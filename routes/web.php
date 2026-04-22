@@ -27,6 +27,7 @@ use App\Http\Controllers\CapaianKompetensiController;
 use App\Http\Controllers\CapaianRangeTemplateController;
 use App\Models\Siswa;
 use App\Models\FormatRapor;
+use App\Models\Kelas;
 use Illuminate\Support\Facades\Auth;
 
 // Root route with role-based redirection
@@ -241,7 +242,7 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
     // Endpoint untuk mendapatkan data kelas
     Route::get('/kelas/data', function() {
         $tahunAjaranId = session('tahun_ajaran_id');
-        $kelas = App\Models\Kelas::with(['mataPelajarans' => function($query) use ($tahunAjaranId) {
+        $kelas = Kelas::with(['mataPelajarans' => function($query) use ($tahunAjaranId) {
             $query->where('tahun_ajaran_id', $tahunAjaranId);
         }])->where('tahun_ajaran_id', $tahunAjaranId)->get();
         

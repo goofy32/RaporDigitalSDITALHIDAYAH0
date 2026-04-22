@@ -327,9 +327,11 @@
             }
             
             // Fix sidebar images and states
-            preloadAndCacheSidebarIcons();
-            if (typeof updateSidebarActiveState === 'function') {
-                updateSidebarActiveState();
+            if (typeof window.preloadAndCacheSidebarIcons === 'function') {
+                window.preloadAndCacheSidebarIcons();
+            }
+            if (typeof window.updateSidebarActiveState === 'function') {
+                window.updateSidebarActiveState();
             }
         });
         
