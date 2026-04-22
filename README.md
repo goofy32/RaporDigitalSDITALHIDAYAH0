@@ -1,6 +1,8 @@
 # Rapot Digital SDIT Al Hidayah
 
-**Rapot Digital SDIT Al Hidayah** adalah aplikasi berbasis web untuk mengelola data siswa, nilai, absensi, dan laporan akademik dengan tampilan responsif dan fitur modern.
+**Rapot Digital SDIT Al Hidayah** adalah sebuah **eksperimen pengembangan aplikasi** yang dibangun sepenuhnya menggunakan **Claude** (AI Assistant by Anthropic). 
+
+Proyek ini bertujuan untuk mendemonstrasikan bagaimana AI dapat membantu membangun sistem manajemen sekolah yang kompleks dari nol, mencakup pengelolaan data siswa, penilaian, absensi, hingga pembuatan laporan akademik otomatis dengan teknologi web modern.
 
 ---
 

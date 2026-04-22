@@ -32,8 +32,6 @@
     <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
     
     <!-- React and ReactDOM -->
-    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 
     <!-- Content-area loading overlay styles with green theme -->
@@ -293,34 +291,6 @@
         </div>
     </div>
 
-    <!-- Base components for React -->
-    <script type="text/babel">
-        // Define base components that will be used across the app
-        window.Card = ({ children, className = '' }) => (
-            <div className={`bg-white shadow rounded-lg ${className}`}>
-                {children}
-            </div>
-        );
-
-        window.Button = ({ children, onClick, className = '', type = 'button' }) => (
-            <button
-                type={type}
-                onClick={onClick}
-                className={`px-4 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-offset-2 ${className}`}
-            >
-                {children}
-            </button>
-        );
-
-        window.Input = ({ type = 'text', value, onChange, className = '' }) => (
-            <input
-                type={type}
-                value={value}
-                onChange={onChange}
-                className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-offset-2 ${className}`}
-            />
-        );
-    </script>
     @if(Auth::guard('web')->check())
         <x-admin.settings-modal id="settings-modal"></x-admin.settings-modal>
     @endif

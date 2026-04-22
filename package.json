@@ -18,22 +18,13 @@
         "vite": "^6.0.0"
     },
     "dependencies": {
-        "@babel/core": "^7.26.8",
-        "@babel/preset-env": "^7.26.8",
-        "@babel/preset-react": "^7.26.3",
         "@hotwired/turbo": "^8.0.12",
-        "@vitejs/plugin-react": "^4.3.4",
         "alpinejs": "^3.14.3",
         "docx-preview": "^0.3.4",
         "flowbite": "^2.5.1",
         "laravel-echo": "^1.19.0",
         "laravel-vite-plugin": "^1.2.0",
-        "libreoffice-convert": "^1.6.1",
         "mammoth": "^1.8.0",
-        "pusher-js": "^8.4.0",
-        "react": "^19.0.0",
-        "react-dom": "^19.0.0",
-        "turbolinks": "^5.2.0",
-        "vue": "^3.5.13"
+        "pusher-js": "^8.4.0"
     }
 }
