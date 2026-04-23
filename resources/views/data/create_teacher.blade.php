@@ -364,6 +364,33 @@ document.addEventListener('DOMContentLoaded', function() {
         removeErrorAlert();
     }
 
+    function removeErrorAlert() {
+        const existingAlert = document.getElementById('no-kelas-alert');
+        if (existingAlert) {
+            existingAlert.remove();
+        }
+    }
+
+    function showErrorAlert(message) {
+        removeErrorAlert();
+
+        const formHeader = document.querySelector('.flex.justify-between.items-center.mb-6');
+        if (!formHeader) return;
+
+        const alertDiv = document.createElement('div');
+        alertDiv.id = 'no-kelas-alert';
+        alertDiv.className = 'bg-red-100 border-l-4 border-red-500 text-red-700 p-4 my-4';
+        alertDiv.innerHTML = `
+            <div class="flex">
+                <div class="ml-3">
+                    <p class="text-sm"><strong>Error:</strong> ${message}</p>
+                </div>
+            </div>
+        `;
+
+        formHeader.parentNode.insertBefore(alertDiv, formHeader.nextSibling);
+    }
+
     function disableFormSubmission(message) {
         const submitButton = document.querySelector('button[form="createTeacherForm"][type="submit"]');
         if (submitButton) {

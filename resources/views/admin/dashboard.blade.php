@@ -35,7 +35,7 @@
         </div>
     </div>
 @endif
-<div x-data="dashboard" x-init="initCharts(); fetchKelasProgress();">
+<div x-data="dashboard" data-dashboard-role="admin">
     <div x-data="notificationHandler">  
         <!-- Main Content Container -->
         <div class="flex flex-col lg:flex-row gap-4 mt-14">
@@ -628,72 +628,6 @@ function updateClassChart(progress) {
 }
 
 // Alpine.js Initialization
-document.addEventListener('alpine:init', () => {
-    Alpine.data('dashboard', () => ({
-        selectedKelas: '',
-        selectedKelasName: 'Per Kelas',
-        mapelProgress: [],
-        
-        init() {
-            this.$nextTick(() => {
-                // Check if overallProgress is defined by PHP, if not, set a default
-                if (typeof overallProgress === 'undefined') {
-                    window.overallProgress = 0;
-                }
-                
-                // Initialize charts after DOM is ready
-                setTimeout(() => {
-                    initCharts();
-                    this.fetchKelasProgress();
-                }, 200);
-            });
-        },
-        
-        initCharts() {
-            initCharts();
-        },
-        
-        async fetchKelasProgress() {
-            if (!this.selectedKelas) {
-                this.selectedKelasName = 'Per Kelas';
-                updateClassChart(0);
-                return;
-            }
-            
-            // Update selected kelas name
-            const kelasSelect = document.getElementById('kelas');
-            if (kelasSelect) {
-                const selectedOption = kelasSelect.options[kelasSelect.selectedIndex];
-                this.selectedKelasName = selectedOption ? selectedOption.text : 'Per Kelas';
-            }
-            
-            try {
-                // Add timestamp to prevent caching
-                const timestamp = new Date().getTime();
-                const response = await fetch(`/admin/kelas-progress/${this.selectedKelas}?_=${timestamp}`);
-                
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-                
-                const data = await response.json();
-                // console.log('Kelas progress data:', data);
-                
-                if (data.success && !isNaN(data.progress)) {
-                    updateClassChart(data.progress);
-                } else {
-                    console.error('Invalid progress data:', data);
-                    updateClassChart(0);
-                }
-            } catch (error) {
-                console.error('Error fetching progress:', error);
-                updateClassChart(0);
-            }
-        }
-    }));
-});
-
-
 // Event Listeners
 document.addEventListener('DOMContentLoaded', () => {
     // console.log('DOM loaded, overall progress from window:', window.overallProgress);

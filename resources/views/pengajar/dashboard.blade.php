@@ -3,7 +3,7 @@
 @section('title', 'Dashboard Pengajar')
 
 @section('content')
-<div x-data="dashboard" x-init="$store.notification.fetchNotifications(); $store.notification.startAutoRefresh()">
+<div x-data="dashboard" data-dashboard-role="pengajar" x-init="$store.notification.fetchNotifications(); $store.notification.startAutoRefresh()">
     <!-- Statistics Grid -->
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-14">
         <!-- Left Section - Stats (col-span-2) -->
@@ -246,6 +246,11 @@ function initCharts() {
     // Overall Progress Chart
     const overallCtx = document.getElementById('overallPieChart')?.getContext('2d');
     if (overallCtx) {
+        const existingOverallChart = Chart.getChart('overallPieChart');
+        if (existingOverallChart) {
+            existingOverallChart.destroy();
+        }
+
         // Get a safe progress value (0-100)
         const safeProgress = Math.min(100, Math.max(0, {{ $overallProgress ?? 0 }}));
         
@@ -290,6 +295,11 @@ function initCharts() {
     // Class Progress Chart (Initially empty)
     const classCtx = document.getElementById('classProgressChart')?.getContext('2d');
     if (classCtx) {
+        const existingClassChart = Chart.getChart('classProgressChart');
+        if (existingClassChart) {
+            existingClassChart.destroy();
+        }
+
         classChart = new Chart(classCtx, {
             type: 'doughnut',
             data: {
@@ -362,33 +372,6 @@ function fetchSubjectProgress(subjectId) {
 
 
 // Event handlers untuk initialization
-document.addEventListener('alpine:init', () => {
-    Alpine.data('dashboard', () => ({
-        selectedSubject: '',
-        mapelProgress: [],
-        
-        init() {
-            setTimeout(() => {
-                this.initCharts();
-            }, 100);
-
-            this.$watch('selectedSubject', value => {
-                if (value) {
-                    this.fetchSubjectProgress();
-                }
-            });
-        },
-        
-        fetchSubjectProgress() {
-            if (!this.selectedSubject) return;
-            
-            // Panggil fungsi global untuk memastikan kompatibilitas
-            window.fetchSubjectProgress(this.selectedSubject);
-        }
-    }));
-});
-
-
 // Function untuk mengecek apakah di halaman dashboard
 function isDashboardPage() {
     return window.location.pathname.includes('/pengajar/dashboard');
@@ -432,6 +415,14 @@ document.addEventListener('turbo:visit', () => {
 // Cleanup saat navigasi
 document.addEventListener('turbo:before-cache', () => {
     destroyCharts();
+});
+
+document.addEventListener('turbo:before-cache', function() {
+    if (Chart.instances) {
+        Object.values(Chart.instances).forEach(chart => {
+            chart.destroy();
+        });
+    }
 });
 
 // Handle unload

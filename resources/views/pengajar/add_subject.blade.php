@@ -225,55 +225,6 @@
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
-    // Setup form protection
-    if (window.Alpine) {
-        document.addEventListener('alpine:init', () => {
-            Alpine.data('formProtection', () => ({
-                formChanged: false,
-                isSubmitting: false,
-                
-                init() {
-                    this.setupFormChangeListeners();
-                    this.setupNavigationProtection();
-                },
-                
-                setupFormChangeListeners() {
-                    this.$el.querySelectorAll('input, select, textarea').forEach(element => {
-                        element.addEventListener('change', () => {
-                            this.formChanged = true;
-                        });
-                        
-                        if (element.tagName === 'INPUT' && element.type !== 'checkbox' && element.type !== 'radio') {
-                            element.addEventListener('keyup', () => {
-                                this.formChanged = true;
-                            });
-                        }
-                    });
-                },
-                
-                setupNavigationProtection() {
-                    window.addEventListener('beforeunload', (e) => {
-                        if (this.formChanged && !this.isSubmitting) {
-                            e.preventDefault();
-                            e.returnValue = 'Ada perubahan yang belum disimpan. Yakin ingin meninggalkan halaman?';
-                            return e.returnValue;
-                        }
-                    });
-                },
-                
-                handleSubmit(e) {
-                    if (!validateForm()) {
-                        e.preventDefault();
-                        return false;
-                    }
-                    
-                    this.isSubmitting = true;
-                    return true;
-                }
-            }));
-        });
-    }
-
     // Initialize all subject entries
     document.querySelectorAll('.subject-entry').forEach(entry => {
         // Initialize kelas selection

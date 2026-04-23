@@ -451,9 +451,9 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     // Validasi form submission untuk password
-    const form = document.getElementById('editTeacherForm');
-    if (form) {
-        form.addEventListener('submit', async function(e) {
+    const passwordForm = document.getElementById('editTeacherForm');
+    if (passwordForm) {
+        passwordForm.addEventListener('submit', async function(e) {
             // Jika ada input password tapi tidak ada input password saat ini
             if (newPassword.value && !currentPassword.value) {
                 e.preventDefault();
@@ -478,7 +478,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 
                 // Lanjutkan submit hanya jika semua validasi berhasil
                 if (passwordValid && matchValid) {
-                    form.submit();
+                    passwordForm.submit();
                 } else {
                     // Focus ke elemen yang bermasalah
                     if (!passwordValid) {
@@ -684,10 +684,10 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // Form validation
-    const form = document.querySelector('form');
-    const requiredFields = form.querySelectorAll('[required]');
+    const validationForm = document.querySelector('form');
+    const requiredFields = validationForm.querySelectorAll('[required]');
 
-    form.addEventListener('submit', function(e) {
+    validationForm.addEventListener('submit', function(e) {
         let hasError = false;
         requiredFields.forEach(field => {
             if (field.multiple && field.selectedOptions.length === 0) {

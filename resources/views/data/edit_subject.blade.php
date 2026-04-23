@@ -439,7 +439,7 @@ document.addEventListener('DOMContentLoaded', function() {
         .map(([id, _]) => parseInt(id));
     
     // Main function to update form state based on selections
-    function updateFormState() {
+    window.updateFormState = function updateFormState() {
         // Get the necessary elements
         const kelasSelect = document.getElementById('kelas');
         const guruSelect = document.getElementById('guru_pengampu');
@@ -591,7 +591,7 @@ document.addEventListener('DOMContentLoaded', function() {
         } else {
             guruSelect.classList.remove('border-yellow-500');
         }
-    }
+    };
 
     const mataPelajaranInput = document.getElementById('mata_pelajaran');
     const semesterSelect = document.getElementById('semester');

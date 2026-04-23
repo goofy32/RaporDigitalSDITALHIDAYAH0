@@ -78,18 +78,17 @@ class ClassController extends Controller
     {
         $tahunAjaranId = session('tahun_ajaran_id');
         
-        // Dapatkan guru yang hanya memiliki jabatan 'guru' saja (bukan guru_wali)
-        // dan belum menjadi wali kelas di kelas manapun pada tahun ajaran saat ini
-        $guruList = Guru::where('jabatan', 'guru')
-            ->whereDoesntHave('kelas', function($query) use ($tahunAjaranId) {
-                $query->where('guru_kelas.is_wali_kelas', true)
-                      ->where('guru_kelas.role', 'wali_kelas');
-                      
-                // Filter berdasarkan tahun ajaran jika ada
-                if ($tahunAjaranId) {
-                    $query->where('kelas.tahun_ajaran_id', $tahunAjaranId);
-                }
+        $assignedWaliKelasIds = DB::table('guru_kelas')
+            ->join('kelas', 'guru_kelas.kelas_id', '=', 'kelas.id')
+            ->where('guru_kelas.is_wali_kelas', true)
+            ->where('guru_kelas.role', 'wali_kelas')
+            ->when($tahunAjaranId, function ($query) use ($tahunAjaranId) {
+                $query->where('kelas.tahun_ajaran_id', $tahunAjaranId);
             })
+            ->pluck('guru_kelas.guru_id');
+
+        $guruList = Guru::whereNotIn('id', $assignedWaliKelasIds)
+            ->orderBy('nama')
             ->get();
     
         return view('data.create_class', compact('guruList'));
@@ -181,17 +180,20 @@ class ClassController extends Controller
                         ->wherePivot('role', 'wali_kelas')
                         ->first();
         
-        // Ambil daftar guru yang tersedia untuk menjadi wali kelas 
-        // (dengan jabatan 'guru' dan belum menjadi wali kelas)
-        $availableGuruList = Guru::where('jabatan', 'guru')
-            ->whereDoesntHave('kelas', function($query) use ($tahunAjaranId) {
-                $query->where('guru_kelas.is_wali_kelas', true)
-                    ->where('guru_kelas.role', 'wali_kelas')
-                    ->when($tahunAjaranId, function($q) use ($tahunAjaranId) {
-                        // FIX: Mengubah 'kelas' menjadi 'tahun_ajaran_id'
-                        $q->where('kelas.tahun_ajaran_id', $tahunAjaranId);
-                    });
+        $assignedWaliKelasIds = DB::table('guru_kelas')
+            ->join('kelas', 'guru_kelas.kelas_id', '=', 'kelas.id')
+            ->where('guru_kelas.is_wali_kelas', true)
+            ->where('guru_kelas.role', 'wali_kelas')
+            ->when($tahunAjaranId, function ($query) use ($tahunAjaranId) {
+                $query->where('kelas.tahun_ajaran_id', $tahunAjaranId);
             })
+            ->when($waliKelas, function ($query) use ($waliKelas) {
+                $query->where('guru_kelas.guru_id', '!=', $waliKelas->id);
+            })
+            ->pluck('guru_kelas.guru_id');
+
+        $availableGuruList = Guru::whereNotIn('id', $assignedWaliKelasIds)
+            ->orderBy('nama')
             ->get();
         
         return view('data.edit_class', compact('kelas', 'waliKelas', 'availableGuruList'));

@@ -1,5 +1,5 @@
 <!-- resources/views/admin/report/placeholder_guide.blade.php -->
-<div class="p-6 max-h-[80vh] overflow-y-auto" x-data="placeholderGuide">
+<div class="p-6 max-h-[80vh] overflow-y-auto" x-data="placeholderGuide" data-placeholders='@json($placeholders)'>
     <div class="flex justify-between items-center mb-6">
         <h3 class="text-lg font-semibold">Panduan Placeholder Rapor</h3>
         <button @click="closePlaceholderGuide()" class="text-gray-400 hover:text-gray-500">
@@ -93,51 +93,3 @@
     </div>
 </div>
 
-<script>
-document.addEventListener('alpine:init', () => {
-    Alpine.data('placeholderGuide', () => ({
-        placeholderSearch: '',
-        activeCategory: 'siswa',
-        placeholders: @json($placeholders),
-
-        get filteredPlaceholders() {
-            const search = this.placeholderSearch.toLowerCase();
-            return Object.entries(this.placeholders).reduce((acc, [category, items]) => {
-                const filtered = items.filter(item => 
-                    item.key.toLowerCase().includes(search) || 
-                    item.description.toLowerCase().includes(search)
-                );
-                if (filtered.length > 0) {
-                    acc[category] = filtered;
-                }
-                return acc;
-            }, {});
-        },
-
-        getCategoryLabel(category) {
-            const labels = {
-                'siswa': 'Data Siswa',
-                'nilai': 'Nilai Akademik',
-                'ekskul': 'Ekstrakurikuler',
-                'lainnya': 'Data Lainnya'
-            };
-            return labels[category] || category;
-        },
-
-        async copyPlaceholder(text) {
-            try {
-                await navigator.clipboard.writeText(text);
-                this.$dispatch('show-notification', {
-                    type: 'success',
-                    message: 'Placeholder berhasil disalin'
-                });
-            } catch (err) {
-                this.$dispatch('show-notification', {
-                    type: 'error',
-                    message: 'Gagal menyalin placeholder'
-                });
-            }
-        }
-    }));
-});
-</script>

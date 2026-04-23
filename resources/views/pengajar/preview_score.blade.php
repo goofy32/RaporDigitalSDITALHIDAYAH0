@@ -355,14 +355,4 @@
     </div> -->
 </div>
 <div style="height:1px;margin:0;padding:0"></div>
-<script>
-document.addEventListener('alpine:init', () => {
-    // Optional: Tambahkan fungsionalitas tambahan untuk Alpine.js
-    Alpine.store('analisisNilai', {
-        toggleAllDetails(value) {
-            // Fungsi untuk toggle semua detail sekaligus
-        }
-    });
-});
-</script>
 @endsection

@@ -97,6 +97,13 @@ class SubjectController extends Controller
         
         return view('data.add_subject', compact('classes', 'teachers', 'waliKelasMap', 'mataPelajaranList'));
     }
+
+    public function show($id)
+    {
+        $subject = MataPelajaran::findOrFail($id);
+
+        return redirect()->route('subject.edit', $subject->id);
+    }
     
     public function store(Request $request)
     {

@@ -656,56 +656,6 @@ window.mapelData = [
 
 // Initialize on load
 document.addEventListener('DOMContentLoaded', function() {
-    // Initialize form protection
-    if (window.Alpine) {
-        document.addEventListener('alpine:init', () => {
-            Alpine.data('formProtection', () => ({
-                formChanged: false,
-                isSubmitting: false,
-                
-                init() {
-                    this.setupFormChangeListeners();
-                    this.setupNavigationProtection();
-                },
-                
-                setupFormChangeListeners() {
-                    this.$el.querySelectorAll('input, select').forEach(element => {
-                        element.addEventListener('change', () => {
-                            this.formChanged = true;
-                        });
-                        
-                        if (element.tagName === 'INPUT' && element.type !== 'checkbox') {
-                            element.addEventListener('keyup', () => {
-                                this.formChanged = true;
-                            });
-                        }
-                    });
-                },
-                
-                setupNavigationProtection() {
-                    window.addEventListener('beforeunload', (e) => {
-                        if (this.formChanged && !this.isSubmitting) {
-                            e.preventDefault();
-                            e.returnValue = 'Ada perubahan yang belum disimpan. Yakin ingin meninggalkan halaman?';
-                            return e.returnValue;
-                        }
-                    });
-                },
-                
-                handleSubmit(e) {
-                    // Validate before submission
-                    if (!validateForm()) {
-                        e.preventDefault();
-                        return false;
-                    }
-                    
-                    this.isSubmitting = true;
-                    return true;
-                }
-            }));
-        });
-    }
-    
     // Form validation
     const form = document.getElementById('addSubjectForm');
     if (form) {

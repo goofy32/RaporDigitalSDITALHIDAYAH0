@@ -34,7 +34,7 @@
                             <input type="text" id="nis" name="nis" 
                             maxlength="10" 
                             pattern="[0-9]*"
-                            oninput="numbersOnly(this); maxLength(this, 10);"
+                            oninput="numbersOnly(this); enforceMaxLength(this, 10);"
                             class="w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring focus:ring-green-200 required-field" 
                             value="{{ old('nis') }}" required>
                             @error('nis')
@@ -48,7 +48,7 @@
                             <input type="text" id="nisn" name="nisn" 
                                 maxlength="10" 
                                 pattern="[0-9]*"
-                                oninput="numbersOnly(this); maxLength(this, 10);"
+                                oninput="numbersOnly(this); enforceMaxLength(this, 10);"
                                 class="w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring focus:ring-green-200 required-field" 
                                 value="{{ old('nisn') }}" required>
                             @error('nisn')
@@ -267,7 +267,7 @@ function lettersOnly(input) {
     input.value = input.value.replace(/[^a-zA-Z\s]/g, '');
 }
 
-function maxLength(input, max) {
+function enforceMaxLength(input, max) {
     if (input.value.length > max) {
         input.value = input.value.slice(0, max);
     }
@@ -310,21 +310,21 @@ document.addEventListener('DOMContentLoaded', function() {
     if (nisInput) {
         nisInput.addEventListener('input', function() {
             numbersOnly(this);
-            maxLength(this, 10);
+            enforceMaxLength(this, 10);
         });
     }
 
     if (nisnInput) {
         nisnInput.addEventListener('input', function() {
             numbersOnly(this);
-            maxLength(this, 10);
+            enforceMaxLength(this, 10);
         });
     }
 
     if (namaInput) {
         namaInput.addEventListener('input', function() {
             lettersOnly(this);
-            maxLength(this, 255);
+            enforceMaxLength(this, 255);
         });
     }
 
