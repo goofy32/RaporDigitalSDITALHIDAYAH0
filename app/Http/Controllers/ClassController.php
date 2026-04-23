@@ -87,7 +87,8 @@ class ClassController extends Controller
             })
             ->pluck('guru_kelas.guru_id');
 
-        $guruList = Guru::whereNotIn('id', $assignedWaliKelasIds)
+        $guruList = Guru::where('jabatan', 'guru_wali')
+            ->whereNotIn('id', $assignedWaliKelasIds)
             ->orderBy('nama')
             ->get();
     
@@ -192,7 +193,14 @@ class ClassController extends Controller
             })
             ->pluck('guru_kelas.guru_id');
 
-        $availableGuruList = Guru::whereNotIn('id', $assignedWaliKelasIds)
+        $availableGuruList = Guru::where(function ($query) use ($waliKelas) {
+                $query->where('jabatan', 'guru_wali');
+
+                if ($waliKelas) {
+                    $query->orWhere('id', $waliKelas->id);
+                }
+            })
+            ->whereNotIn('id', $assignedWaliKelasIds)
             ->orderBy('nama')
             ->get();
         
