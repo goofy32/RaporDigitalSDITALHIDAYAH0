@@ -22,15 +22,33 @@ import { registerReportTemplateFeatures } from './features/report-template-manag
 import { registerNotificationHandler } from './features/notification-handler';
 import { registerFormDiagnostics } from './features/form-diagnostics';
 import { registerSidebarFeatures } from './features/sidebar';
+import { registerTopbarFeatures } from './features/topbar';
+import { registerSettingsModalFeatures } from './features/settings-modal';
+import { registerGeminiChatDebug } from './features/gemini-chat-debug';
+import { registerDashboard } from './features/dashboard';
+import { registerBobotNilaiForm } from './features/bobot-nilai-form';
+import { registerKkmForm } from './features/kkm-form';
+import { registerPlaceholderGuide } from './features/placeholder-guide';
+import { registerRaporManager } from './features/rapor-manager';
 
 import { registerFormProtectionComponent } from './components/form-protection';
+import { registerAnalisisNilaiStore } from './stores/analisis-nilai-store';
+import { registerContentLoadingStore } from './stores/content-loading-store';
 
 window.renderAsync = renderAsync;
 window.Alpine = Alpine;
 
 registerTurboCore();
+registerDashboard();
 registerGeminiChat();
+registerGeminiChatDebug();
 registerFormDiagnostics();
+registerTopbarFeatures();
+registerSettingsModalFeatures();
+registerBobotNilaiForm();
+registerKkmForm();
+registerPlaceholderGuide();
+registerRaporManager();
 
 registerGeminiStore();
 registerHelpersStore();
@@ -45,6 +63,8 @@ registerNotificationStore();
 registerSessionTimeout();
 registerNotificationHandler();
 registerPageLoadingStore();
+registerAnalisisNilaiStore();
+registerContentLoadingStore();
 registerSidebarFeatures();
 
 if (!window.alpineInitialized) {
