@@ -1,13 +1,124 @@
 {
+  "_app-components-BcE0uDbN.js": {
+    "file": "assets/app-components-BcE0uDbN.js",
+    "name": "app-components",
+    "imports": [
+      "_vendor-alpine-CwKKyv8g.js"
+    ]
+  },
+  "_app-core-DBNIIJRJ.js": {
+    "file": "assets/app-core-DBNIIJRJ.js",
+    "name": "app-core",
+    "imports": [
+      "_vendor-axios-D5GkNzM3.js",
+      "_vendor-realtime-BlRiD3cs.js",
+      "_vendor-alpine-CwKKyv8g.js",
+      "_app-features-CKsj_PjB.js"
+    ]
+  },
+  "_app-features-CKsj_PjB.js": {
+    "file": "assets/app-features-CKsj_PjB.js",
+    "name": "app-features",
+    "imports": [
+      "_vendor-alpine-CwKKyv8g.js"
+    ]
+  },
+  "_app-stores-B9RhffvX.js": {
+    "file": "assets/app-stores-B9RhffvX.js",
+    "name": "app-stores",
+    "imports": [
+      "_vendor-alpine-CwKKyv8g.js"
+    ]
+  },
+  "_vendor-alpine-CwKKyv8g.js": {
+    "file": "assets/vendor-alpine-CwKKyv8g.js",
+    "name": "vendor-alpine"
+  },
+  "_vendor-axios-D5GkNzM3.js": {
+    "file": "assets/vendor-axios-D5GkNzM3.js",
+    "name": "vendor-axios"
+  },
+  "_vendor-docx-B7dGn9hU.js": {
+    "file": "assets/vendor-docx-B7dGn9hU.js",
+    "name": "vendor-docx",
+    "imports": [
+      "_vendor-realtime-BlRiD3cs.js"
+    ]
+  },
+  "_vendor-flowbite-DsaYIjts.js": {
+    "file": "assets/vendor-flowbite-DsaYIjts.js",
+    "name": "vendor-flowbite"
+  },
+  "_vendor-realtime-BlRiD3cs.js": {
+    "file": "assets/vendor-realtime-BlRiD3cs.js",
+    "name": "vendor-realtime"
+  },
+  "_vendor-turbo-BRR3A8XY.js": {
+    "file": "assets/vendor-turbo-BRR3A8XY.js",
+    "name": "vendor-turbo"
+  },
   "resources/css/app.css": {
-    "file": "assets/app-D0M_S_0d.css",
+    "file": "assets/app-Cn7ENoSb.css",
     "src": "resources/css/app.css",
     "isEntry": true
   },
   "resources/js/app.js": {
-    "file": "assets/app-B9tkuKZQ.js",
+    "file": "assets/app-DAKHYsQo.js",
     "name": "app",
     "src": "resources/js/app.js",
-    "isEntry": true
+    "isEntry": true,
+    "imports": [
+      "_app-core-DBNIIJRJ.js",
+      "_vendor-flowbite-DsaYIjts.js",
+      "_vendor-turbo-BRR3A8XY.js",
+      "_vendor-alpine-CwKKyv8g.js",
+      "_app-stores-B9RhffvX.js",
+      "_app-features-CKsj_PjB.js",
+      "_app-components-BcE0uDbN.js",
+      "_vendor-axios-D5GkNzM3.js",
+      "_vendor-realtime-BlRiD3cs.js"
+    ],
+    "dynamicImports": [
+      "resources/js/pages/add-subject.js",
+      "resources/js/pages/edit-subject.js",
+      "resources/js/pages/admin-report.js",
+      "resources/js/pages/pengajar-input-score.js"
+    ]
+  },
+  "resources/js/pages/add-subject.js": {
+    "file": "assets/add-subject-CCZrEJlf.js",
+    "name": "add-subject",
+    "src": "resources/js/pages/add-subject.js",
+    "isDynamicEntry": true,
+    "imports": [
+      "_app-features-CKsj_PjB.js",
+      "_vendor-alpine-CwKKyv8g.js"
+    ]
+  },
+  "resources/js/pages/admin-report.js": {
+    "file": "assets/admin-report-C5wSS3tc.js",
+    "name": "admin-report",
+    "src": "resources/js/pages/admin-report.js",
+    "isDynamicEntry": true,
+    "imports": [
+      "_vendor-docx-B7dGn9hU.js",
+      "_vendor-realtime-BlRiD3cs.js"
+    ]
+  },
+  "resources/js/pages/edit-subject.js": {
+    "file": "assets/edit-subject-VrYIaJ1d.js",
+    "name": "edit-subject",
+    "src": "resources/js/pages/edit-subject.js",
+    "isDynamicEntry": true,
+    "imports": [
+      "_app-features-CKsj_PjB.js",
+      "_vendor-alpine-CwKKyv8g.js"
+    ]
+  },
+  "resources/js/pages/pengajar-input-score.js": {
+    "file": "assets/pengajar-input-score-Y4G4UcRw.js",
+    "name": "pengajar-input-score",
+    "src": "resources/js/pages/pengajar-input-score.js",
+    "isDynamicEntry": true
   }
 }

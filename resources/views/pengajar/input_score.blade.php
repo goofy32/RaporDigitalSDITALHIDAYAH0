@@ -16,7 +16,7 @@
     }
 </style>
 
-<div class="p-4 mt-16 bg-white shadow-md rounded-lg">
+<div data-page="pengajar-input-score" class="p-4 mt-16 bg-white shadow-md rounded-lg">
     <div class="flex justify-between items-center mb-6">
         <h2 class="text-2xl font-bold text-green-700 flex items-center gap-2">
             <span>{{ $subject['class'] }} - {{ $mataPelajaran->nama_pelajaran }}</span>

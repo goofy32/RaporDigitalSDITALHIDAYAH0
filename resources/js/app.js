@@ -2,7 +2,6 @@ import './bootstrap';
 import 'flowbite';
 import '@hotwired/turbo';
 import Alpine from 'alpinejs';
-import { renderAsync } from 'docx-preview';
 
 import { registerTurboCore } from './core/turbo';
 import { registerSessionTimeout } from './core/session-timeout';
@@ -34,10 +33,7 @@ import { registerRaporManager } from './features/rapor-manager';
 import { registerFormProtectionComponent } from './components/form-protection';
 import { registerAnalisisNilaiStore } from './stores/analisis-nilai-store';
 import { registerContentLoadingStore } from './stores/content-loading-store';
-import { initAdminReportPage } from './pages/admin-report';
-import { initPengajarInputScorePage } from './pages/pengajar-input-score';
 
-window.renderAsync = renderAsync;
 window.Alpine = Alpine;
 
 registerTurboCore();
@@ -68,10 +64,29 @@ registerPageLoadingStore();
 registerAnalisisNilaiStore();
 registerContentLoadingStore();
 registerSidebarFeatures();
-initAdminReportPage();
-initPengajarInputScorePage();
 
 if (!window.alpineInitialized) {
     Alpine.start();
     window.alpineInitialized = true;
 }
+
+const pageLoaders = {
+    'add-subject': () => import('./pages/add-subject').then(module => module.initAddSubjectPage()),
+    'edit-subject': () => import('./pages/edit-subject').then(module => module.initEditSubjectPage()),
+    'admin-report': () => import('./pages/admin-report').then(module => module.initAdminReportPage()),
+    'pengajar-input-score': () => import('./pages/pengajar-input-score').then(module => module.initPengajarInputScorePage()),
+};
+
+async function loadCurrentPageModule() {
+    const pageEl = document.querySelector('[data-page]');
+    const pageName = pageEl?.dataset?.page;
+
+    if (!pageName || !pageLoaders[pageName]) return;
+    await pageLoaders[pageName]();
+}
+
+document.addEventListener('turbo:load', () => {
+    loadCurrentPageModule().catch(error => {
+        console.error(`Failed to load page module for ${document.querySelector('[data-page]')?.dataset?.page || 'unknown page'}`, error);
+    });
+});

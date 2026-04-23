@@ -3,7 +3,7 @@
 @section('title', 'Manajemen Template Rapor')
 
 @section('content')
-<div id="admin-report-page" data-sample-url="{{ route('report.template.sample') }}">
+<div id="admin-report-page" data-page="admin-report" data-sample-url="{{ route('report.template.sample') }}">
     <div class="p-4 bg-white mt-14">
         <!-- Header -->
         <div class="flex justify-between items-center mb-6">
