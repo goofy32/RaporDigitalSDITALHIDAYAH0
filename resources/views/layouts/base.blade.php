@@ -7,6 +7,7 @@
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <meta name="turbo-cache-control" content="no-preview">
     <meta name="turbo-visit-control" content="reload">
+    <meta name="active-tahun-ajaran" content="{{ isset($activeTahunAjaran) ? $activeTahunAjaran->tahun_ajaran : '' }}">
     @yield('role-meta')
 
     <link rel="icon" type="image/x-icon" href="{{ asset('favicon.ico') }}">

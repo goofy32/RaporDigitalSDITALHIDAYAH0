@@ -256,22 +256,6 @@
                 window.dispatchEvent(new CustomEvent('open-settings'));
             });
 
-            if (window.Alpine) {
-                window.Alpine.store('contentLoading', {
-                    isLoading: false,
-
-                    startLoading() {
-                        this.isLoading = true;
-                        document.getElementById('content-loading-overlay').classList.add('active');
-                    },
-
-                    stopLoading() {
-                        this.isLoading = false;
-                        document.getElementById('content-loading-overlay').classList.remove('active');
-                    }
-                });
-            }
-
             const sidebar = document.getElementById('logo-sidebar');
             if (sidebar) {
                 sidebar.classList.remove('-translate-x-full');
