@@ -69,7 +69,7 @@
                     </div>
 
                     <!-- Muatan Lokal Checkbox -->
-                    <div class="mb-4">
+                    <div class="mb-4 muatan-lokal-options">
                         <div class="flex items-center">
                             <input id="is_muatan_lokal_0" name="subjects[0][is_muatan_lokal]" type="checkbox" 
                                 class="h-4 w-4 text-green-600 focus:ring-green-500 border-gray-300 rounded muatan-lokal-checkbox"
@@ -240,8 +240,9 @@ function addSubjectEntry() {
     lingkupContainer.appendChild(firstLingkupEntry);
     firstLingkupEntry.querySelector('input').value = '';
 
-    // Hide non-muatan lokal options initially
-    template.querySelector('.non-muatan-lokal-options').style.display = 'none';
+    // New rows should show both type choices immediately.
+    template.querySelector('.muatan-lokal-options').style.display = 'block';
+    template.querySelector('.non-muatan-lokal-options').style.display = 'block';
     
     // Clear any info messages
     template.querySelector('.info-container').innerHTML = '';
@@ -349,6 +350,7 @@ function handleCheckboxChange(checkbox) {
     const subjectEntry = checkbox.closest('.subject-entry');
     const isMuatanLokalCheckbox = subjectEntry.querySelector('input[name*="[is_muatan_lokal]"]');
     const allowNonWaliCheckbox = subjectEntry.querySelector('input[name*="[allow_non_wali]"]');
+    const guruSelect = subjectEntry.querySelector('select[name*="[guru_pengampu]"]');
     
     // If the muatan lokal checkbox was changed
     if (checkbox === isMuatanLokalCheckbox && checkbox.checked) {
@@ -365,6 +367,11 @@ function handleCheckboxChange(checkbox) {
             isMuatanLokalCheckbox.checked = false;
         }
     }
+
+    if (guruSelect) {
+        guruSelect.selectedIndex = 0;
+        subjectEntry.setAttribute('data-skip-auto-select', 'true');
+    }
     
     // Update the guru options after changing checkbox state
     updateGuruOptions(subjectEntry);
@@ -373,6 +380,7 @@ function handleCheckboxChange(checkbox) {
 function updateGuruOptions(subjectEntry) {
     // Ambil elemen dari entry yang aktif
     const isMuatanLokalElement = subjectEntry.querySelector('input[name*="[is_muatan_lokal]"]');
+    const muatanOptions = subjectEntry.querySelector('.muatan-lokal-options');
     const nonMuatanOptions = subjectEntry.querySelector('.non-muatan-lokal-options');
     const allowNonWaliElement = subjectEntry.querySelector('input[name*="[allow_non_wali]"]');
     const kelasSelect = subjectEntry.querySelector('select[name*="[kelas]"]');
@@ -409,6 +417,10 @@ function updateGuruOptions(subjectEntry) {
     }
     
     // Toggle display of non-muatan lokal options jika elemen ada
+    if (muatanOptions) {
+        muatanOptions.style.display = allowNonWali ? 'none' : 'block';
+    }
+
     if (nonMuatanOptions) {
         nonMuatanOptions.style.display = isMuatanLokal ? 'none' : 'block';
         
@@ -530,8 +542,12 @@ function updateGuruOptions(subjectEntry) {
         }
     }
     
-    // Auto-select an appropriate guru based on the rules
-    autoSelectGuru(guruSelect, selectedKelasId, isMuatanLokal, allowNonWali, waliKelasId);
+    // Auto-select an appropriate guru based on the rules, except right after the user changes subject type.
+    if (subjectEntry.getAttribute('data-skip-auto-select') === 'true') {
+        subjectEntry.removeAttribute('data-skip-auto-select');
+    } else {
+        autoSelectGuru(guruSelect, selectedKelasId, isMuatanLokal, allowNonWali, waliKelasId);
+    }
     
     // Highlight this field if no valid option is selected
     if (guruSelect.value === "" || guruSelect.selectedIndex === 0) {

@@ -19,16 +19,7 @@
 <div class="p-4 mt-16 bg-white shadow-md rounded-lg">
     <div class="flex justify-between items-center mb-6">
         <h2 class="text-2xl font-bold text-green-700 flex items-center gap-2">
-            <span>{{ $subject['class'] }} - </span>       
-            <select class="border border-gray-300 rounded-lg px-4 py-2" 
-                    onchange="window.location.href=this.value">
-                @foreach($mataPelajaranList as $mapel)
-                    <option value="{{ route('pengajar.score.input_score', $mapel->id) }}" 
-                            {{ $mapel->id == $mataPelajaran->id ? 'selected' : '' }}>
-                        {{ $mapel->nama_pelajaran }}
-                    </option>
-                @endforeach
-            </select>
+            <span>{{ $subject['class'] }} - {{ $mataPelajaran->nama_pelajaran }}</span>
         </h2>
 
         <div class="flex gap-4">
@@ -66,6 +57,7 @@
         @csrf
 
         <input type="hidden" name="tahun_ajaran_id" value="{{ session('tahun_ajaran_id') }}">
+        <input type="hidden" name="mata_pelajaran_id" value="{{ $mataPelajaran->id }}">
 
         <div class="overflow-x-auto">
             <table id="students-table" class="min-w-full text-sm text-left text-gray-500 border-collapse">

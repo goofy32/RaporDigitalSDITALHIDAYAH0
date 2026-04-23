@@ -60,7 +60,7 @@
             </div>
 
             <!-- Muatan Lokal Checkbox -->
-            <div class="mb-4">
+            <div class="mb-4 muatan-lokal-options">
                 <div class="flex items-center">
                     <input id="is_muatan_lokal" name="is_muatan_lokal" type="checkbox" 
                         class="h-4 w-4 text-green-600 focus:ring-green-500 border-gray-300 rounded muatan-lokal-checkbox"
@@ -373,6 +373,7 @@ function handleCheckboxChange(checkbox) {
     const form = document.getElementById('editSubjectForm');
     const isMuatanLokalCheckbox = document.getElementById('is_muatan_lokal');
     const allowNonWaliCheckbox = document.getElementById('allow_non_wali');
+    const guruSelect = document.getElementById('guru_pengampu');
     
     // Jika checkbox muatan lokal yang diubah
     if (checkbox === isMuatanLokalCheckbox && checkbox.checked) {
@@ -388,6 +389,11 @@ function handleCheckboxChange(checkbox) {
         if (isMuatanLokalCheckbox) {
             isMuatanLokalCheckbox.checked = false;
         }
+    }
+
+    if (guruSelect) {
+        guruSelect.selectedIndex = 0;
+        form.setAttribute('data-skip-auto-select', 'true');
     }
     
     // Update guru options setelah mengubah status checkbox
@@ -445,6 +451,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const guruSelect = document.getElementById('guru_pengampu');
         const muatanLokalCheckbox = document.getElementById('is_muatan_lokal');
         const allowNonWaliCheckbox = document.getElementById('allow_non_wali');
+        const muatanOptions = document.querySelector('.muatan-lokal-options');
         const nonMuatanOptions = document.querySelector('.non-muatan-lokal-options');
         const infoContainer = document.querySelector('.info-container');
         
@@ -463,6 +470,10 @@ document.addEventListener('DOMContentLoaded', function() {
         const allowNonWali = allowNonWaliCheckbox ? allowNonWaliCheckbox.checked : false;
         
         // Toggle visibility of non-muatan options
+        if (muatanOptions) {
+            muatanOptions.style.display = allowNonWali ? 'none' : 'block';
+        }
+
         if (nonMuatanOptions) {
             nonMuatanOptions.style.display = isMuatanLokal ? 'none' : 'block';
             
@@ -572,7 +583,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     });
                     
                     // Auto-select wali kelas if not already selected
-                    if (guruSelect.value !== waliKelasId.toString() && waliKelasFound) {
+                    const shouldAutoSelect = document.getElementById('editSubjectForm').getAttribute('data-skip-auto-select') !== 'true';
+                    if (shouldAutoSelect && guruSelect.value !== waliKelasId.toString() && waliKelasFound) {
                         guruSelect.value = waliKelasId.toString();
                     }
                     
@@ -591,6 +603,8 @@ document.addEventListener('DOMContentLoaded', function() {
         } else {
             guruSelect.classList.remove('border-yellow-500');
         }
+
+        document.getElementById('editSubjectForm').removeAttribute('data-skip-auto-select');
     };
 
     const mataPelajaranInput = document.getElementById('mata_pelajaran');
