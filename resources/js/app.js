@@ -34,6 +34,8 @@ import { registerRaporManager } from './features/rapor-manager';
 import { registerFormProtectionComponent } from './components/form-protection';
 import { registerAnalisisNilaiStore } from './stores/analisis-nilai-store';
 import { registerContentLoadingStore } from './stores/content-loading-store';
+import { initAdminReportPage } from './pages/admin-report';
+import { initPengajarInputScorePage } from './pages/pengajar-input-score';
 
 window.renderAsync = renderAsync;
 window.Alpine = Alpine;
@@ -66,6 +68,8 @@ registerPageLoadingStore();
 registerAnalisisNilaiStore();
 registerContentLoadingStore();
 registerSidebarFeatures();
+initAdminReportPage();
+initPengajarInputScorePage();
 
 if (!window.alpineInitialized) {
     Alpine.start();
