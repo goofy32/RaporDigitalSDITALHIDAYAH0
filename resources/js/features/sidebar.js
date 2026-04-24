@@ -33,7 +33,10 @@ export function preloadAndCacheSidebarIcons() {
 export function ensureSidebarVisible() {
     const sidebar = document.getElementById('logo-sidebar');
     if (sidebar) {
+        sidebar.style.display = '';
+        sidebar.style.visibility = 'visible';
         sidebar.classList.remove('-translate-x-full');
+        sidebar.classList.remove('hidden');
         sidebar.classList.add('sm:translate-x-0');
     }
 }
@@ -140,6 +143,8 @@ export function registerSidebarFeatures() {
     document.addEventListener('turbo:render', ensureSidebarVisible);
 
     document.addEventListener('turbo:before-cache', () => {
+        ensureSidebarVisible();
+
         if (window.Alpine) {
             document.querySelectorAll('[x-data]').forEach(el => {
                 if (el.__x && el.__x.$data && el.__x.$data.openDropdown !== undefined) {

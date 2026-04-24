@@ -6,18 +6,18 @@
       "_vendor-alpine-CwKKyv8g.js"
     ]
   },
-  "_app-core-CmVplWAQ.js": {
-    "file": "assets/app-core-CmVplWAQ.js",
+  "_app-core-D0Wphm-d.js": {
+    "file": "assets/app-core-D0Wphm-d.js",
     "name": "app-core",
     "imports": [
       "_vendor-axios-D5GkNzM3.js",
       "_vendor-realtime-BlRiD3cs.js",
       "_vendor-alpine-CwKKyv8g.js",
-      "_app-features-DMifVSOF.js"
+      "_app-features-MVLxD5Rf.js"
     ]
   },
-  "_app-features-DMifVSOF.js": {
-    "file": "assets/app-features-DMifVSOF.js",
+  "_app-features-MVLxD5Rf.js": {
+    "file": "assets/app-features-MVLxD5Rf.js",
     "name": "app-features",
     "imports": [
       "_vendor-alpine-CwKKyv8g.js"
@@ -63,17 +63,17 @@
     "isEntry": true
   },
   "resources/js/app.js": {
-    "file": "assets/app-CXssYK0g.js",
+    "file": "assets/app-C5MaXX8G.js",
     "name": "app",
     "src": "resources/js/app.js",
     "isEntry": true,
     "imports": [
-      "_app-core-CmVplWAQ.js",
+      "_app-core-D0Wphm-d.js",
       "_vendor-flowbite-DsaYIjts.js",
       "_vendor-turbo-BRR3A8XY.js",
       "_vendor-alpine-CwKKyv8g.js",
       "_app-stores-CfGkpd7L.js",
-      "_app-features-DMifVSOF.js",
+      "_app-features-MVLxD5Rf.js",
       "_app-components-BcE0uDbN.js",
       "_vendor-axios-D5GkNzM3.js",
       "_vendor-realtime-BlRiD3cs.js"
@@ -86,12 +86,12 @@
     ]
   },
   "resources/js/pages/add-subject.js": {
-    "file": "assets/add-subject-DFssfqwB.js",
+    "file": "assets/add-subject-CcstLea-.js",
     "name": "add-subject",
     "src": "resources/js/pages/add-subject.js",
     "isDynamicEntry": true,
     "imports": [
-      "_app-features-DMifVSOF.js",
+      "_app-features-MVLxD5Rf.js",
       "_vendor-alpine-CwKKyv8g.js"
     ]
   },
@@ -106,12 +106,12 @@
     ]
   },
   "resources/js/pages/edit-subject.js": {
-    "file": "assets/edit-subject-CxuiPuSx.js",
+    "file": "assets/edit-subject-P2oXq8Z8.js",
     "name": "edit-subject",
     "src": "resources/js/pages/edit-subject.js",
     "isDynamicEntry": true,
     "imports": [
-      "_app-features-DMifVSOF.js",
+      "_app-features-MVLxD5Rf.js",
       "_vendor-alpine-CwKKyv8g.js"
     ]
   },
