@@ -1,5 +1,5 @@
 import Alpine from 'alpinejs';
-import { sidebarImageCache } from '../features/sidebar';
+import { safeInitFlowbite, sidebarImageCache } from '../features/sidebar';
 
 export function registerTurboCore() {
     document.addEventListener('turbo:load', () => {
@@ -75,13 +75,15 @@ export function registerTurboCore() {
     });
 
     document.addEventListener('turbo:before-render', () => {
-        Alpine.store('report').showPreview = false;
-        Alpine.store('report').previewContent = '';
-        Alpine.store('report').closePreview();
+        const reportStore = window.Alpine?.store?.('report');
 
-        if (window.Alpine) {
-            window.Alpine.flushAndStopDeferring();
+        if (reportStore) {
+            reportStore.showPreview = false;
+            reportStore.previewContent = '';
+            reportStore.closePreview?.();
         }
+
+        window.Alpine?.deferMutations?.();
     });
 
     document.addEventListener('turbo:frame-render', () => {
@@ -129,9 +131,7 @@ export function registerTurboCore() {
             imgObserver.observe(img);
         });
 
-        if (typeof initFlowbite === 'function') {
-            initFlowbite();
-        }
+        safeInitFlowbite();
 
         if (window.Alpine && window.alpineInitialized) {
             window.Alpine.initTree(document.body);
@@ -157,5 +157,13 @@ export function registerTurboCore() {
                 Alpine.store('pageLoading').stopLoading();
             }
         }, 100);
+    });
+
+    document.addEventListener('turbo:render', () => {
+        window.Alpine?.discardMutations?.();
+
+        if (window.Alpine && window.alpineInitialized) {
+            window.Alpine.initTree(document.body);
+        }
     });
 }

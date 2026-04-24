@@ -8,6 +8,12 @@ export function registerGeminiStore() {
             connectionTested: false,
 
             async checkStatus() {
+                const chatbot = document.querySelector('[x-data="geminiChatDebug"]');
+                if (!chatbot) {
+                    this.connectionTested = true;
+                    return;
+                }
+
                 try {
                     const response = await fetch('/admin/gemini/test-knowledge', {
                         headers: {
@@ -16,12 +22,14 @@ export function registerGeminiStore() {
                         },
                     });
 
-                    if (response.ok) {
-                        const data = await response.json();
-                        this.knowledgeBaseLoaded = data.file_exists || false;
-                        this.apiKeyExists = data.api_key_exists || false;
-                        this.connectionTested = true;
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}`);
                     }
+
+                    const data = await response.json();
+                    this.knowledgeBaseLoaded = data.file_exists || false;
+                    this.apiKeyExists = data.api_key_exists || false;
+                    this.connectionTested = true;
                 } catch (error) {
                     console.error('Failed to check Gemini status:', error);
                     this.connectionTested = true;

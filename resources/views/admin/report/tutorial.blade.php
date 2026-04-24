@@ -211,8 +211,8 @@
 
 @push('scripts')
 <script>
-    let currentStep = 1;
-    const totalSteps = 5;
+    var currentStep = 1;
+    var totalSteps = 5;
     
     function goToStep(step) {
         // Hide all steps

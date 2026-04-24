@@ -207,9 +207,9 @@
 @push('scripts')
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
-let overallChart, classChart;
-let kelasProgress = 0;
-const WALIKELAS_DASHBOARD_KEY = 'walikelasDashboardLoaded';
+var overallChart, classChart;
+var kelasProgress = 0;
+var WALIKELAS_DASHBOARD_KEY = 'walikelasDashboardLoaded';
 
 function destroyCharts() {
     if (overallChart) {

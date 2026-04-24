@@ -214,9 +214,9 @@
 @push('scripts')
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
-let overallChart, classChart;
-let kelasProgress = 0;
-const PENGAJAR_DASHBOARD_KEY = 'pengajarDashboardLoaded';
+var overallChart, classChart;
+var kelasProgress = 0;
+var PENGAJAR_DASHBOARD_KEY = 'pengajarDashboardLoaded';
 
 function destroyCharts() {
     if (overallChart) {

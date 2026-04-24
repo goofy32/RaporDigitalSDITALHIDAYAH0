@@ -18,6 +18,7 @@ use App\Models\ReportGeneration;
 use App\Models\TahunAjaran;
 use App\Jobs\GeneratePdfReportJob;
 use App\Services\PdfCacheService;
+use Illuminate\Support\Str;
 
 class ReportController extends Controller
 {
@@ -46,6 +47,13 @@ class ReportController extends Controller
      */
     public function upload(Request $request)
     {
+        Log::info('Report template upload request', [
+            'has_file' => $request->hasFile('template'),
+            'files' => array_keys($request->allFiles()),
+            'fields' => array_keys($request->except(['template'])),
+            'content_type' => $request->header('Content-Type'),
+        ]);
+
         // Validasi permintaan
         $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
             'template' => 'required|file|mimes:docx',
@@ -66,11 +74,29 @@ class ReportController extends Controller
         try {
             // Proses upload file
             $file = $request->file('template');
-            $fileName = time() . '_' . $file->getClientOriginalName();
-            $filePath = $file->storeAs('templates', $fileName, 'public');
+            if (!$file || !$file->isValid()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'File template tidak valid atau gagal diupload.'
+                ], 422);
+            }
+
+            $originalName = pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME);
+            $safeName = Str::slug($originalName ?: 'template-rapor');
+            $extension = $file->getClientOriginalExtension() ?: 'docx';
+            $fileName = time() . '_' . $safeName . '.' . $extension;
+            Storage::disk('public')->makeDirectory('templates');
+
+            $destinationDirectory = Storage::disk('public')->path('templates');
+            $file->move($destinationDirectory, $fileName);
+            $filePath = 'templates/' . $fileName;
+
+            if (!Storage::disk('public')->exists($filePath)) {
+                throw new \RuntimeException('Gagal menyimpan file template ke storage.');
+            }
             
             // Validasi placeholder dalam template
-            $templatePath = storage_path('app/public/' . $filePath);
+            $templatePath = Storage::disk('public')->path($filePath);
             $templateProcessor = new \PhpOffice\PhpWord\TemplateProcessor($templatePath);
             $variables = $templateProcessor->getVariables();
             

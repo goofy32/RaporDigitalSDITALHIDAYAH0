@@ -303,7 +303,7 @@
 @push('scripts')
 <script>
     // Variable to track lingkup materi items that need to be updated
-    let lingkupMateriChanges = [];
+    var lingkupMateriChanges = [];
     
     // Definisikan array data mata pelajaran yang sudah ada
     window.mapelData = [

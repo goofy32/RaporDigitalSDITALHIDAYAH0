@@ -459,8 +459,8 @@ window.overallProgress = {{ number_format($overallProgress ?? 0, 2) }};
 </script>
 <script>
 // Global variables for charts
-let overallChart, classChart;
-let kelasProgress = 0;
+var overallChart, classChart;
+var kelasProgress = 0;
 
 function navigateTo(url) {
     window.location.href = url;

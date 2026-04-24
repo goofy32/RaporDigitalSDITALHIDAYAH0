@@ -92,9 +92,28 @@ export function updateSidebarActiveState() {
     }
 }
 
+export function safeInitFlowbite() {
+    window.clearTimeout(window.__flowbiteInitTimer);
+
+    window.__flowbiteInitTimer = window.setTimeout(() => {
+        if (typeof initFlowbite !== 'function') return;
+
+        const drawerTriggers = document.querySelectorAll('[data-drawer-target], [data-drawer-toggle]');
+        const hasMissingDrawerTarget = Array.from(drawerTriggers).some(trigger => {
+            const targetId = trigger.getAttribute('data-drawer-target') || trigger.getAttribute('data-drawer-toggle');
+            return targetId && !document.getElementById(targetId);
+        });
+
+        if (hasMissingDrawerTarget) return;
+
+        initFlowbite();
+    }, 50);
+}
+
 export function exposeSidebarHelpers() {
     window.preloadAndCacheSidebarIcons = preloadAndCacheSidebarIcons;
     window.updateSidebarActiveState = updateSidebarActiveState;
+    window.safeInitFlowbite = safeInitFlowbite;
 }
 
 export function registerSidebarFeatures() {
@@ -110,9 +129,7 @@ export function registerSidebarFeatures() {
 
     document.addEventListener('DOMContentLoaded', () => {
         updateSidebarActiveState();
-        if (typeof initFlowbite === 'function') {
-            initFlowbite();
-        }
+        safeInitFlowbite();
     });
 
     document.addEventListener('turbo:render', updateSidebarActiveState);

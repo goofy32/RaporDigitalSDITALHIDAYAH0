@@ -552,17 +552,29 @@ JAWABAN:";
     
     public function testKnowledgeBase()
     {
-        $knowledgeFile = storage_path('app/knowledge/rapor_sdit_guide.txt');
-        
-        return response()->json([
-            'file_exists' => file_exists($knowledgeFile),
-            'file_path' => $knowledgeFile,
-            'file_size' => file_exists($knowledgeFile) ? filesize($knowledgeFile) : 0,
-            'content_length' => strlen($this->systemContext),
-            'first_100_chars' => substr($this->systemContext, 0, 100),
-            'api_key_exists' => !empty(env('GEMINI_API_KEY')),
-            'api_key_length' => strlen(env('GEMINI_API_KEY') ?? ''),
-        ]);
+        try {
+            $knowledgeFile = storage_path('app/knowledge/rapor_sdit_guide.txt');
+
+            return response()->json([
+                'status' => 'ok',
+                'file_exists' => file_exists($knowledgeFile),
+                'file_path' => $knowledgeFile,
+                'file_size' => file_exists($knowledgeFile) ? filesize($knowledgeFile) : 0,
+                'content_length' => strlen($this->systemContext),
+                'first_100_chars' => substr($this->systemContext, 0, 100),
+                'api_key_exists' => !empty(env('GEMINI_API_KEY')),
+                'api_key_length' => strlen(env('GEMINI_API_KEY') ?? ''),
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Gemini status check failed: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Gagal memeriksa status Gemini.',
+            ], 500);
+        }
     }
 
     public function debugTest()

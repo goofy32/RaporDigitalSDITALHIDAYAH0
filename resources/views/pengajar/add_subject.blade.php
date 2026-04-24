@@ -328,7 +328,7 @@ function updateKelasSelection(selectElement) {
     window.formChanged = true;
 }
 
-let subjectCount = 1;
+var subjectCount = 1;
 
 function addSubjectEntry() {
     subjectCount++;
