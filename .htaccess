@@ -1,2 +1,13 @@
-RewriteEngine On
-RewriteRule ^(.*)$ public/ [L]
+# Cache Vite assets (content-hashed filenames)
+<IfModule mod_headers.c>
+    <FilesMatch "^(app|vendor|app-core|app-stores|app-features|app-components|add-subject|edit-subject|admin-report|pengajar-input-score).*\.(js|css)$">
+        Header set Cache-Control "public, max-age=31536000, immutable"
+    </FilesMatch>
+</IfModule>
+
+<IfModule mod_expires.c>
+    ExpiresActive On
+    <FilesMatch "\.(js|css)$">
+        ExpiresDefault "access plus 1 year"
+    </FilesMatch>
+</IfModule>

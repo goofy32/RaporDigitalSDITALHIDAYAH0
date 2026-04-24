@@ -1,5 +1,5 @@
 export function initPengajarInputScorePage() {
-    // Module imported by app.js; legacy globals below are intentionally page-scoped by DOM checks.
+    bindInputScorePage();
 }
 
 // Single source of truth for form change state
@@ -12,7 +12,7 @@ function isInputScorePage() {
 
 function getFormProtectionStore() {
     try {
-        return window.Alpine ? Alpine.store('formProtection') : null;
+        return window.Alpine ? window.Alpine.store('formProtection') : null;
     } catch {
         return null;
     }
@@ -22,8 +22,7 @@ function hasUnsavedChanges() {
     return formChanged || Boolean(getFormProtectionStore()?.formChanged);
 }
 
-// Initialize form change tracking - only attach once
-document.addEventListener('turbo:load', function() {
+function bindInputScorePage() {
     if (!isInputScorePage()) return;
 
     // Remove any existing event listeners first to avoid duplicates
@@ -50,7 +49,7 @@ document.addEventListener('turbo:load', function() {
     
     // Only add these event listeners once
     setupNavigationListeners();
-});
+}
 
 function markFormChanged() {
     // Set our local formChanged variable
@@ -58,8 +57,8 @@ function markFormChanged() {
     
     // Try to access the Alpine store only if it exists
     try {
-        if (window.Alpine && Alpine.store('formProtection')) {
-            Alpine.store('formProtection').markAsChanged();
+        if (window.Alpine && window.Alpine.store('formProtection')) {
+            window.Alpine.store('formProtection').markAsChanged();
         }
     } catch (e) {
         console.warn('Could not access Alpine formProtection store', e);
@@ -79,8 +78,8 @@ function updateCalculations(e) {
         
         // Try to use Alpine store if available
         try {
-            if (window.Alpine && Alpine.store('formProtection')) {
-                Alpine.store('formProtection').markAsChanged();
+            if (window.Alpine && window.Alpine.store('formProtection')) {
+                window.Alpine.store('formProtection').markAsChanged();
             }
         } catch (e) {
             console.warn('Could not access Alpine formProtection store', e);
@@ -527,8 +526,8 @@ window.saveData = async function() {
             
             // Try to use Alpine store if available
             try {
-                if (window.Alpine && Alpine.store('formProtection')) {
-                    Alpine.store('formProtection').reset();
+                if (window.Alpine && window.Alpine.store('formProtection')) {
+                    window.Alpine.store('formProtection').reset();
                 }
             } catch (e) {
                 console.warn('Could not access Alpine formProtection store', e);
@@ -573,8 +572,8 @@ window.saveData = async function() {
         
         // Try to reset Alpine store's submitting flag if available
         try {
-            if (window.Alpine && Alpine.store('formProtection')) {
-                Alpine.store('formProtection').isSubmitting = false;
+            if (window.Alpine && window.Alpine.store('formProtection')) {
+                window.Alpine.store('formProtection').isSubmitting = false;
             }
         } catch (e) {
             console.warn('Could not access Alpine formProtection store', e);
