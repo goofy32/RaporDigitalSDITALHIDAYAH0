@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 
 class StudentController extends Controller
 {
@@ -130,7 +131,7 @@ class StudentController extends Controller
         $validated['pekerjaan_wali'] = $validated['pekerjaan_wali'] ?? '';
     
         if ($request->hasFile('photo')) {
-            $validated['photo'] = $request->file('photo')->store('photos', 'public');
+            $validated['photo'] = $this->storePublicUpload($request->file('photo'), 'photos');
         }
     
         try {
@@ -190,7 +191,7 @@ class StudentController extends Controller
             if ($student->photo) {
                 Storage::delete($student->photo);
             }
-            $validated['photo'] = $request->file('photo')->store('photos', 'public');
+            $validated['photo'] = $this->storePublicUpload($request->file('photo'), 'photos');
         }
     
         $student->update($validated);
@@ -361,7 +362,7 @@ class StudentController extends Controller
             
             // Handle photo upload
             if ($request->hasFile('photo')) {
-                $validated['photo'] = $request->file('photo')->store('photos', 'public');
+                $validated['photo'] = $this->storePublicUpload($request->file('photo'), 'photos');
             }
     
             // Use database transaction
@@ -435,7 +436,7 @@ class StudentController extends Controller
             if ($student->photo) {
                 Storage::delete('public/' . $student->photo);
             }
-            $validated['photo'] = $request->file('photo')->store('photos', 'public');
+            $validated['photo'] = $this->storePublicUpload($request->file('photo'), 'photos');
         }
 
         $student->update($validated);
@@ -540,5 +541,28 @@ class StudentController extends Controller
             \Log::error('Error downloading template: ' . $e->getMessage());
             return back()->with('error', 'Terjadi kesalahan saat mengunduh template.');
         }
+    }
+
+    private function storePublicUpload(\Illuminate\Http\UploadedFile $file, string $folder, ?string $fileName = null): string
+    {
+        Storage::disk('public')->makeDirectory($folder);
+
+        $extension = $file->getClientOriginalExtension() ?: $file->extension() ?: 'bin';
+        $baseName = $fileName
+            ? pathinfo($fileName, PATHINFO_FILENAME)
+            : pathinfo($file->hashName(), PATHINFO_FILENAME);
+        $safeBaseName = Str::slug($baseName ?: pathinfo($file->hashName(), PATHINFO_FILENAME));
+        $finalFileName = $safeBaseName . '.' . $extension;
+
+        $destinationDirectory = Storage::disk('public')->path($folder);
+        $file->move($destinationDirectory, $finalFileName);
+
+        $filePath = $folder . '/' . $finalFileName;
+
+        if (!Storage::disk('public')->exists($filePath)) {
+            throw new \RuntimeException('File gagal disimpan.');
+        }
+
+        return $filePath;
     }
 }

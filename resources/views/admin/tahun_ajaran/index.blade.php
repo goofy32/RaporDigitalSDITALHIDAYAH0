@@ -302,11 +302,10 @@
                 form.action = "{{ url('admin/tahun-ajaran') }}/" + id + "/set-active";
                 
                 // Add CSRF token
-                const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
                 const csrfInput = document.createElement('input');
                 csrfInput.type = 'hidden';
                 csrfInput.name = '_token';
-                csrfInput.value = csrfToken;
+                csrfInput.value = document.querySelector('meta[name="csrf-token"]')?.content || '';
                 form.appendChild(csrfInput);
                 
                 // Add to DOM temporarily (not visible)

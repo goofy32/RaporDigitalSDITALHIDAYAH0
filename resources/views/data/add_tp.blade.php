@@ -111,11 +111,11 @@
 
 <!-- JavaScript Section -->
 <script>
-    const csrfToken = '{{ csrf_token() }}';
-    const mataPelajaranId = '{{ $mataPelajaran->id }}';
-    let tpData = [];
-    let existingData = [];
-    let activeFilterLingkupMateri = '';
+    var csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '{{ csrf_token() }}';
+    var mataPelajaranId = '{{ $mataPelajaran->id }}';
+    var tpData = [];
+    var existingData = [];
+    var activeFilterLingkupMateri = '';
 
     function addTPRow() {
         const container = document.getElementById('tpContainer');

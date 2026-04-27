@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Str;
 
 class TeacherController extends Controller
 {
@@ -267,7 +268,7 @@ class TeacherController extends Controller
             $validated['password_plain'] = $request->password;
     
             if ($request->hasFile('photo')) {
-                $validated['photo'] = $request->file('photo')->store('teacher-photos', 'public');
+                $validated['photo'] = $this->storePublicUpload($request->file('photo'), 'teacher-photos');
             }
     
             // Buat guru baru
@@ -481,7 +482,7 @@ class TeacherController extends Controller
                 if ($teacher->photo) {
                     Storage::disk('public')->delete($teacher->photo);
                 }
-                $dataToUpdate['photo'] = $request->file('photo')->store('teacher-photos', 'public');
+                $dataToUpdate['photo'] = $this->storePublicUpload($request->file('photo'), 'teacher-photos');
             }
         
             $teacher->update($dataToUpdate);
@@ -621,5 +622,28 @@ class TeacherController extends Controller
         $teacher->delete();
 
         return redirect()->route('teacher')->with('success', 'Data guru berhasil dihapus');
+    }
+
+    private function storePublicUpload(\Illuminate\Http\UploadedFile $file, string $folder, ?string $fileName = null): string
+    {
+        Storage::disk('public')->makeDirectory($folder);
+
+        $extension = $file->getClientOriginalExtension() ?: $file->extension() ?: 'bin';
+        $baseName = $fileName
+            ? pathinfo($fileName, PATHINFO_FILENAME)
+            : pathinfo($file->hashName(), PATHINFO_FILENAME);
+        $safeBaseName = Str::slug($baseName ?: pathinfo($file->hashName(), PATHINFO_FILENAME));
+        $finalFileName = $safeBaseName . '.' . $extension;
+
+        $destinationDirectory = Storage::disk('public')->path($folder);
+        $file->move($destinationDirectory, $finalFileName);
+
+        $filePath = $folder . '/' . $finalFileName;
+
+        if (!Storage::disk('public')->exists($filePath)) {
+            throw new \RuntimeException('File gagal disimpan.');
+        }
+
+        return $filePath;
     }
 }

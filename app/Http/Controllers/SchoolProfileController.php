@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use App\Models\ProfilSekolah;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 
 class SchoolProfileController extends Controller
 {
@@ -81,7 +82,7 @@ class SchoolProfileController extends Controller
                 }
                 
                 // Simpan logo baru
-                $logoPath = $request->file('logo')->store('logos', 'public');
+                $logoPath = $this->storePublicUpload($request->file('logo'), 'logos');
                 $data['logo'] = $logoPath;
                 
                 \Log::info('Logo stored successfully', [
@@ -123,5 +124,28 @@ class SchoolProfileController extends Controller
     
         // Setelah menyimpan data, arahkan ke halaman data profil sekolah
         return redirect()->route('profile')->with('success', 'Profil sekolah berhasil disimpan.');
+    }
+
+    private function storePublicUpload(\Illuminate\Http\UploadedFile $file, string $folder, ?string $fileName = null): string
+    {
+        Storage::disk('public')->makeDirectory($folder);
+
+        $extension = $file->getClientOriginalExtension() ?: $file->extension() ?: 'bin';
+        $baseName = $fileName
+            ? pathinfo($fileName, PATHINFO_FILENAME)
+            : pathinfo($file->hashName(), PATHINFO_FILENAME);
+        $safeBaseName = Str::slug($baseName ?: pathinfo($file->hashName(), PATHINFO_FILENAME));
+        $finalFileName = $safeBaseName . '.' . $extension;
+
+        $destinationDirectory = Storage::disk('public')->path($folder);
+        $file->move($destinationDirectory, $finalFileName);
+
+        $filePath = $folder . '/' . $finalFileName;
+
+        if (!Storage::disk('public')->exists($filePath)) {
+            throw new \RuntimeException('File gagal disimpan.');
+        }
+
+        return $filePath;
     }
 }
