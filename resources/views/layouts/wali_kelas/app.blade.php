@@ -59,19 +59,6 @@
 
 @section('role-scripts')
     <script>
-        function ensureWaliShellReady() {
-            document.querySelectorAll('#topbar img, #logo-sidebar img').forEach((img) => {
-                img.style.opacity = '1';
-                img.style.visibility = 'visible';
-                img.style.display = '';
-                img.setAttribute('data-loaded', 'true');
-            });
-
-            document.getElementById('logo-sidebar')?.classList.remove('-translate-x-full');
-            document.getElementById('logo-sidebar')?.classList.add('sm:translate-x-0');
-            hideGlobalLoader();
-        }
-
         document.addEventListener('turbo:before-render', function () {
             const oldErrors = JSON.parse(localStorage.getItem('validationErrors'));
             const oldInput = JSON.parse(localStorage.getItem('oldInput'));
@@ -171,9 +158,8 @@
         });
 
         document.addEventListener('alpine:initialized', hideGlobalLoader);
-        document.addEventListener('DOMContentLoaded', ensureWaliShellReady);
         document.addEventListener('turbo:load', function() {
-            ensureWaliShellReady();
+            hideGlobalLoader();
 
             if (typeof window.safeInitFlowbite === 'function') {
                 window.safeInitFlowbite();
@@ -181,6 +167,5 @@
 
             document.dispatchEvent(new CustomEvent('app:page-loaded'));
         });
-        document.addEventListener('turbo:render', ensureWaliShellReady);
     </script>
 @endsection

@@ -43,18 +43,6 @@
 
 @section('role-scripts')
     <script>
-        function ensurePengajarShellReady() {
-            document.querySelectorAll('#topbar img, #logo-sidebar img').forEach((img) => {
-                img.style.opacity = '1';
-                img.style.visibility = 'visible';
-                img.style.display = '';
-                img.setAttribute('data-loaded', 'true');
-            });
-
-            document.getElementById('logo-sidebar')?.classList.remove('-translate-x-full');
-            document.getElementById('logo-sidebar')?.classList.add('sm:translate-x-0');
-        }
-
         window.formChanged = false;
 
         window.addEventListener('beforeunload', (e) => {
@@ -88,11 +76,7 @@
         document.addEventListener('turbo:load', () => {
             window.formChanged = sessionStorage.getItem('formChanged') === 'true';
             sessionStorage.removeItem('formChanged');
-            ensurePengajarShellReady();
         });
-
-        document.addEventListener('DOMContentLoaded', ensurePengajarShellReady);
-        document.addEventListener('turbo:render', ensurePengajarShellReady);
     </script>
 
     @if(Session::has('success'))

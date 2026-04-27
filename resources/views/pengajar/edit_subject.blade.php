@@ -2,10 +2,6 @@
 
 @section('title', 'Edit Data Mata Pelajaran')
 
-@push('meta')
-<meta name="turbo-visit-control" content="reload">
-@endpush
-
 @section('content')
 <div>
     <div class="p-4 bg-white mt-14">
