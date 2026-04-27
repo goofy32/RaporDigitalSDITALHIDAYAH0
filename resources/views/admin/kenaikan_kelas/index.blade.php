@@ -207,6 +207,34 @@
 @if(session('mass_promotion'))
 <script>
 document.addEventListener('DOMContentLoaded', function() {
+    function bindPromotionTabs() {
+        document.querySelectorAll('.tablinks').forEach(tabLink => {
+            tabLink.addEventListener('click', function() {
+                const target = this.getAttribute('data-target');
+
+                document.querySelectorAll('.tabcontent').forEach(tabContent => {
+                    tabContent.classList.add('hidden');
+                    tabContent.classList.remove('block');
+                });
+
+                document.querySelectorAll('.tablinks').forEach(tab => {
+                    tab.classList.remove('active', 'border-green-500', 'border-red-500');
+                    tab.classList.add('border-transparent');
+                });
+
+                document.getElementById(target).classList.remove('hidden');
+                document.getElementById(target).classList.add('block');
+                this.classList.add('active');
+
+                if (target === 'notProcessed') {
+                    this.classList.add('border-red-500');
+                } else {
+                    this.classList.add('border-green-500');
+                }
+            });
+        });
+    }
+
     // Siapkan statistik
     const stats = {
         promoted: {{ session('stats.promoted') }},
@@ -314,42 +342,8 @@ document.addEventListener('DOMContentLoaded', function() {
         icon: 'success',
         width: 600,
         confirmButtonColor: '#10b981',
-        confirmButtonText: 'OK'
-    }).then(() => {
-        // Event handler untuk tab
-        document.querySelectorAll('.tablinks').forEach(tabLink => {
-            tabLink.addEventListener('click', function(e) {
-                const target = this.getAttribute('data-target');
-                
-                // Hide all tabcontent
-                document.querySelectorAll('.tabcontent').forEach(tabContent => {
-                    tabContent.classList.add('hidden');
-                    tabContent.classList.remove('block');
-                });
-                
-                // Remove active class from tabs
-                document.querySelectorAll('.tablinks').forEach(tab => {
-                    tab.classList.remove('active', 'border-green-500', 'border-green-500', 'border-red-500');
-                    tab.classList.add('border-transparent');
-                });
-                
-                // Show current tab
-                document.getElementById(target).classList.remove('hidden');
-                document.getElementById(target).classList.add('block');
-                
-                // Add active class to current tab
-                this.classList.add('active');
-                
-                // Add proper border color based on tab
-                if (target === 'promoted') {
-                    this.classList.add('border-green-500');
-                } else if (target === 'graduated') {
-                    this.classList.add('border-green-500');
-                } else if (target === 'notProcessed') {
-                    this.classList.add('border-red-500');
-                }
-            });
-        });
+        confirmButtonText: 'OK',
+        didOpen: bindPromotionTabs
     });
 });
 </script>

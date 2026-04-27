@@ -429,26 +429,28 @@
         }
     };
 
-    document.addEventListener('DOMContentLoaded', function() {
-        activeFilterLingkupMateri = '';
-        document.getElementById('table-filter').value = '';
-        // Load existing data when page loads
-        loadExistingData();
-        
-        const form = document.getElementById('addTPForm');
+    function initializeAdminAddTpPage() {
+        const pageRoot = document.getElementById('addTPForm');
         const tableFilter = document.getElementById('table-filter');
-        
-        // Event listener untuk filter tabel
+        const lingkupMateriSelect = document.getElementById('lingkup_materi');
+        const form = document.getElementById('addTPForm');
+
+        activeFilterLingkupMateri = '';
+        tableFilter.value = '';
+        loadExistingData();
+
+        if (pageRoot.dataset.turboInitialized === 'true') {
+            return;
+        }
+
         tableFilter.addEventListener('change', function() {
             activeFilterLingkupMateri = this.value;
             renderTable();
-            
-            // Opsional: Set dropdown lingkup materi pada form sesuai dengan filter
             if (this.value) {
-                document.getElementById('lingkup_materi').value = this.value;
+                lingkupMateriSelect.value = this.value;
             }
         });
-        
+
         form.addEventListener('keypress', function(e) {
             if (e.key === 'Enter') {
                 e.preventDefault();
@@ -467,16 +469,19 @@
                 e.target.removeAttribute('title');
             }
         }, true);
-        
-        // Event listener untuk dropdown lingkup materi pada form
-        document.getElementById('lingkup_materi').addEventListener('change', function() {
-            // Opsional: Sinkronkan filter dengan dropdown lingkup materi
+
+        lingkupMateriSelect.addEventListener('change', function() {
             if (this.value) {
                 tableFilter.value = this.value;
                 activeFilterLingkupMateri = this.value;
                 renderTable();
             }
         });
-    });
+
+        pageRoot.dataset.turboInitialized = 'true';
+    }
+
+    document.addEventListener('DOMContentLoaded', initializeAdminAddTpPage);
+    document.addEventListener('turbo:load', initializeAdminAddTpPage);
 </script>
 @endsection
