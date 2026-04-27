@@ -6,8 +6,8 @@
       "_vendor-alpine-CwKKyv8g.js"
     ]
   },
-  "_app-core-D0Wphm-d.js": {
-    "file": "assets/app-core-D0Wphm-d.js",
+  "_app-core-C54Q5YZ9.js": {
+    "file": "assets/app-core-C54Q5YZ9.js",
     "name": "app-core",
     "imports": [
       "_vendor-axios-D5GkNzM3.js",
@@ -29,6 +29,10 @@
     "imports": [
       "_vendor-alpine-CwKKyv8g.js"
     ]
+  },
+  "_dashboard-shared-Bwd2FwGM.js": {
+    "file": "assets/dashboard-shared-Bwd2FwGM.js",
+    "name": "dashboard-shared"
   },
   "_vendor-alpine-CwKKyv8g.js": {
     "file": "assets/vendor-alpine-CwKKyv8g.js",
@@ -58,17 +62,17 @@
     "name": "vendor-turbo"
   },
   "resources/css/app.css": {
-    "file": "assets/app-Cn7ENoSb.css",
+    "file": "assets/app-C0FXGnlz.css",
     "src": "resources/css/app.css",
     "isEntry": true
   },
   "resources/js/app.js": {
-    "file": "assets/app-C5MaXX8G.js",
+    "file": "assets/app-CyUxPdcg.js",
     "name": "app",
     "src": "resources/js/app.js",
     "isEntry": true,
     "imports": [
-      "_app-core-D0Wphm-d.js",
+      "_app-core-C54Q5YZ9.js",
       "_vendor-flowbite-DsaYIjts.js",
       "_vendor-turbo-BRR3A8XY.js",
       "_vendor-alpine-CwKKyv8g.js",
@@ -82,7 +86,13 @@
       "resources/js/pages/add-subject.js",
       "resources/js/pages/edit-subject.js",
       "resources/js/pages/admin-report.js",
-      "resources/js/pages/pengajar-input-score.js"
+      "resources/js/pages/pengajar-input-score.js",
+      "resources/js/pages/admin-dashboard.js",
+      "resources/js/pages/pengajar-dashboard.js",
+      "resources/js/pages/wali-dashboard.js",
+      "resources/js/pages/pengajar-score.js",
+      "resources/js/pages/kenaikan-kelas-show-siswa.js",
+      "resources/js/pages/pengajar-add-tp.js"
     ]
   },
   "resources/js/pages/add-subject.js": {
@@ -93,6 +103,15 @@
     "imports": [
       "_app-features-MVLxD5Rf.js",
       "_vendor-alpine-CwKKyv8g.js"
+    ]
+  },
+  "resources/js/pages/admin-dashboard.js": {
+    "file": "assets/admin-dashboard-CXFSZvu8.js",
+    "name": "admin-dashboard",
+    "src": "resources/js/pages/admin-dashboard.js",
+    "isDynamicEntry": true,
+    "imports": [
+      "_dashboard-shared-Bwd2FwGM.js"
     ]
   },
   "resources/js/pages/admin-report.js": {
@@ -115,10 +134,46 @@
       "_vendor-alpine-CwKKyv8g.js"
     ]
   },
+  "resources/js/pages/kenaikan-kelas-show-siswa.js": {
+    "file": "assets/kenaikan-kelas-show-siswa-B33MjqbF.js",
+    "name": "kenaikan-kelas-show-siswa",
+    "src": "resources/js/pages/kenaikan-kelas-show-siswa.js",
+    "isDynamicEntry": true
+  },
+  "resources/js/pages/pengajar-add-tp.js": {
+    "file": "assets/pengajar-add-tp-Cm_65rQd.js",
+    "name": "pengajar-add-tp",
+    "src": "resources/js/pages/pengajar-add-tp.js",
+    "isDynamicEntry": true
+  },
+  "resources/js/pages/pengajar-dashboard.js": {
+    "file": "assets/pengajar-dashboard-pDl8ch66.js",
+    "name": "pengajar-dashboard",
+    "src": "resources/js/pages/pengajar-dashboard.js",
+    "isDynamicEntry": true,
+    "imports": [
+      "_dashboard-shared-Bwd2FwGM.js"
+    ]
+  },
   "resources/js/pages/pengajar-input-score.js": {
     "file": "assets/pengajar-input-score-Y4G4UcRw.js",
     "name": "pengajar-input-score",
     "src": "resources/js/pages/pengajar-input-score.js",
     "isDynamicEntry": true
+  },
+  "resources/js/pages/pengajar-score.js": {
+    "file": "assets/pengajar-score-tZNgqwpE.js",
+    "name": "pengajar-score",
+    "src": "resources/js/pages/pengajar-score.js",
+    "isDynamicEntry": true
+  },
+  "resources/js/pages/wali-dashboard.js": {
+    "file": "assets/wali-dashboard-BNtC163M.js",
+    "name": "wali-dashboard",
+    "src": "resources/js/pages/wali-dashboard.js",
+    "isDynamicEntry": true,
+    "imports": [
+      "_dashboard-shared-Bwd2FwGM.js"
+    ]
   }
 }
