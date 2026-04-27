@@ -34,7 +34,29 @@ import { registerFormProtectionComponent } from './components/form-protection';
 import { registerAnalisisNilaiStore } from './stores/analisis-nilai-store';
 import { registerContentLoadingStore } from './stores/content-loading-store';
 
+const pageLoaders = {
+    'add-subject': () => import('./pages/add-subject').then(module => module.initAddSubjectPage()),
+    'edit-subject': () => import('./pages/edit-subject').then(module => module.initEditSubjectPage()),
+    'admin-report': () => import('./pages/admin-report').then(module => module.initAdminReportPage()),
+    'pengajar-input-score': () => import('./pages/pengajar-input-score').then(module => module.initPengajarInputScorePage()),
+    'admin-dashboard': () => import('./pages/admin-dashboard').then(module => module.initAdminDashboardPage()),
+    'pengajar-dashboard': () => import('./pages/pengajar-dashboard').then(module => module.initPengajarDashboardPage()),
+    'wali-dashboard': () => import('./pages/wali-dashboard').then(module => module.initWaliDashboardPage()),
+    'pengajar-score': () => import('./pages/pengajar-score').then(module => module.initPengajarScorePage()),
+    'kenaikan-kelas-show': () => import('./pages/kenaikan-kelas-show-siswa').then(module => module.initKenaikanKelasShowPage()),
+    'pengajar-add-tp': () => import('./pages/pengajar-add-tp').then(module => module.initPengajarAddTpPage()),
+};
+
+async function loadCurrentPageModule() {
+    const pageEl = document.querySelector('[data-page]');
+    const pageName = pageEl?.dataset?.page;
+
+    if (!pageName || !pageLoaders[pageName]) return;
+    await pageLoaders[pageName]();
+}
+
 window.Alpine = Alpine;
+window.__loadCurrentPageModule = loadCurrentPageModule;
 
 registerTurboCore();
 registerDashboard();
@@ -65,28 +87,15 @@ registerAnalisisNilaiStore();
 registerContentLoadingStore();
 registerSidebarFeatures();
 
-if (!window.alpineInitialized) {
-    Alpine.start();
-    window.alpineInitialized = true;
+async function bootstrapApp() {
+    await loadCurrentPageModule();
+
+    if (!window.alpineInitialized) {
+        Alpine.start();
+        window.alpineInitialized = true;
+    }
 }
 
-const pageLoaders = {
-    'add-subject': () => import('./pages/add-subject').then(module => module.initAddSubjectPage()),
-    'edit-subject': () => import('./pages/edit-subject').then(module => module.initEditSubjectPage()),
-    'admin-report': () => import('./pages/admin-report').then(module => module.initAdminReportPage()),
-    'pengajar-input-score': () => import('./pages/pengajar-input-score').then(module => module.initPengajarInputScorePage()),
-};
-
-async function loadCurrentPageModule() {
-    const pageEl = document.querySelector('[data-page]');
-    const pageName = pageEl?.dataset?.page;
-
-    if (!pageName || !pageLoaders[pageName]) return;
-    await pageLoaders[pageName]();
-}
-
-document.addEventListener('turbo:load', () => {
-    loadCurrentPageModule().catch(error => {
-        console.error(`Failed to load page module for ${document.querySelector('[data-page]')?.dataset?.page || 'unknown page'}`, error);
-    });
+bootstrapApp().catch(error => {
+    console.error(`Failed to bootstrap page module for ${document.querySelector('[data-page]')?.dataset?.page || 'unknown page'}`, error);
 });
