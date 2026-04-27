@@ -100,7 +100,7 @@ export function registerTurboCore() {
         event.detail.fetchOptions.timeout = 10000;
     });
 
-    document.addEventListener('turbo:load', () => {
+    document.addEventListener('turbo:load', async () => {
         const imgObserver = new IntersectionObserver(entries => {
             entries.forEach(entry => {
                 if (!entry.isIntersecting) return;
@@ -134,6 +134,8 @@ export function registerTurboCore() {
 
         safeInitFlowbite();
 
+        await window.__loadCurrentPageModule?.();
+
         if (window.Alpine && window.alpineInitialized) {
             window.Alpine.initTree(document.body);
         }
@@ -160,8 +162,10 @@ export function registerTurboCore() {
         }, 100);
     });
 
-    document.addEventListener('turbo:render', () => {
+    document.addEventListener('turbo:render', async () => {
         window.Alpine?.discardMutations?.();
+
+        await window.__loadCurrentPageModule?.();
 
         if (window.Alpine && window.alpineInitialized) {
             window.Alpine.initTree(document.body);
