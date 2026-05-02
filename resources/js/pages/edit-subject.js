@@ -6,6 +6,8 @@ import {
     setSubjectPageReady,
 } from '../features/subject-form';
 
+var pendingDeleteIds = [];
+
 function getPageRoot() {
     return document.querySelector('[data-page="edit-subject"]');
 }
@@ -17,6 +19,83 @@ function getForm() {
 
 function getCsrfToken() {
     return document.querySelector('meta[name="csrf-token"]').content;
+}
+
+function syncPendingDeleteInputs() {
+    const form = getForm();
+    if (!form) return;
+
+    form.querySelectorAll('input[name="delete_ids[]"]').forEach(input => input.remove());
+    pendingDeleteIds.forEach(id => {
+        const hiddenInput = document.createElement('input');
+        hiddenInput.type = 'hidden';
+        hiddenInput.name = 'delete_ids[]';
+        hiddenInput.value = id;
+        form.appendChild(hiddenInput);
+    });
+}
+
+function resetPendingDeleteState() {
+    pendingDeleteIds = [];
+
+    document.querySelectorAll('#lingkupMateriContainer [data-pending-delete="true"]').forEach(row => {
+        const button = row.querySelector('.delete-btn');
+        const input = row.querySelector('input[name="lingkup_materi[]"]');
+
+        row.classList.remove('opacity-40', 'line-through');
+        row.dataset.pendingDelete = 'false';
+
+        if (input) {
+            input.disabled = false;
+            input.required = true;
+        }
+
+        if (button) {
+            setDeleteButtonState(button, false);
+        }
+    });
+
+    syncPendingDeleteInputs();
+}
+
+function setDeleteButtonState(button, isPending) {
+    if (!button.dataset.originalHtml) {
+        button.dataset.originalHtml = button.innerHTML;
+        button.dataset.originalClass = button.className;
+    }
+
+    if (isPending) {
+        button.innerHTML = 'Batal';
+        button.className = 'delete-btn ml-2 px-3 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600';
+    } else {
+        button.innerHTML = button.dataset.originalHtml;
+        button.className = button.dataset.originalClass;
+    }
+}
+
+function setPendingDeleteState(row, button, id, isPending) {
+    const input = row.querySelector('input[name="lingkup_materi[]"]');
+
+    row.classList.toggle('opacity-40', isPending);
+    row.classList.toggle('line-through', isPending);
+    row.dataset.pendingDelete = isPending ? 'true' : 'false';
+
+    if (input) {
+        input.disabled = isPending;
+        input.required = !isPending;
+    }
+
+    if (isPending) {
+        if (!pendingDeleteIds.includes(id)) {
+            pendingDeleteIds.push(id);
+        }
+    } else {
+        pendingDeleteIds = pendingDeleteIds.filter(deleteId => deleteId !== id);
+    }
+
+    setDeleteButtonState(button, isPending);
+    syncPendingDeleteInputs();
+    markSubjectFormChanged();
 }
 
 function addLingkupMateri() {
@@ -37,9 +116,11 @@ function removeLingkupMateri(button) {
 }
 
 function confirmDeleteLingkupMateri(button, id) {
-    if (confirm('Apakah Anda yakin ingin menghapus Lingkup Materi ini? Semua tujuan pembelajaran terkait juga akan dihapus.')) {
-        deleteLingkupMateri(button, id);
-    }
+    const row = button.closest('.flex.items-center');
+    if (!row) return;
+
+    const isPending = row.dataset.pendingDelete === 'true';
+    setPendingDeleteState(row, button, id, !isPending);
 }
 
 async function checkForDependentData(lingkupMateriId) {
@@ -58,35 +139,7 @@ async function checkForDependentData(lingkupMateriId) {
 }
 
 function deleteLingkupMateri(button, id) {
-    markSubjectFormChanged();
-    markSubjectFormSubmitting(true);
-
-    fetch(`/admin/subject/lingkup-materi/${id}`, {
-        method: 'DELETE',
-        headers: {
-            'X-CSRF-TOKEN': getCsrfToken(),
-            'Accept': 'application/json',
-            'Content-Type': 'application/json'
-        },
-    })
-        .then(response => {
-            if (!response.ok) throw new Error('Network response was not ok');
-            return response.json();
-        })
-        .then(data => {
-            if (data.success) {
-                button.closest('.flex.items-center').remove();
-                markSubjectFormChanged();
-                alert('Lingkup materi berhasil dihapus');
-            } else {
-                alert(data.message || 'Gagal menghapus Lingkup Materi');
-            }
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            alert('Terjadi kesalahan saat menghapus Lingkup Materi');
-        })
-        .finally(() => markSubjectFormSubmitting(false));
+    confirmDeleteLingkupMateri(button, id);
 }
 
 function handleCheckboxChange(checkbox) {
@@ -178,9 +231,11 @@ function bindEditSubjectPage() {
     const form = getForm();
     if (!form) return;
     if (form.dataset.subjectFormBound === 'true') {
+        resetPendingDeleteState();
         setSubjectPageReady(pageRoot, form);
         return;
     }
+    pendingDeleteIds = [];
     registerEditSubjectGlobals();
     form.dataset.subjectFormBound = 'true';
 
@@ -204,15 +259,24 @@ function bindEditSubjectPage() {
     });
     validateMataPelajaran();
     updateFormState();
+    syncPendingDeleteInputs();
     setSubjectPageReady(pageRoot, form);
     form.addEventListener('submit', event => {
         if (!checkDuplication()) {
             event.preventDefault();
             event.stopPropagation();
-            alert('Mata pelajaran dengan nama yang sama sudah ada di kelas ini untuk semester yang sama.');
+            markSubjectFormSubmitting(false);
+            if (typeof Swal !== 'undefined') {
+                Swal.fire({
+                    icon: 'error',
+                    title: 'Validasi Gagal',
+                    text: 'Mata pelajaran dengan nama yang sama sudah ada di kelas ini untuk semester yang sama.'
+                });
+            }
             validateMataPelajaran();
             return false;
         }
+        syncPendingDeleteInputs();
         markSubjectFormSubmitting(true);
         return true;
     }, true);

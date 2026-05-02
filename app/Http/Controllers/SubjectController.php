@@ -8,8 +8,10 @@ use App\Models\Guru;
 use App\Models\Siswa;
 use App\Models\LingkupMateri;
 use Illuminate\Http\Request;
+use Illuminate\Support\MessageBag;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Validation\ValidationException;
 
 class SubjectController extends Controller
 {
@@ -126,10 +128,9 @@ class SubjectController extends Controller
                 'subjects.*.semester.required' => 'Semester harus dipilih',
                 'subjects.*.lingkup_materi.required' => 'Lingkup materi harus diisi'
             ]);
-    
-            DB::beginTransaction();
-            $successCount = 0;
-            $errorMessages = [];
+
+            $errorBag = new MessageBag();
+            $seenSubjects = [];
     
             foreach ($request->subjects as $index => $subjectData) {
                 // Convert checkbox value to boolean 
@@ -143,7 +144,7 @@ class SubjectController extends Controller
                 $guru = Guru::find($guruId);
                 
                 if (!$kelas || !$guru) {
-                    $errorMessages[] = "Data kelas atau guru tidak valid untuk mata pelajaran {$subjectData['mata_pelajaran']}.";
+                    $errorBag->add("subjects.$index.guru_pengampu", "Data kelas atau guru tidak valid untuk mata pelajaran {$subjectData['mata_pelajaran']}.");
                     continue;
                 }
                 
@@ -152,7 +153,7 @@ class SubjectController extends Controller
                     // Jika ini adalah mata pelajaran muatan lokal: 
                     // Hanya guru biasa (bukan wali kelas) yang dapat mengajar
                     if ($guru->jabatan == 'guru_wali') {
-                        $errorMessages[] = "Mata pelajaran {$subjectData['mata_pelajaran']} (muatan lokal) untuk kelas {$kelas->nomor_kelas} {$kelas->nama_kelas} hanya dapat diajar oleh guru dengan jabatan guru (bukan wali kelas).";
+                        $errorBag->add("subjects.$index.guru_pengampu", "Mata pelajaran {$subjectData['mata_pelajaran']} (muatan lokal) untuk kelas {$kelas->nomor_kelas} {$kelas->nama_kelas} hanya dapat diajar oleh guru dengan jabatan guru (bukan wali kelas).");
                         continue;
                     }
                 } else {
@@ -163,18 +164,25 @@ class SubjectController extends Controller
                         // Jika tidak diizinkan untuk guru bukan wali kelas
                         if (!$allowNonWali) {
                             if ($waliKelasId != $guruId) {
-                                $errorMessages[] = "Mata pelajaran {$subjectData['mata_pelajaran']} untuk kelas {$kelas->nomor_kelas} {$kelas->nama_kelas} harus diajar oleh wali kelasnya.";
+                                $errorBag->add("subjects.$index.guru_pengampu", "Mata pelajaran {$subjectData['mata_pelajaran']} untuk kelas {$kelas->nomor_kelas} {$kelas->nama_kelas} harus diajar oleh wali kelasnya.");
                                 continue;
                             }
                         }
                     } else {
                         // Kelas tidak memiliki wali kelas
                         if (!$allowNonWali) {
-                            $errorMessages[] = "Kelas {$kelas->nomor_kelas} {$kelas->nama_kelas} belum memiliki wali kelas. Harap tambahkan wali kelas terlebih dahulu, atau centang opsi 'Pelajaran non-muatan lokal dengan guru bukan wali kelas'.";
+                            $errorBag->add("subjects.$index.kelas", "Kelas {$kelas->nomor_kelas} {$kelas->nama_kelas} belum memiliki wali kelas. Harap tambahkan wali kelas terlebih dahulu, atau centang opsi 'Pelajaran non-muatan lokal dengan guru bukan wali kelas'.");
                             continue;
                         }
                     }
                 }
+
+                $duplicateKey = strtolower(trim($subjectData['mata_pelajaran'])) . '|' . $kelasId . '|' . $subjectData['semester'];
+                if (in_array($duplicateKey, $seenSubjects, true)) {
+                    $errorBag->add("subjects.$index.mata_pelajaran", "Mata pelajaran {$subjectData['mata_pelajaran']} diduplikasi lebih dari sekali dalam form yang sama.");
+                    continue;
+                }
+                $seenSubjects[] = $duplicateKey;
     
                 // Cek duplikasi nama mata pelajaran dalam satu kelas untuk semester yang sama
                 $exists = MataPelajaran::where('kelas_id', $kelasId)
@@ -183,9 +191,23 @@ class SubjectController extends Controller
                     ->exists();
                     
                 if ($exists) {
-                    $errorMessages[] = "Mata pelajaran {$subjectData['mata_pelajaran']} untuk kelas {$kelas->nomor_kelas} {$kelas->nama_kelas} semester {$subjectData['semester']} sudah ada.";
+                    $errorBag->add("subjects.$index.mata_pelajaran", "Mata pelajaran {$subjectData['mata_pelajaran']} untuk kelas {$kelas->nomor_kelas} {$kelas->nama_kelas} semester {$subjectData['semester']} sudah ada.");
                     continue;
                 }
+            }
+
+            if ($errorBag->any()) {
+                return back()->withErrors($errorBag)->withInput();
+            }
+
+            DB::beginTransaction();
+            $successCount = 0;
+
+            foreach ($request->subjects as $subjectData) {
+                $isMuatanLokal = isset($subjectData['is_muatan_lokal']);
+                $allowNonWali = isset($subjectData['allow_non_wali']);
+                $kelasId = $subjectData['kelas'];
+                $guruId = $subjectData['guru_pengampu'];
     
                 // Simpan Mata Pelajaran
                 $mataPelajaran = MataPelajaran::create([
@@ -209,21 +231,15 @@ class SubjectController extends Controller
             }
     
             DB::commit();
-            
-            $message = $successCount > 0 
-                ? "Berhasil menambahkan {$successCount} mata pelajaran!" 
-                : "Tidak ada mata pelajaran yang ditambahkan.";
-                
-            if (count($errorMessages) > 0) {
-                $message .= " Terdapat " . count($errorMessages) . " kesalahan.";
-                \Log::warning('Errors during subject creation:', $errorMessages);
-            }
-    
+
             return redirect()->route('subject.index')
-                ->with('success', $message)
-                ->with('errors', $errorMessages);
+                ->with('success', "Berhasil menambahkan {$successCount} mata pelajaran!");
+        } catch (ValidationException $e) {
+            throw $e;
         } catch (\Exception $e) {
-            DB::rollBack();
+            if (DB::transactionLevel() > 0) {
+                DB::rollBack();
+            }
             \Log::error('Error in subject store method:', [
                 'message' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
@@ -394,6 +410,8 @@ class SubjectController extends Controller
                 'semester' => 'required|integer|min:1|max:2',
                 'lingkup_materi' => 'required|array',
                 'lingkup_materi.*' => 'required|string|max:255',
+                'delete_ids' => 'nullable|array',
+                'delete_ids.*' => 'integer|exists:lingkup_materis,id',
             ]);
     
             // Convert checkbox value to boolean
@@ -457,9 +475,26 @@ class SubjectController extends Controller
                 'is_muatan_lokal' => $isMuatanLokal,
                 'allow_non_wali' => $allowNonWali,
             ]);
+
+            $deleteIds = collect($request->input('delete_ids', []))
+                ->map(fn ($deleteId) => (int) $deleteId)
+                ->filter()
+                ->values();
+
+            if ($deleteIds->isNotEmpty()) {
+                $subject->lingkupMateris()
+                    ->whereIn('id', $deleteIds)
+                    ->get()
+                    ->each(function ($lingkupMateri) {
+                        if ($lingkupMateri->tujuanPembelajarans()->exists()) {
+                            $lingkupMateri->tujuanPembelajarans()->delete();
+                        }
+
+                        $lingkupMateri->delete();
+                    });
+            }
     
             // Dapatkan lingkup materi yang sudah ada
-            $existingLingkupMateriIds = $subject->lingkupMateris()->pluck('id')->toArray();
             $existingLingkupMateriTitles = $subject->lingkupMateris()->pluck('judul_lingkup_materi')->toArray();
             $newLingkupMateriTitles = $validated['lingkup_materi'];
             
@@ -486,6 +521,8 @@ class SubjectController extends Controller
             DB::commit();
             return redirect()->route('subject.index')->with('success', 'Mata Pelajaran berhasil diperbarui!');
     
+        } catch (ValidationException $e) {
+            throw $e;
         } catch (\Exception $e) {
             DB::rollback();
             return back()->with('error', 'Terjadi kesalahan: ' . $e->getMessage())->withInput();
@@ -582,17 +619,16 @@ class SubjectController extends Controller
                 'subjects.*.lingkup_materi' => 'required|array',
                 'subjects.*.lingkup_materi.*' => 'required|string|max:255',
             ]);
-    
-            DB::beginTransaction();
-            $successCount = 0;
-            $errorMessages = [];
+
+            $errorBag = new MessageBag();
+            $seenSubjects = [];
     
             foreach ($request->subjects as $index => $subjectData) {
                 $kelasId = $subjectData['kelas'];
                 $kelas = Kelas::find($kelasId);
                 
                 if (!$kelas) {
-                    $errorMessages[] = "Kelas tidak valid untuk mata pelajaran {$subjectData['mata_pelajaran']}.";
+                    $errorBag->add("subjects.$index.kelas", "Kelas tidak valid untuk mata pelajaran {$subjectData['mata_pelajaran']}.");
                     continue;
                 }
                 
@@ -621,7 +657,7 @@ class SubjectController extends Controller
                             $allowNonWali = isset($subjectData['allow_non_wali']);
                             
                             if (!$allowNonWali) {
-                                $errorMessages[] = "Mata pelajaran {$subjectData['mata_pelajaran']} adalah non-muatan lokal dan hanya bisa diajar oleh wali kelas dari kelas tersebut. Anda perlu mencentang opsi 'Mengajar di kelas selain kelas wali'.";
+                                $errorBag->add("subjects.$index.kelas", "Mata pelajaran {$subjectData['mata_pelajaran']} adalah non-muatan lokal dan hanya bisa diajar oleh wali kelas dari kelas tersebut. Anda perlu mencentang opsi 'Mengajar di kelas selain kelas wali'.");
                                 continue;
                             }
                         }
@@ -631,6 +667,13 @@ class SubjectController extends Controller
                     $isMuatanLokal = true;
                     $allowNonWali = false;
                 }
+
+                $duplicateKey = strtolower(trim($subjectData['mata_pelajaran'])) . '|' . $kelasId . '|' . $subjectData['semester'];
+                if (in_array($duplicateKey, $seenSubjects, true)) {
+                    $errorBag->add("subjects.$index.mata_pelajaran", "Mata pelajaran {$subjectData['mata_pelajaran']} diduplikasi lebih dari sekali dalam form yang sama.");
+                    continue;
+                }
+                $seenSubjects[] = $duplicateKey;
     
                 // Cek duplikasi mata pelajaran
                 $exists = MataPelajaran::where('kelas_id', $kelasId)
@@ -639,8 +682,39 @@ class SubjectController extends Controller
                     ->exists();
                     
                 if ($exists) {
-                    $errorMessages[] = "Mata pelajaran {$subjectData['mata_pelajaran']} untuk kelas {$kelas->nomor_kelas} {$kelas->nama_kelas} semester {$subjectData['semester']} sudah ada.";
+                    $errorBag->add("subjects.$index.mata_pelajaran", "Mata pelajaran {$subjectData['mata_pelajaran']} untuk kelas {$kelas->nomor_kelas} {$kelas->nama_kelas} semester {$subjectData['semester']} sudah ada.");
                     continue;
+                }
+            }
+
+            if ($errorBag->any()) {
+                return redirect()->back()
+                    ->withErrors($errorBag)
+                    ->withInput();
+            }
+
+            DB::beginTransaction();
+            $successCount = 0;
+
+            foreach ($request->subjects as $subjectData) {
+                $kelasId = $subjectData['kelas'];
+
+                $isWaliKelas = $guru->isWaliKelas();
+                $isWaliKelasForThisClass = $guru->getWaliKelasId() == $kelasId;
+                $isMuatanLokal = false;
+                $allowNonWali = false;
+
+                if ($isWaliKelas) {
+                    if ($isWaliKelasForThisClass) {
+                        $isMuatanLokal = false;
+                        $allowNonWali = false;
+                    } else {
+                        $isMuatanLokal = isset($subjectData['is_muatan_lokal']);
+                        $allowNonWali = !$isMuatanLokal && isset($subjectData['allow_non_wali']);
+                    }
+                } else {
+                    $isMuatanLokal = true;
+                    $allowNonWali = false;
                 }
     
                 // Simpan Mata Pelajaran
@@ -665,21 +739,15 @@ class SubjectController extends Controller
             }
     
             DB::commit();
-            
-            $message = $successCount > 0 
-                ? "Berhasil menambahkan {$successCount} mata pelajaran!" 
-                : "Tidak ada mata pelajaran yang ditambahkan.";
-                
-            if (count($errorMessages) > 0) {
-                $message .= " Terdapat " . count($errorMessages) . " kesalahan.";
-                \Log::warning('Errors during teacher subject creation:', $errorMessages);
-            }
-    
+
             return redirect()->route('pengajar.subject.index')
-                ->with('success', $message)
-                ->with('errors', $errorMessages);
+                ->with('success', "Berhasil menambahkan {$successCount} mata pelajaran!");
+        } catch (ValidationException $e) {
+            throw $e;
         } catch (\Exception $e) {
-            DB::rollBack();
+            if (DB::transactionLevel() > 0) {
+                DB::rollBack();
+            }
             \Log::error('Error in teacher subject store method:', [
                 'message' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
@@ -758,6 +826,8 @@ class SubjectController extends Controller
             'semester' => 'required|integer|min:1|max:2',
             'lingkup_materi' => 'required|array',
             'lingkup_materi.*' => 'required|string|max:255',
+            'delete_ids' => 'nullable|array',
+            'delete_ids.*' => 'integer|exists:lingkup_materis,id',
         ]);
     
         $kelasId = $validated['kelas'];
@@ -828,6 +898,24 @@ class SubjectController extends Controller
                 'is_muatan_lokal' => $isMuatanLokal,
                 'allow_non_wali' => $allowNonWali,
             ]);
+
+            $deleteIds = collect($request->input('delete_ids', []))
+                ->map(fn ($deleteId) => (int) $deleteId)
+                ->filter()
+                ->values();
+
+            if ($deleteIds->isNotEmpty()) {
+                $subject->lingkupMateris()
+                    ->whereIn('id', $deleteIds)
+                    ->get()
+                    ->each(function ($lingkupMateri) {
+                        if ($lingkupMateri->tujuanPembelajarans()->exists()) {
+                            $lingkupMateri->tujuanPembelajarans()->delete();
+                        }
+
+                        $lingkupMateri->delete();
+                    });
+            }
             
             // Handle lingkup materi updates
             $existingLingkupMateris = $subject->lingkupMateris()->get();
@@ -858,6 +946,8 @@ class SubjectController extends Controller
             DB::commit();
             return redirect()->route('pengajar.subject.index')
                 ->with('success', 'Mata Pelajaran berhasil diperbarui!');
+        } catch (ValidationException $e) {
+            throw $e;
         } catch (\Exception $e) {
             DB::rollback();
             return back()->with('error', 'Terjadi kesalahan: ' . $e->getMessage())->withInput();

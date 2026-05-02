@@ -2,6 +2,10 @@
 
 @section('title', 'Edit Data Mata Pelajaran')
 
+@push('meta')
+<meta name="turbo-visit-control" content="reload">
+@endpush
+
 @section('content')
 <div>
     <div class="p-4 bg-white mt-14">
@@ -30,10 +34,37 @@
             @endif
         </div>
 
+        @if(session('success'))
+        <div class="mb-4 bg-green-100 border-l-4 border-green-500 text-green-700 p-4">
+            <p>{{ session('success') }}</p>
+        </div>
+        @endif
+
+        @if(session('error'))
+        <div class="mb-4 bg-red-100 border-l-4 border-red-500 text-red-700 p-4">
+            <p>{{ session('error') }}</p>
+        </div>
+        @endif
+
+        @if($errors->any())
+        <div class="mb-4 bg-red-100 border-l-4 border-red-500 text-red-700 p-4">
+            <h4 class="font-medium">Validasi gagal:</h4>
+            <ul class="ml-4 mt-2 list-disc">
+                @foreach($errors->all() as $error)
+                <li>{{ $error }}</li>
+                @endforeach
+            </ul>
+        </div>
+        @endif
+
         <!-- Form -->
         <form id="editSubjectForm" 
             action="{{ route('pengajar.subject.update', $subject->id) }}" 
             method="POST" 
+            data-turbo="false"
+            x-data="formProtection"
+            @submit="handleSubmit"
+            data-needs-protection
             class="space-y-6"
             data-subject-id="{{ $subject->id }}">
             @csrf
@@ -217,7 +248,7 @@
                                 </svg>
                             </button>
                         @else
-                        <button type="button" onclick="confirmDeleteLingkupMateri(this, {{ $lm->id }})" class="ml-2 p-2 bg-red-600 text-white rounded-lg hover:bg-red-700">
+                        <button type="button" onclick="confirmDeleteLingkupMateri(this, {{ $lm->id }})" class="delete-btn ml-2 p-2 bg-red-600 text-white rounded-lg hover:bg-red-700">
                                 <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
                                     <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
                                 </svg>
@@ -304,6 +335,7 @@
 <script>
     // Variable to track lingkup materi items that need to be updated
     var lingkupMateriChanges = [];
+    var pendingDeleteIds = [];
     
     // Definisikan array data mata pelajaran yang sudah ada
     window.mapelData = [
@@ -344,41 +376,71 @@
         button.closest('.flex.items-center').remove();
         window.formChanged = true;
     }
-    
-    function confirmDeleteLingkupMateri(button, id) {
-        if (confirm('Apakah Anda yakin ingin menghapus Lingkup Materi ini? Semua tujuan pembelajaran terkait juga akan dihapus.')) {
-            deleteLingkupMateri(button, id);
+
+    function syncPendingDeleteInputs() {
+        const form = document.getElementById('editSubjectForm');
+        if (!form) return;
+
+        form.querySelectorAll('input[name="delete_ids[]"]').forEach(input => input.remove());
+        pendingDeleteIds.forEach(id => {
+            const hiddenInput = document.createElement('input');
+            hiddenInput.type = 'hidden';
+            hiddenInput.name = 'delete_ids[]';
+            hiddenInput.value = id;
+            form.appendChild(hiddenInput);
+        });
+    }
+
+    function setDeleteButtonState(button, isPending) {
+        if (!button.dataset.originalHtml) {
+            button.dataset.originalHtml = button.innerHTML;
+            button.dataset.originalClass = button.className;
+        }
+
+        if (isPending) {
+            button.innerHTML = 'Batal';
+            button.className = 'delete-btn ml-2 px-3 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600';
+        } else {
+            button.innerHTML = button.dataset.originalHtml;
+            button.className = button.dataset.originalClass;
         }
     }
 
+    function setPendingDeleteState(row, button, id, isPending) {
+        const input = row.querySelector('input[name="lingkup_materi[]"]');
+
+        row.classList.toggle('opacity-40', isPending);
+        row.classList.toggle('line-through', isPending);
+        row.dataset.pendingDelete = isPending ? 'true' : 'false';
+
+        if (input) {
+            input.disabled = isPending;
+            input.required = !isPending;
+        }
+
+        if (isPending) {
+            if (!pendingDeleteIds.includes(id)) {
+                pendingDeleteIds.push(id);
+            }
+        } else {
+            pendingDeleteIds = pendingDeleteIds.filter(deleteId => deleteId !== id);
+        }
+
+        setDeleteButtonState(button, isPending);
+        syncPendingDeleteInputs();
+        window.formChanged = true;
+    }
+    
+    function confirmDeleteLingkupMateri(button, id) {
+        const row = button.closest('.flex.items-center');
+        if (!row) return;
+
+        const isPending = row.dataset.pendingDelete === 'true';
+        setPendingDeleteState(row, button, id, !isPending);
+    }
+
     function deleteLingkupMateri(button, id) {
-        fetch(`/pengajar/subject/lingkup-materi/${id}`, {
-            method: 'DELETE',
-            headers: {
-                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
-                'Accept': 'application/json',
-                'Content-Type': 'application/json'
-            },
-        })
-        .then(response => {
-            if (!response.ok) {
-                throw new Error('Network response was not ok');
-            }
-            return response.json();
-        })
-        .then(data => {
-            if (data.success) {
-                button.closest('.flex.items-center').remove();
-                showMessage('Lingkup materi berhasil dihapus', 'success');
-                window.formChanged = true;
-            } else {
-                showMessage(data.message || 'Gagal menghapus Lingkup Materi', 'error');
-            }
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            showMessage('Terjadi kesalahan saat menghapus Lingkup Materi', 'error');
-        });
+        confirmDeleteLingkupMateri(button, id);
     }
     
     // Fungsi untuk menghandle checkbox yang saling mengunci (untuk guru biasa)
@@ -685,6 +747,7 @@
             }
             
             // Jika validasi lolos, reset flag dan biarkan form submit normal
+            syncPendingDeleteInputs();
             window.formChanged = false;
             return true;
         });

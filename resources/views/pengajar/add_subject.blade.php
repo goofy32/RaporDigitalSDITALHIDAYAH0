@@ -55,19 +55,8 @@
         </div>
         @endif
 
-        @if(session('errors') && count(session('errors')) > 0)
-        <div class="mb-4 bg-red-100 border-l-4 border-red-500 text-red-700 p-4">
-            <h4 class="font-medium">Terjadi beberapa kesalahan:</h4>
-            <ul class="ml-4 mt-2 list-disc">
-                @foreach(session('errors') as $error)
-                <li>{{ $error }}</li>
-                @endforeach
-            </ul>
-        </div>
-        @endif
-
         <!-- Form -->
-        <form id="addSubjectForm" action="{{ route('pengajar.subject.store') }}" method="POST" @submit="handleSubmit" x-data="formProtection" class="space-y-6" data-needs-protection>
+        <form id="addSubjectForm" action="{{ route('pengajar.subject.store') }}" method="POST" data-turbo="false" @submit="handleSubmit" x-data="formProtection" class="space-y-6" data-needs-protection>
             @csrf
 
             <input type="hidden" name="tahun_ajaran_id" value="{{ session('tahun_ajaran_id') }}">

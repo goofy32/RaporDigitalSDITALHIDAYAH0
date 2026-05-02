@@ -37,11 +37,11 @@
         </div>
         @endif
 
-        @if(session('errors') && count(session('errors')) > 0)
+        @if($errors->any())
         <div class="mb-4 bg-red-100 border-l-4 border-red-500 text-red-700 p-4">
-            <h4 class="font-medium">Terjadi beberapa kesalahan:</h4>
+            <h4 class="font-medium">Validasi gagal:</h4>
             <ul class="ml-4 mt-2 list-disc">
-                @foreach(session('errors') as $error)
+                @foreach($errors->all() as $error)
                 <li>{{ $error }}</li>
                 @endforeach
             </ul>
@@ -52,6 +52,7 @@
         <form id="addSubjectForm"
               action="{{ route('subject.store') }}"
               method="POST"
+              data-turbo="false"
               @submit="handleSubmit"
               x-data="formProtection"
               class="space-y-6 subject-form-loading"
@@ -59,7 +60,8 @@
               data-needs-protection
               data-current-semester="{{ App\Models\TahunAjaran::find(session('tahun_ajaran_id'))->semester }}"
               data-wali-kelas-map='{!! e($waliKelasMap) !!}'
-              data-mapel-data='{!! e($mataPelajaranList->toJson()) !!}'>
+              data-mapel-data='{!! e($mataPelajaranList->toJson()) !!}'
+              data-old-subjects='{!! e(json_encode(old("subjects", []))) !!}'>
             @csrf
 
             <input type="hidden" name="tahun_ajaran_id" value="{{ session('tahun_ajaran_id') }}">
@@ -80,8 +82,11 @@
                     <!-- Mata Pelajaran -->
                     <div class="mb-4">
                         <label for="mata_pelajaran_0" class="block mb-2 text-sm font-medium text-gray-900">Nama Mata Pelajaran</label>
-                        <input type="text" id="mata_pelajaran_0" name="subjects[0][mata_pelajaran]" value="{{ old('mata_pelajaran') }}" required
-                            class="block w-full p-2.5 bg-white border border-gray-300 rounded-lg focus:ring-green-500 focus:border-green-500">
+                        <input type="text" id="mata_pelajaran_0" name="subjects[0][mata_pelajaran]" value="{{ old('subjects.0.mata_pelajaran') }}" required
+                            class="block w-full p-2.5 bg-white border border-gray-300 rounded-lg focus:ring-green-500 focus:border-green-500 @error('subjects.0.mata_pelajaran') border-red-500 @enderror">
+                        @error('subjects.0.mata_pelajaran')
+                            <p class="mt-1 text-sm text-red-500">{{ $message }}</p>
+                        @enderror
                     </div>
 
                     <!-- Muatan Lokal Checkbox -->
@@ -89,6 +94,7 @@
                         <div class="flex items-center">
                             <input id="is_muatan_lokal_0" name="subjects[0][is_muatan_lokal]" type="checkbox" 
                                 class="h-4 w-4 text-green-600 focus:ring-green-500 border-gray-300 rounded muatan-lokal-checkbox"
+                                {{ old('subjects.0.is_muatan_lokal') ? 'checked' : '' }}
                                 onchange="handleCheckboxChange(this)">
                             <label for="is_muatan_lokal_0" class="ml-2 block text-sm text-gray-900">
                                 <span class="font-medium">Pelajaran Muatan Lokal</span>
@@ -102,6 +108,7 @@
                         <div class="flex items-center">
                             <input id="allow_non_wali_0" name="subjects[0][allow_non_wali]" type="checkbox" 
                                 class="h-4 w-4 text-green-600 focus:ring-green-500 border-gray-300 rounded allow-non-wali-checkbox"
+                                {{ old('subjects.0.allow_non_wali') ? 'checked' : '' }}
                                 onchange="handleCheckboxChange(this)">
                             <label for="allow_non_wali_0" class="ml-2 block text-sm text-gray-900">
                                 <span class="font-medium">Pelajaran Wajib - Guru Mapel</span>
@@ -114,16 +121,19 @@
                     <div class="mb-4">
                         <label for="kelas_0" class="block mb-2 text-sm font-medium text-gray-900">Kelas</label>
                         <select id="kelas_0" name="subjects[0][kelas]" required
-                            class="block w-full p-2.5 bg-white border border-gray-300 rounded-lg focus:ring-green-500 focus:border-green-500 kelas-select"
+                            class="block w-full p-2.5 bg-white border border-gray-300 rounded-lg focus:ring-green-500 focus:border-green-500 kelas-select @error('subjects.0.kelas') border-red-500 @enderror"
                             onchange="updateGuruOptions(this.closest('.subject-entry'))">
                             <option value="">Pilih Kelas</option>
                             @foreach($classes as $class)
-                            <option value="{{ $class->id }}" data-has-wali="{{ $class->hasWaliKelas() ? 'true' : 'false' }}" data-wali-id="{{ $class->getWaliKelasId() }}">
+                            <option value="{{ $class->id }}" data-has-wali="{{ $class->hasWaliKelas() ? 'true' : 'false' }}" data-wali-id="{{ $class->getWaliKelasId() }}" {{ old('subjects.0.kelas') == $class->id ? 'selected' : '' }}>
                                 {{ $class->nomor_kelas }} - {{ $class->nama_kelas }}
                                 {{ $class->hasWaliKelas() ? '(Ada Wali Kelas)' : '(Belum Ada Wali Kelas)' }}
                             </option>
                             @endforeach
                         </select>
+                        @error('subjects.0.kelas')
+                            <p class="mt-1 text-sm text-red-500">{{ $message }}</p>
+                        @enderror
                     </div>
 
                     <!-- Semester -->
@@ -139,14 +149,17 @@
                     <div class="mb-4">
                         <label for="guru_pengampu_0" class="block mb-2 text-sm font-medium text-gray-900">Guru Pengampu</label>
                         <select id="guru_pengampu_0" name="subjects[0][guru_pengampu]" required
-                            class="block w-full p-2.5 bg-white border border-gray-300 rounded-lg focus:ring-green-500 focus:border-green-500 guru-select">
+                            class="block w-full p-2.5 bg-white border border-gray-300 rounded-lg focus:ring-green-500 focus:border-green-500 guru-select @error('subjects.0.guru_pengampu') border-red-500 @enderror">
                             <option value="">Pilih Guru</option>
                             @foreach($teachers as $teacher)
-                            <option value="{{ $teacher->id }}" data-jabatan="{{ $teacher->jabatan }}" {{ old('guru_pengampu') == $teacher->id ? 'selected' : '' }}>
+                            <option value="{{ $teacher->id }}" data-jabatan="{{ $teacher->jabatan }}" {{ old('subjects.0.guru_pengampu') == $teacher->id ? 'selected' : '' }}>
                                 {{ $teacher->nama }} ({{ $teacher->jabatan == 'guru_wali' ? 'Wali Kelas' : 'Guru' }})
                             </option>
                             @endforeach
                         </select>
+                        @error('subjects.0.guru_pengampu')
+                            <p class="mt-1 text-sm text-red-500">{{ $message }}</p>
+                        @enderror
                         <!-- Tempat untuk pesan info -->
                         <div class="info-container mt-2"></div>
                     </div>
@@ -156,14 +169,17 @@
                         <label class="block mb-2 text-sm font-medium text-gray-900">Lingkup Materi</label>
                         <div class="lingkup-materi-container">
                             <div class="flex items-center mb-2">
-                                <input type="text" name="subjects[0][lingkup_materi][]" required
-                                    class="block w-full p-2.5 bg-white border border-gray-300 rounded-lg focus:ring-green-500 focus:border-green-500">
+                                <input type="text" name="subjects[0][lingkup_materi][]" required value="{{ old('subjects.0.lingkup_materi.0') }}"
+                                    class="block w-full p-2.5 bg-white border border-gray-300 rounded-lg focus:ring-green-500 focus:border-green-500 @error('subjects.0.lingkup_materi.0') border-red-500 @enderror">
                                 <button type="button" onclick="addLingkupMateri(this)" class="ml-2 p-2 bg-green-600 text-white rounded-lg hover:bg-green-700">
                                     <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
                                         <path fill-rule="evenodd" d="M10 5a1 1 0 011 1v3h3a1 1 0 110 2h-3v3a1 1 0 11-2 0v-3H6a1 1 0 110-2h3V6a1 1 0 011-1z" clip-rule="evenodd"/>
                                     </svg>
                                 </button>
                             </div>
+                            @error('subjects.0.lingkup_materi.0')
+                                <p class="mt-1 text-sm text-red-500">{{ $message }}</p>
+                            @enderror
                         </div>
                     </div>
                 </div>
@@ -179,14 +195,4 @@
         </form>
     </div>
 </div>
-
-@push('scripts')
-@if(session('error'))
-<script>
-    document.addEventListener('turbo:load', function() {
-        alert(@json(session('error')));
-    });
-</script>
-@endif
-@endpush
 @endsection

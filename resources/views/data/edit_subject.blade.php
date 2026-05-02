@@ -37,11 +37,11 @@
         </div>
         @endif
 
-        @if(session('errors') && count(session('errors')) > 0)
+        @if($errors->any())
         <div class="mb-4 bg-red-100 border-l-4 border-red-500 text-red-700 p-4">
-            <h4 class="font-medium">Terjadi beberapa kesalahan:</h4>
+            <h4 class="font-medium">Validasi gagal:</h4>
             <ul class="ml-4 mt-2 list-disc">
-                @foreach(session('errors') as $error)
+                @foreach($errors->all() as $error)
                 <li>{{ $error }}</li>
                 @endforeach
             </ul>
@@ -52,6 +52,7 @@
         <form id="editSubjectForm"
               action="{{ route('subject.update', $subject->id) }}"
               method="POST"
+              data-turbo="false"
               x-data="formProtection"
               class="space-y-6 subject-form-loading"
               x-cloak
@@ -172,7 +173,7 @@
                             </svg>
                         </button>
                     @else
-                    <button type="button" onclick="confirmDeleteLingkupMateri(this, {{ $lm->id }})" class="ml-2 p-2 bg-red-600 text-white rounded-lg hover:bg-red-700">
+                    <button type="button" onclick="confirmDeleteLingkupMateri(this, {{ $lm->id }})" class="delete-btn ml-2 p-2 bg-red-600 text-white rounded-lg hover:bg-red-700">
                             <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
                                 <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
                             </svg>
@@ -188,14 +189,4 @@
         </form>
     </div>
 </div>
-
-@push('scripts')
-@if(session('error'))
-<script>
-    document.addEventListener('turbo:load', function() {
-        alert(@json(session('error')));
-    });
-</script>
-@endif
-@endpush
 @endsection

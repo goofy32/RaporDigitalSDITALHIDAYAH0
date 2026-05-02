@@ -20,6 +20,26 @@ function getConfig() {
     return getSubjectFormConfig(getForm());
 }
 
+function getOldSubjects(form) {
+    if (!form?.dataset?.oldSubjects) return [];
+
+    try {
+        const oldSubjects = JSON.parse(form.dataset.oldSubjects);
+        return Array.isArray(oldSubjects) ? oldSubjects : [];
+    } catch (error) {
+        console.warn('Invalid old subject payload', error);
+        return [];
+    }
+}
+
+function escapeHtmlAttribute(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
 function showErrorAfter(input, message) {
     input.classList.add('border-red-500');
     const errorElement = document.createElement('p');
@@ -167,6 +187,77 @@ function updateGuruOptions(subjectEntry) {
     });
 }
 
+function populateLingkupMateri(entry, index, lingkupMateriList) {
+    const lingkupContainer = entry.querySelector('.lingkup-materi-container');
+    if (!lingkupContainer) return;
+
+    const values = Array.isArray(lingkupMateriList) && lingkupMateriList.length > 0 ? lingkupMateriList : [''];
+    lingkupContainer.innerHTML = '';
+
+    values.forEach((value, lingkupIndex) => {
+        const div = document.createElement('div');
+        div.className = 'flex items-center mb-2';
+        div.innerHTML = `
+            <input type="text" name="subjects[${index}][lingkup_materi][]" required value="${escapeHtmlAttribute(value)}"
+                class="block w-full p-2.5 bg-white border border-gray-300 rounded-lg focus:ring-green-500 focus:border-green-500">
+            <button type="button" onclick="${lingkupIndex === 0 ? 'addLingkupMateri(this)' : 'removeLingkupMateri(this)'}" class="ml-2 p-2 ${lingkupIndex === 0 ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'} text-white rounded-lg">
+                ${lingkupIndex === 0
+                    ? '<svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 5a1 1 0 011 1v3h3a1 1 0 110 2h-3v3a1 1 0 11-2 0v-3H6a1 1 0 110-2h3V6a1 1 0 011-1z" clip-rule="evenodd"/></svg>'
+                    : '<svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>'}
+            </button>
+        `;
+        lingkupContainer.appendChild(div);
+    });
+}
+
+function populateSubjectEntry(entry, index, subjectData) {
+    entry.querySelector('h4').textContent = `Mata Pelajaran ${index + 1}`;
+
+    const mataPelajaranInput = entry.querySelector(`input[name="subjects[${index}][mata_pelajaran]"]`);
+    const kelasSelect = entry.querySelector(`select[name="subjects[${index}][kelas]"]`);
+    const guruSelect = entry.querySelector(`select[name="subjects[${index}][guru_pengampu]"]`);
+    const muatanCheckbox = entry.querySelector(`input[name="subjects[${index}][is_muatan_lokal]"]`);
+    const allowNonWaliCheckbox = entry.querySelector(`input[name="subjects[${index}][allow_non_wali]"]`);
+
+    if (mataPelajaranInput) mataPelajaranInput.value = subjectData?.mata_pelajaran || '';
+    if (kelasSelect) kelasSelect.value = subjectData?.kelas || '';
+    if (guruSelect) guruSelect.value = subjectData?.guru_pengampu || '';
+    if (muatanCheckbox) muatanCheckbox.checked = Boolean(subjectData?.is_muatan_lokal);
+    if (allowNonWaliCheckbox) allowNonWaliCheckbox.checked = Boolean(subjectData?.allow_non_wali);
+
+    populateLingkupMateri(entry, index, subjectData?.lingkup_materi || []);
+
+    initializeSubjectEntry(entry, {
+        mode: subjectData?.is_muatan_lokal ? 'muatan_lokal' : (subjectData?.allow_non_wali ? 'guru_mapel' : 'default'),
+        resetSelection: false,
+    });
+}
+
+function hydrateOldSubjects(form) {
+    const oldSubjects = getOldSubjects(form).filter(subject => subject && Object.keys(subject).length > 0);
+    if (oldSubjects.length === 0) return;
+
+    const container = document.getElementById('subjectEntriesContainer');
+    if (!container) return;
+
+    oldSubjects.forEach((subjectData, index) => {
+        if (index > 0) {
+            addSubjectEntry();
+        }
+
+        const entry = container.querySelectorAll('.subject-entry')[index];
+        if (!entry) return;
+
+        populateSubjectEntry(entry, index, subjectData);
+    });
+
+    document.querySelectorAll('.subject-entry').forEach((entry, entryIndex) => {
+        entry.querySelector('.remove-btn').classList.toggle('hidden', entryIndex === 0);
+    });
+
+    updateEntryStyles();
+}
+
 function registerAddSubjectGlobals() {
     window.addSubjectEntry = addSubjectEntry;
     window.removeSubjectEntry = removeSubjectEntry;
@@ -260,12 +351,14 @@ export function initAddSubjectPage() {
         return;
     }
 
+    subjectCount = 1;
     registerAddSubjectGlobals();
     form.dataset.subjectFormBound = 'true';
     form.addEventListener('submit', event => {
         if (!validateForm()) event.preventDefault();
     });
 
+    hydrateOldSubjects(form);
     document.querySelectorAll('.subject-entry').forEach(entry => initializeSubjectEntry(entry, { resetSelection: false }));
     updateEntryStyles();
     setSubjectPageReady(pageRoot, form);
