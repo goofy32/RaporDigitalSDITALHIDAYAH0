@@ -382,8 +382,8 @@ class StudentController extends Controller
             return redirect()->route('wali_kelas.student.index')
                 ->with('success', 'Data siswa berhasil ditambahkan!');
         } catch (\Illuminate\Validation\ValidationException $e) {
-            // Ubah format error menjadi satu pesan dengan HTML untuk SweetAlert
-            $errorMessages = collect($e->errors())->flatten()->implode('<br>');
+            // Simpan sebagai plain text agar aman ditampilkan via SweetAlert text:
+            $errorMessages = collect($e->errors())->flatten()->implode("\n");
             
             // Kembali dengan validation_errors dalam session
             \Log::info('Validation error: ' . $errorMessages);

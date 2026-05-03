@@ -102,7 +102,7 @@
             Swal.fire({
                 icon: 'error',
                 title: 'Validasi Error',
-                html: "{!! session('swal_validation_error') !!}",
+                text: @json(session('swal_validation_error')),
                 confirmButtonText: 'Oke'
             });
         @endif
