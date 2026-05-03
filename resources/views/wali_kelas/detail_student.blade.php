@@ -2,6 +2,10 @@
 
 @section('title', 'Detail Data Siswa')
 
+@push('meta')
+<meta name="turbo-cache-control" content="no-cache">
+@endpush
+
 @section('content')
 <div class="p-4 bg-white rounded-lg shadow-sm mt-14">
     <!-- Header -->

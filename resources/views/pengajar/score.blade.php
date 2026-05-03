@@ -2,6 +2,10 @@
 
 @section('title', 'Data Pembelajaran')
 
+@push('meta')
+<meta name="turbo-cache-control" content="no-cache">
+@endpush
+
 @section('content')
 
 <div data-page="pengajar-score" class="p-4 bg-white mt-14 rounded-lg">

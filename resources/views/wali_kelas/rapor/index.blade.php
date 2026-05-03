@@ -2,6 +2,10 @@
 
 @section('title', 'Manajemen Rapor')
 
+@push('meta')
+<meta name="turbo-cache-control" content="no-cache">
+@endpush
+
 @section('content')
 @push('styles')
 <style>

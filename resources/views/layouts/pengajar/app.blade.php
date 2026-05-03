@@ -1,6 +1,7 @@
 @extends('layouts.base')
 
 @section('role-meta')
+    <meta name="turbo-root" content="true">
     <meta name="tahun-ajaran-id" content="{{ session('tahun_ajaran_id') }}">
 @endsection
 

@@ -1,5 +1,9 @@
 @extends('layouts.base')
 
+@section('role-meta')
+    <meta name="turbo-root" content="true">
+@endsection
+
 @section('sidebar')
     <x-wali-kelas.sidebar data-turbo-permanent id="sidebar"></x-wali-kelas.sidebar>
 @endsection

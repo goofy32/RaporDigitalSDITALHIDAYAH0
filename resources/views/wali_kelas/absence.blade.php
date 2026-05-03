@@ -2,6 +2,10 @@
 
 @section('title', 'Data Absensi')
 
+@push('meta')
+<meta name="turbo-cache-control" content="no-cache">
+@endpush
+
 @section('content')
 <div>
     <div class="p-4 mt-14">

@@ -2,6 +2,10 @@
 
 @section('title', 'Input Nilai Siswa')
 
+@push('meta')
+<meta name="turbo-cache-control" content="no-cache">
+@endpush
+
 @section('content')
 <style>
     /* Remove spinner buttons from number inputs */
