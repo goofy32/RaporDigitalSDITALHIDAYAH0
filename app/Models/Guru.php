@@ -25,7 +25,6 @@ class Guru extends Authenticatable
         'jabatan',
         'username',
         'password',
-        'password_plain',
         'photo',
     ];
 
@@ -71,6 +70,7 @@ class Guru extends Authenticatable
 
     protected $hidden = [
         'password',
+        'password_plain',
         'remember_token',
     ];
 

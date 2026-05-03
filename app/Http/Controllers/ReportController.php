@@ -19,6 +19,7 @@ use App\Models\TahunAjaran;
 use App\Jobs\GeneratePdfReportJob;
 use App\Services\PdfCacheService;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\URL;
 
 class ReportController extends Controller
 {
@@ -1406,6 +1407,7 @@ class ReportController extends Controller
         try {
             $type = $request->query('type', 'UTS');
             $tahunAjaranId = $request->query('tahun_ajaran_id', session('tahun_ajaran_id'));
+            $disposition = $request->query('disposition', 'inline') === 'attachment' ? 'attachment' : 'inline';
             
             // Similar to downloadPdf but return for inline viewing
             $conversionService = new \App\Services\DocumentConversionService();
@@ -1433,14 +1435,17 @@ class ReportController extends Controller
             if (!$pdfResult['success']) {
                 throw new \Exception('Konversi ke PDF gagal: ' . $pdfResult['message']);
             }
+
+            $downloadFilename = pathinfo($result['filename'], PATHINFO_FILENAME) . '.pdf';
             
-            $pdfPath = storage_path('app/public/' . $pdfResult['storage_path']);
-            
-            // Return PDF for inline viewing
-            return response()->file($pdfPath, [
-                'Content-Type' => 'application/pdf',
-                'Content-Disposition' => 'inline; filename="rapor_preview.pdf"'
-            ]);
+            return redirect()->away(
+                $this->createSecureRaporFileUrl(
+                    $pdfResult['storage_path'],
+                    $downloadFilename,
+                    $disposition,
+                    60
+                )
+            );
             
         } catch (\Exception $e) {
             Log::error('Error previewing PDF report', [
@@ -1497,7 +1502,11 @@ class ReportController extends Controller
                     'success' => true,
                     'ready' => true,
                     'cached' => true,
-                    'download_url' => asset('storage/' . $cachedPdf['path']),
+                    'download_url' => $this->createSecureRaporFileUrl(
+                        $cachedPdf['path'],
+                        $cachedPdf['filename'],
+                        'attachment'
+                    ),
                     'filename' => $cachedPdf['filename'],
                     'file_size' => $cachedPdf['file_size'],
                     'request_id' => $requestId
@@ -1794,7 +1803,11 @@ class ReportController extends Controller
             if ($action == 'preview') {
                 return response()->json([
                     'success' => true,
-                    'file_url' => asset('storage/' . $result['path']),
+                    'file_url' => $this->createSecureRaporFileUrl(
+                        $result['path'],
+                        $result['filename'],
+                        'attachment'
+                    ),
                     'filename' => $result['filename']
                 ]);
             }
@@ -2485,8 +2498,8 @@ class ReportController extends Controller
             $notification->specific_users = [$guru->id];
             $notification->save();
             
-            // Return URL download langsung
-            $downloadUrl = url($webPath);
+            // Return signed URL download agar file batch tidak bisa diakses publik langsung
+            $downloadUrl = $this->createSecureBatchDownloadUrl($webPath, $zipName);
             
             return response()->json([
                 'success' => true,
@@ -2597,6 +2610,111 @@ class ReportController extends Controller
         }
         
         return $template;
+    }
+
+    public function downloadSecureFile(Request $request)
+    {
+        abort_unless($request->hasValidSignature(), 403);
+
+        $currentGuruId = auth()->guard('guru')->id();
+        abort_unless(
+            $currentGuruId && (string) $request->query('user') === (string) $currentGuruId,
+            403
+        );
+
+        $relativePath = $this->normalizeProtectedPath((string) $request->query('path'));
+        abort_unless($this->isAllowedProtectedStoragePath($relativePath), 404);
+        abort_unless(Storage::disk('public')->exists($relativePath), 404);
+
+        $filePath = Storage::disk('public')->path($relativePath);
+        $filename = basename((string) $request->query('filename', basename($relativePath)));
+        $disposition = $request->query('disposition') === 'inline' ? 'inline' : 'attachment';
+
+        if ($disposition === 'inline') {
+            return response()->file($filePath, [
+                'Content-Disposition' => sprintf('inline; filename="%s"', $filename),
+            ]);
+        }
+
+        return response()->download($filePath, $filename);
+    }
+
+    public function downloadSecureBatchDownload(Request $request)
+    {
+        abort_unless($request->hasValidSignature(), 403);
+
+        $currentGuruId = auth()->guard('guru')->id();
+        abort_unless(
+            $currentGuruId && (string) $request->query('user') === (string) $currentGuruId,
+            403
+        );
+
+        $relativePath = $this->normalizeProtectedPath((string) $request->query('path'));
+        abort_unless(Str::startsWith($relativePath, 'downloads/rapor_batch_'), 404);
+
+        $filePath = public_path($relativePath);
+        abort_unless(file_exists($filePath), 404);
+
+        $filename = basename((string) $request->query('filename', basename($relativePath)));
+
+        return response()->download($filePath, $filename);
+    }
+
+    protected function createSecureRaporFileUrl(
+        string $relativePath,
+        string $filename,
+        string $disposition = 'attachment',
+        int $expiresInMinutes = 30
+    ): string {
+        return URL::temporarySignedRoute(
+            'wali_kelas.rapor.secure-file',
+            now()->addMinutes($expiresInMinutes),
+            [
+                'path' => $this->normalizeProtectedPath($relativePath),
+                'filename' => $filename,
+                'disposition' => $disposition,
+                'user' => auth()->guard('guru')->id(),
+            ]
+        );
+    }
+
+    protected function createSecureBatchDownloadUrl(
+        string $relativePath,
+        string $filename,
+        int $expiresInMinutes = 30
+    ): string {
+        return URL::temporarySignedRoute(
+            'wali_kelas.rapor.secure-batch-download',
+            now()->addMinutes($expiresInMinutes),
+            [
+                'path' => $this->normalizeProtectedPath($relativePath),
+                'filename' => $filename,
+                'user' => auth()->guard('guru')->id(),
+            ]
+        );
+    }
+
+    protected function normalizeProtectedPath(string $path): string
+    {
+        return ltrim(str_replace('\\', '/', $path), '/');
+    }
+
+    protected function isAllowedProtectedStoragePath(string $relativePath): bool
+    {
+        $allowedPrefixes = [
+            'generated/',
+            'pdf_reports/',
+            'pdf_previews/',
+            'templates/',
+        ];
+
+        foreach ($allowedPrefixes as $prefix) {
+            if (Str::startsWith($relativePath, $prefix)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public function destroy(ReportTemplate $template)

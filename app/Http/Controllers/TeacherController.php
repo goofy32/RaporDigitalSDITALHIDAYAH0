@@ -221,7 +221,7 @@ class TeacherController extends Controller
                 'jabatan' => 'required|in:guru,guru_wali',
                 'username' => 'required|string|max:255|unique:gurus,username',
                 'password' => 'required|string|min:6|confirmed',
-                'photo' => 'nullable|image|mimes:jpeg,png,jpg|max:2048',
+                'photo' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp', 'max:2048'],
             ];
             
             // Tambah validasi kelas_ids dan wali_kelas_id berdasarkan jabatan
@@ -258,15 +258,14 @@ class TeacherController extends Controller
                 'password.required' => 'Password wajib diisi',
                 'password.min' => 'Password minimal 6 karakter',
                 'password.confirmed' => 'Konfirmasi password tidak cocok',
-                'photo.image' => 'File harus berupa gambar',
-                'photo.mimes' => 'Format file harus JPG atau PNG',
+                'photo.file' => 'File foto tidak valid',
+                'photo.mimes' => 'Format file harus JPG, JPEG, PNG, atau WEBP',
                 'photo.max' => 'Ukuran file maksimal 2MB',
             ]);
     
             // Handle password dan photo
             $validated['password'] = Hash::make($validated['password']);
-            $validated['password_plain'] = $request->password;
-    
+
             if ($request->hasFile('photo')) {
                 $validated['photo'] = $this->storePublicUpload($request->file('photo'), 'teacher-photos');
             }
@@ -325,26 +324,6 @@ class TeacherController extends Controller
             return redirect()->route('teacher')
                 ->with('success', 'Data guru berhasil ditambahkan');
         });
-    }
-    
-    public function showPassword($id)
-    {
-        try {
-            $teacher = Guru::findOrFail($id);
-            
-            // Tambahkan kolom password_plain di migration jika belum ada
-            $plainPassword = $teacher->password_plain ?? 'Password tidak tersedia';
-            
-            return response()->json([
-                'status' => 'success',
-                'password' => $plainPassword
-            ]);
-        } catch (\Exception $e) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'Gagal mengambil password'
-            ], 500);
-        }
     }
     
     public function show($id)
@@ -432,6 +411,7 @@ class TeacherController extends Controller
                 'alamat' => 'required|string|max:500',
                 'jabatan' => 'required|in:guru,guru_wali',
                 'username' => 'required|string|max:255|unique:gurus,username,'.$id,
+                'photo' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp', 'max:2048'],
             ];
         
             // Tambah validasi berdasarkan jabatan
@@ -473,7 +453,6 @@ class TeacherController extends Controller
             // Update password jika ada
             if ($request->filled('password')) {
                 $dataToUpdate['password'] = Hash::make($request->password);
-                $dataToUpdate['password_plain'] = $request->password; // Simpan juga password plaintext untuk keperluan admin
             }
         
             // Update photo jika ada

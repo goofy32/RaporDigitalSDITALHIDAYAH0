@@ -146,19 +146,6 @@ Route::middleware(['web', 'guest'])->group(function () {
 
 Route::post('logout', [LoginController::class, 'logout'])->name('logout');
 
-Route::get('/admin/check-password-format/{id}', function($id) {
-    $guru = \App\Models\Guru::find($id);
-    if (!$guru) return 'Guru tidak ditemukan';
-    
-    // Cek apakah password disimpan dengan format bcrypt (dimulai dengan $2y$)
-    $passwordFormat = substr($guru->password, 0, 4);
-    
-    return "Format password: {$passwordFormat}. " . 
-        "Benar jika dimulai dengan \$2y\$ atau \$2a\$. " .
-        "Password length: " . strlen($guru->password);
-})->middleware(['auth:web']);
-
-
 // Admin Routes - Guard: web, Role: admin only
 Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admin')->group(function () {
 
@@ -168,75 +155,78 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
         Route::get('/history', [GeminiChatController::class, 'getHistory'])->name('history');
         Route::get('/test-knowledge', [GeminiChatController::class, 'testKnowledgeBase'])->name('test-knowledge');
         Route::post('/update-knowledge', [GeminiChatController::class, 'updateKnowledgeBase'])->name('update-knowledge');
-        Route::get('/debug-test', [GeminiChatController::class, 'debugTest'])->name('debug-test');
-        Route::get('/test-direct', [GeminiChatController::class, 'testGeminiDirectly'])->name('test-direct');
         Route::delete('/clear-history', [GeminiChatController::class, 'clearHistory'])->name('clear-history');
         Route::delete('/chat/{id}', [GeminiChatController::class, 'deleteChat'])->name('delete-chat');
-        Route::get('/test-db', [GeminiChatController::class, 'testDatabaseConnection'])->name('test-db');
-        Route::get('/test-intent', [GeminiChatController::class, 'testIntentAnalysis'])->name('test-intent');
-        Route::get('/test-data', [GeminiChatController::class, 'testDataFetching'])->name('test-data');
-        Route::get('/debug-nilai', [GeminiChatController::class, 'debugNilaiData'])->name('gemini.debug-nilai');
         Route::get('/auto-switch-tahun', [GeminiChatController::class, 'autoSwitchTahunAjaran'])->name('gemini.auto-switch');
         Route::delete('/clear-conversation', [GeminiChatController::class, 'resetConversation'])->name('reset-conversation');
+
+        if (app()->environment('local')) {
+            Route::get('/debug-test', [GeminiChatController::class, 'debugTest'])->name('debug-test');
+            Route::get('/test-direct', [GeminiChatController::class, 'testGeminiDirectly'])->name('test-direct');
+            Route::get('/test-db', [GeminiChatController::class, 'testDatabaseConnection'])->name('test-db');
+            Route::get('/test-intent', [GeminiChatController::class, 'testIntentAnalysis'])->name('test-intent');
+            Route::get('/test-data', [GeminiChatController::class, 'testDataFetching'])->name('test-data');
+            Route::get('/debug-nilai', [GeminiChatController::class, 'debugNilaiData'])->name('gemini.debug-nilai');
+        }
     });
 
-    Route::get('/admin/gemini/test-database', function() {
-        try {
-            $tahunAjaranId = session('tahun_ajaran_id');
-            
-            // Test basic data
-            $nilaiCount = \App\Models\Nilai::where('tahun_ajaran_id', $tahunAjaranId)
-                ->whereNotNull('nilai_akhir_rapor')
-                ->count();
+    if (app()->environment('local')) {
+        Route::get('/admin/gemini/test-database', function() {
+            try {
+                $tahunAjaranId = session('tahun_ajaran_id');
                 
-            $siswaCount = \App\Models\Siswa::whereHas('kelas', function($q) use ($tahunAjaranId) {
-                $q->where('tahun_ajaran_id', $tahunAjaranId);
-            })->count();
-            
-            $kelasCount = \App\Models\Kelas::where('tahun_ajaran_id', $tahunAjaranId)->count();
-            
-            $mataPelajaranCount = \App\Models\MataPelajaran::where('tahun_ajaran_id', $tahunAjaranId)->count();
-            
-            // Test user role
-            $userRole = 'unknown';
-            if (Auth::guard('web')->check()) {
-                $userRole = 'admin';
-            } elseif (Auth::guard('guru')->check()) {
-                $userRole = session('selected_role') === 'wali_kelas' ? 'wali_kelas' : 'guru';
-            }
-            
-            return response()->json([
-                'success' => true,
-                'tahun_ajaran_id' => $tahunAjaranId,
-                'user_role' => $userRole,
-                'data_counts' => [
-                    'nilai' => $nilaiCount,
-                    'siswa' => $siswaCount,
-                    'kelas' => $kelasCount,
-                    'mata_pelajaran' => $mataPelajaranCount
-                ],
-                'sample_nilai' => \App\Models\Nilai::where('tahun_ajaran_id', $tahunAjaranId)
-                    ->with(['siswa', 'mataPelajaran'])
+                $nilaiCount = \App\Models\Nilai::where('tahun_ajaran_id', $tahunAjaranId)
                     ->whereNotNull('nilai_akhir_rapor')
-                    ->limit(3)
-                    ->get()
-                    ->map(function($nilai) {
-                        return [
-                            'siswa' => $nilai->siswa->nama ?? 'N/A',
-                            'mata_pelajaran' => $nilai->mataPelajaran->nama_pelajaran ?? 'N/A',
-                            'nilai' => $nilai->nilai_akhir_rapor
-                        ];
-                    })
-            ]);
-            
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-        }
-    })->middleware(['auth:web']);
+                    ->count();
+                    
+                $siswaCount = \App\Models\Siswa::whereHas('kelas', function($q) use ($tahunAjaranId) {
+                    $q->where('tahun_ajaran_id', $tahunAjaranId);
+                })->count();
+                
+                $kelasCount = \App\Models\Kelas::where('tahun_ajaran_id', $tahunAjaranId)->count();
+                
+                $mataPelajaranCount = \App\Models\MataPelajaran::where('tahun_ajaran_id', $tahunAjaranId)->count();
+                
+                $userRole = 'unknown';
+                if (Auth::guard('web')->check()) {
+                    $userRole = 'admin';
+                } elseif (Auth::guard('guru')->check()) {
+                    $userRole = session('selected_role') === 'wali_kelas' ? 'wali_kelas' : 'guru';
+                }
+                
+                return response()->json([
+                    'success' => true,
+                    'tahun_ajaran_id' => $tahunAjaranId,
+                    'user_role' => $userRole,
+                    'data_counts' => [
+                        'nilai' => $nilaiCount,
+                        'siswa' => $siswaCount,
+                        'kelas' => $kelasCount,
+                        'mata_pelajaran' => $mataPelajaranCount
+                    ],
+                    'sample_nilai' => \App\Models\Nilai::where('tahun_ajaran_id', $tahunAjaranId)
+                        ->with(['siswa', 'mataPelajaran'])
+                        ->whereNotNull('nilai_akhir_rapor')
+                        ->limit(3)
+                        ->get()
+                        ->map(function($nilai) {
+                            return [
+                                'siswa' => $nilai->siswa->nama ?? 'N/A',
+                                'mata_pelajaran' => $nilai->mataPelajaran->nama_pelajaran ?? 'N/A',
+                                'nilai' => $nilai->nilai_akhir_rapor
+                            ];
+                        })
+                ]);
+                
+            } catch (\Exception $e) {
+                return response()->json([
+                    'success' => false,
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString()
+                ]);
+            }
+        })->middleware(['auth:web']);
+    }
 
     Route::prefix('kkm')->name('admin.kkm.')->group(function() {
         Route::get('/', [KkmController::class, 'index'])->name('index');
@@ -377,10 +367,7 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
         Route::get('/{id}/edit', [TeacherController::class, 'edit'])->name('teacher.edit');
         Route::put('/{id}', [TeacherController::class, 'update'])->name('teacher.update');
         Route::delete('/{id}', [TeacherController::class, 'destroy'])->name('teacher.destroy');
-        Route::get('/{id}/password', [TeacherController::class, 'showPassword'])
-        ->name('teacher.show_password');
         
-        // Tambahkan rute baru di sini
         Route::post('/verify-password', [TeacherController::class, 'verifyPassword'])
             ->name('teacher.verify-password');
     });
@@ -473,24 +460,26 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
         Route::delete('/chat/{id}', [GeminiChatController::class, 'deleteChat'])->name('delete-chat');
     });
 
-    Route::get('/check-access/{mapelId}', function($mapelId) {
-        $guru = Auth::guard('guru')->user();
-        $mapel = \App\Models\MataPelajaran::find($mapelId);
-        
-        return [
-            'guru_id' => $guru->id,
-            'guru_name' => $guru->nama,
-            'guru_role' => $guru->jabatan,
-            'is_wali_kelas' => $guru->isWaliKelas(),
-            'mapel_id' => $mapel->id,
-            'mapel_name' => $mapel->nama_pelajaran,
-            'mapel_guru_id' => $mapel->guru_id,
-            'tahun_ajaran_match' => $mapel->tahun_ajaran_id == session('tahun_ajaran_id'),
-            'session_tahun_ajaran' => session('tahun_ajaran_id'),
-            'mapel_tahun_ajaran' => $mapel->tahun_ajaran_id,
-            'has_access' => $mapel->guru_id === $guru->id
-        ];
-    })->middleware(['auth:guru']);
+    if (app()->environment('local')) {
+        Route::get('/check-access/{mapelId}', function($mapelId) {
+            $guru = Auth::guard('guru')->user();
+            $mapel = \App\Models\MataPelajaran::find($mapelId);
+            
+            return [
+                'guru_id' => $guru->id,
+                'guru_name' => $guru->nama,
+                'guru_role' => $guru->jabatan,
+                'is_wali_kelas' => $guru->isWaliKelas(),
+                'mapel_id' => $mapel->id,
+                'mapel_name' => $mapel->nama_pelajaran,
+                'mapel_guru_id' => $mapel->guru_id,
+                'tahun_ajaran_match' => $mapel->tahun_ajaran_id == session('tahun_ajaran_id'),
+                'session_tahun_ajaran' => session('tahun_ajaran_id'),
+                'mapel_tahun_ajaran' => $mapel->tahun_ajaran_id,
+                'has_access' => $mapel->guru_id === $guru->id
+            ];
+        })->middleware(['auth:guru']);
+    }
 
     // Notifications
     Route::prefix('notifications')->name('notifications.')->group(function () {
@@ -613,8 +602,9 @@ Route::prefix('notifications')->name('notifications.')->group(function () {
     Route::get('/unread-count', [NotificationController::class, 'getUnreadCount'])->name('unread-count');
 });
 
-// Diagnose route
-Route::get('/rapor/diagnose/{siswa}', [ReportController::class, 'diagnoseSiswaData'])->name('diagnose');
+if (app()->environment('local')) {
+    Route::get('/rapor/diagnose/{siswa}', [ReportController::class, 'diagnoseSiswaData'])->name('diagnose');
+}
 
 // Dashboard
 Route::get('/dashboard', [DashboardController::class, 'waliKelasDashboard'])
@@ -673,29 +663,31 @@ Route::post('/lingkup-materi/{id}/update', [SubjectController::class, 'updateLin
 // Ensure this route exists for tujuan pembelajaran view
 Route::get('/tujuan-pembelajaran/{mata_pelajaran_id}/view', [TujuanPembelajaranController::class, 'teacherView'])
     ->name('tujuan_pembelajaran.view');
-Route::get('/test-pdf-request', function() {
-    try {
-        $siswa = \App\Models\Siswa::first();
-        if (!$siswa) {
-            return "No student found";
+if (app()->environment('local')) {
+    Route::get('/test-pdf-request', function() {
+        try {
+            $siswa = \App\Models\Siswa::first();
+            if (!$siswa) {
+                return "No student found";
+            }
+            
+            $controller = new \App\Http\Controllers\ReportController();
+            $request = new \Illuminate\Http\Request();
+            $request->merge([
+                'type' => 'UTS',
+                'tahun_ajaran_id' => session('tahun_ajaran_id', 1)
+            ]);
+            
+            return $controller->requestPdf($siswa, $request);
+            
+        } catch (\Exception $e) {
+            return response()->json([
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
         }
-        
-        $controller = new \App\Http\Controllers\ReportController();
-        $request = new \Illuminate\Http\Request();
-        $request->merge([
-            'type' => 'UTS',
-            'tahun_ajaran_id' => session('tahun_ajaran_id', 1)
-        ]);
-        
-        return $controller->requestPdf($siswa, $request);
-        
-    } catch (\Exception $e) {
-        return response()->json([
-            'error' => $e->getMessage(),
-            'trace' => $e->getTraceAsString()
-        ]);
-    }
-});
+    });
+}
 // RAPOR ROUTES - Consolidated and organized
 Route::prefix('rapor')->name('rapor.')->group(function () {
     Route::get('/', [ReportController::class, 'indexWaliKelas'])->name('index');
@@ -713,6 +705,8 @@ Route::prefix('rapor')->name('rapor.')->group(function () {
     Route::delete('/clear-cache/{siswa}', [ReportController::class, 'clearPdfCache'])->name('clear-cache');
     Route::post('/request-pdf/{siswa}', [ReportController::class, 'requestPdf'])->name('request-pdf');
     Route::get('/pdf-progress/{requestId}', [ReportController::class, 'checkPdfProgress'])->name('pdf-progress');
+    Route::get('/secure-file', [ReportController::class, 'downloadSecureFile'])->name('secure-file');
+    Route::get('/secure-batch-download', [ReportController::class, 'downloadSecureBatchDownload'])->name('secure-batch-download');
 
     // Cache management routes
     Route::get('/cache-stats', function() {
@@ -729,8 +723,9 @@ Route::prefix('rapor')->name('rapor.')->group(function () {
     // Batch PDF Route
     Route::post('/batch-generate-pdf', [ReportController::class, 'generateBatchPdf'])->name('batch.generate-pdf');
     
-    // Testing routes (remove in production)
-    Route::get('/test-pdf-conversion', [ReportController::class, 'testPdfConversion'])->name('test.pdf');
-    Route::get('/conversion-status', [ReportController::class, 'getConversionStatus'])->name('conversion.status');
+    if (app()->environment('local')) {
+        Route::get('/test-pdf-conversion', [ReportController::class, 'testPdfConversion'])->name('test.pdf');
+        Route::get('/conversion-status', [ReportController::class, 'getConversionStatus'])->name('conversion.status');
+    }
 });
 });

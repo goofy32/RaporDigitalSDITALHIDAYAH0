@@ -14,6 +14,7 @@ use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\URL;
 use Exception;
 
 class GeneratePdfReportJob implements ShouldQueue
@@ -70,7 +71,10 @@ class GeneratePdfReportJob implements ShouldQueue
                 ]);
                 
                 $this->updateProgress(100, 'PDF siap diunduh', [
-                    'download_url' => asset('storage/' . $cachedPdf['path']),
+                    'download_url' => $this->createSecureDownloadUrl(
+                        $cachedPdf['path'],
+                        $cachedPdf['filename']
+                    ),
                     'filename' => $cachedPdf['filename'],
                     'file_size' => $cachedPdf['file_size'],
                     'cached' => true
@@ -148,7 +152,7 @@ class GeneratePdfReportJob implements ShouldQueue
 
             // Update progress: Completed
             $this->updateProgress(100, 'PDF siap diunduh', [
-                'download_url' => asset('storage/' . $pdfPath),
+                'download_url' => $this->createSecureDownloadUrl($pdfPath, $filename),
                 'filename' => $filename,
                 'file_size' => $fileSize,
                 'cached' => false
@@ -281,5 +285,19 @@ class GeneratePdfReportJob implements ShouldQueue
             'progress_key' => $progressKey,
             'cache_stored' => Cache::has($progressKey)
         ]);
+    }
+
+    private function createSecureDownloadUrl(string $relativePath, string $filename): string
+    {
+        return URL::temporarySignedRoute(
+            'wali_kelas.rapor.secure-file',
+            now()->addMinutes(30),
+            [
+                'path' => ltrim(str_replace('\\', '/', $relativePath), '/'),
+                'filename' => $filename,
+                'disposition' => 'attachment',
+                'user' => $this->userId,
+            ]
+        );
     }
 }

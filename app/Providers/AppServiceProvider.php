@@ -57,6 +57,8 @@ class AppServiceProvider extends ServiceProvider
             if (!Storage::exists('public/previews')) {
                 Storage::makeDirectory('public/previews');
             }
+
+            $this->ensureProtectedFileDirectories();
         } catch (\Exception $e) {
             // Log the error but don't crash the application
             Log::warning('Unable to create storage symlink: ' . $e->getMessage());
@@ -93,5 +95,56 @@ class AppServiceProvider extends ServiceProvider
         ReportTemplate::observe(AuditObserver::class);
         
         // 
+    }
+
+    protected function ensureProtectedFileDirectories(): void
+    {
+        $publicDiskDirectories = [
+            'templates',
+            'generated',
+            'pdf_reports',
+            'pdf_previews',
+            'previews',
+        ];
+
+        foreach ($publicDiskDirectories as $directory) {
+            $this->protectDirectory(Storage::disk('public')->path($directory));
+        }
+
+        $this->protectDirectory(public_path('downloads'));
+    }
+
+    protected function protectDirectory(string $directory): void
+    {
+        if (!file_exists($directory)) {
+            app('files')->makeDirectory($directory, 0755, true);
+        }
+
+        $htaccessPath = $directory . DIRECTORY_SEPARATOR . '.htaccess';
+        if (!file_exists($htaccessPath)) {
+            file_put_contents($htaccessPath, <<<HTACCESS
+<IfModule mod_authz_core.c>
+    Require all denied
+</IfModule>
+<IfModule !mod_authz_core.c>
+    Deny from all
+</IfModule>
+HTACCESS);
+        }
+
+        $webConfigPath = $directory . DIRECTORY_SEPARATOR . 'web.config';
+        if (!file_exists($webConfigPath)) {
+            file_put_contents($webConfigPath, <<<XML
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <system.webServer>
+    <authorization>
+      <remove users="*" roles="" verbs="" />
+      <add accessType="Deny" users="*" />
+    </authorization>
+  </system.webServer>
+</configuration>
+XML);
+        }
     }
 }

@@ -123,7 +123,7 @@
                         </thead>
                         <tbody>
                             @foreach($auditLog->new_values as $key => $newValue)
-                                @if(!in_array($key, ['id', 'created_at', 'updated_at', 'password']) && 
+                                @if(!in_array($key, ['id', 'created_at', 'updated_at', 'password', 'password_plain', 'remember_token']) && 
                                     (isset($auditLog->old_values[$key]) || $newValue !== null))
                                     <tr class="bg-white border-b">
                                         <th scope="row" class="px-6 py-4 font-medium text-gray-900 whitespace-nowrap">
@@ -168,7 +168,7 @@
                         </thead>
                         <tbody>
                             @foreach($auditLog->new_values as $key => $value)
-                                @if(!in_array($key, ['id', 'created_at', 'updated_at', 'password']) && $value !== null)
+                                @if(!in_array($key, ['id', 'created_at', 'updated_at', 'password', 'password_plain', 'remember_token']) && $value !== null)
                                     <tr class="bg-white border-b">
                                         <th scope="row" class="px-6 py-4 font-medium text-gray-900 whitespace-nowrap">
                                             {{ ucfirst(str_replace('_', ' ', $key)) }}
@@ -197,7 +197,7 @@
                         </thead>
                         <tbody>
                             @foreach($auditLog->old_values as $key => $value)
-                                @if(!in_array($key, ['id', 'created_at', 'updated_at', 'password']) && $value !== null)
+                                @if(!in_array($key, ['id', 'created_at', 'updated_at', 'password', 'password_plain', 'remember_token']) && $value !== null)
                                     <tr class="bg-white border-b">
                                         <th scope="row" class="px-6 py-4 font-medium text-gray-900 whitespace-nowrap">
                                             {{ ucfirst(str_replace('_', ' ', $key)) }}

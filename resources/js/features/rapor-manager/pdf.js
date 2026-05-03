@@ -3,32 +3,19 @@ export const raporManagerPdf = {
         if (!this.validateData(nilaiCount, hasAbsensi)) return;
         try {
             this.loadingPdf = siswaId;
-            const response = await fetch(`/wali-kelas/rapor/request-pdf/${siswaId}`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    Accept: 'application/json',
-                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content
-                },
-                body: JSON.stringify({ type: this.activeTab, tahun_ajaran_id: this.tahunAjaranId })
-            });
-            if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-            const data = await response.json();
-            if (data.success) {
-                if (data.ready) {
-                    this.downloadPdfFile(data.download_url, data.filename, namaSiswa, data.cached);
-                } else {
-                    this.showPdfProgressEnhanced(data.request_id, namaSiswa, data.estimated_time);
-                }
-            } else {
-                throw new Error(data.message || 'Gagal memproses PDF');
-            }
+            const url = `/wali-kelas/rapor/preview-pdf/${siswaId}?type=${this.activeTab}&tahun_ajaran_id=${this.tahunAjaranId}&disposition=attachment`;
+            const link = document.createElement('a');
+            link.href = url;
+            link.style.display = 'none';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
         } catch (error) {
             console.error('Error in handleDownloadPdf:', error);
             Swal.fire({
                 icon: 'error',
-                title: 'Gagal Generate PDF',
-                html: `<p>${error.message}</p><div class="mt-4 text-xs text-gray-500"><p>Kemungkinan penyebab:</p><ul class="text-left list-disc list-inside"><li>Koneksi internet tidak stabil</li><li>Server sedang sibuk</li><li>Queue worker tidak berjalan</li></ul><p class="mt-2">Coba lagi dalam beberapa saat.</p></div>`
+                title: 'Gagal Mengunduh PDF',
+                text: error.message || `Terjadi kesalahan saat mengunduh rapor PDF untuk ${namaSiswa}`
             });
         } finally {
             this.loadingPdf = null;
