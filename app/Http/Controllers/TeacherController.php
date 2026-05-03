@@ -531,12 +531,14 @@ class TeacherController extends Controller
         
         } catch (\Exception $e) {
             DB::rollBack();
-            \Log::error('Error update guru', [
-                'message' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+            Log::error('Failed to update teacher data', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'user_id' => auth()->id(),
+                'teacher_id' => $id,
             ]);
             return back()
-                ->with('error', 'Terjadi kesalahan: ' . $e->getMessage())
+                ->with('error', 'Terjadi kesalahan. Silakan coba lagi.')
                 ->withInput();
         }
     }
@@ -566,14 +568,16 @@ class TeacherController extends Controller
                 'message' => $valid ? 'Password valid' : 'Password tidak sesuai'
             ]);
         } catch (\Exception $e) {
-            \Log::error('Error verifying teacher password', [
-                'message' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+            Log::error('Failed to verify teacher password', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'user_id' => auth()->id(),
+                'teacher_id' => $request->teacher_id,
             ]);
             
             return response()->json([
                 'valid' => false,
-                'message' => 'Terjadi kesalahan: ' . $e->getMessage()
+                'message' => 'Terjadi kesalahan. Silakan coba lagi.'
             ], 500);
         }
     }

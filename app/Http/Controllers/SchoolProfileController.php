@@ -57,7 +57,7 @@ class SchoolProfileController extends Controller
             'jumlah_siswa' => 'nullable|integer',
             'tempat_terbit' => 'required|string|max:255',
             'tanggal_terbit' => 'required|date',
-            'logo' => 'nullable|image|mimes:jpeg,png,jpg,gif,svg|max:2048',
+            'logo' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp', 'max:2048'],
         ]);
     
         // Cek apakah data profil sudah ada

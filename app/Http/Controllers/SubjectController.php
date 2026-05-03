@@ -11,6 +11,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\MessageBag;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 
 class SubjectController extends Controller
@@ -240,12 +241,13 @@ class SubjectController extends Controller
             if (DB::transactionLevel() > 0) {
                 DB::rollBack();
             }
-            \Log::error('Error in subject store method:', [
-                'message' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+            Log::error('Failed to store admin subject data', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'user_id' => auth()->id(),
             ]);
             
-            return back()->withInput()->with('error', 'Terjadi kesalahan: ' . $e->getMessage());
+            return back()->withInput()->with('error', 'Terjadi kesalahan. Silakan coba lagi.');
         }
     }
 
@@ -276,9 +278,16 @@ class SubjectController extends Controller
             ]);
             
         } catch (\Exception $e) {
+            Log::error('Failed to check lingkup materi dependencies', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'user_id' => auth()->guard('guru')->id() ?? auth()->id(),
+                'lingkup_materi_id' => $id,
+            ]);
+
             return response()->json([
                 'success' => false,
-                'message' => 'Terjadi kesalahan: ' . $e->getMessage()
+                'message' => 'Terjadi kesalahan. Silakan coba lagi.'
             ], 500);
         }
     }
@@ -321,10 +330,17 @@ class SubjectController extends Controller
             
         } catch (\Exception $e) {
             DB::rollBack();
+
+            Log::error('Failed to delete lingkup materi', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'user_id' => auth()->guard('guru')->id() ?? auth()->id(),
+                'lingkup_materi_id' => $id,
+            ]);
             
             return response()->json([
                 'success' => false,
-                'message' => 'Terjadi kesalahan: ' . $e->getMessage()
+                'message' => 'Terjadi kesalahan. Silakan coba lagi.'
             ], 500);
         }
     }
@@ -389,9 +405,16 @@ class SubjectController extends Controller
             ]);
             
         } catch (\Exception $e) {
+            Log::error('Failed to update lingkup materi', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'user_id' => auth()->guard('guru')->id() ?? auth()->id(),
+                'lingkup_materi_id' => $id,
+            ]);
+
             return response()->json([
                 'success' => false,
-                'message' => 'Terjadi kesalahan: ' . $e->getMessage()
+                'message' => 'Terjadi kesalahan. Silakan coba lagi.'
             ], 500);
         }
     }
@@ -525,7 +548,14 @@ class SubjectController extends Controller
             throw $e;
         } catch (\Exception $e) {
             DB::rollback();
-            return back()->with('error', 'Terjadi kesalahan: ' . $e->getMessage())->withInput();
+            Log::error('Failed to update admin subject data', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'user_id' => auth()->id(),
+                'subject_id' => $id,
+            ]);
+
+            return back()->with('error', 'Terjadi kesalahan. Silakan coba lagi.')->withInput();
         }
     }
 
@@ -748,13 +778,14 @@ class SubjectController extends Controller
             if (DB::transactionLevel() > 0) {
                 DB::rollBack();
             }
-            \Log::error('Error in teacher subject store method:', [
-                'message' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+            Log::error('Failed to store teacher subject data', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'user_id' => auth()->guard('guru')->id(),
             ]);
             
             return redirect()->back()
-                ->with('error', 'Terjadi kesalahan saat menyimpan data: ' . $e->getMessage())
+                ->with('error', 'Terjadi kesalahan saat menyimpan data. Silakan coba lagi.')
                 ->withInput();
         }
     }
@@ -950,7 +981,14 @@ class SubjectController extends Controller
             throw $e;
         } catch (\Exception $e) {
             DB::rollback();
-            return back()->with('error', 'Terjadi kesalahan: ' . $e->getMessage())->withInput();
+            Log::error('Failed to update teacher subject data', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'user_id' => auth()->guard('guru')->id(),
+                'subject_id' => $id,
+            ]);
+
+            return back()->with('error', 'Terjadi kesalahan. Silakan coba lagi.')->withInput();
         }
     }
 
@@ -965,8 +1003,15 @@ class SubjectController extends Controller
             return redirect()->route('pengajar.subject.index')
                 ->with('success', 'Mata Pelajaran berhasil dihapus!');
         } catch (\Exception $e) {
+            Log::error('Failed to delete teacher subject data', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'user_id' => auth()->guard('guru')->id(),
+                'subject_id' => $id,
+            ]);
+
             return redirect()->back()
-                ->with('error', 'Terjadi kesalahan saat menghapus data: ' . $e->getMessage());
+                ->with('error', 'Terjadi kesalahan saat menghapus data. Silakan coba lagi.');
         }
     }
 }

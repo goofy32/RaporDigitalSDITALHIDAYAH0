@@ -138,8 +138,14 @@ class StudentController extends Controller
             Siswa::create($validated);
             return redirect()->route('student')->with('success', 'Data siswa berhasil ditambahkan!');
         } catch (\Exception $e) {
-            return back()->with('error', 'Terjadi kesalahan: ' . $e->getMessage())
-                        ->withInput();
+            Log::error('Failed to create student', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'user_id' => auth()->id(),
+            ]);
+
+            return back()->with('error', 'Terjadi kesalahan. Silakan coba lagi.')
+                ->withInput();
         }
     }
 
@@ -388,10 +394,13 @@ class StudentController extends Controller
                 DB::rollBack();
             }
             
-            // Log the error
-            \Log::error('Error adding student: ' . $e->getMessage());
+            Log::error('Failed to create wali kelas student', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'user_id' => auth()->guard('guru')->id(),
+            ]);
             
-            return back()->with('error', 'Terjadi kesalahan: ' . $e->getMessage())
+            return back()->with('error', 'Terjadi kesalahan. Silakan coba lagi.')
                 ->withInput();
         }
     }
@@ -515,11 +524,12 @@ class StudentController extends Controller
     
         } catch (\Exception $e) {
             DB::rollBack();
-            \Log::error('Import failed:', [
+            Log::error('Student import failed', [
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
+                'user_id' => auth()->id(),
             ]);
-            return back()->with('error', 'Gagal import: ' . $e->getMessage());
+            return back()->with('error', 'Gagal mengimpor data. Silakan coba lagi.');
         }
     }
     public function downloadTemplate()
@@ -529,7 +539,12 @@ class StudentController extends Controller
             $filePath = public_path('templates/Student_Template_with_Data.xlsx');
     
             if (!file_exists($filePath)) {
-                return back()->with('error', 'File template tidak ditemukan di ' . $filePath);
+                Log::warning('Student import template file missing', [
+                    'path' => $filePath,
+                    'user_id' => auth()->id(),
+                ]);
+
+                return back()->with('error', 'File template tidak ditemukan.');
             }
     
             // Gunakan nama file yang lebih user-friendly saat didownload
@@ -538,7 +553,11 @@ class StudentController extends Controller
             ]);
     
         } catch (\Exception $e) {
-            \Log::error('Error downloading template: ' . $e->getMessage());
+            Log::error('Failed to download student import template', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'user_id' => auth()->id(),
+            ]);
             return back()->with('error', 'Terjadi kesalahan saat mengunduh template.');
         }
     }

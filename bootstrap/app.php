@@ -19,6 +19,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->web(append: [
             SessionTimeout::class,
             CacheControl::class,
+            \App\Http\Middleware\SecurityHeaders::class,
             TahunAjaranMiddleware::class,
             \App\Http\Middleware\HandleValidationErrors::class
         ]);

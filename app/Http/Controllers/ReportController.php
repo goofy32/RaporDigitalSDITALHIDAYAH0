@@ -57,7 +57,13 @@ class ReportController extends Controller
 
         // Validasi permintaan
         $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
-            'template' => 'required|file|mimes:docx',
+            'template' => [
+                'required',
+                'file',
+                'mimes:docx',
+                'mimetypes:application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                'max:10240',
+            ],
             'type' => 'required|in:UTS,UAS',
             'kelas_ids' => 'nullable|array',
             'kelas_ids.*' => 'exists:kelas,id',

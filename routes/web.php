@@ -150,7 +150,7 @@ Route::post('logout', [LoginController::class, 'logout'])->name('logout');
 Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admin')->group(function () {
 
     
-    Route::prefix('gemini')->name('gemini.')->group(function () {
+    Route::prefix('gemini')->name('gemini.')->middleware('throttle:20,1')->group(function () {
         Route::post('/send-message', [GeminiChatController::class, 'sendMessage'])->name('send');
         Route::get('/history', [GeminiChatController::class, 'getHistory'])->name('history');
         Route::get('/test-knowledge', [GeminiChatController::class, 'testKnowledgeBase'])->name('test-knowledge');
@@ -310,7 +310,9 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
     
     Route::get('template/student', [StudentController::class, 'downloadTemplate'])->name('student.template');
     Route::get('students/upload', [StudentController::class, 'uploadPage'])->name('student.upload');
-    Route::post('students/import', [StudentController::class, 'importExcel'])->name('student.import');
+    Route::post('students/import', [StudentController::class, 'importExcel'])
+        ->middleware('throttle:5,1')
+        ->name('student.import');
 
     // Subject Settings Routes - harus di atas resource route untuk menghindari konflik
     Route::get('subject/bobot-nilai', [BobotNilaiController::class, 'subjectView'])->name('admin.subject.bobot-nilai');
@@ -425,6 +427,7 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
         Route::get('/current', [ReportController::class, 'getCurrentTemplate'])
             ->name('current');
         Route::post('/upload', [ReportController::class, 'upload'])
+            ->middleware('throttle:5,1')
             ->name('upload');
         
         Route::get('/{template}/download', [ReportController::class, 'downloadTemplate'])
@@ -452,7 +455,7 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
     Route::get('/mata-pelajaran-progress/{mataPelajaranId}', [DashboardController::class, 'getMataPelajaranProgress'])
         ->name('mata_pelajaran.progress');
 
-    Route::prefix('gemini')->name('gemini.')->group(function () {
+    Route::prefix('gemini')->name('gemini.')->middleware('throttle:20,1')->group(function () {
         Route::post('/send-message', [GeminiChatController::class, 'sendMessage'])->name('send');
         Route::get('/history', [GeminiChatController::class, 'getHistory'])->name('history');
 
@@ -560,7 +563,7 @@ Route::prefix('rapor-html')->name('rapor_html.')->group(function () {
 Route::get('/cetak-rapor', [ReportController::class, 'indexPrintRapor'])->name('rapor.print_index');
 Route::get('/cetak-rapor/{siswa}', [ReportController::class, 'printRaporHtml'])->name('rapor.print_html');
 
-Route::prefix('gemini')->name('gemini.')->group(function () {
+Route::prefix('gemini')->name('gemini.')->middleware('throttle:20,1')->group(function () {
     Route::post('/send-message', [GeminiChatController::class, 'sendMessage'])->name('send');
     Route::get('/history', [GeminiChatController::class, 'getHistory'])->name('history');
     Route::delete('/clear-history', [GeminiChatController::class, 'clearHistory'])->name('clear-history');
@@ -693,17 +696,24 @@ Route::prefix('rapor')->name('rapor.')->group(function () {
     Route::get('/', [ReportController::class, 'indexWaliKelas'])->name('index');
     
     // Basic rapor routes with middleware
-    Route::middleware('check.rapor.access')->group(function () {
+    Route::middleware(['check.rapor.access', 'throttle:10,1'])->group(function () {
         Route::post('/generate/{siswa}', [ReportController::class, 'generateReport'])->name('generate');
+    });
+
+    Route::middleware('check.rapor.access')->group(function () {
         Route::get('/download/{siswa}/{type}', [ReportController::class, 'downloadReport'])->name('download');
     });
 
     Route::get('/preview/{siswa}', [ReportController::class, 'previewRapor'])->name('preview');
     Route::get('/check-templates', [ReportController::class, 'checkActiveTemplates'])->name('check-templates');
-    Route::post('/batch-generate', [ReportController::class, 'generateBatchReport'])->name('batch.generate');
+    Route::post('/batch-generate', [ReportController::class, 'generateBatchReport'])
+        ->middleware('throttle:10,1')
+        ->name('batch.generate');
     
     Route::delete('/clear-cache/{siswa}', [ReportController::class, 'clearPdfCache'])->name('clear-cache');
-    Route::post('/request-pdf/{siswa}', [ReportController::class, 'requestPdf'])->name('request-pdf');
+    Route::post('/request-pdf/{siswa}', [ReportController::class, 'requestPdf'])
+        ->middleware('throttle:10,1')
+        ->name('request-pdf');
     Route::get('/pdf-progress/{requestId}', [ReportController::class, 'checkPdfProgress'])->name('pdf-progress');
     Route::get('/secure-file', [ReportController::class, 'downloadSecureFile'])->name('secure-file');
     Route::get('/secure-batch-download', [ReportController::class, 'downloadSecureBatchDownload'])->name('secure-batch-download');
@@ -714,14 +724,16 @@ Route::prefix('rapor')->name('rapor.')->group(function () {
     })->name('cache-stats');
 
     // PDF Routes with middleware
-    Route::middleware('check.rapor.access')->group(function () {
+    Route::middleware(['check.rapor.access', 'throttle:10,1'])->group(function () {
         Route::get('/preview-pdf/{siswa}', [ReportController::class, 'previewPdf'])->name('preview-pdf');
         Route::get('/download-pdf/{siswa}', [ReportController::class, 'downloadPdf'])->name('download-pdf');
         Route::post('/generate-pdf/{siswa}', [ReportController::class, 'generatePdfDirect'])->name('generate-pdf');
     });
     
     // Batch PDF Route
-    Route::post('/batch-generate-pdf', [ReportController::class, 'generateBatchPdf'])->name('batch.generate-pdf');
+    Route::post('/batch-generate-pdf', [ReportController::class, 'generateBatchPdf'])
+        ->middleware('throttle:10,1')
+        ->name('batch.generate-pdf');
     
     if (app()->environment('local')) {
         Route::get('/test-pdf-conversion', [ReportController::class, 'testPdfConversion'])->name('test.pdf');

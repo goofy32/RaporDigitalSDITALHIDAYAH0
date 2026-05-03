@@ -8,6 +8,7 @@ use App\Models\ProfilSekolah;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\URL;
 use App\Services\RaporTemplateProcessor;
 
 // Add these imports for the audit system
@@ -72,10 +73,9 @@ class AppServiceProvider extends ServiceProvider
         // Register the audit observers for various models
         $this->registerAuditObservers();
 
-        /**
-         * if(config('app.env') === 'production') {
-         * URL::forceScheme('https'); }
-        */      
+        if (app()->environment('production') && config('app.force_https', false)) {
+            URL::forceScheme('https');
+        }
     }
 
     /**
