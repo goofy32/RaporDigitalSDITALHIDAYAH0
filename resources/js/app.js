@@ -45,6 +45,11 @@ const pageLoaders = {
     'pengajar-score': () => import('./pages/pengajar-score').then(module => module.initPengajarScorePage()),
     'kenaikan-kelas-show': () => import('./pages/kenaikan-kelas-show-siswa').then(module => module.initKenaikanKelasShowPage()),
     'pengajar-add-tp': () => import('./pages/pengajar-add-tp').then(module => module.initPengajarAddTpPage()),
+    'create-teacher': () => import('./pages/create-teacher').then(module => module.initCreateTeacherPage()),
+    'edit-teacher': () => import('./pages/edit-teacher').then(module => module.initEditTeacherPage()),
+    'pengajar-add-subject': () => import('./pages/pengajar-add-subject').then(module => module.initPengajarAddSubjectPage()),
+    'pengajar-edit-subject': () => import('./pages/pengajar-edit-subject').then(module => module.initPengajarEditSubjectPage()),
+    'admin-add-tp': () => import('./pages/admin-add-tp').then(module => module.initAdminAddTpPage()),
 };
 
 async function loadCurrentPageModule() {
