@@ -50,6 +50,15 @@ const pageLoaders = {
     'pengajar-add-subject': () => import('./pages/pengajar-add-subject').then(module => module.initPengajarAddSubjectPage()),
     'pengajar-edit-subject': () => import('./pages/pengajar-edit-subject').then(module => module.initPengajarEditSubjectPage()),
     'admin-add-tp': () => import('./pages/admin-add-tp').then(module => module.initAdminAddTpPage()),
+    'add-student': () => import('./pages/add-student').then(module => module.initAddStudentPage()),
+    'edit-student': () => import('./pages/edit-student').then(module => module.initEditStudentPage()),
+    'kenaikan-kelas-index': () => import('./pages/kenaikan-kelas-index').then(module => module.initKenaikanKelasIndexPage()),
+    'tahun-ajaran-create': () => import('./pages/tahun-ajaran-create').then(module => module.initTahunAjaranCreatePage()),
+    'tahun-ajaran-edit': () => import('./pages/tahun-ajaran-edit').then(module => module.initTahunAjaranEditPage()),
+    'tahun-ajaran-copy': () => import('./pages/tahun-ajaran-copy').then(module => module.initTahunAjaranCopyPage()),
+    'tahun-ajaran-index': () => import('./pages/tahun-ajaran-index').then(module => module.initTahunAjaranIndexPage()),
+    'admin-profile': () => import('./pages/admin-profile').then(module => module.initAdminProfilePage()),
+    'edit-class': () => import('./pages/edit-class').then(module => module.initEditClassPage()),
 };
 
 async function loadCurrentPageModule() {

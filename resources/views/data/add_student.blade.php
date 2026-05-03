@@ -3,7 +3,7 @@
 @section('title', 'Tambah Data Siswa')
 
 @section('content')
-<div>
+<div data-page="add-student">
     <div class="p-4 bg-white mt-14">
         <div class="flex justify-between items-center mb-6">
             <h2 class="text-2xl font-bold text-green-700">Form Tambah Data Siswa</h2>
@@ -34,7 +34,6 @@
                             <input type="text" id="nis" name="nis" 
                             maxlength="10" 
                             pattern="[0-9]*"
-                            oninput="numbersOnly(this); enforceMaxLength(this, 10);"
                             class="w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring focus:ring-green-200 required-field" 
                             value="{{ old('nis') }}" required>
                             @error('nis')
@@ -48,7 +47,6 @@
                             <input type="text" id="nisn" name="nisn" 
                                 maxlength="10" 
                                 pattern="[0-9]*"
-                                oninput="numbersOnly(this); enforceMaxLength(this, 10);"
                                 class="w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring focus:ring-green-200 required-field" 
                                 value="{{ old('nisn') }}" required>
                             @error('nisn')
@@ -60,7 +58,6 @@
                         <div>
                             <label for="nama" class="block text-sm font-medium text-gray-700 mb-1">Nama Lengkap <span class="text-red-500">*</span></label>
                             <input type="text" id="nama" name="nama" 
-                                oninput="lettersOnly(this);"
                                 class="w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring focus:ring-green-200 required-field" 
                                 value="{{ old('nama') }}" required>
                             @error('nama')
@@ -257,146 +254,4 @@
     }
 </style>
 
-<script>
-// Global validation functions
-function numbersOnly(input) {
-    input.value = input.value.replace(/[^0-9]/g, '');
-}
-
-function lettersOnly(input) {
-    input.value = input.value.replace(/[^a-zA-Z\s]/g, '');
-}
-
-function enforceMaxLength(input, max) {
-    if (input.value.length > max) {
-        input.value = input.value.slice(0, max);
-    }
-}
-
-document.addEventListener('DOMContentLoaded', function() {
-    // Mark required fields with red border initially if empty
-    const requiredFields = document.querySelectorAll('.required-field');
-    
-    requiredFields.forEach(field => {
-        // Initial check - add red border if empty
-        if (!field.value.trim()) {
-            field.classList.add('empty');
-        }
-        
-        // Listen for changes and update styling
-        field.addEventListener('input', function() {
-            if (!this.value.trim()) {
-                this.classList.add('empty');
-            } else {
-                this.classList.remove('empty');
-            }
-        });
-        
-        // Listen for blur events
-        field.addEventListener('blur', function() {
-            if (!this.value.trim()) {
-                this.classList.add('empty');
-            } else {
-                this.classList.remove('empty');
-            }
-        });
-    });
-
-    // NIS dan NISN validasi
-    const nisInput = document.getElementById('nis');
-    const nisnInput = document.getElementById('nisn');
-    const namaInput = document.getElementById('nama');
-
-    if (nisInput) {
-        nisInput.addEventListener('input', function() {
-            numbersOnly(this);
-            enforceMaxLength(this, 10);
-        });
-    }
-
-    if (nisnInput) {
-        nisnInput.addEventListener('input', function() {
-            numbersOnly(this);
-            enforceMaxLength(this, 10);
-        });
-    }
-
-    if (namaInput) {
-        namaInput.addEventListener('input', function() {
-            lettersOnly(this);
-            enforceMaxLength(this, 255);
-        });
-    }
-
-    // Form validation
-    document.querySelector('form').addEventListener('submit', function(e) {
-        const nis = document.getElementById('nis').value;
-        const nisn = document.getElementById('nisn').value;
-        
-        // Check all required fields
-        let hasError = false;
-        requiredFields.forEach(field => {
-            if (!field.value.trim()) {
-                field.classList.add('empty');
-                hasError = true;
-            }
-        });
-        
-        if (hasError) {
-            e.preventDefault();
-            alert('Semua field yang bertanda (*) wajib diisi!');
-            return false;
-        }
-
-        // Specific validations
-        if (nis.length < 5) { // Minimal 5 digit
-            e.preventDefault();
-            alert('NIS harus minimal 5 digit!');
-            return false;
-        }
-
-        if (nisn.length < 10) { // NISN harus 10 digit
-            e.preventDefault();
-            alert('NISN harus 10 digit!');
-            return false;
-        }
-    });
-});
-
-// Preview foto sebelum upload
-document.getElementById('photo').onchange = function(evt) {
-    const preview = document.getElementById('photo-preview');
-    preview.innerHTML = '';
-    
-    const [file] = this.files;
-    if (file) {
-        if (file.size > 2 * 1024 * 1024) {
-            preview.innerHTML = '<p class="text-red-500 text-sm">Ukuran file terlalu besar. Maksimal 2MB.</p>';
-            this.value = '';
-            return;
-        }
-
-        if (!['image/jpeg', 'image/png'].includes(file.type)) {
-            preview.innerHTML = '<p class="text-red-500 text-sm">Format file tidak sesuai. Gunakan JPG/JPEG/PNG.</p>';
-            this.value = '';
-            return;
-        }
-
-        const previewContainer = document.createElement('div');
-        previewContainer.className = 'mt-4 relative';
-
-        const img = document.createElement('img');
-        img.src = URL.createObjectURL(file);
-        img.className = 'max-w-xs rounded-lg shadow-sm';
-        img.style.maxHeight = '200px';
-        
-        previewContainer.appendChild(img);
-        preview.appendChild(previewContainer);
-
-        img.onload = function() {
-            URL.revokeObjectURL(this.src);
-        }
-    }
-};
-</script>
 @endsection

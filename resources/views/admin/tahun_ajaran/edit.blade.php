@@ -3,7 +3,7 @@
 @section('title', 'Edit Tahun Ajaran')
 
 @section('content')
-<div class="p-4">
+<div class="p-4" data-page="tahun-ajaran-edit">
     <div class="flex justify-between items-center mb-6">
         <h2 class="text-2xl font-bold text-green-700">Edit Tahun Ajaran</h2>
         <div class="flex space-x-3">
@@ -141,68 +141,4 @@
     </div>
 </div>
 
-@push('scripts')
-<script>
-    document.addEventListener('DOMContentLoaded', function() {
-        // Validasi format tahun ajaran
-        const form = document.getElementById('formEditTahunAjaran');
-        
-        form.addEventListener('submit', function(e) {
-            // Validasi format tahun ajaran (2023/2024)
-            const tahunAjaranInput = document.getElementById('tahun_ajaran');
-            const tahunAjaranPattern = /^\d{4}\/\d{4}$/;
-            
-            if (!tahunAjaranPattern.test(tahunAjaranInput.value)) {
-                e.preventDefault();
-                alert('Format tahun ajaran harus XXXX/XXXX, contoh: 2023/2024');
-                tahunAjaranInput.focus();
-            }
-        });
-        
-        // Validasi tanggal selesai harus setelah tanggal mulai
-        const tanggalMulaiInput = document.getElementById('tanggal_mulai');
-        const tanggalSelesaiInput = document.getElementById('tanggal_selesai');
-        
-        tanggalSelesaiInput.addEventListener('change', function() {
-            if (tanggalMulaiInput.value && this.value) {
-                const mulai = new Date(tanggalMulaiInput.value);
-                const selesai = new Date(this.value);
-                
-                if (selesai <= mulai) {
-                    const errorMsg = document.createElement('p');
-                    errorMsg.classList.add('text-red-500', 'text-sm', 'mt-1', 'tanggal-error');
-                    errorMsg.textContent = 'Tanggal selesai harus setelah tanggal mulai';
-                    
-                    // Remove any existing error message
-                    const existingError = document.querySelector('.tanggal-error');
-                    if (existingError) existingError.remove();
-                    
-                    // Add the error message
-                    this.parentNode.appendChild(errorMsg);
-                    
-                    // Add invalid class
-                    this.classList.add('border-red-500');
-                } else {
-                    // Remove error message
-                    const existingError = document.querySelector('.tanggal-error');
-                    if (existingError) existingError.remove();
-                    
-                    // Remove invalid class
-                    this.classList.remove('border-red-500');
-                }
-            }
-        });
-        
-        // Form validation before submit
-        const form = document.querySelector('form');
-        form.addEventListener('submit', function(e) {
-            const errors = document.querySelectorAll('.text-red-500');
-            if (errors.length > 0) {
-                e.preventDefault();
-                alert('Mohon perbaiki error pada form sebelum melanjutkan.');
-            }
-        });
-    });
-</script>
-@endpush
 @endsection

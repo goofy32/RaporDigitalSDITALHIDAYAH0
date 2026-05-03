@@ -3,7 +3,9 @@
 @section('title', 'Manajemen Tahun Ajaran')
 
 @section('content')
-<div class="p-4 bg-white">
+<div class="p-4 bg-white"
+     data-page="tahun-ajaran-index"
+     data-set-active-base-url="{{ url('admin/tahun-ajaran') }}">
     <div class="flex justify-between items-center mb-6">
         <h2 class="text-2xl font-bold text-green-700">Manajemen Tahun Ajaran</h2>
         <div class="flex gap-2">
@@ -173,7 +175,8 @@
                                                 {{ $tahunAjaran->is_active ? 'checked' : '' }}
                                                 {{ $tahunAjaran->is_active ? 'disabled' : '' }}
                                                 @if(!$tahunAjaran->is_active)
-                                                    onclick="return activateTahunAjaran({{ $tahunAjaran->id }}, '{{ $tahunAjaran->tahun_ajaran }}');"
+                                                    data-activate-id="{{ $tahunAjaran->id }}"
+                                                    data-tahun-ajaran-name="{{ $tahunAjaran->tahun_ajaran }}"
                                                 @endif
                                             >
                                         </div>
@@ -260,72 +263,4 @@
 }
 </style>
 
-@push('scripts')
-<script>
-    document.addEventListener('DOMContentLoaded', function() {
-        const archivedCount = {{ $archivedCount }};
-        const disabledBtn = document.getElementById('disabledArchiveBtn');
-        
-        // Add click handler for the disabled button
-        if (disabledBtn) {
-            disabledBtn.addEventListener('click', function() {
-                Swal.fire({
-                    icon: 'info',
-                    title: 'Tidak Ada Arsip',
-                    text: 'Tidak ada tahun ajaran yang diarsipkan saat ini.',
-                    confirmButtonText: 'Mengerti'
-                });
-            });
-        }
-    });
-    
-    // Function to handle checkbox activation
-    function activateTahunAjaran(id, tahunAjaranName) {
-        // Prevent default checkbox behavior
-        event.preventDefault();
-        
-        // Show confirmation dialog
-        Swal.fire({
-            title: 'Aktivasi Tahun Ajaran',
-            html: `Apakah Anda yakin ingin mengaktifkan tahun ajaran <strong>${tahunAjaranName}</strong>?<br><br>Mengaktifkan tahun ajaran ini akan menonaktifkan tahun ajaran lain.`,
-            icon: 'question',
-            showCancelButton: true,
-            confirmButtonColor: '#3F7858',
-            cancelButtonColor: '#d33',
-            confirmButtonText: 'Ya, Aktifkan',
-            cancelButtonText: 'Batal'
-        }).then((result) => {
-            if (result.isConfirmed) {
-                // Create a form element
-                const form = document.createElement('form');
-                form.method = 'POST';
-                form.action = "{{ url('admin/tahun-ajaran') }}/" + id + "/set-active";
-                
-                // Add CSRF token
-                const csrfInput = document.createElement('input');
-                csrfInput.type = 'hidden';
-                csrfInput.name = '_token';
-                csrfInput.value = document.querySelector('meta[name="csrf-token"]')?.content || '';
-                form.appendChild(csrfInput);
-                
-                // Add to DOM temporarily (not visible)
-                document.body.appendChild(form);
-                
-                // Show loading overlay if available
-                if (window.Alpine && Alpine.store('pageLoading')) {
-                    Alpine.store('pageLoading').startLoading();
-                }
-                
-                // Submit the form
-                form.submit();
-            } else {
-                // Reset checkbox state if canceled
-                document.getElementById(`active-${id}`).checked = false;
-            }
-        });
-        
-        return false;
-    }
-</script>
-@endpush
 @endsection

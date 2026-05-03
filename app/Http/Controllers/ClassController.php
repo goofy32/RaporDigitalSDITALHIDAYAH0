@@ -281,9 +281,9 @@ class ClassController extends Controller
                 
                 // Validasi wali kelas baru tidak boleh sama dengan wali kelas lama
                 if ($request->wali_kelas_id == $currentWaliKelas->id) {
-                    return back()
-                        ->withInput()
-                        ->with('error', 'Wali kelas baru tidak boleh sama dengan wali kelas lama.');
+                    DB::commit();
+                    return redirect()->route('kelas.index')
+                        ->with('info', 'Tidak ada perubahan yang disimpan. Wali kelas yang dipilih sama dengan sebelumnya.');
                 }
                 
                 // Ambil data guru baru

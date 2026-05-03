@@ -3,7 +3,7 @@
 @section('title', 'Edit Data Kelas')
 
 @section('content')
-<div>
+<div data-page="edit-class">
     <div class="p-4 bg-white mt-14 rounded-lg shadow">
         <!-- Error Messages -->
         @if ($errors->any())
@@ -126,7 +126,10 @@
                         </div>
                         
                         <!-- Menyimpan wali kelas saat ini sebagai hidden input -->
-                        <input type="hidden" name="current_wali_kelas_id" value="{{ $waliKelas->id }}">
+                        <input type="hidden"
+                               name="current_wali_kelas_id"
+                               id="current_wali_kelas_id"
+                               value="{{ $waliKelas->id }}">
                         
                         <!-- Dropdown untuk wali kelas baru (awalnya disembunyikan) -->
                         <div id="new_wali_kelas_container" class="mt-3 hidden">
@@ -173,92 +176,4 @@
     </div>
 </div>
 
-@push('scripts')
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-    // Form validation
-    const form = document.querySelector('form');
-    const requiredFields = form.querySelectorAll('[required]');
-
-    form.addEventListener('submit', function(e) {
-        let hasError = false;
-        requiredFields.forEach(field => {
-            if (!field.value.trim()) {
-                hasError = true;
-                field.classList.add('border-red-500');
-                let errorDiv = field.parentElement.querySelector('.error-message');
-                if (!errorDiv) {
-                    errorDiv = document.createElement('p');
-                    errorDiv.className = 'error-message text-red-500 text-xs mt-1';
-                    field.parentElement.appendChild(errorDiv);
-                }
-                errorDiv.textContent = `${field.getAttribute('placeholder') || field.getAttribute('name')} wajib diisi`;
-            } else {
-                field.classList.remove('border-red-500');
-                const errorDiv = field.parentElement.querySelector('.error-message');
-                if (errorDiv) errorDiv.remove();
-            }
-        });
-
-        // Validasi untuk "Ganti Wali Kelas"
-        const changeWaliKelasCheckbox = document.getElementById('change_wali_kelas');
-        const waliKelasIdSelect = document.getElementById('wali_kelas_id');
-        
-        if (changeWaliKelasCheckbox && changeWaliKelasCheckbox.checked && waliKelasIdSelect) {
-            if (!waliKelasIdSelect.value) {
-                hasError = true;
-                waliKelasIdSelect.classList.add('border-red-500');
-                let errorDiv = waliKelasIdSelect.parentElement.querySelector('.error-message');
-                if (!errorDiv) {
-                    errorDiv = document.createElement('p');
-                    errorDiv.className = 'error-message text-red-500 text-xs mt-1';
-                    waliKelasIdSelect.parentElement.appendChild(errorDiv);
-                }
-                errorDiv.textContent = 'Pilih wali kelas baru';
-            }
-        }
-
-        if (hasError) {
-            e.preventDefault();
-            const firstError = form.querySelector('.border-red-500');
-            if (firstError) {
-                firstError.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            }
-        }
-    });
-
-    // Validasi input nomor kelas
-    document.getElementById('nomor_kelas').addEventListener('input', function(e) {
-        if(this.value.length > 0) {
-            this.value = parseInt(this.value.replace(/^0+/, '')) || '';
-        }
-        if(this.value === '0') {
-            this.value = '';
-        }
-        if(parseInt(this.value) > 99) {
-            this.value = '99';
-        }
-    });
-
-    // Toggle untuk menampilkan/menyembunyikan dropdown wali kelas baru
-    const changeWaliKelasCheckbox = document.getElementById('change_wali_kelas');
-    const newWaliKelasContainer = document.getElementById('new_wali_kelas_container');
-    
-    if (changeWaliKelasCheckbox && newWaliKelasContainer) {
-        changeWaliKelasCheckbox.addEventListener('change', function() {
-            if (this.checked) {
-                newWaliKelasContainer.classList.remove('hidden');
-            } else {
-                newWaliKelasContainer.classList.add('hidden');
-                // Reset pilihan wali kelas baru
-                const waliKelasSelect = document.getElementById('wali_kelas_id');
-                if (waliKelasSelect) {
-                    waliKelasSelect.value = '';
-                }
-            }
-        });
-    }
-});
-</script>
-@endpush
 @endsection

@@ -3,15 +3,14 @@
 @section('title', 'Buat Tahun Ajaran Berikutnya')
 
 @section('content')
-<div class="p-4">
+<div class="p-4" data-page="tahun-ajaran-copy">
     <div class="bg-white rounded-lg shadow p-6">
-        <!-- Header dengan tombol -->
         <div class="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-6 gap-4">
             <div>
                 <h2 class="text-2xl font-bold text-green-700">Buat Tahun Ajaran Berikutnya</h2>
                 <p class="text-gray-600">Buat tahun ajaran baru dengan struktur kelas dan pengaturan yang sama dari tahun ajaran saat ini</p>
             </div>
-            
+
             <div class="flex gap-2">
                 <a href="{{ route('tahun.ajaran.index') }}" class="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700">
                     Kembali
@@ -22,7 +21,6 @@
             </div>
         </div>
 
-        <!-- Info box untuk semester genap -->
         <div class="bg-green-50 border border-green-200 rounded-lg p-4 mb-6">
             <div class="flex">
                 <div class="flex-shrink-0">
@@ -34,7 +32,7 @@
                         Fitur ini digunakan untuk membuat tahun ajaran baru dengan struktur yang sama. Sistem akan:
                     </p>
                     <ul class="mt-2 text-sm text-green-700 list-disc list-inside">
-                        <li>Mempertahankan struktur kelas yang sama (Kelas 1A → Kelas 1A, dst.)</li>
+                        <li>Mempertahankan struktur kelas yang sama (Kelas 1A -> Kelas 1A, dst.)</li>
                         <li>Menyalin pengaturan guru dan wali kelas</li>
                         <li>Menyalin pengaturan mata pelajaran, KKM, dan template rapor</li>
                         <li>Siswa dapat diatur kenaikan kelasnya secara manual nanti</li>
@@ -52,7 +50,7 @@
                     <div class="bg-green-50 p-4 rounded-md border border-green-100">
                         <p><strong>Tahun Ajaran:</strong> {{ $sourceTahunAjaran->tahun_ajaran }}</p>
                         <p><strong>Semester:</strong> {{ $sourceTahunAjaran->semester == 1 ? 'Ganjil' : 'Genap' }}</p>
-                        <p><strong>Periode:</strong> {{ $sourceTahunAjaran->tanggal_mulai->format('d/m/Y') }} - 
+                        <p><strong>Periode:</strong> {{ $sourceTahunAjaran->tanggal_mulai->format('d/m/Y') }} -
                             {{ $sourceTahunAjaran->tanggal_selesai->format('d/m/Y') }}</p>
                         <p><strong>Status:</strong> {{ $sourceTahunAjaran->is_active ? 'Aktif' : 'Tidak Aktif' }}</p>
                     </div>
@@ -60,10 +58,10 @@
 
                 <div>
                     <h3 class="text-lg font-medium text-gray-700 mb-3">Tahun Ajaran Berikutnya</h3>
-                    
+
                     <div class="mb-4">
                         <label for="tahun_ajaran" class="block text-sm font-medium text-gray-700 mb-1">Tahun Ajaran <span class="text-red-500">*</span></label>
-                        <input type="text" name="tahun_ajaran" id="tahun_ajaran" value="{{ old('tahun_ajaran', $newTahunAjaran) }}" 
+                        <input type="text" name="tahun_ajaran" id="tahun_ajaran" value="{{ old('tahun_ajaran', $newTahunAjaran) }}"
                                class="w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 p-2" required>
                     </div>
 
@@ -81,53 +79,49 @@
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
                 <div>
                     <label for="tanggal_mulai" class="block text-sm font-medium text-gray-700 mb-1">Tanggal Mulai <span class="text-red-500">*</span></label>
-                    <input type="date" name="tanggal_mulai" id="tanggal_mulai" 
-                           value="{{ old('tanggal_mulai', now()->addYear()->startOfYear()->format('Y-m-d')) }}" 
+                    <input type="date" name="tanggal_mulai" id="tanggal_mulai"
+                           value="{{ old('tanggal_mulai', now()->addYear()->startOfYear()->format('Y-m-d')) }}"
                            class="w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 p-2" required>
                 </div>
 
                 <div>
                     <label for="tanggal_selesai" class="block text-sm font-medium text-gray-700 mb-1">Tanggal Selesai <span class="text-red-500">*</span></label>
-                    <input type="date" name="tanggal_selesai" id="tanggal_selesai" 
-                           value="{{ old('tanggal_selesai', now()->addYear()->endOfYear()->format('Y-m-d')) }}" 
+                    <input type="date" name="tanggal_selesai" id="tanggal_selesai"
+                           value="{{ old('tanggal_selesai', now()->addYear()->endOfYear()->format('Y-m-d')) }}"
                            class="w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 p-2" required>
                 </div>
             </div>
 
             <div class="mt-6">
                 <label for="deskripsi" class="block text-sm font-medium text-gray-700 mb-1">Deskripsi</label>
-                <textarea name="deskripsi" id="deskripsi" rows="2" 
+                <textarea name="deskripsi" id="deskripsi" rows="2"
                           class="w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 p-2">{{ old('deskripsi', 'Tahun Ajaran ' . $newTahunAjaran) }}</textarea>
             </div>
 
-            <!-- Data yang akan disalin section -->
             <div class="mt-8">
                 <h3 class="text-lg font-semibold text-gray-800 mb-4">Data yang Akan Disalin</h3>
-                
+
                 <div class="bg-green-50 border border-green-100 rounded-md p-4">
-                    <!-- Pengaturan Wajib -->
                     <div class="mb-4 p-3 bg-green-100 border border-green-300 rounded-md">
                         <div class="flex items-center mb-2">
                             <i class="fas fa-lock text-green-600 mr-2"></i>
                             <span class="text-green-800 font-medium text-sm">Pengaturan Wajib (Tidak Dapat Diubah)</span>
                         </div>
-                        
+
                         <div class="mb-1">
                             <div class="flex items-center">
-                                <input type="checkbox" name="copy_kelas_display" id="copy_kelas_display" 
+                                <input type="checkbox" name="copy_kelas_display" id="copy_kelas_display"
                                        value="1" checked disabled
                                        class="w-5 h-5 rounded border-gray-300 text-green-600 focus:ring-green-500 opacity-75 cursor-not-allowed">
                                 <label for="copy_kelas_display" class="ml-2 text-gray-700">
                                     Struktur Kelas dan Guru <span class="text-green-600 font-medium text-xs">(WAJIB)</span>
                                 </label>
                             </div>
-                            <div class="ml-7 text-gray-500 text-sm">Kelas akan disalin dengan struktur yang sama persis (1A → 1A, 2B → 2B, dst.)</div>
-                            <!-- Hidden input untuk memastikan nilai tetap terkirim -->
+                            <div class="ml-7 text-gray-500 text-sm">Kelas akan disalin dengan struktur yang sama persis (1A -> 1A, 2B -> 2B, dst.)</div>
                             <input type="hidden" name="copy_kelas" value="1">
                         </div>
                     </div>
-                    
-                    <!-- Pilihan data yang ingin disalin -->
+
                     <h4 class="font-medium text-green-800 mb-3 mt-6">Data Opsional</h4>
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-3 mb-5">
                         <div class="flex items-center">
@@ -135,33 +129,32 @@
                                    class="w-5 h-5 rounded border-gray-300 text-green-600 focus:ring-green-500">
                             <label for="copy_mata_pelajaran" class="ml-2 text-gray-700">Mata Pelajaran <span class="text-gray-500">(dan tujuan pembelajaran)</span></label>
                         </div>
-                        
+
                         <div class="flex items-center">
                             <input type="checkbox" name="copy_templates" id="copy_templates" value="1" checked
                                    class="w-5 h-5 rounded border-gray-300 text-green-600 focus:ring-green-500">
                             <label for="copy_templates" class="ml-2 text-gray-700">Template Rapor</label>
                         </div>
-                        
+
                         <div class="flex items-center">
                             <input type="checkbox" name="copy_ekstrakurikuler" id="copy_ekstrakurikuler" value="1" checked
                                    class="w-5 h-5 rounded border-gray-300 text-green-600 focus:ring-green-500">
                             <label for="copy_ekstrakurikuler" class="ml-2 text-gray-700">Ekstrakurikuler</label>
                         </div>
-                        
+
                         <div class="flex items-center">
                             <input type="checkbox" name="copy_kkm" id="copy_kkm" value="1" checked
                                    class="w-5 h-5 rounded border-gray-300 text-green-600 focus:ring-green-500">
                             <label for="copy_kkm" class="ml-2 text-gray-700">Standar KKM</label>
                         </div>
-                        
+
                         <div class="flex items-center">
                             <input type="checkbox" name="copy_bobot_nilai" id="copy_bobot_nilai" value="1" checked
                                    class="w-5 h-5 rounded border-gray-300 text-green-600 focus:ring-green-500">
                             <label for="copy_bobot_nilai" class="ml-2 text-gray-700">Bobot Penilaian</label>
                         </div>
                     </div>
-                    
-                    <!-- Penjelasan di bawah -->
+
                     <div class="bg-white p-3 rounded border border-green-200">
                         <p class="text-gray-700 text-sm"><strong>Catatan Penting:</strong></p>
                         <div class="mt-1 space-y-1">
@@ -198,74 +191,6 @@
 </div>
 
 @push('scripts')
-<script>
-    document.addEventListener('DOMContentLoaded', function() {
-        const form = document.getElementById('formCopyTahunAjaran');
-        const submitButton = document.querySelector('button[type="submit"]');
-        
-        let isSubmitting = false;
-        
-        if (form && submitButton) {
-            form.addEventListener('submit', function(e) {
-                if (isSubmitting) {
-                    e.preventDefault();
-                    return false;
-                }
-                
-                // Validasi form
-                const tahunAjaranInput = document.getElementById('tahun_ajaran');
-                const tahunAjaranPattern = /^\d{4}\/\d{4}$/;
-                
-                if (!tahunAjaranPattern.test(tahunAjaranInput.value)) {
-                    e.preventDefault();
-                    alert('Format tahun ajaran harus XXXX/XXXX, contoh: 2024/2025');
-                    tahunAjaranInput.focus();
-                    return false;
-                }
-                
-                // Konfirmasi yang lebih sederhana
-                const confirmed = confirm(`Apakah Anda yakin ingin membuat tahun ajaran berikutnya?
-
-Tindakan ini akan:
-• Menyalin struktur kelas dengan nama dan guru yang sama
-• Menyalin pengaturan yang dipilih dari tahun ajaran saat ini
-• Memulai tahun ajaran baru dengan data nilai kosong
-
-Siswa dapat diatur kenaikan kelasnya secara manual menggunakan fitur Kenaikan Kelas.
-
-Proses ini tidak dapat dibatalkan setelah dimulai.`);
-                
-                if (!confirmed) {
-                    e.preventDefault();
-                    return false;
-                }
-                
-                isSubmitting = true;
-                submitButton.disabled = true;
-                
-                submitButton.innerHTML = `
-                    <svg class="animate-spin -ml-1 mr-2 h-4 w-4 inline-block" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                    Membuat Tahun Ajaran...
-                `;
-            });
-        }
-        
-        if (typeof initFlowbite === 'function') {
-            initFlowbite();
-        }
-        
-        // Add tooltips for disabled checkboxes
-        const disabledCheckboxes = document.querySelectorAll('input[disabled]');
-        disabledCheckboxes.forEach(checkbox => {
-            checkbox.parentElement.title = 'Pengaturan ini wajib untuk menjaga konsistensi struktur kelas';
-        });
-    });
-</script>
-
-<!-- Add Font Awesome for icons -->
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 
 <style>

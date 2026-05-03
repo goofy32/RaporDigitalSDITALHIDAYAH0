@@ -10,6 +10,24 @@
             <h2 class="text-2xl font-bold text-green-700">Data Kelas</h2>
         </div>
 
+        @if(session('info'))
+        <div class="mb-4 bg-blue-100 border-l-4 border-blue-500 text-blue-700 p-4">
+            <p>{{ session('info') }}</p>
+        </div>
+        @endif
+
+        @if(session('success'))
+        <div class="mb-4 bg-green-100 border-l-4 border-green-500 text-green-700 p-4">
+            <p>{{ session('success') }}</p>
+        </div>
+        @endif
+
+        @if(session('error'))
+        <div class="mb-4 bg-red-100 border-l-4 border-red-500 text-red-700 p-4">
+            <p>{{ session('error') }}</p>
+        </div>
+        @endif
+
         <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
             <a href="{{ route('kelas.create') }}" 
             class="flex items-center justify-center text-white bg-green-700 hover:bg-green-800 focus:ring-4 focus:ring-green-300 font-medium rounded-lg text-sm px-4 py-2">
