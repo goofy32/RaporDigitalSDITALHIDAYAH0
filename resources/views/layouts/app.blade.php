@@ -200,6 +200,39 @@
         </div>
 
         <div class="mt-14">
+            @php
+                $hasActiveTahunAjaran = \App\Models\TahunAjaran::where('is_active', true)->exists();
+            @endphp
+
+            @if(!$hasActiveTahunAjaran)
+                <div x-data="{ show: true }"
+                     x-show="show"
+                     x-transition.opacity.duration.150ms
+                     class="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-4 rounded-r">
+                    <div class="flex items-start justify-between gap-4">
+                        <div class="flex items-start gap-3">
+                            <svg class="w-5 h-5 text-yellow-400 mt-0.5 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.72-1.36 3.485 0l5.58 9.92c.75 1.334-.213 2.981-1.742 2.981H4.42c-1.53 0-2.492-1.647-1.743-2.98l5.58-9.921zM11 13a1 1 0 10-2 0 1 1 0 002 0zm-1-6a1 1 0 00-1 1v3a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" />
+                            </svg>
+                            <div>
+                                <p class="text-yellow-800 font-medium">Tahun Ajaran Belum Aktif</p>
+                                <p class="text-yellow-700 text-sm">
+                                    Aktifkan tahun ajaran terlebih dahulu sebelum menginput data.
+                                    <a href="{{ route('tahun.ajaran.index') }}" class="text-yellow-800 underline font-medium ml-1">
+                                        Aktifkan sekarang &rarr;
+                                    </a>
+                                </p>
+                            </div>
+                        </div>
+                        <button type="button" @click="show = false" class="text-yellow-400 hover:text-yellow-600">
+                            <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            @endif
+
             @if(session('tahun_ajaran_id') && isset($activeTahunAjaran) && $activeTahunAjaran && session('tahun_ajaran_id') != $activeTahunAjaran->id)
                 <div class="bg-blue-50 border-l-4 border-blue-400 p-4 mb-4">
                     <div class="flex">

@@ -7,11 +7,14 @@ use App\Models\CatatanSiswa;
 use App\Models\CatatanMataPelajaran;
 use App\Models\Siswa;
 use App\Models\MataPelajaran;
+use App\Traits\RequiresTahunAjaran;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 
 class CatatanController extends Controller
 {
+    use RequiresTahunAjaran;
+
     // =================== CATATAN SISWA ===================
     
     /**
@@ -44,6 +47,12 @@ class CatatanController extends Controller
      */
     public function storeCatatanSiswa(Request $request, Siswa $siswa)
     {
+        $tahunAjaranId = $this->getValidTahunAjaranId();
+
+        if (!$tahunAjaranId) {
+            return $this->failTahunAjaranNotSet($request);
+        }
+
         $request->validate([
             'catatan_umum' => 'nullable|string|max:1000',
             'catatan_uts' => 'nullable|string|max:1000',
@@ -51,7 +60,6 @@ class CatatanController extends Controller
         ]);
         
         $guru = Auth::guard('guru')->user();
-        $tahunAjaranId = session('tahun_ajaran_id');
         $selectedSemester = session('selected_semester', 1);
         
         // Check access
@@ -217,8 +225,13 @@ public function indexCatatanMataPelajaran()
      */
     public function storeCatatanMataPelajaran(Request $request, MataPelajaran $mataPelajaran)
     {
+        $tahunAjaranId = $this->getValidTahunAjaranId();
+
+        if (!$tahunAjaranId) {
+            return $this->failTahunAjaranNotSet($request);
+        }
+
         $guru = Auth::guard('guru')->user();
-        $tahunAjaranId = session('tahun_ajaran_id');
         $selectedSemester = session('selected_semester', 1);
         
         // Check access

@@ -66,33 +66,6 @@
                             </div>
                         </div>
                     </div>
-                    <div class="p-4 bg-green-50 border border-green-200 rounded-lg">
-                        <h4 class="text-lg font-medium text-green-800 mb-2">Pengaturan Notifikasi KKM</h4>
-                        <div class="mb-4">
-                            <div class="flex items-center">
-                                <input 
-                                    type="checkbox" 
-                                    id="notification_complete_scores_only" 
-                                    x-model="kkmNotificationSettings.completeScoresOnly" 
-                                    class="w-4 h-4 text-green-600 bg-gray-100 border-gray-300 rounded focus:ring-green-500"
-                                >
-                                <label for="notification_complete_scores_only" class="ml-2 text-sm font-medium text-gray-900">
-                                    Hanya tampilkan notifikasi KKM rendah untuk nilai yang sudah lengkap
-                                </label>
-                            </div>
-                            <p class="mt-2 text-xs text-gray-600">
-                                Jika diaktifkan, notifikasi nilai dibawah KKM hanya akan muncul ketika semua komponen nilai (TP, LM, Tes, Non-Tes) sudah diisi lengkap.
-                            </p>
-                        </div>
-                        <button 
-                            @click="saveKkmNotificationSettings" 
-                            class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
-                        >
-                            Simpan Pengaturan Notifikasi
-                        </button>
-                    </div>
-
-                    
                     <!-- Pengaturan KKM Massal -->
                     <div class="p-4 bg-green-50 border border-green-200 rounded-lg">
                         <h4 class="text-lg font-medium text-green-800 mb-2">Pengaturan KKM Massal</h4>

@@ -38,7 +38,7 @@ Route::get('/', function () {
         $selectedRole = session('selected_role');
         
         // Tambahkan pengecekan role yang valid
-        if (!in_array($selectedRole, ['guru', 'wali_kelas'])) {
+        if (!in_array($selectedRole, ['guru', 'pengajar', 'wali_kelas'])) {
             Auth::guard('guru')->logout();
             return redirect()->route('login')
                 ->with('error', 'Sesi tidak valid. Silakan login kembali.');
@@ -61,7 +61,7 @@ Route::fallback(function () {
         
         if ($selectedRole === 'wali_kelas') {
             return redirect()->route('wali_kelas.dashboard');
-        } else if ($selectedRole === 'guru') {
+        } else if (in_array($selectedRole, ['guru', 'pengajar'], true)) {
             return redirect()->route('pengajar.dashboard');
         }
     }
@@ -94,7 +94,7 @@ Route::get('/api/session-config', function () {
 Route::get('/notifications/unread-count', function () {
     if (Auth::guard('guru')->check()) {
         $guru = Auth::guard('guru')->user();
-        $role = session('selected_role');
+        $role = session('selected_role') === 'wali_kelas' ? 'wali_kelas' : 'guru';
 
         $count = \App\Models\Notification::where(function($query) use ($guru, $role) {
             $query->where('target', 'all')
@@ -145,6 +145,11 @@ Route::middleware(['web', 'guest'])->group(function () {
 
 
 Route::post('logout', [LoginController::class, 'logout'])->name('logout');
+
+Route::middleware('auth:guru')->group(function () {
+    Route::get('/switch-role/{role}', [LoginController::class, 'switchRole'])
+        ->name('auth.switch.role');
+});
 
 // Admin Routes - Guard: web, Role: admin only
 Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admin')->group(function () {
@@ -231,6 +236,8 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
     Route::prefix('kkm')->name('admin.kkm.')->group(function() {
         Route::get('/', [KkmController::class, 'index'])->name('index');
         Route::post('/', [KkmController::class, 'store'])->name('store');
+        Route::get('/by-kelas/{kelas}', [KkmController::class, 'byKelas'])->name('by-kelas');
+        Route::post('/batch-save', [KkmController::class, 'batchSave'])->name('batch-save');
         Route::get('/list', [KkmController::class, 'getKkmList'])->name('list');
         // Route baru untuk KKM massal
         Route::post('/global', [KkmController::class, 'applyGlobalKkm'])->name('global');
@@ -257,6 +264,9 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
 
     Route::get('/report-history/preview/{report}', [ReportController::class, 'previewHistoryRapor'])
     ->name('admin.report.history.preview');
+
+    Route::delete('/report-history/{report}', [ReportController::class, 'destroyHistory'])
+    ->name('admin.report.history.destroy');
 
     // Endpoint untuk mendapatkan data kelas
     Route::get('/kelas/data', function() {

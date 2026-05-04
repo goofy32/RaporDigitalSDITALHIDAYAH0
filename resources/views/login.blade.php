@@ -73,8 +73,8 @@
             @csrf
             <!-- Username -->
             <div class="mb-4">
-                <label for="username" class="block mb-2 text-sm font-medium text-gray-700">Nama Pengguna</label>
-                <input type="text" name="username" id="username" required
+                <label for="username" class="block mb-2 text-sm font-medium text-gray-700">Username atau Email</label>
+                <input type="text" name="username" id="username" required value="{{ old('username') }}"
                     class="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500">
             </div>
 
@@ -117,20 +117,8 @@
                     </button>
                 </div>
             </div>
-            <!-- Role -->
-            <div class="mb-6">
-                <label for="role" class="block mb-2 text-sm font-medium text-gray-700">Role</label>
-                <select name="role" id="role" required
-                    class="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 text-sm">
-                    <option value="" disabled selected>Pilih Role</option>
-                    <option value="admin">Admin</option>
-                    <option value="guru">Guru</option>
-                    <option value="wali_kelas">Wali Kelas</option>
-                </select>
-            </div>
-
             <!-- Button -->
-            <div class="flex justify-center">
+            <div class="flex justify-center mt-6">
                 <button type="submit"
                     class="w-full px-4 py-2 text-white bg-green-700 rounded-lg hover:bg-green-800 focus:outline-none focus:ring-2 focus:ring-green-500">
                     Masuk

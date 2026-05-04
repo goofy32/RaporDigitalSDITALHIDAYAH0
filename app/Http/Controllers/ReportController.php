@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
+use App\Traits\RequiresTahunAjaran;
 use App\Models\ReportTemplate;
 use App\Models\ReportPlaceholder;
 use App\Models\Siswa;
@@ -23,6 +24,8 @@ use Illuminate\Support\Facades\URL;
 
 class ReportController extends Controller
 {
+    use RequiresTahunAjaran;
+
     // Modify the index method to pass school profile to the view
     public function index()
     {
@@ -417,6 +420,33 @@ class ReportController extends Controller
         $fileName = 'rapor_' . $report->siswa->nis . '_' . $report->type . '.docx';
         
         return response()->download($path, $fileName);
+    }
+
+    public function destroyHistory(ReportGeneration $report)
+    {
+        try {
+            if ($report->generated_file && Storage::disk('public')->exists($report->generated_file)) {
+                Storage::disk('public')->delete($report->generated_file);
+            }
+
+            $report->delete();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Riwayat berhasil dihapus',
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error deleting report history', [
+                'report_id' => $report->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal menghapus riwayat rapor.',
+            ], 500);
+        }
     }
     /**
      * Buat template sampel dinamis dengan placeholder terbaru
@@ -1431,7 +1461,14 @@ class ReportController extends Controller
     {
         try {
             $type = $request->query('type', 'UTS');
-            $tahunAjaranId = $request->query('tahun_ajaran_id', session('tahun_ajaran_id'));
+            $tahunAjaranId = $this->getValidTahunAjaranId(
+                $request->query('tahun_ajaran_id') ? (int) $request->query('tahun_ajaran_id') : null
+            );
+
+            if (!$tahunAjaranId) {
+                return $this->failTahunAjaranNotSet($request, true);
+            }
+
             $disposition = $request->query('disposition', 'inline') === 'attachment' ? 'attachment' : 'inline';
             
             // Similar to downloadPdf but return for inline viewing
@@ -1488,7 +1525,14 @@ class ReportController extends Controller
     public function requestPdf(Siswa $siswa, Request $request)
     {
         $type = $request->input('type', 'UTS');
-        $tahunAjaranId = $request->input('tahun_ajaran_id', session('tahun_ajaran_id'));
+        $tahunAjaranId = $this->getValidTahunAjaranId(
+            $request->input('tahun_ajaran_id') ? (int) $request->input('tahun_ajaran_id') : null
+        );
+
+        if (!$tahunAjaranId) {
+            return $this->failTahunAjaranNotSet($request, true);
+        }
+
         $requestId = uniqid('pdf_', true);
 
         Log::info("=== PDF REQUEST RECEIVED ===", [
@@ -1726,7 +1770,13 @@ class ReportController extends Controller
     {
         $type = $request->input('type', 'UTS');
         $action = $request->input('action', 'download');
-        $tahunAjaranId = $request->input('tahun_ajaran_id', session('tahun_ajaran_id'));
+        $tahunAjaranId = $this->getValidTahunAjaranId(
+            $request->input('tahun_ajaran_id') ? (int) $request->input('tahun_ajaran_id') : null
+        );
+
+        if (!$tahunAjaranId) {
+            return $this->failTahunAjaranNotSet($request, true);
+        }
         
         try {
             \Log::info('Generate report request', [
@@ -2316,7 +2366,13 @@ class ReportController extends Controller
         try {
             $siswaIds = $request->input('siswa_ids', []);
             $type = $request->input('type', 'UTS');
-            $tahunAjaranId = $request->input('tahun_ajaran_id', session('tahun_ajaran_id'));
+            $tahunAjaranId = $this->getValidTahunAjaranId(
+                $request->input('tahun_ajaran_id') ? (int) $request->input('tahun_ajaran_id') : null
+            );
+
+            if (!$tahunAjaranId) {
+                return $this->failTahunAjaranNotSet($request, true);
+            }
             
             // Get current semester from tahun ajaran
             $tahunAjaran = \App\Models\TahunAjaran::find($tahunAjaranId);

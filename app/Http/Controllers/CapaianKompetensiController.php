@@ -9,11 +9,14 @@ use App\Models\CapaianKompetensiCustom;
 use App\Models\MataPelajaran;
 use App\Models\Siswa;
 use App\Models\TahunAjaran;
+use App\Traits\RequiresTahunAjaran;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class CapaianKompetensiController extends Controller
 {
+    use RequiresTahunAjaran;
+
     // =============== ADMIN METHODS ===============
     
     /**
@@ -45,15 +48,18 @@ class CapaianKompetensiController extends Controller
      */
     public function adminStore(Request $request)
     {
+        $tahunAjaranId = $this->getValidTahunAjaranId();
+
+        if (!$tahunAjaranId) {
+            return $this->failTahunAjaranNotSet($request);
+        }
+
         $request->validate([
             'mata_pelajaran' => 'required|string|max:255',
             'nilai_min' => 'required|numeric|min:0|max:100',
             'nilai_max' => 'required|numeric|min:0|max:100|gte:nilai_min',
             'template_text' => 'required|string|max:1000',
         ]);
-
-        $tahunAjaranId = session('tahun_ajaran_id');
-
         // Cek overlap range nilai untuk mata pelajaran yang sama
         $overlap = CapaianKompetensiTemplate::where('mata_pelajaran', $request->mata_pelajaran)
             ->where('tahun_ajaran_id', $tahunAjaranId)
@@ -182,8 +188,13 @@ class CapaianKompetensiController extends Controller
      */
     public function waliKelasUpdate(Request $request, $mataPelajaranId)
     {
+        $tahunAjaranId = $this->getValidTahunAjaranId();
+
+        if (!$tahunAjaranId) {
+            return $this->failTahunAjaranNotSet($request);
+        }
+
         $guru = auth()->user();
-        $tahunAjaranId = session('tahun_ajaran_id');
         $tahunAjaran = TahunAjaran::find($tahunAjaranId);
         $semester = $tahunAjaran ? $tahunAjaran->semester : 1;
 

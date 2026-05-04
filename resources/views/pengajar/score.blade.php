@@ -28,8 +28,8 @@
         $mapelDenganNilaiRendah = [];
         $siswaDibawahKKM = [];
 
-        // Get KKM notification settings using the Setting model
-        $completeScoresOnly = \App\Models\Setting::getBool('kkm_notification_complete_scores_only', false);
+        // Pengaturan completeScoresOnly diabaikan.
+        // Notifikasi KKM selalu menampilkan semua nilai di bawah KKM.
 
         foreach($kelasData as $kelas) {
             foreach($kelas->mataPelajarans as $mapel) {
@@ -47,14 +47,6 @@
                     ->whereNotNull('nilai_akhir_rapor')
                     ->where('nilai_akhir_rapor', '<', $kkmValue);
                     
-                // If we require complete scores, add conditions for all components
-                if ($completeScoresOnly) {
-                    $query->whereNotNull('nilai_tp')
-                        ->whereNotNull('nilai_lm')
-                        ->whereNotNull('nilai_tes')
-                        ->whereNotNull('nilai_non_tes');
-                }
-                
                 $lowScores = $query->count();
                     
                 if ($lowScores > 0) {
@@ -70,14 +62,6 @@
                         ->whereNotNull('nilai_akhir_rapor')
                         ->where('nilai_akhir_rapor', '<', $kkmValue);
                         
-                    // If requiring complete scores, add the same conditions
-                    if ($completeScoresOnly) {
-                        $siswaLowQuery->whereNotNull('nilai_tp')
-                            ->whereNotNull('nilai_lm')
-                            ->whereNotNull('nilai_tes')
-                            ->whereNotNull('nilai_non_tes');
-                    }
-                    
                     $siswaLow = $siswaLowQuery->with('siswa')->get();
                         
                     foreach($siswaLow as $nilai) {

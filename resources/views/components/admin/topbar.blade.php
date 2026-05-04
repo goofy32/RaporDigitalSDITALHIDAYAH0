@@ -41,17 +41,10 @@
                 <div class="flex items-center ms-2 md:me-24 relative">
                     <!-- Large logo that extends below the topbar -->
                     <div class="relative h-12 w-32 mr-3"> <!-- Wider container for the large logo -->
-                        @if(isset($schoolProfile->logo))
-                            <img src="{{ asset('storage/' . $schoolProfile->logo) }}" 
-                                 class="absolute h-20 w-auto max-w-none -bottom-3"
-                                 style="left: 40%; transform: translateX(-50%);"
-                                 alt="Logo Sekolah" />
-                        @else
-                            <img src="{{ asset('images/logo/sdit-logo.png') }}" 
-                                 class="absolute h-20 w-auto max-w-none -bottom-3"
-                                 style="left: 50%; transform: translateX(-50%);"
-                                 alt="SDIT Al-Hidayah Logo">
-                        @endif
+                        <img src="{{ asset('images/logo/logo.png') }}" 
+                             class="absolute h-20 w-auto max-w-none -bottom-3"
+                             style="left: 40%; transform: translateX(-50%);"
+                             alt="Logo Sekolah">
                     </div>
                     
                     <!-- School name -->
@@ -199,6 +192,28 @@
                             <!-- Menu Items -->
                             <div class="border-t border-gray-100">
                                 @if(Auth::guard('guru')->check())
+                                    @if(Auth::guard('guru')->user()->isWaliKelas())
+                                        @if(session('selected_role') === 'wali_kelas')
+                                            <a href="{{ route('auth.switch.role', ['role' => 'pengajar']) }}"
+                                            class="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                                            role="menuitem">
+                                                <!-- <svg class="h-4 w-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h11m0 0l-3-3m3 3l-3 3m9 7H10m0 0l3-3m-3 3l3 3" />
+                                                </svg> -->
+                                                Beralih ke Pengajar
+                                            </a>
+                                        @else
+                                            <a href="{{ route('auth.switch.role', ['role' => 'wali_kelas']) }}"
+                                            class="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                                            role="menuitem">
+                                                <!-- <svg class="h-4 w-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h11m0 0l-3-3m3 3l-3 3m9 7H10m0 0l3-3m-3 3l3 3" />
+                                                </svg> -->
+                                                Beralih ke Wali Kelas
+                                            </a>
+                                        @endif
+                                    @endif
+
                                     @if(session('selected_role') === 'wali_kelas')
                                         <a href="{{ route('wali_kelas.profile') }}" 
                                         class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100" 

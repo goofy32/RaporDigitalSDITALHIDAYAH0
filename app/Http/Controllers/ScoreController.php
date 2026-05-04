@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Traits\RequiresTahunAjaran;
 use App\Models\Kelas;
 use App\Models\MataPelajaran;
 use App\Models\Siswa;
@@ -18,6 +19,8 @@ use Illuminate\Support\Facades\Cache;
 
 class ScoreController extends Controller
 {
+    use RequiresTahunAjaran;
+
     public function index()
     {
         $guru = Auth::guard('guru')->user();
@@ -49,11 +52,16 @@ class ScoreController extends Controller
 
     public function saveScore(Request $request, $id)
     {
+        $tahunAjaranId = $this->getValidTahunAjaranId();
+
+        if (!$tahunAjaranId) {
+            return $this->failTahunAjaranNotSet($request, true);
+        }
+
         try {
             DB::beginTransaction();
             $savedData = [];
             $notSavedData = []; // Tracking data yang tidak tersimpan
-            $tahunAjaranId = session('tahun_ajaran_id');
 
             foreach($request->scores as $siswaId => $scoreData) {
                 $studentData = [

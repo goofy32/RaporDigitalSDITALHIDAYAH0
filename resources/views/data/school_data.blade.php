@@ -44,15 +44,9 @@
             <div class="grid grid-cols-3 gap-4">
                 <!-- Gambar Profil Kiri -->
                 <div class="p-4 bg-gray-100 rounded-lg flex items-center justify-center">
-                    @if(isset($profil->logo))
-                        <img src="{{ asset('storage/' . $profil->logo) }}" 
-                            alt="Logo Sekolah" 
-                            class="w-64 h-64 object-cover object-center rounded-lg">
-                    @else
-                        <img src="https://via.placeholder.com/256" 
-                            alt="Logo Sekolah" 
-                            class="w-64 h-64 object-cover object-center rounded-lg">
-                    @endif
+                    <img src="{{ asset('images/logo/logo.png') }}" 
+                        alt="Logo Sekolah" 
+                        class="w-64 h-64 object-cover object-center rounded-lg">
                 </div>
 
                 <!-- Tabel Data Sekolah -->

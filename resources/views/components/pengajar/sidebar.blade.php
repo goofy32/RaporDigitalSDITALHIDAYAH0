@@ -65,9 +65,6 @@
                     $countLowScores = 0;
                     $kkmValue = 70; // Default KKM value
                     
-                    // Get KKM notification setting using the Setting model
-                    $completeScoresOnly = \App\Models\Setting::getBool('kkm_notification_complete_scores_only', false);
-                    
                     // Cek apakah ada guru yang login
                     if (Auth::guard('guru')->check()) {
                         $guru = Auth::guard('guru')->user();
@@ -87,14 +84,6 @@
                                     ->where('mata_pelajarans.tahun_ajaran_id', $tahunAjaranId)
                                     ->where('kkms.tahun_ajaran_id', $tahunAjaranId);
                             });
-                        }
-                        
-                        // If we require complete scores, add checks for all score components
-                        if ($completeScoresOnly) {
-                            $query->whereNotNull('nilais.nilai_tp')
-                                ->whereNotNull('nilais.nilai_lm')
-                                ->whereNotNull('nilais.nilai_tes')
-                                ->whereNotNull('nilais.nilai_non_tes');
                         }
                         
                         $nilaiDibawahKKM = $query->count();

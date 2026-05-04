@@ -81,11 +81,6 @@
                         <p class="text-green-600">Semester {{ $activeTahunAjaran->semester }} ({{ $activeTahunAjaran->semester == 1 ? 'Ganjil' : 'Genap' }})</p>
                         <p class="text-sm text-gray-600">{{ date('d F Y', strtotime($activeTahunAjaran->tanggal_mulai)) }} - {{ date('d F Y', strtotime($activeTahunAjaran->tanggal_selesai)) }}</p>
                     </div>
-                    <div>
-                        <a href="{{ route('tahun.ajaran.show', $activeTahunAjaran->id) }}" class="px-3 py-1 bg-green-600 text-white rounded-md mr-2 text-sm hover:bg-green-700 flex items-center transition duration-150 ease-in-out">
-                            Detail
-                        </a>
-                    </div>
                 </div>
                 @if($activeTahunAjaran->deskripsi)
                 <div class="mt-2 p-2 bg-white rounded border border-green-100">
@@ -189,9 +184,23 @@
                                         <!-- Tombol Restore untuk tahun ajaran yang diarsipkan -->
                                         <form action="{{ route('tahun.ajaran.restore', $tahunAjaran->id) }}" method="POST" class="inline">
                                             @csrf
-                                            <button type="submit" class="border-0 bg-transparent p-0" title="Pulihkan" 
+                                            <button type="submit"
+                                                    class="border-0 bg-transparent p-0"
+                                                    title="Pulihkan"
                                                     onclick="return confirm('Apakah Anda yakin ingin memulihkan tahun ajaran ini?')">
-                                                <img src="{{ asset('images/icons/preview.png') }}" alt="Pulihkan" class="w-5 h-5">
+
+                                                <svg xmlns="http://www.w3.org/2000/svg"
+                                                    class="w-5 h-5"
+                                                    viewBox="0 0 24 24"
+                                                    fill="none"
+                                                    stroke="currentColor"
+                                                    stroke-width="2"
+                                                    stroke-linecap="round"
+                                                    stroke-linejoin="round">
+                                                    <path d="M3 12a9 9 0 1 0 3-6.7" />
+                                                    <path d="M3 4v6h6" />
+                                                </svg>
+
                                             </button>
                                         </form>
                                         

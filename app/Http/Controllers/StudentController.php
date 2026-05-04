@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Traits\RequiresTahunAjaran;
 use Illuminate\Http\Request;
 use App\Imports\StudentImport;
 use Maatwebsite\Excel\Facades\Excel;
@@ -15,6 +16,8 @@ use Illuminate\Support\Str;
 
 class StudentController extends Controller
 {
+    use RequiresTahunAjaran;
+
     public function index(Request $request)
     {
         // Ambil tahun ajaran dari session
@@ -89,6 +92,12 @@ class StudentController extends Controller
 
     public function store(Request $request)
     {
+        $tahunAjaranId = $this->getValidTahunAjaranId();
+
+        if (!$tahunAjaranId) {
+            return $this->failTahunAjaranNotSet($request);
+        }
+
         $validated = $request->validate([
             'nis' => [
                 'required',
@@ -133,6 +142,8 @@ class StudentController extends Controller
         if ($request->hasFile('photo')) {
             $validated['photo'] = $this->storePublicUpload($request->file('photo'), 'photos');
         }
+
+        $validated['tahun_ajaran_id'] = $tahunAjaranId;
     
         try {
             Siswa::create($validated);
@@ -172,6 +183,12 @@ class StudentController extends Controller
 
     public function update(Request $request, $id)
     {
+        $tahunAjaranId = $this->getValidTahunAjaranId();
+
+        if (!$tahunAjaranId) {
+            return $this->failTahunAjaranNotSet($request);
+        }
+
         $student = Siswa::findOrFail($id);
         $validated = $request->validate([
             'nis' => 'required|string|max:20|unique:siswas,nis,'.$id,
@@ -199,6 +216,8 @@ class StudentController extends Controller
             }
             $validated['photo'] = $this->storePublicUpload($request->file('photo'), 'photos');
         }
+
+        $validated['tahun_ajaran_id'] = $tahunAjaranId;
     
         $student->update($validated);
         return redirect()->route('student')->with('success', 'Data siswa berhasil diperbarui!');
@@ -419,6 +438,12 @@ class StudentController extends Controller
 
     public function waliKelasUpdate(Request $request, $id)
     {
+        $tahunAjaranId = $this->getValidTahunAjaranId();
+
+        if (!$tahunAjaranId) {
+            return $this->failTahunAjaranNotSet($request);
+        }
+
         $waliKelas = auth()->guard('guru')->user();
         $kelasWaliId = $waliKelas->getWaliKelasId(); // Menggunakan method getWaliKelasId() bukan kelas_pengajar_id
         
@@ -447,6 +472,8 @@ class StudentController extends Controller
             }
             $validated['photo'] = $this->storePublicUpload($request->file('photo'), 'photos');
         }
+
+        $validated['tahun_ajaran_id'] = $tahunAjaranId;
 
         $student->update($validated);
         return redirect()->route('wali_kelas.student.index')

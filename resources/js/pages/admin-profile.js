@@ -1,24 +1,3 @@
-function bindLogoPreview() {
-    var logoInput = document.getElementById('logo');
-    var profileImage = document.getElementById('profileImage');
-
-    if (!logoInput || !profileImage || logoInput.dataset.previewBound === 'true') return;
-
-    logoInput.addEventListener('change', function (event) {
-        var input = event.target;
-        if (!input.files?.[0]) return;
-
-        var reader = new FileReader();
-        reader.onload = function () {
-            profileImage.src = reader.result;
-            profileImage.classList.add('object-cover', 'object-center');
-        };
-        reader.readAsDataURL(input.files[0]);
-    });
-
-    logoInput.dataset.previewBound = 'true';
-}
-
 function updateSemester(selectElement) {
     var target = selectElement || document.getElementById('tahun_pelajaran');
     if (!target || !target.value) return;
@@ -67,6 +46,5 @@ export function initAdminProfilePage() {
     if (!pageRoot || pageRoot.dataset.profileBound === 'true') return;
 
     pageRoot.dataset.profileBound = 'true';
-    bindLogoPreview();
     syncAcademicYearSelection(pageRoot);
 }

@@ -4,8 +4,6 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use App\Models\ProfilSekolah;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Str;
 
 class SchoolProfileController extends Controller
 {
@@ -57,44 +55,13 @@ class SchoolProfileController extends Controller
             'jumlah_siswa' => 'nullable|integer',
             'tempat_terbit' => 'required|string|max:255',
             'tanggal_terbit' => 'required|date',
-            'logo' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp', 'max:2048'],
         ]);
     
         // Cek apakah data profil sudah ada
         $profil = ProfilSekolah::first();
         
         // Siapkan data yang akan diupdate/disimpan
-        $data = $request->except(['_token', 'logo']);
-
-        // Jika ada file logo yang diupload
-        if ($request->hasFile('logo')) {
-            \Log::info('Logo file found', [
-                'file' => $request->file('logo'),
-                'original_name' => $request->file('logo')->getClientOriginalName(),
-                'mime' => $request->file('logo')->getMimeType(),
-                'size' => $request->file('logo')->getSize()
-            ]);
-            
-            try {
-                // Jika ada logo lama, hapus dulu
-                if ($profil && $profil->logo) {
-                    Storage::disk('public')->delete($profil->logo);
-                }
-                
-                // Simpan logo baru
-                $logoPath = $this->storePublicUpload($request->file('logo'), 'logos');
-                $data['logo'] = $logoPath;
-                
-                \Log::info('Logo stored successfully', [
-                    'path' => $logoPath
-                ]);
-            } catch (\Exception $e) {
-                \Log::error('Error storing logo', [
-                    'error' => $e->getMessage(),
-                    'trace' => $e->getTraceAsString()
-                ]);
-            }
-        }
+        $data = $validated;
     
         // Cari tahun ajaran aktif berdasarkan tahun dan semester yang dipilih
         $tahunAjaran = \App\Models\TahunAjaran::where('tahun_ajaran', $validated['tahun_pelajaran'])
@@ -126,26 +93,4 @@ class SchoolProfileController extends Controller
         return redirect()->route('profile')->with('success', 'Profil sekolah berhasil disimpan.');
     }
 
-    private function storePublicUpload(\Illuminate\Http\UploadedFile $file, string $folder, ?string $fileName = null): string
-    {
-        Storage::disk('public')->makeDirectory($folder);
-
-        $extension = $file->getClientOriginalExtension() ?: $file->extension() ?: 'bin';
-        $baseName = $fileName
-            ? pathinfo($fileName, PATHINFO_FILENAME)
-            : pathinfo($file->hashName(), PATHINFO_FILENAME);
-        $safeBaseName = Str::slug($baseName ?: pathinfo($file->hashName(), PATHINFO_FILENAME));
-        $finalFileName = $safeBaseName . '.' . $extension;
-
-        $destinationDirectory = Storage::disk('public')->path($folder);
-        $file->move($destinationDirectory, $finalFileName);
-
-        $filePath = $folder . '/' . $finalFileName;
-
-        if (!Storage::disk('public')->exists($filePath)) {
-            throw new \RuntimeException('File gagal disimpan.');
-        }
-
-        return $filePath;
-    }
 }

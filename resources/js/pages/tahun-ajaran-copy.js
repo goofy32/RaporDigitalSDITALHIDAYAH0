@@ -1,6 +1,8 @@
 import {
     bindAcademicYearValidation,
+    bindDateRangeValidation,
     validateAcademicYearFormat,
+    validateDateRange,
 } from '../features/tahun-ajaran-form';
 
 export function initTahunAjaranCopyPage() {
@@ -10,59 +12,212 @@ export function initTahunAjaranCopyPage() {
     var form = document.getElementById('formCopyTahunAjaran');
     var submitButton = document.querySelector('button[form="formCopyTahunAjaran"][type="submit"]');
     var tahunAjaranInput = document.getElementById('tahun_ajaran');
+    var tanggalMulaiInput = document.getElementById('tanggal_mulai');
+    var tanggalSelesaiInput = document.getElementById('tanggal_selesai');
+    var csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
+    var forceDeleteUrlTemplate = pageRoot.dataset.forceDeleteUrlTemplate || '';
+    var indexUrl = pageRoot.dataset.indexUrl || '';
     var isSubmitting = false;
+    var defaultButtonHtml = submitButton ? submitButton.innerHTML : '';
 
     if (!form || !submitButton || form.dataset.tahunAjaranBound === 'true') return;
 
     form.dataset.tahunAjaranBound = 'true';
     bindAcademicYearValidation(tahunAjaranInput);
+    bindDateRangeValidation(tanggalMulaiInput, tanggalSelesaiInput);
 
-    form.addEventListener('submit', function (event) {
+    function setSubmittingState(active) {
+        isSubmitting = active;
+        submitButton.disabled = active;
+        submitButton.innerHTML = active
+            ? `
+                <svg class="animate-spin -ml-1 mr-2 h-4 w-4 inline-block" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Membuat Tahun Ajaran...
+            `
+            : defaultButtonHtml;
+    }
+
+    function getErrorMessage(data, fallbackMessage) {
+        if (data && data.message) {
+            return data.message;
+        }
+
+        if (data && data.errors) {
+            var firstKey = Object.keys(data.errors)[0];
+            if (firstKey && data.errors[firstKey] && data.errors[firstKey][0]) {
+                return data.errors[firstKey][0];
+            }
+        }
+
+        return fallbackMessage;
+    }
+
+    async function deleteArchivedRecord(archivedId) {
+        var deleteUrl = forceDeleteUrlTemplate.replace('__ID__', String(archivedId));
+        var response = await fetch(deleteUrl, {
+            method: 'DELETE',
+            headers: {
+                'Accept': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+                'X-CSRF-TOKEN': csrfToken,
+            },
+        });
+
+        var data = {};
+        try {
+            data = await response.json();
+        } catch (error) {
+            data = {};
+        }
+
+        if (!response.ok || !data.success) {
+            throw new Error(getErrorMessage(data, 'Gagal menghapus data tahun ajaran dari arsip.'));
+        }
+    }
+
+    async function submitCopyRequest() {
+        var formData = new FormData(form);
+        var response = await fetch(form.action, {
+            method: 'POST',
+            headers: {
+                'Accept': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+            },
+            body: formData,
+        });
+
+        var data = {};
+        try {
+            data = await response.json();
+        } catch (error) {
+            data = {};
+        }
+
+        if (response.ok && data.success) {
+            await Swal.fire({
+                icon: 'success',
+                title: 'Berhasil',
+                text: data.message || 'Tahun ajaran berikutnya berhasil dibuat.',
+                timer: 1600,
+                showConfirmButton: false,
+            });
+
+            window.location.href = data.redirect || indexUrl || form.action;
+            return;
+        }
+
+        if (response.status === 409 && data.conflict === 'archived') {
+            var result = await Swal.fire({
+                icon: 'warning',
+                title: 'Tahun Ajaran Sudah Ada di Arsip',
+                html: `Tahun ajaran <b>${tahunAjaranInput.value.trim()}</b> sudah ada di arsip. Hapus dari arsip terlebih dahulu untuk melanjutkan copy?`,
+                showCancelButton: true,
+                confirmButtonColor: '#dc2626',
+                confirmButtonText: 'Hapus dari Arsip & Lanjutkan',
+                cancelButtonText: 'Batal',
+            });
+
+            if (result.isConfirmed && data.archived_id) {
+                await deleteArchivedRecord(data.archived_id);
+                await submitCopyRequest();
+            }
+
+            return;
+        }
+
+        if (response.status === 409 && data.conflict === 'active') {
+            await Swal.fire({
+                icon: 'error',
+                title: 'Tahun Ajaran Sudah Ada',
+                text: getErrorMessage(data, 'Tahun ajaran tersebut sudah ada.'),
+            });
+            return;
+        }
+
+        if (response.status === 422) {
+            await Swal.fire({
+                icon: 'error',
+                title: 'Validasi Gagal',
+                text: getErrorMessage(data, 'Mohon periksa kembali data yang diisikan.'),
+            });
+            return;
+        }
+
+        throw new Error(getErrorMessage(data, 'Gagal membuat tahun ajaran berikutnya.'));
+    }
+
+    form.addEventListener('submit', async function (event) {
+        event.preventDefault();
+
         if (isSubmitting) {
-            event.preventDefault();
             return false;
         }
 
         if (!validateAcademicYearFormat(tahunAjaranInput)) {
-            event.preventDefault();
-            alert('Format tahun ajaran harus XXXX/XXXX, contoh: 2024/2025');
+            await Swal.fire({
+                icon: 'error',
+                title: 'Format Tidak Valid',
+                text: 'Format tahun ajaran harus XXXX/XXXX, contoh: 2024/2025.',
+            });
             tahunAjaranInput.focus();
             return false;
         }
 
-        var confirmed = confirm(`Apakah Anda yakin ingin membuat tahun ajaran berikutnya?
-
-Tindakan ini akan:
-• Menyalin struktur kelas dengan nama dan guru yang sama
-• Menyalin pengaturan yang dipilih dari tahun ajaran saat ini
-• Memulai tahun ajaran baru dengan data nilai kosong
-
-Siswa dapat diatur kenaikan kelasnya secara manual menggunakan fitur Kenaikan Kelas.
-
-Proses ini tidak dapat dibatalkan setelah dimulai.`);
-
-        if (!confirmed) {
-            event.preventDefault();
+        if (!validateDateRange(tanggalMulaiInput, tanggalSelesaiInput)) {
+            await Swal.fire({
+                icon: 'error',
+                title: 'Tanggal Tidak Valid',
+                text: 'Tanggal selesai harus setelah tanggal mulai.',
+            });
+            tanggalSelesaiInput.focus();
             return false;
         }
 
-        isSubmitting = true;
-        submitButton.disabled = true;
-        submitButton.innerHTML = `
-            <svg class="animate-spin -ml-1 mr-2 h-4 w-4 inline-block" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-            Membuat Tahun Ajaran...
-        `;
-        return true;
+        var confirmed = await Swal.fire({
+            icon: 'question',
+            title: 'Buat Tahun Ajaran Berikutnya?',
+            html: `
+                <div class="text-left space-y-2">
+                    <p>Tindakan ini akan:</p>
+                    <ul class="list-disc list-inside text-sm text-gray-700 space-y-1">
+                        <li>Menyalin struktur kelas dengan nama dan guru yang sama</li>
+                        <li>Menyalin seluruh pengaturan dari tahun ajaran saat ini</li>
+                        <li>Memulai tahun ajaran baru dengan data nilai kosong</li>
+                    </ul>
+                    <p class="text-sm text-gray-700 mt-3">Siswa dapat diatur kenaikan kelasnya secara manual menggunakan fitur Kenaikan Kelas.</p>
+                </div>
+            `,
+            showCancelButton: true,
+            confirmButtonColor: '#16a34a',
+            confirmButtonText: 'Ya, Buat',
+            cancelButtonText: 'Batal',
+        });
+
+        if (!confirmed.isConfirmed) {
+            return false;
+        }
+
+        setSubmittingState(true);
+
+        try {
+            await submitCopyRequest();
+        } catch (error) {
+            await Swal.fire({
+                icon: 'error',
+                title: 'Gagal Membuat Tahun Ajaran',
+                text: error.message || 'Terjadi kesalahan. Silakan coba lagi.',
+            });
+        } finally {
+            setSubmittingState(false);
+        }
+
+        return false;
     });
 
     if (typeof initFlowbite === 'function') {
         initFlowbite();
     }
-
-    pageRoot.querySelectorAll('input[disabled]').forEach(checkbox => {
-        checkbox.parentElement.title = 'Pengaturan ini wajib untuk menjaga konsistensi struktur kelas';
-    });
 }

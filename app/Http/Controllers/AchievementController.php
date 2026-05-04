@@ -6,11 +6,14 @@ use Illuminate\Http\Request;
 use App\Models\Prestasi;
 use App\Models\Kelas;
 use App\Models\Siswa;
+use App\Traits\RequiresTahunAjaran;
 use Illuminate\Support\Facades\Log;
 
 
 class AchievementController extends Controller
 {
+    use RequiresTahunAjaran;
+
     // Menampilkan semua data prestasi
     public function index(Request $request)
     {
@@ -86,6 +89,12 @@ class AchievementController extends Controller
     // Menyimpan data prestasi
     public function store(Request $request)
     {
+        $tahunAjaranId = $this->getValidTahunAjaranId();
+
+        if (!$tahunAjaranId) {
+            return $this->failTahunAjaranNotSet($request);
+        }
+
         $validated = $request->validate([
             'kelas_id' => 'required|exists:kelas,id',
             'siswa_id' => 'required|exists:siswas,id',
@@ -93,7 +102,6 @@ class AchievementController extends Controller
             'keterangan' => 'nullable|string|max:500',
         ]);
     
-        $tahunAjaranId = session('tahun_ajaran_id');
         $validated['tahun_ajaran_id'] = $tahunAjaranId;
     
         Prestasi::create($validated);
@@ -130,6 +138,12 @@ class AchievementController extends Controller
     // Memperbarui data prestasi
     public function update(Request $request, $id)
     {
+        $tahunAjaranId = $this->getValidTahunAjaranId();
+
+        if (!$tahunAjaranId) {
+            return $this->failTahunAjaranNotSet($request);
+        }
+
         $validated = $request->validate([
             'kelas_id' => 'required|exists:kelas,id',
             'siswa_id' => 'required|exists:siswas,id',
@@ -137,7 +151,6 @@ class AchievementController extends Controller
             'keterangan' => 'nullable|string|max:500',
         ]);
     
-        $tahunAjaranId = session('tahun_ajaran_id');
         $validated['tahun_ajaran_id'] = $tahunAjaranId;
         
         $prestasi = Prestasi::findOrFail($id);

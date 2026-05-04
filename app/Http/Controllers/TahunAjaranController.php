@@ -861,6 +861,13 @@ class TahunAjaranController extends Controller
             
             // Pastikan tahun ajaran sudah diarsipkan
             if (!$tahunAjaran->trashed()) {
+                if (request()->expectsJson()) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Hanya tahun ajaran yang sudah diarsipkan yang dapat dihapus permanen.'
+                    ], 422);
+                }
+
                 return redirect()->back()
                     ->with('error', 'Hanya tahun ajaran yang sudah diarsipkan yang dapat dihapus permanen.');
             }
@@ -887,6 +894,13 @@ class TahunAjaranController extends Controller
             
             // Hapus permanen
             $tahunAjaran->forceDelete();
+
+            if (request()->expectsJson()) {
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Tahun ajaran berhasil dihapus permanen.'
+                ]);
+            }
             
             return redirect()->route('tahun.ajaran.index', ['showArchived' => 'true'])
                 ->with('success', 'Tahun ajaran berhasil dihapus permanen.');
@@ -896,6 +910,13 @@ class TahunAjaranController extends Controller
                 'tahun_ajaran_id' => $id,
                 'trace' => $e->getTraceAsString()
             ]);
+
+            if (request()->expectsJson()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Terjadi kesalahan saat menghapus permanen tahun ajaran.'
+                ], 500);
+            }
             
             return redirect()->back()
                 ->with('error', 'Terjadi kesalahan saat menghapus permanen tahun ajaran: ' . $e->getMessage());
@@ -981,13 +1002,45 @@ class TahunAjaranController extends Controller
         $tahunParts = explode('/', $sourceTahunAjaran->tahun_ajaran);
         $newTahunAjaran = (intval($tahunParts[0]) + 1) . '/' . (intval($tahunParts[1]) + 1);
         
-        // Cek apakah tahun ajaran baru sudah ada
-        $exists = TahunAjaran::where('tahun_ajaran', $newTahunAjaran)->first();
-        if ($exists) {
-            return redirect()->back()->with('error', 'Tahun ajaran ' . $newTahunAjaran . ' sudah ada!');
-        }
-        
         return view('admin.tahun_ajaran.copy', compact('sourceTahunAjaran', 'newTahunAjaran'));
+    }
+
+    private function findCopyConflictRecord(string $tahunAjaran, int $semester): ?TahunAjaran
+    {
+        return TahunAjaran::withTrashed()
+            ->where('tahun_ajaran', $tahunAjaran)
+            ->where('semester', $semester)
+            ->first();
+    }
+
+    private function respondToCopyConflict(Request $request, TahunAjaran $existing, string $tahunAjaran)
+    {
+        $semesterLabel = (int) $existing->semester === 1 ? 'Ganjil' : 'Genap';
+
+        if ($request->expectsJson()) {
+            if ($existing->trashed()) {
+                return response()->json([
+                    'success' => false,
+                    'conflict' => 'archived',
+                    'message' => 'Tahun ajaran ' . $tahunAjaran . ' semester ' . $semesterLabel . ' sudah ada di arsip.',
+                    'archived_id' => $existing->id
+                ], 409);
+            }
+
+            return response()->json([
+                'success' => false,
+                'conflict' => 'active',
+                'message' => 'Tahun ajaran ' . $tahunAjaran . ' semester ' . $semesterLabel . ' sudah ada dan belum diarsipkan.'
+            ], 409);
+        }
+
+        $message = $existing->trashed()
+            ? 'Tahun ajaran ' . $tahunAjaran . ' semester ' . $semesterLabel . ' sudah ada di arsip. Hapus dari arsip terlebih dahulu untuk melanjutkan copy.'
+            : 'Tahun ajaran ' . $tahunAjaran . ' semester ' . $semesterLabel . ' sudah ada dan belum diarsipkan.';
+
+        return redirect()->back()
+            ->with('error', $message)
+            ->withInput();
     }
 
 
@@ -999,21 +1052,24 @@ class TahunAjaranController extends Controller
 
     public function processCopy(Request $request, $id)
     {
+        $sourceTahunAjaran = TahunAjaran::withTrashed()->findOrFail($id);
+
+        if ($sourceTahunAjaran->semester != 2) {
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Pembuatan tahun ajaran berikutnya hanya dapat dilakukan dari semester genap.'
+                ], 422);
+            }
+
+            return redirect()->back()->with('error', 'Pembuatan tahun ajaran berikutnya hanya dapat dilakukan dari semester genap.');
+        }
+
         $validator = Validator::make($request->all(), [
             'tahun_ajaran' => [
                 'required',
                 'string',
                 'regex:/^\d{4}\/\d{4}$/',
-                function ($attribute, $value, $fail) {
-                    $exists = TahunAjaran::withTrashed()
-                        ->where('tahun_ajaran', $value)
-                        ->where('semester', request('semester'))
-                        ->exists();
-                    
-                    if ($exists) {
-                        $fail('Tahun ajaran dan semester ini sudah ada. Silakan gunakan nama yang berbeda atau semester yang berbeda.');
-                    }
-                }
             ],
             'tanggal_mulai' => 'required|date',
             'tanggal_selesai' => 'required|date|after:tanggal_mulai',
@@ -1028,15 +1084,22 @@ class TahunAjaranController extends Controller
         ]);
 
         if ($validator->fails()) {
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $validator->errors()->first(),
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
             return redirect()->back()
                             ->withErrors($validator)
                             ->withInput();
         }
 
-        $sourceTahunAjaran = TahunAjaran::withTrashed()->findOrFail($id);
-        
-        if ($sourceTahunAjaran->semester != 2) {
-            return redirect()->back()->with('error', 'Pembuatan tahun ajaran berikutnya hanya dapat dilakukan dari semester genap.');
+        $conflict = $this->findCopyConflictRecord($request->tahun_ajaran, (int) $request->semester);
+        if ($conflict) {
+            return $this->respondToCopyConflict($request, $conflict, $request->tahun_ajaran);
         }
 
         DB::beginTransaction();
@@ -1089,6 +1152,14 @@ class TahunAjaranController extends Controller
             }
             
             DB::commit();
+
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Tahun ajaran berikutnya berhasil dibuat dengan struktur kelas yang sama!',
+                    'redirect' => route('tahun.ajaran.index')
+                ]);
+            }
             
             return redirect()->route('tahun.ajaran.index')
                             ->with('success', 'Tahun ajaran berikutnya berhasil dibuat dengan struktur kelas yang sama!');
@@ -1097,6 +1168,14 @@ class TahunAjaranController extends Controller
             \Log::error('Error in processCopy: ' . $e->getMessage(), [
                 'trace' => $e->getTraceAsString()
             ]);
+
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Gagal membuat tahun ajaran berikutnya. Silakan coba lagi.'
+                ], 500);
+            }
+
             return redirect()->back()->with('error', 'Gagal membuat tahun ajaran berikutnya: ' . $e->getMessage());
         }
     }

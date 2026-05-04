@@ -4,12 +4,15 @@ namespace App\Http\Controllers;
 
 use App\Models\CapaianKompetensiRangeTemplate;
 use App\Models\TahunAjaran;
+use App\Traits\RequiresTahunAjaran;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class CapaianRangeTemplateController extends Controller
 {
+    use RequiresTahunAjaran;
+
     /**
      * Display listing of range templates
      */
@@ -105,6 +108,12 @@ class CapaianRangeTemplateController extends Controller
      */
     public function store(Request $request)
     {
+        $tahunAjaranId = $this->getValidTahunAjaranId();
+
+        if (!$tahunAjaranId) {
+            return $this->failTahunAjaranNotSet($request, true);
+        }
+
         $request->validate([
             'nama_range' => 'required|string|max:255',
             'nilai_min' => 'required|integer|min:0|max:100',
@@ -112,9 +121,6 @@ class CapaianRangeTemplateController extends Controller
             'template_text' => 'required|string',
             'color_class' => 'nullable|string|max:255',
         ]);
-
-        $tahunAjaranId = session('tahun_ajaran_id');
-
         // Validasi range tidak overlap
         $existingTemplate = CapaianKompetensiRangeTemplate::where('tahun_ajaran_id', $tahunAjaranId)
             ->where('is_active', true)

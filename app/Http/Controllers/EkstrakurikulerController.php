@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Ekstrakurikuler;
 use App\Models\NilaiEkstrakurikuler;
 use App\Models\Siswa;
+use App\Traits\RequiresTahunAjaran;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
@@ -12,6 +13,8 @@ use Illuminate\Support\Facades\DB;
 
 class EkstrakurikulerController extends Controller
 {
+    use RequiresTahunAjaran;
+
     public function index(Request $request)
     {
         $tahunAjaranId = session('tahun_ajaran_id');
@@ -192,9 +195,14 @@ class EkstrakurikulerController extends Controller
     }
     public function waliKelasStore(Request $request)
     {
+        $tahunAjaranId = $this->getValidTahunAjaranId();
+
+        if (!$tahunAjaranId) {
+            return $this->failTahunAjaranNotSet($request);
+        }
+
         $waliKelas = auth()->guard('guru')->user();
         $kelasWaliId = $waliKelas->getWaliKelasId();
-        $tahunAjaranId = session('tahun_ajaran_id');
         
         if (!$kelasWaliId) {
             return redirect()->back()->with('error', 'Anda belum ditugaskan sebagai wali kelas untuk kelas manapun.');
@@ -268,9 +276,14 @@ class EkstrakurikulerController extends Controller
 
     public function waliKelasUpdate(Request $request, $id)
     {
+        $tahunAjaranId = $this->getValidTahunAjaranId();
+
+        if (!$tahunAjaranId) {
+            return $this->failTahunAjaranNotSet($request);
+        }
+
         $waliKelas = auth()->guard('guru')->user();
         $kelasWaliId = $waliKelas->getWaliKelasId();
-        $tahunAjaranId = session('tahun_ajaran_id');
         
         if (!$kelasWaliId) {
             return redirect()->back()->with('error', 'Anda belum ditugaskan sebagai wali kelas untuk kelas manapun.');

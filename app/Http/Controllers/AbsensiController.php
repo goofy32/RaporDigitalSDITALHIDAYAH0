@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Traits\RequiresTahunAjaran;
 use App\Models\Absensi;
 use App\Models\Siswa;
 use Illuminate\Http\Request;
@@ -9,6 +10,8 @@ use Illuminate\Support\Facades\DB;
 
 class AbsensiController extends Controller
 {
+    use RequiresTahunAjaran;
+
     public function index(Request $request)
     {
         $waliKelas = auth()->guard('guru')->user();
@@ -93,7 +96,12 @@ class AbsensiController extends Controller
 
     public function store(Request $request)
     {
-        $tahunAjaranId = session('tahun_ajaran_id');
+        $tahunAjaranId = $this->getValidTahunAjaranId();
+
+        if (!$tahunAjaranId) {
+            return $this->failTahunAjaranNotSet($request);
+        }
+
         $tahunAjaran = \App\Models\TahunAjaran::find($tahunAjaranId);
         $currentSemester = $tahunAjaran ? $tahunAjaran->semester : $request->semester;
         
@@ -159,6 +167,12 @@ class AbsensiController extends Controller
     
     public function update(Request $request, $id)
     {
+        $tahunAjaranId = $this->getValidTahunAjaranId();
+
+        if (!$tahunAjaranId) {
+            return $this->failTahunAjaranNotSet($request);
+        }
+
         $request->validate([
             'sakit' => 'required|integer|min:0',
             'izin' => 'required|integer|min:0',
@@ -166,7 +180,6 @@ class AbsensiController extends Controller
         ]);
 
         $absensi = Absensi::findOrFail($id);
-        $tahunAjaranId = session('tahun_ajaran_id');
         
         // Keep the original semester
         $data = $request->all();

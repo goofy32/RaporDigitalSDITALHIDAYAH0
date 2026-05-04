@@ -2,15 +2,19 @@
 
 namespace App\Http\Controllers;
 
+use App\Traits\RequiresTahunAjaran;
 use App\Models\Kkm;
 use App\Models\Kelas;
 use App\Models\MataPelajaran;
+use App\Models\TahunAjaran;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class KkmController extends Controller
 {
+    use RequiresTahunAjaran;
+
     public function index()
     {
         return redirect()->route('admin.dashboard')
@@ -21,6 +25,12 @@ class KkmController extends Controller
     {
         return view('admin.subject.kkm');
     }
+
+    protected function resolveTahunAjaranId(): ?int
+    {
+        return $this->getValidTahunAjaranId()
+            ?? TahunAjaran::where('is_active', true)->value('id');
+    }
     
     public function store(Request $request)
     {
@@ -29,7 +39,11 @@ class KkmController extends Controller
             'nilai' => 'required|numeric|min:0|max:100',
         ]);
         
-        $tahunAjaranId = session('tahun_ajaran_id');
+        $tahunAjaranId = $this->getValidTahunAjaranId();
+
+        if (!$tahunAjaranId) {
+            return $this->failTahunAjaranNotSet($request, true);
+        }
         
         try {
             $mataPelajaran = MataPelajaran::find($request->mata_pelajaran_id);
@@ -70,7 +84,7 @@ class KkmController extends Controller
             'overwriteExisting' => 'boolean',
         ]);
         
-        $tahunAjaranId = session('tahun_ajaran_id');
+        $tahunAjaranId = $this->resolveTahunAjaranId();
         
         try {
             DB::beginTransaction();
@@ -123,7 +137,7 @@ class KkmController extends Controller
     public function getKkm($mapelId)
     {
         $kkm = Kkm::where('mata_pelajaran_id', $mapelId)
-               ->where('tahun_ajaran_id', session('tahun_ajaran_id'))
+               ->where('tahun_ajaran_id', $this->resolveTahunAjaranId())
                ->first();
                
         return response()->json(['kkm' => $kkm ? $kkm->nilai : 70]);
@@ -136,7 +150,7 @@ class KkmController extends Controller
      */
     public function getKkmList()
     {
-        $tahunAjaranId = session('tahun_ajaran_id');
+        $tahunAjaranId = $this->resolveTahunAjaranId();
         
         $kkms = Kkm::with(['mataPelajaran.kelas'])
             ->where('tahun_ajaran_id', $tahunAjaranId)
@@ -168,6 +182,100 @@ class KkmController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Gagal menghapus KKM: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function byKelas(Kelas $kelas)
+    {
+        $tahunAjaranId = $this->resolveTahunAjaranId();
+
+        if (!$tahunAjaranId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Tahun ajaran aktif tidak ditemukan.',
+            ], 422);
+        }
+
+        $mataPelajarans = MataPelajaran::where('kelas_id', $kelas->id)
+            ->where('tahun_ajaran_id', $tahunAjaranId)
+            ->orderBy('nama_pelajaran')
+            ->get();
+
+        $kkms = Kkm::where('kelas_id', $kelas->id)
+            ->where('tahun_ajaran_id', $tahunAjaranId)
+            ->get()
+            ->keyBy('mata_pelajaran_id');
+
+        return response()->json([
+            'success' => true,
+            'items' => $mataPelajarans->map(function ($mataPelajaran) use ($kkms) {
+                $kkm = $kkms->get($mataPelajaran->id);
+
+                return [
+                    'kkm_id' => $kkm?->id,
+                    'mata_pelajaran_id' => $mataPelajaran->id,
+                    'nama_pelajaran' => $mataPelajaran->nama_pelajaran,
+                    'nilai' => $kkm?->nilai ?? 70,
+                ];
+            })->values(),
+        ]);
+    }
+
+    public function batchSave(Request $request)
+    {
+        $validated = $request->validate([
+            'kelas_id' => 'required|exists:kelas,id',
+            'tahun_ajaran_id' => 'required|exists:tahun_ajarans,id',
+            'items' => 'required|array',
+            'items.*.mata_pelajaran_id' => 'required|exists:mata_pelajarans,id',
+            'items.*.nilai' => 'required|integer|min:0|max:100',
+            'items.*.delete' => 'nullable|boolean',
+        ]);
+
+        try {
+            DB::beginTransaction();
+
+            foreach ($validated['items'] as $item) {
+                if (!empty($item['delete'])) {
+                    Kkm::where('mata_pelajaran_id', $item['mata_pelajaran_id'])
+                        ->where('tahun_ajaran_id', $validated['tahun_ajaran_id'])
+                        ->delete();
+
+                    continue;
+                }
+
+                Kkm::updateOrCreate(
+                    [
+                        'mata_pelajaran_id' => $item['mata_pelajaran_id'],
+                        'tahun_ajaran_id' => $validated['tahun_ajaran_id'],
+                    ],
+                    [
+                        'nilai' => $item['nilai'],
+                        'kelas_id' => $validated['kelas_id'],
+                    ]
+                );
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'KKM berhasil disimpan',
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+
+            Log::error('Error saving KKM batch', [
+                'kelas_id' => $validated['kelas_id'] ?? null,
+                'tahun_ajaran_id' => $validated['tahun_ajaran_id'] ?? null,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal menyimpan KKM.',
             ], 500);
         }
     }

@@ -3,186 +3,149 @@ import Alpine from 'alpinejs';
 export function registerKkmForm() {
     Alpine.data('kkmForm', () => ({
         kelasData: [],
-        kkmList: [],
-        filteredKkmList: [],
-        filteredMataPelajaran: [],
+        kkmItems: [],
         selectedKelasId: '',
-        filterKelasId: '',
-        kkmData: {
-            mata_pelajaran_id: '',
-            nilai: 70
-        },
+        loadingRows: false,
+        savingBatch: false,
         globalKkmData: {
             nilai: 70,
             overwriteExisting: false
         },
-        kkmNotificationSettings: {
-            completeScoresOnly: false
-        },
 
         init() {
             this.fetchKelasData();
-            this.fetchKkmList();
-            this.initKkmNotificationSettings();
         },
 
-        getSubjectRedirectUrl() {
-            const subjectId = Number.parseInt(this.kkmData.mata_pelajaran_id, 10);
+        getKelasDataUrl() {
+            return this.$el?.dataset?.kelasDataUrl || '/admin/kelas/data';
+        },
 
-            if (Number.isInteger(subjectId) && subjectId > 0) {
-                const baseUrl = this.$el?.dataset?.subjectUrlBase || this.$el?.dataset?.subjectIndexUrl || '/admin/subject';
-                return `${baseUrl.replace(/\/$/, '')}/${subjectId}`;
-            }
+        getByKelasUrl(kelasId) {
+            var template = this.$el?.dataset?.byKelasUrlTemplate || '/admin/kkm/by-kelas/__KELAS__';
+            return template.replace('__KELAS__', kelasId);
+        },
 
-            const indexUrl = this.$el?.dataset?.subjectIndexUrl;
+        getBatchSaveUrl() {
+            return this.$el?.dataset?.batchSaveUrl || '/admin/kkm/batch-save';
+        },
 
-            if (indexUrl && !indexUrl.includes('undefined')) {
-                return indexUrl;
-            }
+        getGlobalSaveUrl() {
+            return this.$el?.dataset?.globalSaveUrl || '/admin/kkm/global';
+        },
 
-            return '/admin/subject';
+        getTahunAjaranId() {
+            return this.$el?.dataset?.tahunAjaranId || '';
         },
 
         async fetchKelasData() {
             try {
-                const response = await fetch('/admin/kelas/data');
-                const data = await response.json();
-                this.kelasData = data.kelas;
-            } catch (error) {
-                console.error('Error fetching kelas data:', error);
-            }
-        },
-
-        async fetchKkmList() {
-            try {
-                const response = await fetch('/admin/kkm/list');
-                const data = await response.json();
-                this.kkmList = data.kkms;
-                this.filteredKkmList = this.kkmList;
-            } catch (error) {
-                console.error('Error fetching KKM list:', error);
-            }
-        },
-
-        loadMataPelajaranByKelas() {
-            if (!this.selectedKelasId) {
-                this.filteredMataPelajaran = [];
-                return;
-            }
-
-            const selectedKelas = this.kelasData.find(kelas => kelas.id == this.selectedKelasId);
-            this.filteredMataPelajaran = selectedKelas ? selectedKelas.mata_pelajarans : [];
-            this.kkmData.mata_pelajaran_id = '';
-            this.kkmData.nilai = 70;
-        },
-
-        filterKkmList() {
-            if (!this.filterKelasId) {
-                this.filteredKkmList = this.kkmList;
-                return;
-            }
-
-            this.filteredKkmList = this.kkmList.filter(kkm =>
-                kkm.mata_pelajaran &&
-                kkm.mata_pelajaran.kelas &&
-                kkm.mata_pelajaran.kelas.id == this.filterKelasId
-            );
-        },
-
-        async initKkmNotificationSettings() {
-            try {
-                const response = await fetch('/admin/kkm/notification-settings');
-                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-                const data = await response.json();
-                if (data.success) this.kkmNotificationSettings = data.settings;
-            } catch (error) {
-                console.error('Error fetching KKM notification settings:', error);
-            }
-        },
-
-        async handleMapelChange() {
-            const selectedMapelId = this.kkmData.mata_pelajaran_id;
-            if (!selectedMapelId) return;
-            const existingKkm = this.kkmList.find(kkm => kkm.mata_pelajaran_id === parseInt(selectedMapelId));
-            this.kkmData.nilai = existingKkm ? existingKkm.nilai : 70;
-        },
-
-        async addToTable() {
-            if (!this.kkmData.mata_pelajaran_id) {
-                this.showAlert('error', 'Pilih mata pelajaran terlebih dahulu');
-                return;
-            }
-
-            await this.saveKkm({ redirectAfterSave: false });
-        },
-
-        async deleteKkm(id) {
-            if (!confirm('Apakah Anda yakin ingin menghapus KKM ini?')) return;
-            try {
-                const response = await fetch(`/admin/kkm/${id}`, {
-                    method: 'DELETE',
+                var response = await fetch(this.getKelasDataUrl(), {
                     headers: {
-                        'Content-Type': 'application/json',
-                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content
+                        'Accept': 'application/json'
                     }
                 });
-                const data = await response.json();
-                if (data.success) {
-                    this.fetchKkmList();
-                    this.showAlert('success', 'KKM berhasil dihapus');
-                } else {
-                    this.showAlert('error', data.message || 'Gagal menghapus KKM');
-                }
+                var data = await response.json();
+                this.kelasData = data.kelas || [];
             } catch (error) {
-                console.error('Error deleting KKM:', error);
-                this.showAlert('error', 'Terjadi kesalahan saat menghapus KKM');
+                console.error('Error fetching kelas data:', error);
+                this.showAlert('error', 'Gagal memuat data kelas.');
             }
         },
 
-        async saveKkm({ redirectAfterSave = false } = {}) {
-            if (!this.kkmData.mata_pelajaran_id) {
-                this.showAlert('error', 'Pilih mata pelajaran terlebih dahulu');
+        async loadKkmByKelas() {
+            if (!this.selectedKelasId) {
+                this.kkmItems = [];
                 return;
             }
 
+            this.loadingRows = true;
+
             try {
-                const response = await fetch('/admin/kkm', {
+                var response = await fetch(this.getByKelasUrl(this.selectedKelasId), {
+                    headers: {
+                        'Accept': 'application/json'
+                    }
+                });
+                var data = await response.json();
+
+                if (!response.ok || !data.success) {
+                    throw new Error(data.message || 'Gagal memuat data KKM.');
+                }
+
+                this.kkmItems = (data.items || []).map(item => ({
+                    ...item,
+                    pendingDelete: false
+                }));
+            } catch (error) {
+                console.error('Error loading KKM by kelas:', error);
+                this.kkmItems = [];
+                this.showAlert('error', error.message || 'Gagal memuat data KKM.');
+            } finally {
+                this.loadingRows = false;
+            }
+        },
+
+        toggleDelete(item) {
+            item.pendingDelete = !item.pendingDelete;
+        },
+
+        async saveBatchKkm() {
+            if (!this.selectedKelasId || this.kkmItems.length === 0) {
+                this.showAlert('error', 'Pilih kelas terlebih dahulu.');
+                return;
+            }
+
+            this.savingBatch = true;
+
+            try {
+                var response = await fetch(this.getBatchSaveUrl(), {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content
+                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
+                        'Accept': 'application/json'
                     },
-                    body: JSON.stringify(this.kkmData)
+                    body: JSON.stringify({
+                        kelas_id: this.selectedKelasId,
+                        tahun_ajaran_id: this.getTahunAjaranId(),
+                        items: this.kkmItems.map(item => ({
+                            mata_pelajaran_id: item.mata_pelajaran_id,
+                            nilai: item.nilai,
+                            delete: !!item.pendingDelete
+                        }))
+                    })
+                });
+                var data = await response.json();
+
+                if (!response.ok || !data.success) {
+                    throw new Error(data.message || 'Gagal menyimpan KKM.');
+                }
+
+                await Swal.fire({
+                    icon: 'success',
+                    title: 'Berhasil!',
+                    text: data.message || 'KKM berhasil disimpan',
+                    timer: 2000,
+                    showConfirmButton: false
                 });
 
-                const data = await response.json();
-                if (data.success) {
-                    await Swal.fire({ icon: 'success', title: 'Berhasil!', text: 'KKM berhasil disimpan', timer: 2000, showConfirmButton: false });
-
-                    if (redirectAfterSave) {
-                        window.location.href = this.getSubjectRedirectUrl();
-                        return;
-                    }
-
-                    await this.fetchKkmList();
-                    this.resetForms();
-                } else {
-                    this.showAlert('error', data.message || 'Gagal menyimpan KKM');
-                }
+                await this.loadKkmByKelas();
             } catch (error) {
-                console.error('Error saving KKM:', error);
-                this.showAlert('error', 'Terjadi kesalahan saat menyimpan KKM');
+                console.error('Error saving KKM batch:', error);
+                this.showAlert('error', error.message || 'Terjadi kesalahan saat menyimpan KKM.');
+            } finally {
+                this.savingBatch = false;
             }
         },
 
         async applyGlobalKkm() {
             try {
-                let confirmMessage = `Apakah Anda yakin ingin menerapkan nilai KKM ${this.globalKkmData.nilai} ke semua mata pelajaran?`;
+                var confirmMessage = `Apakah Anda yakin ingin menerapkan nilai KKM ${this.globalKkmData.nilai} ke semua mata pelajaran?`;
                 confirmMessage += this.globalKkmData.overwriteExisting
                     ? '<br/><br/><strong class="text-red-600">Perhatian!</strong> Tindakan ini akan menimpa nilai KKM yang sudah ada sebelumnya.'
                     : '<br/><br/>Hanya mata pelajaran yang belum memiliki KKM yang akan diperbarui.';
 
-                const isConfirmed = await Swal.fire({
+                var isConfirmed = await Swal.fire({
                     title: 'Konfirmasi Pengaturan KKM Massal',
                     html: confirmMessage,
                     icon: 'warning',
@@ -191,19 +154,34 @@ export function registerKkmForm() {
                     cancelButtonColor: '#d33',
                     confirmButtonText: 'Ya, Terapkan',
                     cancelButtonText: 'Batal'
-                }).then((result) => result.isConfirmed);
+                }).then(result => result.isConfirmed);
 
-                if (!isConfirmed) return;
+                if (!isConfirmed) {
+                    return;
+                }
 
-                Swal.fire({ title: 'Menerapkan KKM Massal...', text: 'Mohon tunggu...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
-                const response = await fetch('/admin/kkm/global', {
+                Swal.fire({
+                    title: 'Menerapkan KKM Massal...',
+                    text: 'Mohon tunggu...',
+                    allowOutsideClick: false,
+                    didOpen: () => Swal.showLoading()
+                });
+
+                var response = await fetch(this.getGlobalSaveUrl(), {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content },
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content
+                    },
                     body: JSON.stringify(this.globalKkmData)
                 });
-                const data = await response.json();
+                var data = await response.json();
+
                 if (data.success) {
-                    this.fetchKkmList();
+                    if (this.selectedKelasId) {
+                        await this.loadKkmByKelas();
+                    }
+
                     this.showAlert('success', `KKM massal berhasil diterapkan. ${data.count} mata pelajaran diperbarui.`);
                 } else {
                     this.showAlert('error', data.message || 'Gagal menerapkan KKM massal');
@@ -214,32 +192,15 @@ export function registerKkmForm() {
             }
         },
 
-        async saveKkmNotificationSettings() {
-            try {
-                Swal.fire({ title: 'Menyimpan pengaturan...', text: 'Mohon tunggu sebentar', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
-                const response = await fetch('/admin/kkm/notification-settings', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content },
-                    body: JSON.stringify(this.kkmNotificationSettings)
-                });
-                const data = await response.json();
-                if (data.success) this.showAlert('success', 'Pengaturan notifikasi KKM berhasil disimpan');
-                else this.showAlert('error', data.message || 'Gagal menyimpan pengaturan notifikasi');
-            } catch (error) {
-                console.error('Error saving KKM notification settings:', error);
-                this.showAlert('error', 'Terjadi kesalahan saat menyimpan pengaturan notifikasi');
-            }
-        },
-
-        resetForms() {
-            this.kkmData = { mata_pelajaran_id: '', nilai: 70 };
-            this.selectedKelasId = '';
-            this.filteredMataPelajaran = [];
-        },
-
         showAlert(type, message) {
             if (window.Swal) {
-                Swal.fire({ icon: type, title: type === 'success' ? 'Berhasil!' : 'Perhatian!', text: message, timer: 3000, showConfirmButton: false });
+                Swal.fire({
+                    icon: type,
+                    title: type === 'success' ? 'Berhasil!' : 'Perhatian!',
+                    text: message,
+                    timer: 3000,
+                    showConfirmButton: false
+                });
             } else {
                 alert(message);
             }

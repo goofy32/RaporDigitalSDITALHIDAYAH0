@@ -3,7 +3,58 @@
 @section('title', 'History Rapor')
 
 @section('content')
-<div class="p-4 bg-white mt-14">
+<div class="p-4 bg-white mt-14"
+     x-data="{
+        async confirmDelete(id, filename) {
+            var result = await Swal.fire({
+                icon: 'warning',
+                title: 'Hapus Riwayat?',
+                html: 'Riwayat cetak dan file PDF akan <b>dihapus permanen</b> dan tidak dapat dikembalikan.',
+                showCancelButton: true,
+                confirmButtonColor: '#dc2626',
+                confirmButtonText: 'Ya, Hapus',
+                cancelButtonText: 'Batal'
+            });
+
+            if (!result.isConfirmed) {
+                return;
+            }
+
+            try {
+                var response = await fetch(`{{ url('/admin/report-history') }}/${id}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'X-CSRF-TOKEN': document.querySelector('meta[name=csrf-token]').content,
+                        'Accept': 'application/json'
+                    }
+                });
+
+                var data = await response.json();
+
+                if (!response.ok || !data.success) {
+                    throw new Error(data.message || `Gagal menghapus riwayat ${filename}`);
+                }
+
+                await Swal.fire({
+                    icon: 'success',
+                    title: 'Berhasil dihapus',
+                    timer: 1500,
+                    showConfirmButton: false
+                });
+
+                var row = document.getElementById(`report-row-${id}`);
+                if (row) {
+                    row.remove();
+                }
+            } catch (error) {
+                await Swal.fire({
+                    icon: 'error',
+                    title: 'Gagal menghapus',
+                    text: error.message || 'Terjadi kesalahan saat menghapus riwayat.'
+                });
+            }
+        }
+     }">
     <!-- Header -->
     <div class="flex justify-between items-center mb-6">
         <h2 class="text-2xl font-bold text-green-700">Riwayat Cetak Rapor</h2>
@@ -82,7 +133,7 @@
         </thead>
         <tbody>
             @forelse($reports as $index => $report)
-            <tr class="bg-white border-b hover:bg-gray-50" 
+            <tr id="report-row-{{ $report->id }}" class="bg-white border-b hover:bg-gray-50" 
                 data-type="{{ $report->type }}" 
                 data-kelas="{{ $report->kelas_id }}"
                 data-tahun-ajaran="{{ $report->tahun_ajaran_id }}"
@@ -130,6 +181,13 @@
                                 <img src="{{ asset('images/icons/download.png') }}" alt="Preview" class="w-6 h-6 object-contain">
                             </button>
                         @endif
+
+                        <button @click="confirmDelete({{ $report->id }}, @js($report->generated_file))"
+                                title="Hapus Riwayat"
+                                class="text-red-600 hover:text-red-900">
+                            <img src="{{ asset('images/icons/delete.png') }}"
+                                 alt="Hapus" class="w-6 h-6 object-contain">
+                        </button>
                         
                         <!-- Tombol Regenerate jika 
                         @if(!$report->generated_file || !Storage::disk('public')->exists($report->generated_file))

@@ -155,7 +155,7 @@
                             </div>
                             <div class="ml-3">
                                 <p class="text-sm text-green-800">
-                                    <strong>Buat Tahun Ajaran Berikutnya:</strong> Digunakan untuk membuat tahun ajaran baru dengan menaikkan kelas siswa dan menyalin pengaturan dari tahun ajaran saat ini. Biasanya dilakukan di akhir semester genap.
+                                    <strong>Buat Tahun Ajaran Berikutnya:</strong> Buat Tahun Ajaran Berikutnya: Digunakan untuk membuat tahun ajaran baru agar bisa mengakses fitur kenaikan kelas. Wajib dilakukan di akhir semester genap .
                                 </p>
                             </div>
                         </div>

@@ -39,26 +39,8 @@
                     Simpan
                 </button>
             </div>
-            <form id="profileForm" action="{{ route('profile.submit') }}" method="POST" enctype="multipart/form-data">
+            <form id="profileForm" action="{{ route('profile.submit') }}" method="POST">
                 @csrf
-
-                <div class="flex flex-col mb-4">
-                    @if(isset($profil->logo))
-                        <img id="profileImage" class="w-32 h-32 rounded-full shadow-lg items-center" src="{{ asset('storage/' . $profil->logo) }}" alt="Logo Sekolah">
-                    @else
-                        <img id="profileImage" class="w-32 h-32 rounded-full shadow-lg items-center" src="https://via.placeholder.com/150" alt="Logo Sekolah">
-                    @endif
-
-                    <label class="block mb-2 text-sm font-medium text-gray-900 mt-4" for="logo">Upload Logo</label>
-                    <input
-                        class="block w-full text-sm text-gray-900 border border-gray-300 rounded-lg cursor-pointer bg-gray-50 focus:outline-none"
-                        id="logo" name="logo" type="file" accept="image/*">
-                    <p class="mt-1 text-sm text-gray-500">PNG, JPG (MAX. 800x400px).</p>
-
-                    @error('logo')
-                        <p class="text-red-500 text-sm">{{ $message }}</p>
-                    @enderror
-                </div>
 
                 <div class="grid gap-6 mb-6 md:grid-cols-2">
                     <div>

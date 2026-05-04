@@ -29,6 +29,7 @@ class TahunAjaranMiddleware
             
             if ($activeTahunAjaran) {
                 session(['tahun_ajaran_id' => $activeTahunAjaran->id]);
+                session(['no_tahun_ajaran' => false]);
                 // FIX: Sync semester session dengan tahun ajaran aktif
                 session(['selected_semester' => $activeTahunAjaran->semester]);
                 $tahunAjaranId = $activeTahunAjaran->id;
@@ -38,12 +39,16 @@ class TahunAjaranMiddleware
                 $latestTahunAjaran = TahunAjaran::orderBy('id', 'desc')->first();
                 if ($latestTahunAjaran) {
                     session(['tahun_ajaran_id' => $latestTahunAjaran->id]);
+                    session(['no_tahun_ajaran' => false]);
                     session(['selected_semester' => $latestTahunAjaran->semester]);
                     $tahunAjaranId = $latestTahunAjaran->id;
                     \Log::info("Auto-sync tahun ajaran dan semester: Set ke tahun ajaran terbaru (ID: {$tahunAjaranId}, Semester: {$latestTahunAjaran->semester})");
+                } else {
+                    session(['no_tahun_ajaran' => true]);
                 }
             }
         } else {
+            session(['no_tahun_ajaran' => false]);
             // FIX: Jika tahun ajaran ID valid, pastikan semester juga sync
             $tahunAjaran = TahunAjaran::find($tahunAjaranId);
             if ($tahunAjaran && session('selected_semester') != $tahunAjaran->semester) {
@@ -82,12 +87,15 @@ class TahunAjaranMiddleware
                 
                 if ($newActiveTahunAjaran) {
                     session(['tahun_ajaran_id' => $newActiveTahunAjaran->id]);
+                    session(['no_tahun_ajaran' => false]);
                     session(['selected_semester' => $newActiveTahunAjaran->semester]); // Add semester sync here too
                     view()->share('activeTahunAjaran', $newActiveTahunAjaran);
                     $request->merge(['tahun_ajaran_id' => $newActiveTahunAjaran->id]);
                     $request->attributes->add(['tahun_ajaran_id' => $newActiveTahunAjaran->id]);
                     $request->attributes->add(['tahun_ajaran_is_archived' => $newActiveTahunAjaran->trashed()]);
                     view()->share('tahunAjaranIsArchived', $newActiveTahunAjaran->trashed());
+                } else {
+                    session(['no_tahun_ajaran' => true]);
                 }
             }
         }
