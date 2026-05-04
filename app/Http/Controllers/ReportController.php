@@ -263,7 +263,28 @@ class ReportController extends Controller
                 ->with('error', 'Anda tidak menjadi wali kelas untuk tahun ajaran yang dipilih.');
         }
         
-        $siswa = Siswa::with(['nilais.mataPelajaran', 'absensi'])
+        $tahunAjaran = TahunAjaran::find($tahunAjaranId);
+        $semester = $tahunAjaran ? $tahunAjaran->semester : 1;
+
+        $siswa = Siswa::with([
+                'kelas.mataPelajarans' => function ($query) use ($tahunAjaranId, $semester) {
+                    $query->where('semester', $semester)
+                        ->when($tahunAjaranId, function ($subQuery) use ($tahunAjaranId) {
+                            return $subQuery->where('tahun_ajaran_id', $tahunAjaranId);
+                        });
+                },
+                'nilais' => function ($query) use ($tahunAjaranId, $semester) {
+                    $query->where('tahun_ajaran_id', $tahunAjaranId)
+                        ->whereHas('mataPelajaran', function ($subQuery) use ($semester) {
+                            $subQuery->where('semester', $semester);
+                        });
+                },
+                'nilais.mataPelajaran',
+                'absensi' => function ($query) use ($tahunAjaranId, $semester) {
+                    $query->where('semester', $semester)
+                        ->where('tahun_ajaran_id', $tahunAjaranId);
+                },
+            ])
             ->where('kelas_id', $kelas->id)
             ->orderBy('nama')
             ->get();
@@ -272,8 +293,6 @@ class ReportController extends Controller
         foreach ($siswa as $s) {
             $diagnosisResults[$s->id] = $s->diagnoseDataCompleteness('UTS');
         }
-        
-        $tahunAjaran = TahunAjaran::find($tahunAjaranId);
         
         return view('wali_kelas.rapor.index_print', compact(
             'siswa',
@@ -2132,8 +2151,36 @@ class ReportController extends Controller
         }
         
         // Query siswa
-        $siswa = Siswa::with(['nilais.mataPelajaran', 'absensi'])
+        $siswa = Siswa::with([
+                'kelas.mataPelajarans' => function ($query) use ($tahunAjaranId, $semester) {
+                    $query->where('semester', $semester)
+                        ->when($tahunAjaranId, function ($subQuery) use ($tahunAjaranId) {
+                            return $subQuery->where('tahun_ajaran_id', $tahunAjaranId);
+                        });
+                },
+                'nilais' => function ($query) use ($tahunAjaranId, $semester) {
+                    $query->where('tahun_ajaran_id', $tahunAjaranId)
+                        ->whereHas('mataPelajaran', function ($subQuery) use ($semester) {
+                            $subQuery->where('semester', $semester);
+                        });
+                },
+                'nilais.mataPelajaran',
+                'absensi' => function ($query) use ($tahunAjaranId, $semester) {
+                    $query->where('semester', $semester)
+                        ->where('tahun_ajaran_id', $tahunAjaranId);
+                },
+            ])
+            ->withCount([
+                'nilais as completed_nilai_count' => function ($query) use ($tahunAjaranId, $semester) {
+                    $query->where('tahun_ajaran_id', $tahunAjaranId)
+                        ->whereNotNull('nilai_akhir_rapor')
+                        ->whereHas('mataPelajaran', function ($subQuery) use ($semester) {
+                            $subQuery->where('semester', $semester);
+                        });
+                }
+            ])
             ->where('kelas_id', $kelas->id)
+            ->orderBy('nama')
             ->get();
         
         // Prepare data for each student
@@ -2147,15 +2194,7 @@ class ReportController extends Controller
             // Hitung jumlah nilai yang sudah memiliki nilai_akhir_rapor
             // PENTING: Untuk UTS/UAS di semester yang sama, perlu dibedakan lagi
             // dengan field tambahan di tabel nilai
-            $nilaiCount = $s->nilais()
-                ->whereHas('mataPelajaran', function($q) use ($semester) {
-                    $q->where('semester', $semester);
-                })
-                ->where('tahun_ajaran_id', $tahunAjaranId)
-                ->where('nilai_akhir_rapor', '!=', null)
-                ->count();
-                
-            $nilaiCounts[$s->id] = $nilaiCount;
+            $nilaiCounts[$s->id] = (int) $s->completed_nilai_count;
         }
         
         return view('wali_kelas.rapor.index', [

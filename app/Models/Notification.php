@@ -74,6 +74,12 @@ class Notification extends Model
     // Method untuk mengecek apakah notifikasi sudah dibaca oleh guru tertentu
     public function isReadBy($guruId)
     {
+        if ($this->relationLoaded('readers')) {
+            return $this->readers->contains(function ($guru) use ($guruId) {
+                return (int) $guru->id === (int) $guruId;
+            });
+        }
+
         return $this->readers()->where('guru_id', $guruId)->exists();
     }
 

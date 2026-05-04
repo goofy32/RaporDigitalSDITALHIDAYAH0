@@ -416,13 +416,14 @@ class RaporTemplateProcessor
                     ]);
                 } else {
                     // Jika tidak ada nilai_akhir_rapor, gunakan rata-rata nilai lain dengan filter tahun ajaran
-                    $avgNilai = $nilaiMapel
-                        ->when($tahunAjaranId, function($collection) use ($tahunAjaranId) {
+                    $avgNilai = $this->calculateAverageTreatingNullAsZero(
+                        $nilaiMapel->when($tahunAjaranId, function($collection) use ($tahunAjaranId) {
                             return $collection->where('tahun_ajaran_id', $tahunAjaranId);
-                        })
-                        ->avg('nilai_tp');
+                        }),
+                        'nilai_tp'
+                    );
                         
-                    if ($avgNilai) {
+                    if (!is_null($avgNilai)) {
                         $data["nilai_$key"] = number_format($avgNilai, 1);
                         $data["capaian_kompetensi_$key"] = \App\Http\Controllers\CapaianKompetensiController::generateCapaianForRapor(
                             $this->siswa->id,
@@ -548,16 +549,17 @@ class RaporTemplateProcessor
                     );
                 } else {
                     // Jika tidak ada nilai_akhir_rapor, cari alternatif dengan filter tahun ajaran
-                    $avgNilai = $nilaiMulok
-                        ->when($tahunAjaranId, function($collection) use ($tahunAjaranId) {
+                    $avgNilai = $this->calculateAverageTreatingNullAsZero(
+                        $nilaiMulok->when($tahunAjaranId, function($collection) use ($tahunAjaranId) {
                             return $collection->where('tahun_ajaran_id', $tahunAjaranId);
-                        })
-                        ->avg('nilai_tp');
+                        }),
+                        'nilai_tp'
+                    );
                         
-                    $data["nilai_mulok$mulokCount"] = $avgNilai ? number_format($avgNilai, 1) : '-';
+                    $data["nilai_mulok$mulokCount"] = !is_null($avgNilai) ? number_format($avgNilai, 1) : '-';
                     
                     // PERBAIKAN: Ubah dari capaian_kompetensi_mulok menjadi capaian_mulok
-                    $data["capaian_mulok$mulokCount"] = $avgNilai ? 
+                    $data["capaian_mulok$mulokCount"] = !is_null($avgNilai) ? 
                         \App\Http\Controllers\CapaianKompetensiController::generateCapaianForRapor(
                             $this->siswa->id,
                             $mataPelajaranId,
@@ -1551,7 +1553,28 @@ protected function prepareFotoSiswa()
         );
     }
 
-     /**
+    protected function calculateAverageTreatingNullAsZero($collection, $field)
+    {
+        $items = collect($collection)->values();
+
+        if ($field === 'nilai_tp') {
+            $items = $items->filter(function ($item) {
+                return !is_null(data_get($item, 'tujuan_pembelajaran_id'));
+            })->values();
+        }
+
+        if ($items->isEmpty()) {
+            return null;
+        }
+
+        $sum = $items->sum(function ($item) use ($field) {
+            return (float) data_get($item, $field, 0);
+        });
+
+        return $sum / $items->count();
+    }
+
+    /**
      * Simpan file rapor ke storage
      * 
      * @param string $filename

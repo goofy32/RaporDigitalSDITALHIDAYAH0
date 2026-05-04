@@ -98,10 +98,16 @@ class Siswa extends Model
      */
     public function diagnoseDataCompleteness($type = 'UTS')
     {
+        static $semesterCache = [];
+
         // Ambil semester dari tahun ajaran aktif
         $tahunAjaranId = session('tahun_ajaran_id');
-        $tahunAjaran = \App\Models\TahunAjaran::find($tahunAjaranId);
-        $semester = $tahunAjaran ? $tahunAjaran->semester : 1;
+        if (!array_key_exists($tahunAjaranId, $semesterCache)) {
+            $tahunAjaran = $tahunAjaranId ? \App\Models\TahunAjaran::find($tahunAjaranId) : null;
+            $semesterCache[$tahunAjaranId] = $tahunAjaran ? $tahunAjaran->semester : 1;
+        }
+
+        $semester = $semesterCache[$tahunAjaranId];
         
         \Log::info('diagnoseDataCompleteness untuk', [
             'siswa_id' => $this->id,
@@ -120,25 +126,52 @@ class Siswa extends Model
         ];
         
         // Cek mata pelajaran untuk semester ini
-        $mataPelajarans = $this->kelas->mataPelajarans()
-            ->where('semester', $semester)
-            ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
-                return $query->where('tahun_ajaran_id', $tahunAjaranId);
-            })
-            ->get();
+        $kelas = $this->relationLoaded('kelas') ? $this->kelas : $this->kelas()->first();
+
+        if ($kelas && $kelas->relationLoaded('mataPelajarans')) {
+            $mataPelajarans = $kelas->mataPelajarans->filter(function ($mataPelajaran) use ($semester, $tahunAjaranId) {
+                return (int) $mataPelajaran->semester === (int) $semester
+                    && (!$tahunAjaranId || (int) $mataPelajaran->tahun_ajaran_id === (int) $tahunAjaranId);
+            })->values();
+        } else {
+            $mataPelajarans = $kelas
+                ? $kelas->mataPelajarans()
+                    ->where('semester', $semester)
+                    ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
+                        return $query->where('tahun_ajaran_id', $tahunAjaranId);
+                    })
+                    ->get()
+                : collect();
+        }
         
         // Cek nilai di tahun ajaran yang aktif
         // PENTING: Untuk membedakan nilai UTS dan UAS, idealnya ada field tambahan
         // tapi untuk saat ini, kita bisa gunakan semua nilai yang ada di semester yang sama
-        $nilaiCount = $this->nilais()
-            ->whereHas('mataPelajaran', function($q) use ($semester) {
-                $q->where('semester', $semester);
-            })
-            ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
-                return $query->where('tahun_ajaran_id', $tahunAjaranId);
-            })
-            ->where('nilai_akhir_rapor', '!=', null)
-            ->count();
+        if ($this->relationLoaded('nilais')) {
+            $nilaiCount = $this->nilais->filter(function ($nilai) use ($semester, $tahunAjaranId) {
+                if ($tahunAjaranId && (int) $nilai->tahun_ajaran_id !== (int) $tahunAjaranId) {
+                    return false;
+                }
+
+                if (is_null($nilai->nilai_akhir_rapor)) {
+                    return false;
+                }
+
+                $mataPelajaran = $nilai->mataPelajaran;
+
+                return $mataPelajaran && (int) $mataPelajaran->semester === (int) $semester;
+            })->count();
+        } else {
+            $nilaiCount = $this->nilais()
+                ->whereHas('mataPelajaran', function($q) use ($semester) {
+                    $q->where('semester', $semester);
+                })
+                ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
+                    return $query->where('tahun_ajaran_id', $tahunAjaranId);
+                })
+                ->whereNotNull('nilai_akhir_rapor')
+                ->count();
+        }
         
         if ($nilaiCount > 0) {
             $result['nilai_status'] = true;
@@ -153,12 +186,20 @@ class Siswa extends Model
         }
         
         // Cek kehadiran untuk semester ini
-        $absensi = $this->absensi()
-            ->where('semester', $semester)
-            ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
-                return $query->where('tahun_ajaran_id', $tahunAjaranId);
-            })
-            ->first();
+        if ($this->relationLoaded('absensi')) {
+            $absensi = $this->absensi
+                && (int) $this->absensi->semester === (int) $semester
+                && (!$tahunAjaranId || (int) $this->absensi->tahun_ajaran_id === (int) $tahunAjaranId)
+                ? $this->absensi
+                : null;
+        } else {
+            $absensi = $this->absensi()
+                ->where('semester', $semester)
+                ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
+                    return $query->where('tahun_ajaran_id', $tahunAjaranId);
+                })
+                ->first();
+        }
         
         if ($absensi) {
             $result['absensi_status'] = true;

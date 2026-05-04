@@ -61,9 +61,26 @@ class NotificationController extends Controller
     public function list()
     {
         try {
-            $notifications = Notification::latest()->get()->map(function($notification) {
+            $notifications = Notification::latest()->get();
+
+            $singleSpecificUserIds = $notifications
+                ->filter(function ($notification) {
+                    return $notification->target === 'specific'
+                        && is_array($notification->specific_users)
+                        && count($notification->specific_users) === 1;
+                })
+                ->map(function ($notification) {
+                    return (int) $notification->specific_users[0];
+                })
+                ->unique()
+                ->values();
+
+            $specificUserNames = Guru::whereIn('id', $singleSpecificUserIds)
+                ->pluck('nama', 'id');
+
+            $notifications = $notifications->map(function($notification) use ($specificUserNames) {
                 // Get target display information
-                $targetDisplay = $this->getTargetDisplay($notification);
+                $targetDisplay = $this->getTargetDisplay($notification, $specificUserNames);
                 
                 return [
                     'id' => $notification->id,
@@ -97,6 +114,9 @@ class NotificationController extends Controller
                             ->whereJsonContains('specific_users', $guru->id);
                       });
             })
+            ->with(['readers' => function ($query) use ($guru) {
+                $query->where('guru_id', $guru->id);
+            }])
             ->orderBy('created_at', 'desc') // Tambahkan ordering
             ->take(5) // Batasi 5 notifikasi terakhir
             ->get()
@@ -188,7 +208,7 @@ class NotificationController extends Controller
     /**
      * Get display text for notification target
      */
-    private function getTargetDisplay($notification)
+    private function getTargetDisplay($notification, $specificUserNames = null)
     {
         switch ($notification->target) {
             case 'all':
@@ -204,7 +224,13 @@ class NotificationController extends Controller
                 
                 // For a single specific user, show their name
                 if (count($notification->specific_users) === 1) {
-                    $guru = Guru::find($notification->specific_users[0]);
+                    $guruId = (int) $notification->specific_users[0];
+
+                    if ($specificUserNames && $specificUserNames->has($guruId)) {
+                        return $specificUserNames->get($guruId);
+                    }
+
+                    $guru = Guru::find($guruId);
                     if ($guru) {
                         return $guru->nama;
                     }

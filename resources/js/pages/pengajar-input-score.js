@@ -94,18 +94,15 @@ function calculateIntermediateValues(row) {
     if (!naTPInput.value) {
         let tpInputs = row.querySelectorAll('.tp-score');
         let tpSum = 0;
-        let validTpCount = 0;
+        let totalTpCount = tpInputs.length;
 
         tpInputs.forEach(input => {
-            let value = parseFloat(input.value);
-            if (!isNaN(value)) { // Dihapus kondisi "value > 0"
-                tpSum += value;
-                validTpCount++;
-            }
+            let value = input.value === '' ? 0 : parseFloat(input.value);
+            tpSum += isNaN(value) ? 0 : value;
         });
 
-        if (validTpCount > 0) {
-            let naTP = tpSum / validTpCount;
+        if (totalTpCount > 0) {
+            let naTP = tpSum / totalTpCount;
             naTPInput.value = naTP.toFixed(2);
         } else {
             naTPInput.value = '0';
@@ -117,18 +114,15 @@ function calculateIntermediateValues(row) {
     if (!naLMInput.value) {
         let lmInputs = row.querySelectorAll('.lm-score');
         let lmSum = 0;
-        let validLmCount = 0;
+        let totalLmCount = lmInputs.length;
 
         lmInputs.forEach(input => {
-            let value = parseFloat(input.value);
-            if (!isNaN(value)) { // Hapus kondisi && value > 0
-                lmSum += value;
-                validLmCount++;
-            }
+            let value = input.value === '' ? 0 : parseFloat(input.value);
+            lmSum += isNaN(value) ? 0 : value;
         });
 
-        if (validLmCount > 0) {
-            let naLM = lmSum / validLmCount;
+        if (totalLmCount > 0) {
+            let naLM = lmSum / totalLmCount;
             naLMInput.value = naLM.toFixed(2);
         } else {
             naLMInput.value = '0';
@@ -167,19 +161,15 @@ function calculateAverages(row) {
     // 1. Hitung rata-rata Nilai TP
     let tpInputs = row.querySelectorAll('.tp-score');
     let tpSum = 0;
-    let validTpCount = 0;
+    let totalTpCount = tpInputs.length;
 
     tpInputs.forEach(input => {
-        let value = parseFloat(input.value);
-        // Only count values that are not empty and not NaN
-        if (!isNaN(value) && input.value !== '') {
-            tpSum += value;
-            validTpCount++;
-        }
+        let value = input.value === '' ? 0 : parseFloat(input.value);
+        tpSum += isNaN(value) ? 0 : value;
     });
 
-    if (validTpCount > 0) {
-        let naTP = tpSum / validTpCount;
+    if (totalTpCount > 0) {
+        let naTP = tpSum / totalTpCount;
         row.querySelector('.na-tp').value = naTP.toFixed(2);
     } else {
         row.querySelector('.na-tp').value = '0';
@@ -188,18 +178,15 @@ function calculateAverages(row) {
     // 2. Hitung rata-rata Nilai LM 
     let lmInputs = row.querySelectorAll('.lm-score');
     let lmSum = 0;
-    let validLmCount = 0;
+    let totalLmCount = lmInputs.length;
 
     lmInputs.forEach(input => {
-        let value = parseFloat(input.value);
-        if (!isNaN(value) && input.value !== '') {
-            lmSum += value;
-            validLmCount++;
-        }
+        let value = input.value === '' ? 0 : parseFloat(input.value);
+        lmSum += isNaN(value) ? 0 : value;
     });
 
-    if (validLmCount > 0) {
-        let naLM = lmSum / validLmCount;
+    if (totalLmCount > 0) {
+        let naLM = lmSum / totalLmCount;
         row.querySelector('.na-lm').value = naLM.toFixed(2);
     } else {
         row.querySelector('.na-lm').value = '0';

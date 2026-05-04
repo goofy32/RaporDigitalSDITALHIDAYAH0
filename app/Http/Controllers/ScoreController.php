@@ -71,7 +71,7 @@ class ScoreController extends Controller
                                 $lm = LingkupMateri::find($lmId);
                                 
                                 $nilaiData = [
-                                    'nilai_tp' => $nilai !== '' ? $nilai : null
+                                    'nilai_tp' => $nilai !== '' ? $nilai : 0
                                 ];
                                 
                                 if ($tahunAjaranId) {
@@ -110,7 +110,7 @@ class ScoreController extends Controller
                             $lm = LingkupMateri::find($lmId);
                             
                             $nilaiData = [
-                                'nilai_lm' => $nilai !== '' ? $nilai : null
+                                'nilai_lm' => $nilai !== '' ? $nilai : 0
                             ];
                             
                             if ($tahunAjaranId) {

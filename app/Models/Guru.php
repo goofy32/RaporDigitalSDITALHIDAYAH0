@@ -65,6 +65,14 @@ class Guru extends Authenticatable
      */
     public function getKelasWaliAttribute()
     {
+        if ($this->relationLoaded('kelasWali')) {
+            $kelasWali = $this->getRelation('kelasWali');
+
+            return $kelasWali instanceof \Illuminate\Support\Collection
+                ? $kelasWali->first()
+                : $kelasWali;
+        }
+
         return $this->kelasWali()->first();
     }
 
