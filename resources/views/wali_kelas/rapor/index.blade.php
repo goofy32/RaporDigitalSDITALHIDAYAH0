@@ -22,6 +22,12 @@
 </style>
 @endpush
 
+@php
+    $readyCount = collect($siswa)->filter(function ($student) use ($nilaiCounts) {
+        return ($nilaiCounts[$student->id] ?? 0) > 0 && !is_null($student->absensi);
+    })->count();
+@endphp
+
 <!-- Main Container with Single Alpine Instance -->
 <div x-data="raporManager" x-cloak class="p-4 bg-white mt-14" data-active-tab="{{ $type }}" data-tahun-ajaran-id="{{ session('tahun_ajaran_id') }}" data-semester="{{ $semester }}">
     
@@ -95,22 +101,41 @@
             </div>
         </div>
 
-        <!-- Search Box -->
-        <div class="flex flex-col md:flex-row justify-between items-center gap-4 mb-6">
-            <div class="relative">
-                <div class="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
-                    <svg class="w-4 h-4 text-gray-500" aria-hidden="true" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
-                    </svg>
+        <div x-data="{ showReadyOnly: false, readyCount: {{ $readyCount }}, toggleReadyFilter() { this.showReadyOnly = !this.showReadyOnly; } }">
+            <!-- Search Box -->
+            <div class="flex flex-col md:flex-row justify-between items-center gap-4 mb-6">
+                <div class="relative">
+                    <div class="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+                        <svg class="w-4 h-4 text-gray-500" aria-hidden="true" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                        </svg>
+                    </div>
+                    <input type="search" 
+                        x-model="searchQuery"
+                        @input="handleSearch($event)"
+                        class="block w-full p-2 pl-10 text-sm text-gray-900 border border-gray-300 rounded-lg bg-gray-50 focus:ring-green-500 focus:border-green-500" 
+                        placeholder="Cari siswa...">
                 </div>
-                <input type="search" 
-                    x-model="searchQuery"
-                    @input="handleSearch($event)"
-                    class="block w-full p-2 pl-10 text-sm text-gray-900 border border-gray-300 rounded-lg bg-gray-50 focus:ring-green-500 focus:border-green-500" 
-                    placeholder="Cari siswa...">
+
+                <div class="w-full md:w-auto flex justify-end">
+                    <button
+                        type="button"
+                        @click="toggleReadyFilter()"
+                        :class="showReadyOnly
+                            ? 'bg-green-700 ring-2 ring-green-200'
+                            : 'bg-green-600 hover:bg-green-700'"
+                        class="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors">
+                        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 01.8 1.6L14 13.5V19a1 1 0 01-1.447.894l-2-1A1 1 0 0110 18v-4.5L3.2 4.6A1 1 0 013 4z" />
+                        </svg>
+                        <span x-text="showReadyOnly ? 'Semua Siswa' : 'Siap Cetak'"></span>
+                        <span x-show="!showReadyOnly" x-cloak class="rounded-full bg-white/20 px-2 py-0.5 text-xs font-semibold" x-text="readyCount"></span>
+                    </button>
+                </div>
             </div>
-        </div>        <!-- Data Table -->
-        <div class="overflow-x-auto shadow-md rounded-lg">
+
+            <!-- Data Table -->
+            <div class="overflow-x-auto shadow-md rounded-lg">
             <table class="w-full text-sm text-left text-gray-500">
                 <thead class="text-xs text-gray-700 uppercase bg-gray-50">
                     <tr>
@@ -124,7 +149,9 @@
                 </thead>
                 <tbody>
                     @forelse($siswa as $index => $s)
-                    <tr class="bg-white border-b hover:bg-gray-50 transition-colors">                    
+                    <tr
+                        x-show="!showReadyOnly || ({{ $nilaiCounts[$s->id] ?? 0 }} > 0 && {{ $s->absensi ? 'true' : 'false' }})"
+                        class="bg-white border-b hover:bg-gray-50 transition-colors">                    
                         <td class="px-6 py-4">{{ $index + 1 }}</td>
                         <td class="px-6 py-4">{{ $s->nis }}</td>
                         <td class="px-6 py-4 font-medium text-gray-900">{{ $s->nama }}</td>
@@ -237,6 +264,7 @@
                     @endforelse
                 </tbody>
             </table>
+            </div>
         </div>
     </div>
 
