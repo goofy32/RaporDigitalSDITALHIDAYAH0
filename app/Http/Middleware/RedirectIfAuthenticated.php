@@ -21,7 +21,7 @@ class RedirectIfAuthenticated
 
             if ($selectedRole === 'wali_kelas') {
                 return redirect()->route('wali_kelas.dashboard');
-            } else if ($selectedRole === 'guru') {
+            } else if (in_array($selectedRole, ['guru', 'pengajar', null], true)) {
                 return redirect()->route('pengajar.dashboard');
             }
         }

@@ -18,8 +18,8 @@ class CheckRole
             return $next($request);
         }
         
-        // Handle guru dan wali_kelas roles
-        if (in_array($role, ['guru', 'wali_kelas'])) {
+        // Handle guru/pengajar dan wali_kelas roles
+        if (in_array($role, ['guru', 'pengajar', 'wali_kelas'])) {
             // Pastikan user login sebagai guru
             if (!Auth::guard('guru')->check()) {
                 return redirect()->route('login');
@@ -27,15 +27,17 @@ class CheckRole
 
             $selectedRole = session('selected_role');
             
-            // Pastikan ada role yang dipilih saat login
-            if (!$selectedRole) {
-                Auth::guard('guru')->logout();
-                return redirect()->route('login')
-                    ->with('error', 'Silakan login dan pilih role Anda');
+            // Fallback aman untuk session lama/kosong
+            if (!$selectedRole && Auth::guard('guru')->check()) {
+                session(['selected_role' => 'pengajar']);
+                $selectedRole = 'pengajar';
             }
 
+            $normalizedRequestedRole = $role === 'guru' ? 'pengajar' : $role;
+            $normalizedSelectedRole = $selectedRole === 'guru' ? 'pengajar' : $selectedRole;
+
             // Pastikan role yang diminta sesuai dengan yang dipilih saat login
-            if ($role === $selectedRole) {
+            if ($normalizedRequestedRole === $normalizedSelectedRole) {
                 return $next($request);
             }
     

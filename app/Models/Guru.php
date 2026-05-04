@@ -102,7 +102,13 @@ class Guru extends Authenticatable
      */
     public function hasRole($role)
     {
-        return session('selected_role') === $role;
+        $selectedRole = session('selected_role');
+
+        if ($role === 'guru') {
+            return in_array($selectedRole, ['guru', 'pengajar'], true);
+        }
+
+        return $selectedRole === $role;
     }
 
     /**

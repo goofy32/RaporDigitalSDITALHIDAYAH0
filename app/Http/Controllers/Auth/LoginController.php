@@ -17,76 +17,71 @@ class LoginController extends Controller
         $credentials = $request->validate([
             'username' => 'required|string',
             'password' => 'required|string',
-            'role' => 'required|in:admin,guru,wali_kelas'
         ]);
-    
-        if ($credentials['role'] === 'admin') {
-            if (Auth::guard('web')->attempt([
-                'username' => $credentials['username'],
-                'password' => $credentials['password']
-            ])) {
-                // Set initial session activity
-                session(['last_activity' => time()]);
-                
-                // Log successful admin login
-                AuditService::logLogin('success', $credentials['username']);
-                
-                return redirect()->route('admin.dashboard');
-            }
-        } else {
-            // Cari guru berdasarkan username
-            $guru = Guru::where('username', $credentials['username'])->first();
-            
-            // Jika guru ditemukan
-            if ($guru && Hash::check($credentials['password'], $guru->password)) {
-                
-                // Jika mencoba login sebagai wali kelas
-                if ($credentials['role'] === 'wali_kelas') {
-                    // Cek apakah guru memiliki jabatan guru_wali
-                    if ($guru->jabatan !== 'guru_wali') {
-                        AuditService::logLogin('failed', $credentials['username']);
-                        
-                        return back()->withErrors([
-                            'role' => 'Akun ini tidak memiliki akses sebagai wali kelas. Silakan pilih role lain.'
-                        ])->withInput($request->except('password'));
-                    }
-                    
-                    // Cek apakah guru benar-benar terdaftar sebagai wali kelas di suatu kelas
-                    $isWaliKelas = $guru->kelas()
-                        ->wherePivot('is_wali_kelas', true)
-                        ->wherePivot('role', 'wali_kelas')
-                        ->exists();
-                        
-                    if (!$isWaliKelas) {
-                        AuditService::logLogin('failed', $credentials['username']);
-                        
-                        return back()->withErrors([
-                            'role' => 'Akun ini belum ditugaskan sebagai wali kelas.'
-                        ])->withInput($request->except('password'));
-                    }
-                }
-                
-                // Login berhasil
-                Auth::guard('guru')->login($guru);
-                session(['selected_role' => $credentials['role']]);
-                
-                // Set initial session activity
-                session(['last_activity' => time()]);
-                
-                // Log successful guru/wali_kelas login
-                AuditService::logLogin('success', $credentials['username']);
-                
-                return redirect()->route($credentials['role'] === 'wali_kelas' ? 
-                    'wali_kelas.dashboard' : 'pengajar.dashboard');
-            }
+
+        $identifier = $credentials['username'];
+        $password = $credentials['password'];
+
+        if (
+            Auth::guard('web')->attempt(['username' => $identifier, 'password' => $password]) ||
+            Auth::guard('web')->attempt(['email' => $identifier, 'password' => $password])
+        ) {
+            session(['last_activity' => time()]);
+            AuditService::logLogin('success', $identifier);
+
+            return redirect()->route('admin.dashboard');
+        }
+
+        $guru = Guru::where('username', $identifier)
+            ->orWhere('email', $identifier)
+            ->first();
+
+        if ($guru && Hash::check($password, $guru->password)) {
+            Auth::guard('guru')->login($guru);
+
+            session([
+                'selected_role' => 'pengajar',
+                'last_activity' => time(),
+            ]);
+
+            AuditService::logLogin('success', $identifier);
+
+            return redirect()->route('pengajar.dashboard');
         }
     
         // Log failed login attempt
-        AuditService::logLogin('failed', $credentials['username']);
+        AuditService::logLogin('failed', $identifier);
         
         return back()->withErrors([
-            'username' => 'Kredensial yang diberikan tidak cocok dengan data kami.',
+            'username' => 'Username atau password salah.',
         ])->withInput($request->except('password'));
+    }
+
+    public function switchRole(string $role)
+    {
+        $guru = Auth::guard('guru')->user();
+
+        if (!$guru) {
+            return redirect()->route('login');
+        }
+
+        if (!in_array($role, ['pengajar', 'wali_kelas'])) {
+            return redirect()->back()
+                ->with('error', 'Role tidak valid.');
+        }
+
+        if ($role === 'wali_kelas' && !$guru->isWaliKelas()) {
+            return redirect()->back()
+                ->with('error', 'Anda bukan wali kelas.');
+        }
+
+        session(['selected_role' => $role]);
+
+        if ($role === 'wali_kelas') {
+            return redirect()->route('wali_kelas.dashboard');
+        }
+
+        return redirect()->route('pengajar.dashboard');
     }
 
     public function logout(Request $request)

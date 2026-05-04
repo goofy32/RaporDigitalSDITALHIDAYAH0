@@ -201,7 +201,11 @@
 
         <div class="mt-14">
             @php
-                $hasActiveTahunAjaran = \App\Models\TahunAjaran::where('is_active', true)->exists();
+                $activeTahunAjaran = \App\Models\TahunAjaran::where('is_active', true)->first();
+                $hasActiveTahunAjaran = !is_null($activeTahunAjaran);
+                $fallbackTahunAjaran = !$hasActiveTahunAjaran
+                    ? \App\Models\TahunAjaran::orderBy('id', 'desc')->first()
+                    : null;
             @endphp
 
             @if(!$hasActiveTahunAjaran)
@@ -215,13 +219,26 @@
                                 <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.72-1.36 3.485 0l5.58 9.92c.75 1.334-.213 2.981-1.742 2.981H4.42c-1.53 0-2.492-1.647-1.743-2.98l5.58-9.921zM11 13a1 1 0 10-2 0 1 1 0 002 0zm-1-6a1 1 0 00-1 1v3a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" />
                             </svg>
                             <div>
-                                <p class="text-yellow-800 font-medium">Tahun Ajaran Belum Aktif</p>
+                                <p class="text-yellow-800 font-medium">Tidak Ada Tahun Ajaran Aktif</p>
                                 <p class="text-yellow-700 text-sm">
-                                    Aktifkan tahun ajaran terlebih dahulu sebelum menginput data.
-                                    <a href="{{ route('tahun.ajaran.index') }}" class="text-yellow-800 underline font-medium ml-1">
+                                    @if($fallbackTahunAjaran)
+                                        Data akan otomatis masuk ke
+                                        <strong>{{ $fallbackTahunAjaran->tahun_ajaran }} - {{ $fallbackTahunAjaran->semester }}</strong>
+                                        (tahun ajaran terakhir).
+                                        Aktifkan tahun ajaran yang benar agar data masuk ke tempat yang tepat.
+                                    @else
+                                        Belum ada tahun ajaran yang dibuat. Buat tahun ajaran terlebih dahulu.
+                                    @endif
+                                </p>
+                                @if($fallbackTahunAjaran)
+                                    <a href="{{ route('tahun.ajaran.index') }}" class="text-yellow-800 underline font-medium text-sm mt-1 inline-block">
                                         Aktifkan sekarang &rarr;
                                     </a>
-                                </p>
+                                @else
+                                    <a href="{{ route('tahun.ajaran.create') }}" class="text-yellow-800 underline font-medium text-sm mt-1 inline-block">
+                                        Buat tahun ajaran &rarr;
+                                    </a>
+                                @endif
                             </div>
                         </div>
                         <button type="button" @click="show = false" class="text-yellow-400 hover:text-yellow-600">

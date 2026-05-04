@@ -14,7 +14,11 @@
         <div class="mt-14">
             <div id="main" data-turbo-frame="main" class="w-full">
                 @php
-                    $hasActiveTahunAjaran = \App\Models\TahunAjaran::where('is_active', true)->exists();
+                    $activeTahunAjaran = \App\Models\TahunAjaran::where('is_active', true)->first();
+                    $hasActiveTahunAjaran = !is_null($activeTahunAjaran);
+                    $fallbackTahunAjaran = !$hasActiveTahunAjaran
+                        ? \App\Models\TahunAjaran::orderBy('id', 'desc')->first()
+                        : null;
                 @endphp
 
                 @if(!$hasActiveTahunAjaran)
@@ -28,9 +32,15 @@
                                     <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.72-1.36 3.485 0l5.58 9.92c.75 1.334-.213 2.981-1.742 2.981H4.42c-1.53 0-2.492-1.647-1.743-2.98l5.58-9.921zM11 13a1 1 0 10-2 0 1 1 0 002 0zm-1-6a1 1 0 00-1 1v3a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" />
                                 </svg>
                                 <div>
-                                    <p class="text-yellow-800 font-medium">Tahun Ajaran Belum Aktif</p>
+                                    <p class="text-yellow-800 font-medium">Tahun Ajaran Belum Diaktifkan</p>
                                     <p class="text-yellow-700 text-sm">
-                                        Tahun ajaran belum diaktifkan. Hubungi administrator.
+                                        @if($fallbackTahunAjaran)
+                                            Data Anda akan masuk ke
+                                            <strong>{{ $fallbackTahunAjaran->tahun_ajaran }} - {{ $fallbackTahunAjaran->semester }}</strong>.
+                                            Hubungi administrator untuk mengaktifkan tahun ajaran yang benar.
+                                        @else
+                                            Belum ada tahun ajaran. Hubungi administrator segera.
+                                        @endif
                                     </p>
                                 </div>
                             </div>

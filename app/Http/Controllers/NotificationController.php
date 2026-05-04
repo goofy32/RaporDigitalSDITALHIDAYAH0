@@ -104,7 +104,7 @@ class NotificationController extends Controller
     {
         try {
             $guru = Auth::guard('guru')->user();
-            $selected_role = session('selected_role');
+            $selected_role = session('selected_role') === 'wali_kelas' ? 'wali_kelas' : 'guru';
         
             $notifications = Notification::where(function($query) use ($guru, $selected_role) {
                 $query->where('target', 'all')
@@ -166,7 +166,7 @@ class NotificationController extends Controller
     {
         try {
             $guru = Auth::guard('guru')->user();
-            $role = session('selected_role');
+            $role = session('selected_role') === 'wali_kelas' ? 'wali_kelas' : 'guru';
             
             $count = Notification::where(function($query) use ($guru, $role) {
                 $query->where('target', 'all')
