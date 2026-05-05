@@ -12,7 +12,6 @@
         "ilovepdf/ilovepdf-php": "^1.2",
         "laravel/framework": "^11.9",
         "laravel/sanctum": "^4.0",
-        "laravel/tinker": "^2.9",
         "maatwebsite/excel": "^3.1",
         "phpoffice/phpword": "^1.3",
         "pusher/pusher-php-server": "^7.2",
@@ -22,6 +21,7 @@
         "fakerphp/faker": "^1.23",
         "laravel/pint": "^1.13",
         "laravel/sail": "^1.26",
+        "laravel/tinker": "^2.9",
         "mockery/mockery": "^1.6",
         "nunomaduro/collision": "^8.0",
         "phpunit/phpunit": "^11.0.1"

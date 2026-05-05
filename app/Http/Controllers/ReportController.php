@@ -305,23 +305,6 @@ class ReportController extends Controller
         ));
     }
 
-    
-    public function archiveByTahunAjaran(Request $request)
-    {
-        $tahunAjaranId = $request->input('tahun_ajaran_id', session('tahun_ajaran_id'));
-        
-        $reports = ReportGeneration::when($tahunAjaranId, function($query) use ($tahunAjaranId) {
-                return $query->where('tahun_ajaran_id', $tahunAjaranId);
-            })
-            ->with(['siswa', 'kelas', 'generator'])
-            ->orderBy('created_at', 'desc')
-            ->paginate(10);
-            
-        $tahunAjarans = TahunAjaran::orderBy('tanggal_mulai', 'desc')->get();
-        
-        return view('admin.report.history', compact('reports', 'tahunAjarans', 'tahunAjaranId'));
-    }
-
     public function tutorialView()
     {
         return view('admin.report.tutorial');
