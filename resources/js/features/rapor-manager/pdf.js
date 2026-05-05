@@ -1,11 +1,56 @@
+async function resolvePdfRequest(url) {
+    var response = await fetch(url, {
+        method: 'GET',
+        headers: {
+            Accept: 'application/json, application/pdf, */*',
+            'X-Requested-With': 'XMLHttpRequest'
+        }
+    });
+    var contentType = response.headers.get('content-type') || '';
+
+    if (contentType.includes('application/json')) {
+        var data = await response.json();
+        return {
+            ok: false,
+            status: response.status,
+            message: data.message || 'PDF tidak dapat dibuat saat ini. Hubungi administrator.'
+        };
+    }
+
+    if (!response.ok) {
+        return {
+            ok: false,
+            status: response.status,
+            message: 'PDF tidak dapat dibuat saat ini. Hubungi administrator.'
+        };
+    }
+
+    return {
+        ok: true,
+        url: response.url || url
+    };
+}
+
 export const raporManagerPdf = {
     async handleDownloadPdf(siswaId, nilaiCount, hasAbsensi, namaSiswa) {
         if (!this.validateData(nilaiCount, hasAbsensi)) return;
         try {
             this.loadingPdf = siswaId;
-            const url = `/wali-kelas/rapor/preview-pdf/${siswaId}?type=${this.activeTab}&tahun_ajaran_id=${this.tahunAjaranId}&disposition=attachment`;
-            const link = document.createElement('a');
-            link.href = url;
+            var url = `/wali-kelas/rapor/preview-pdf/${siswaId}?type=${this.activeTab}&tahun_ajaran_id=${this.tahunAjaranId}&disposition=attachment`;
+            var result = await resolvePdfRequest(url);
+
+            if (!result.ok) {
+                Swal.fire({
+                    icon: 'error',
+                    title: 'Gagal Mengunduh PDF',
+                    text: result.message,
+                    confirmButtonText: 'OK'
+                });
+                return;
+            }
+
+            var link = document.createElement('a');
+            link.href = result.url;
             link.style.display = 'none';
             document.body.appendChild(link);
             link.click();
@@ -15,7 +60,8 @@ export const raporManagerPdf = {
             Swal.fire({
                 icon: 'error',
                 title: 'Gagal Mengunduh PDF',
-                text: error.message || `Terjadi kesalahan saat mengunduh rapor PDF untuk ${namaSiswa}`
+                text: 'Terjadi kesalahan. Silakan coba lagi.',
+                confirmButtonText: 'OK'
             });
         } finally {
             this.loadingPdf = null;
@@ -108,14 +154,35 @@ export const raporManagerPdf = {
         if (!this.validateData(nilaiCount, hasAbsensi)) return;
         try {
             this.loading = true;
-            const url = `/wali-kelas/rapor/preview-pdf/${siswaId}?type=${this.activeTab}&tahun_ajaran_id=${this.tahunAjaranId}`;
-            const newWindow = window.open(url, '_blank');
+            var url = `/wali-kelas/rapor/preview-pdf/${siswaId}?type=${this.activeTab}&tahun_ajaran_id=${this.tahunAjaranId}`;
+            var result = await resolvePdfRequest(url);
+
+            if (!result.ok) {
+                Swal.fire({
+                    icon: 'error',
+                    title: 'Gagal Membuat PDF',
+                    text: result.message,
+                    confirmButtonText: 'OK'
+                });
+                return;
+            }
+
+            var newWindow = window.open(result.url, '_blank');
             if (!newWindow) {
-                Swal.fire({ icon: 'warning', title: 'Popup Diblokir', html: `<a href="${url}" target="_blank" class="text-blue-600 underline">Buka PDF Preview</a>` });
+                Swal.fire({
+                    icon: 'warning',
+                    title: 'Popup Diblokir',
+                    html: `<a href="${result.url}" target="_blank" class="text-blue-600 underline">Buka PDF Preview</a>`
+                });
             }
         } catch (error) {
             console.error('Error previewing PDF:', error);
-            Swal.fire({ icon: 'error', title: 'Gagal Preview PDF', text: error.message || 'Terjadi kesalahan saat membuka preview PDF' });
+            Swal.fire({
+                icon: 'error',
+                title: 'Gagal Preview PDF',
+                text: 'Terjadi kesalahan. Silakan coba lagi.',
+                confirmButtonText: 'OK'
+            });
         } finally {
             this.loading = false;
         }
