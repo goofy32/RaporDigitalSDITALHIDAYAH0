@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>403 - SD IT Al-Hidayah</title>
+    <title>500 - SD IT Al-Hidayah</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="min-h-screen bg-gray-50 flex items-center justify-center px-4 py-10">
@@ -18,28 +18,29 @@
                 SD IT Al-Hidayah Logam
             </p>
 
-            <h1 class="text-7xl sm:text-8xl font-bold text-amber-500 leading-none mb-4">
-                403
+            <h1 class="text-7xl sm:text-8xl font-bold text-orange-500 leading-none mb-4">
+                500
             </h1>
 
             <h2 class="text-2xl font-semibold text-gray-800 mb-3">
-                Akses Ditolak
+                Terjadi Kesalahan
             </h2>
 
             <p class="text-gray-500 leading-relaxed mb-8">
-                Anda tidak memiliki izin untuk mengakses halaman ini.
+                Server mengalami gangguan. Silakan coba beberapa saat lagi atau hubungi administrator.
             </p>
 
             <div class="flex flex-col sm:flex-row gap-3 justify-center">
                 <button type="button"
-                    onclick="history.back()"
+                    onclick="location.reload()"
                     class="px-6 py-3 rounded-xl border border-green-600 text-green-600 font-medium hover:bg-green-50 transition">
+                    Coba Lagi
+                </button>
+                <button type="button"
+                    onclick="history.back()"
+                    class="px-6 py-3 rounded-xl bg-green-600 text-white font-medium hover:bg-green-700 transition">
                     Kembali
                 </button>
-                <a href="{{ route('login') }}"
-                    class="px-6 py-3 rounded-xl bg-green-600 text-white font-medium hover:bg-green-700 transition">
-                    Login
-                </a>
             </div>
         </div>
     </div>

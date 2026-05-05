@@ -158,7 +158,6 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
     Route::prefix('gemini')->name('gemini.')->middleware('throttle:20,1')->group(function () {
         Route::post('/send-message', [GeminiChatController::class, 'sendMessage'])->name('send');
         Route::get('/history', [GeminiChatController::class, 'getHistory'])->name('history');
-        Route::get('/test-knowledge', [GeminiChatController::class, 'testKnowledgeBase'])->name('test-knowledge');
         Route::post('/update-knowledge', [GeminiChatController::class, 'updateKnowledgeBase'])->name('update-knowledge');
         Route::delete('/clear-history', [GeminiChatController::class, 'clearHistory'])->name('clear-history');
         Route::delete('/chat/{id}', [GeminiChatController::class, 'deleteChat'])->name('delete-chat');
@@ -166,6 +165,7 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
         Route::delete('/clear-conversation', [GeminiChatController::class, 'resetConversation'])->name('reset-conversation');
 
         if (app()->environment('local')) {
+            Route::get('/test-knowledge', [GeminiChatController::class, 'testKnowledgeBase'])->name('test-knowledge');
             Route::get('/debug-test', [GeminiChatController::class, 'debugTest'])->name('debug-test');
             Route::get('/test-direct', [GeminiChatController::class, 'testGeminiDirectly'])->name('test-direct');
             Route::get('/test-db', [GeminiChatController::class, 'testDatabaseConnection'])->name('test-db');

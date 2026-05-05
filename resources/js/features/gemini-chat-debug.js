@@ -25,7 +25,6 @@ export function registerGeminiChatDebug() {
         ],
 
         init() {
-            console.log('Alpine chat component initialized');
             this.suggestions = this.getUserRoleBasedSuggestions();
             this.loadHistory();
             this.$watch('message', (value) => {
@@ -141,23 +140,18 @@ export function registerGeminiChatDebug() {
         },
 
         handleClearHistory() {
-            console.log('Clear history called');
             this.clearAllHistory();
         },
 
         handleDeleteChat(index) {
-            console.log('Delete chat called for index:', index);
             this.deleteSpecificChat(index);
         },
 
         handleResetConversation() {
-            console.log('Reset conversation called');
             this.resetConversation();
         },
 
         async clearAllHistory() {
-            console.log('clearAllHistory method called');
-
             if (!confirm('Apakah Anda yakin ingin menghapus semua riwayat chat? Tindakan ini tidak dapat dibatalkan.')) {
                 return;
             }
@@ -179,7 +173,6 @@ export function registerGeminiChatDebug() {
                     this.chats = [];
                     this.showHistoryMenu = false;
                     this.showSuggestions = true;
-                    console.log('History cleared successfully');
                 } else {
                     alert('Gagal menghapus riwayat: ' + data.message);
                 }
@@ -190,8 +183,6 @@ export function registerGeminiChatDebug() {
         },
 
         async deleteSpecificChat(chatIndex) {
-            console.log('deleteSpecificChat method called for index:', chatIndex);
-
             if (!confirm('Hapus chat ini?')) {
                 return;
             }
@@ -217,7 +208,6 @@ export function registerGeminiChatDebug() {
 
                 if (data.success) {
                     this.chats.splice(chatIndex, 1);
-                    console.log('Chat deleted successfully');
                 } else {
                     alert('Gagal menghapus chat: ' + data.message);
                 }
@@ -363,8 +353,6 @@ export function registerGeminiChatDebug() {
                         });
                         this.scrollToBottom();
                     }, 300);
-
-                    console.log('Conversation context reset successfully');
                 } else {
                     alert('Gagal mereset konteks: ' + data.message);
                 }

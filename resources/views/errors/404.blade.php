@@ -3,10 +3,22 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>403 - SD IT Al-Hidayah</title>
+    <title>404 - SD IT Al-Hidayah</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="min-h-screen bg-gray-50 flex items-center justify-center px-4 py-10">
+    @php
+        $dashboardUrl = route('login');
+
+        if (auth()->guard('web')->check()) {
+            $dashboardUrl = route('admin.dashboard');
+        } elseif (auth()->guard('guru')->check()) {
+            $dashboardUrl = session('selected_role') === 'wali_kelas'
+                ? route('wali_kelas.dashboard')
+                : route('pengajar.dashboard');
+        }
+    @endphp
+
     <div class="w-full max-w-md mx-auto text-center">
         <div class="bg-white rounded-3xl shadow-lg border border-gray-100 p-8 sm:p-10">
             <img src="{{ asset('images/logo.png') }}"
@@ -18,16 +30,16 @@
                 SD IT Al-Hidayah Logam
             </p>
 
-            <h1 class="text-7xl sm:text-8xl font-bold text-amber-500 leading-none mb-4">
-                403
+            <h1 class="text-7xl sm:text-8xl font-bold text-green-600 leading-none mb-4">
+                404
             </h1>
 
             <h2 class="text-2xl font-semibold text-gray-800 mb-3">
-                Akses Ditolak
+                Halaman Tidak Ditemukan
             </h2>
 
             <p class="text-gray-500 leading-relaxed mb-8">
-                Anda tidak memiliki izin untuk mengakses halaman ini.
+                Halaman yang Anda cari tidak tersedia atau telah dipindahkan.
             </p>
 
             <div class="flex flex-col sm:flex-row gap-3 justify-center">
@@ -36,9 +48,9 @@
                     class="px-6 py-3 rounded-xl border border-green-600 text-green-600 font-medium hover:bg-green-50 transition">
                     Kembali
                 </button>
-                <a href="{{ route('login') }}"
+                <a href="{{ $dashboardUrl }}"
                     class="px-6 py-3 rounded-xl bg-green-600 text-white font-medium hover:bg-green-700 transition">
-                    Login
+                    Dashboard
                 </a>
             </div>
         </div>
