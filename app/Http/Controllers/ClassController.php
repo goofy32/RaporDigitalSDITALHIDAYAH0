@@ -163,10 +163,14 @@ class ClassController extends Controller
                 ->with('success', 'Data kelas berhasil ditambahkan');
         } catch (\Exception $e) {
             DB::rollBack();
-            Log::error('Error saat membuat kelas: ' . $e->getMessage(), [
-                'stacktrace' => $e->getTraceAsString()
+            Log::error('[ClassController] Store class failed', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'user_id' => auth()->id(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
             ]);
-            return back()->with('error', 'Terjadi kesalahan: ' . $e->getMessage())->withInput();
+            return back()->with('error', 'Terjadi kesalahan. Silakan coba lagi.')->withInput();
         }
     }
 
@@ -394,13 +398,17 @@ class ClassController extends Controller
                 ->with('success', 'Data kelas berhasil diperbarui');
         } catch (\Exception $e) {
             DB::rollBack();
-            Log::error('Error saat mengupdate kelas: ' . $e->getMessage(), [
+            Log::error('[ClassController] Update class failed', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'user_id' => auth()->id(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
                 'kelas_id' => $id,
-                'stacktrace' => $e->getTraceAsString()
             ]);
             
             return back()
-                ->with('error', 'Terjadi kesalahan: ' . $e->getMessage())
+                ->with('error', 'Terjadi kesalahan. Silakan coba lagi.')
                 ->withInput();
         }
     }

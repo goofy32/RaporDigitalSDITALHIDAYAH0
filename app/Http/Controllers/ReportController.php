@@ -1510,14 +1510,18 @@ class ReportController extends Controller
             );
             
         } catch (\Exception $e) {
-            Log::error('Error previewing PDF report', [
+            Log::error('[ReportController] Preview PDF failed', [
                 'siswa_id' => $siswa->id,
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'user_id' => auth()->guard('guru')->id(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
             ]);
             
             return response()->json([
                 'success' => false,
-                'message' => 'Gagal preview PDF: ' . $e->getMessage()
+                'message' => 'Terjadi kesalahan. Silakan coba lagi.'
             ], 500);
         }
     }

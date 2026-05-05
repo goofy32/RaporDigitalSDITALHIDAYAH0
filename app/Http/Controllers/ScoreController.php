@@ -213,10 +213,17 @@ class ScoreController extends Controller
 
         } catch (\Exception $e) {
             DB::rollback();
-            \Log::error('Error saving scores: ' . $e->getMessage());
+            Log::error('[ScoreController] Save score failed', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'user_id' => Auth::guard('guru')->id(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'mata_pelajaran_id' => $id,
+            ]);
             return response()->json([
                 'success' => false,
-                'message' => 'Terjadi kesalahan: ' . $e->getMessage()
+                'message' => 'Terjadi kesalahan. Silakan coba lagi.'
             ], 500);
         }
     }
@@ -550,9 +557,16 @@ class ScoreController extends Controller
                 'bobotNilai'   // Tambahkan ini
             ));
         } catch (\Exception $e) {
-            \Log::error('Error in previewScore: ' . $e->getMessage());
+            Log::error('[ScoreController] Preview score failed', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'user_id' => Auth::guard('guru')->id(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'mata_pelajaran_id' => $id,
+            ]);
             return redirect()->route('pengajar.score.index')
-                ->with('error', 'Terjadi kesalahan saat memuat data: ' . $e->getMessage());
+                ->with('error', 'Terjadi kesalahan. Silakan coba lagi.');
         }
     }
 

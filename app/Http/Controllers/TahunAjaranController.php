@@ -687,8 +687,15 @@ class TahunAjaranController extends Controller
                             ->with('success', 'Tahun ajaran berhasil diperbarui!');
         } catch (\Exception $e) {
             DB::rollBack();
+            Log::error('[TahunAjaranController] Update tahun ajaran failed', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'user_id' => auth()->id(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
             return redirect()->back()
-                    ->with('error', 'Terjadi kesalahan: ' . $e->getMessage())
+                    ->with('error', 'Gagal memproses tahun ajaran. Silakan coba lagi.')
                     ->withInput();
         }
     }
@@ -793,7 +800,7 @@ class TahunAjaranController extends Controller
                 'error' => $e->getMessage()
             ]);
             
-            return redirect()->back()->with('error', 'Terjadi kesalahan: ' . $e->getMessage());
+            return redirect()->back()->with('error', 'Gagal memproses tahun ajaran. Silakan coba lagi.');
         }
     }
     /**
@@ -1506,7 +1513,14 @@ class TahunAjaranController extends Controller
             
             return redirect()->back()->with('success', 'Tampilan data diubah ke tahun ajaran ' . $tahunAjaran->tahun_ajaran);
         } catch (\Exception $e) {
-            return redirect()->back()->with('error', 'Terjadi kesalahan: ' . $e->getMessage());
+            Log::error('[TahunAjaranController] Change session tahun ajaran failed', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'user_id' => auth()->id(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
+            return redirect()->back()->with('error', 'Gagal memproses tahun ajaran. Silakan coba lagi.');
         }
     }
 

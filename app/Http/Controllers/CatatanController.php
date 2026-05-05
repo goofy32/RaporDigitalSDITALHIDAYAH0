@@ -10,6 +10,7 @@ use App\Models\MataPelajaran;
 use App\Traits\RequiresTahunAjaran;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class CatatanController extends Controller
 {
@@ -106,7 +107,15 @@ class CatatanController extends Controller
             
         } catch (\Exception $e) {
             DB::rollBack();
-            return redirect()->back()->with('error', 'Gagal menyimpan catatan: ' . $e->getMessage());
+            Log::error('[CatatanController] Store student note failed', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'user_id' => Auth::guard('guru')->id(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'siswa_id' => $siswa->id,
+            ]);
+            return redirect()->back()->with('error', 'Terjadi kesalahan. Silakan coba lagi.');
         }
     }
     
@@ -292,7 +301,15 @@ public function indexCatatanMataPelajaran()
             
         } catch (\Exception $e) {
             DB::rollBack();
-            return redirect()->back()->with('error', 'Gagal menyimpan catatan: ' . $e->getMessage());
+            Log::error('[CatatanController] Store subject note failed', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'user_id' => Auth::guard('guru')->id(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'mata_pelajaran_id' => $mataPelajaran->id,
+            ]);
+            return redirect()->back()->with('error', 'Terjadi kesalahan. Silakan coba lagi.');
         }
     }
     
