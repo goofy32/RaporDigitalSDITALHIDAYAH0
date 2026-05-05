@@ -559,12 +559,12 @@ class StudentController extends Controller
             return back()->with('error', 'Gagal mengimpor data. Silakan coba lagi.');
         }
     }
+    
     public function downloadTemplate()
     {
         try {
-            // Ubah path ke public_path() untuk mengakses folder public langsung
-            $filePath = public_path('templates/Student_Template_with_Data.xlsx');
-    
+            $filePath = base_path('../public_html/templates/Student_Template_with_Data.xlsx');
+
             if (!file_exists($filePath)) {
                 Log::warning('Student import template file missing', [
                     'path' => $filePath,
@@ -573,18 +573,18 @@ class StudentController extends Controller
 
                 return back()->with('error', 'File template tidak ditemukan.');
             }
-    
-            // Gunakan nama file yang lebih user-friendly saat didownload
+
             return response()->download($filePath, 'Template_Import_Siswa.xlsx', [
                 'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             ]);
-    
+
         } catch (\Exception $e) {
             Log::error('Failed to download student import template', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
                 'user_id' => auth()->id(),
             ]);
+
             return back()->with('error', 'Terjadi kesalahan saat mengunduh template.');
         }
     }

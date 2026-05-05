@@ -32,8 +32,12 @@
     @endif
 
     <div class="p-4 sm:ml-64">
-        <div class="p-4 bg-white mt-14 relative">
-            <div class="absolute top-4 right-4">
+        <div class="p-4 bg-white mt-14">
+            <div class="flex items-center justify-between gap-4 mb-6">
+                <div>
+                    <h1 class="text-2xl font-semibold text-gray-900">Profile Sekolah</h1>
+                    <p class="text-sm text-gray-500">Kelola informasi utama sekolah pada halaman ini.</p>
+                </div>
                 <button type="submit" form="profileForm"
                     class="text-white bg-green-700 hover:bg-green-800 focus:ring-4 focus:outline-none focus:ring-green-300 font-medium rounded-lg text-sm px-5 py-2.5 text-center">
                     Simpan

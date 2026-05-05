@@ -3,15 +3,24 @@
      x-data="{ 
          initImages() {
              this.$el.querySelectorAll('img').forEach(img => {
-                 if (!Alpine.store('navigation').isImageLoaded(img.id)) {
+                 if (img.dataset.persistVisibility === 'true') {
+                     img.style.opacity = '1';
+                     img.style.visibility = 'visible';
+                     img.style.display = '';
+                     return;
+                 }
+
+                 var imageKey = img.id || img.currentSrc || img.src;
+
+                 if (!Alpine.store('navigation').isImageLoaded(imageKey)) {
                      img.style.opacity = '0';
                      if (img.complete) {
                          img.style.opacity = '1';
-                         Alpine.store('navigation').markImageLoaded(img.id);
+                         Alpine.store('navigation').markImageLoaded(imageKey);
                      } else {
                          img.addEventListener('load', () => {
                              img.style.opacity = '1';
-                             Alpine.store('navigation').markImageLoaded(img.id);
+                             Alpine.store('navigation').markImageLoaded(imageKey);
                          });
                      }
                  } else {
@@ -41,7 +50,10 @@
                 <div class="flex items-center ms-2 md:me-24 relative">
                     <!-- Large logo that extends below the topbar -->
                     <div class="relative h-12 w-32 mr-3"> <!-- Wider container for the large logo -->
-                        <img src="{{ asset('images/logo/logo.png') }}" 
+                        <img src="{{ asset('images/logo.png') }}"
+                             id="school-logo"
+                             data-persist-visibility="true"
+                             onerror="this.style.display='none';"
                              class="absolute h-20 w-auto max-w-none -bottom-3"
                              style="left: 40%; transform: translateX(-50%);"
                              alt="Logo Sekolah">

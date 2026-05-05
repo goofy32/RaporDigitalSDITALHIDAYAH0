@@ -4,9 +4,32 @@ import {
     updateDashboardClassChart,
 } from './dashboard-shared';
 
-export function initWaliDashboardPage() {
+function waitForChart(callback, maxAttempts) {
+    var attempts = typeof maxAttempts === 'number' ? maxAttempts : 10;
+
+    if (typeof window.Chart !== 'undefined') {
+        callback();
+        return;
+    }
+
+    if (attempts <= 0) {
+        return;
+    }
+
+    setTimeout(function () {
+        waitForChart(callback, attempts - 1);
+    }, 100);
+}
+
+function setupWaliDashboardPage() {
     var pageEl = document.querySelector('[data-page="wali-dashboard"]');
     if (!pageEl) return;
+
+    if (pageEl.dataset.dashboardInit === 'true') {
+        return;
+    }
+
+    pageEl.dataset.dashboardInit = 'true';
 
     var overallProgress = Number(pageEl.dataset.overallProgress || 0);
     var progressEndpoint = pageEl.dataset.progressEndpoint || '';
@@ -52,4 +75,16 @@ export function initWaliDashboardPage() {
                 updateDashboardClassChart(0);
             });
     };
+
+    waitForChart(function () {
+        window.initCharts();
+    });
+}
+
+export function initWaliDashboardPage() {
+    document.addEventListener('turbo:load', setupWaliDashboardPage);
+
+    if (document.readyState === 'complete' || document.readyState === 'interactive') {
+        setupWaliDashboardPage();
+    }
 }
