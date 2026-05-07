@@ -18,10 +18,14 @@ use App\Models\Guru;
 use App\Models\Siswa;
 use App\Models\Kelas;
 use App\Models\MataPelajaran;
+use App\Models\LingkupMateri;
 use App\Models\Nilai;
 use App\Models\Prestasi;
 use App\Models\Absensi;
+use App\Models\Ekstrakurikuler;
+use App\Models\NilaiEkstrakurikuler;
 use App\Models\ReportTemplate;
+use App\Models\TujuanPembelajaran;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -89,9 +93,13 @@ class AppServiceProvider extends ServiceProvider
         Siswa::observe(AuditObserver::class);
         Kelas::observe(AuditObserver::class);
         MataPelajaran::observe(AuditObserver::class);
+        LingkupMateri::observe(AuditObserver::class);
+        TujuanPembelajaran::observe(AuditObserver::class);
         Nilai::observe(AuditObserver::class);
         Prestasi::observe(AuditObserver::class);
         Absensi::observe(AuditObserver::class);
+        Ekstrakurikuler::observe(AuditObserver::class);
+        NilaiEkstrakurikuler::observe(AuditObserver::class);
         ReportTemplate::observe(AuditObserver::class);
         
         // 
