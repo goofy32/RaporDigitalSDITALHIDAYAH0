@@ -135,19 +135,13 @@ export function registerSessionTimeout() {
         handleLogout() {
             this.isLoggingOut = true;
             if (this.checkInterval) clearInterval(this.checkInterval);
+            sessionStorage.removeItem('lastActivityTime');
 
-            const form = document.createElement('form');
-            form.method = 'POST';
-            form.action = '/logout';
+            if (window.Turbo && typeof window.Turbo.clearCache === 'function') {
+                window.Turbo.clearCache();
+            }
 
-            const token = document.createElement('input');
-            token.type = 'hidden';
-            token.name = '_token';
-            token.value = document.querySelector('meta[name="csrf-token"]').content;
-
-            form.appendChild(token);
-            document.body.appendChild(form);
-            form.submit();
+            window.location.href = '/login';
         },
     }));
 }

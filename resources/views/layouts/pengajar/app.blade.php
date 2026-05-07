@@ -10,7 +10,7 @@
 @endsection
 
 @section('layout-content')
-    <div class="p-4 sm:ml-64">
+    <div class="p-4 sm:ml-64 min-h-screen bg-white relative">
         <div class="mt-14">
             <div id="main" data-turbo-frame="main" class="w-full">
                 @php

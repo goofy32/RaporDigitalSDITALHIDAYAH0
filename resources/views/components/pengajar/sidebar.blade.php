@@ -1,3 +1,7 @@
+@php
+    $menuLinkClasses = 'flex items-center p-2 text-gray-700 rounded-lg hover:bg-gray-100 hover:text-gray-900 transition-colors duration-150';
+@endphp
+
 <aside id="logo-sidebar" 
        class="fixed top-0 left-0 z-40 w-64 h-screen pt-20 bg-white border-r border-gray-200 dark:bg-gray-800 dark:border-gray-700" 
        aria-label="Sidebar"
@@ -29,9 +33,9 @@
             <li>
                 <a href="{{ route('pengajar.dashboard') }}" 
                    data-turbo-action="replace"
-                   data-path="dashboard"
+                   data-path="/pengajar/dashboard"
                    onclick="return !window.formChanged || confirm('Ada perubahan yang belum disimpan. Yakin ingin meninggalkan halaman?')"
-                   class="flex items-center p-2 text-gray-900 rounded-lg hover:bg-gray-100">
+                   class="{{ $menuLinkClasses }}">
                     <div x-data class="w-5 h-5">
                         <img src="{{ asset('images/icons/dashboard-icon.png') }}" 
                              alt="Dashboard Icon"
@@ -47,9 +51,9 @@
             <li>
                 <a href="{{ route('pengajar.score.index') }}" 
                 data-turbo-action="replace"
-                data-path="score"
+                data-path="/pengajar/score"
                 onclick="return !window.formChanged || confirm('Ada perubahan yang belum disimpan. Yakin ingin meninggalkan halaman?')"
-                class="flex items-center p-2 text-gray-900 rounded-lg hover:bg-gray-100 relative">
+                class="{{ $menuLinkClasses }} relative">
                     <div x-data class="w-5 h-5">
                         <img src="{{ asset('images/icons/score.png') }}" 
                             alt="Score Icon"
@@ -74,6 +78,8 @@
                             ->join('mata_pelajarans', 'nilais.mata_pelajaran_id', '=', 'mata_pelajarans.id')
                             ->join('kkms', 'mata_pelajarans.id', '=', 'kkms.mata_pelajaran_id')
                             ->where('mata_pelajarans.guru_id', $guru->id)
+                            ->whereNull('nilais.deleted_at')
+                            ->whereNull('mata_pelajarans.deleted_at')
                             ->where('nilais.nilai_akhir_rapor', '<', DB::raw('kkms.nilai'));
                             
                         // Add tahun ajaran filter
@@ -112,9 +118,9 @@
             <li>
                 <a href="{{ route('pengajar.subject.index') }}" 
                    data-turbo-action="replace"
-                   data-path="subject"
+                   data-path="/pengajar/subject"
                    onclick="return !window.formChanged || confirm('Ada perubahan yang belum disimpan. Yakin ingin meninggalkan halaman?')"
-                   class="flex items-center p-2 text-gray-900 rounded-lg hover:bg-gray-100">
+                   class="{{ $menuLinkClasses }}">
                     <div x-data class="w-5 h-5">
                         <img src="{{ asset('images/icons/subject-icon.png') }}" 
                              alt="Subject Icon"

@@ -11,16 +11,16 @@
 @push('styles')
 <style>
     #global-loader {
-        position: fixed;
-        top: 0;
+        position: absolute;
+        top: 3.5rem;
         left: 0;
-        width: 100%;
-        height: 100%;
+        right: 0;
+        bottom: 0;
         display: flex;
         justify-content: center;
         align-items: center;
         background-color: white;
-        z-index: 9999;
+        z-index: 30;
         transition: opacity 0.3s ease;
     }
 
@@ -36,17 +36,17 @@
 @endpush
 
 @section('layout-content')
-    <div id="global-loader">
-        <div class="flex flex-col items-center">
-            <svg class="animate-spin h-12 w-12 text-green-600 mb-3" viewBox="0 0 24 24" fill="none">
-                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-            </svg>
-            <p class="text-gray-600">Memuat aplikasi...</p>
+    <div class="p-4 sm:ml-64 min-h-screen bg-white relative">
+        <div id="global-loader">
+            <div class="flex flex-col items-center">
+                <svg class="animate-spin h-12 w-12 text-green-600 mb-3" viewBox="0 0 24 24" fill="none">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                </svg>
+                <p class="text-gray-600">Memuat aplikasi...</p>
+            </div>
         </div>
-    </div>
 
-    <div class="p-4 sm:ml-64">
         <div class="mt-14">
             <div id="main">
                 @php

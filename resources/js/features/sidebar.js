@@ -65,13 +65,14 @@ export function debounce(func, wait) {
 
 export function updateSidebarActiveState() {
     try {
-        const currentPath = window.location.pathname;
+        const currentPath = (window.location.pathname.replace(/\/+$/, '') || '/').toLowerCase();
         const sidebarLinks = document.querySelectorAll('#logo-sidebar a[data-path]');
 
         if (!sidebarLinks.length) return;
 
         sidebarLinks.forEach(link => {
-            link.classList.remove('bg-green-100', 'bg-gray-100', 'shadow-md', 'active');
+            link.classList.remove('bg-green-100', 'bg-gray-100', 'shadow-md', 'active', 'text-gray-900', 'font-semibold');
+            link.classList.add('text-gray-700');
             link.removeAttribute('aria-current');
         });
 
@@ -79,15 +80,18 @@ export function updateSidebarActiveState() {
         let maxMatchLength = 0;
 
         sidebarLinks.forEach(link => {
-            const path = link.dataset.path;
-            if (path && currentPath.includes(path) && path.length > maxMatchLength) {
+            const path = (link.dataset.path || '').replace(/\/+$/, '').toLowerCase();
+            const isMatch = path && (currentPath === path || currentPath.startsWith(`${path}/`));
+
+            if (isMatch && path.length > maxMatchLength) {
                 maxMatchLength = path.length;
                 mostSpecificLink = link;
             }
         });
 
         if (mostSpecificLink) {
-            mostSpecificLink.classList.add('bg-gray-100', 'active');
+            mostSpecificLink.classList.remove('text-gray-700');
+            mostSpecificLink.classList.add('bg-gray-100', 'text-gray-900', 'font-semibold', 'active');
             mostSpecificLink.setAttribute('aria-current', 'page');
         }
     } catch (error) {

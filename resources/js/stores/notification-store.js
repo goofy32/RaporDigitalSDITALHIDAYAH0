@@ -6,6 +6,27 @@ export function registerNotificationStore() {
         unreadCount: 0,
         loading: false,
         refreshInterval: null,
+        baseTitle: '',
+
+        init() {
+            this.baseTitle = document.title.replace(/^\(\d+\)\s/, '');
+            this.updateTabTitle();
+        },
+
+        updateTabTitle() {
+            var baseTitle = this.baseTitle || document.title.replace(/^\(\d+\)\s/, '');
+
+            if (!this.baseTitle) {
+                this.baseTitle = baseTitle;
+            }
+
+            if (this.unreadCount > 0) {
+                document.title = `(${this.unreadCount}) ${baseTitle}`;
+                return;
+            }
+
+            document.title = baseTitle;
+        },
 
         async fetchNotifications() {
             if (this.loading) return;
@@ -34,6 +55,7 @@ export function registerNotificationStore() {
 
                 const data = await response.json();
                 this.items = data.items || [];
+                this.updateTabTitle();
             } catch (error) {
                 console.error('Error fetching notifications:', error);
             } finally {
@@ -64,6 +86,7 @@ export function registerNotificationStore() {
                 if (response.ok) {
                     this.items = this.items.map(item => item.id === notificationId ? { ...item, is_read: true } : item);
                     await this.fetchUnreadCount();
+                    this.updateTabTitle();
                     return true;
                 }
 
@@ -89,9 +112,11 @@ export function registerNotificationStore() {
 
                 const data = await response.json();
                 this.unreadCount = data.count;
+                this.updateTabTitle();
                 return data.count;
             } catch (error) {
                 console.error('Error fetching unread count:', error);
+                this.updateTabTitle();
                 return 0;
             }
         },
@@ -169,4 +194,6 @@ export function registerNotificationStore() {
             }
         },
     });
+
+    Alpine.store('notification').init();
 }

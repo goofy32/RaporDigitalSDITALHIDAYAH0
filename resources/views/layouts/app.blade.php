@@ -21,7 +21,7 @@
         flex-direction: column;
         justify-content: center;
         align-items: center;
-        z-index: 50;
+        z-index: 30;
         opacity: 0;
         pointer-events: none;
         transition: opacity 0.2s ease;
@@ -55,11 +55,10 @@
     }
 
     #logo-sidebar a.active,
-    #logo-sidebar a:focus,
-    #logo-sidebar a[aria-current="page"],
-    #logo-sidebar a.bg-gray-100,
-    #logo-sidebar a.bg-green-100 {
-        background-color: transparent !important;
+    #logo-sidebar a[aria-current="page"] {
+        background-color: rgb(243 244 246) !important;
+        color: rgb(17 24 39) !important;
+        font-weight: 600;
     }
 
     input:required:invalid,
@@ -81,11 +80,16 @@
         min-width: 1.25rem;
         height: 1.25rem;
         width: 1.25rem;
-        filter: brightness(0.2) contrast(1.2);
+        filter: grayscale(1) brightness(0.5);
         backface-visibility: hidden;
         -webkit-backface-visibility: hidden;
         will-change: auto;
         transform: translateZ(0);
+    }
+
+    #logo-sidebar a.active img,
+    #logo-sidebar a[aria-current="page"] img {
+        filter: grayscale(0) brightness(0.2) contrast(1.2);
     }
 
     #logo-sidebar a.cursor-not-allowed img {
@@ -160,8 +164,6 @@
 @endpush
 
 @section('layout-content')
-    <x-content-loading-overlay />
-
     <div class="p-4 sm:ml-64 min-h-screen bg-white relative">
         <div id="content-loading-overlay"
              x-data="{
