@@ -25,6 +25,7 @@ use App\Http\Controllers\KenaikanKelasController;
 use App\Http\Controllers\CatatanController;
 use App\Http\Controllers\CapaianKompetensiController;
 use App\Http\Controllers\CapaianRangeTemplateController;
+use App\Http\Controllers\RecycleBinController;
 use App\Models\Siswa;
 use App\Models\FormatRapor;
 use App\Models\Kelas;
@@ -300,6 +301,13 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
         Route::get('/export', [AuditController::class, 'export'])->name('export');
         Route::post('/clear', [AuditController::class, 'clear'])->name('clear');
         Route::get('/{auditLog}', [AuditController::class, 'show'])->name('show');
+    });
+
+    Route::prefix('recycle-bin')->name('admin.recycle-bin.')->group(function () {
+        Route::get('/', [RecycleBinController::class, 'index'])->name('index');
+        Route::post('/restore/{type}/{id}', [RecycleBinController::class, 'restore'])->name('restore');
+        Route::delete('/force-delete/{type}/{id}', [RecycleBinController::class, 'forceDelete'])->name('force-delete');
+        Route::delete('/force-delete-all', [RecycleBinController::class, 'forceDeleteAll'])->name('force-delete-all');
     });
     
     // Profile Routes
