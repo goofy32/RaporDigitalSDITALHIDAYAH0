@@ -5,10 +5,11 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use App\Traits\InvalidatesDashboardCache;
 
 class LingkupMateri extends Model
 {
-    use HasFactory, SoftDeletes;
+    use HasFactory, InvalidatesDashboardCache, SoftDeletes;
 
     protected $table = 'lingkup_materis';
 
@@ -80,6 +81,15 @@ class LingkupMateri extends Model
                 $tujuanPembelajaran->delete();
             });
         });
+
+        $invalidateCaches = function (LingkupMateri $lingkupMateri) {
+            $mataPelajaran = MataPelajaran::withTrashed()->find($lingkupMateri->mata_pelajaran_id);
+            $lingkupMateri->invalidateDashboardCaches($mataPelajaran?->guru_id, $mataPelajaran?->kelas_id);
+        };
+
+        static::deleted($invalidateCaches);
+        static::restored($invalidateCaches);
+        static::forceDeleted($invalidateCaches);
     }
 
     protected static function resolveAuditActorType(): ?string
