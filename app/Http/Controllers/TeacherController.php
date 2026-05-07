@@ -596,12 +596,7 @@ class TeacherController extends Controller
     public function destroy($id)
     {
         $teacher = Guru::findOrFail($id);
-        
-        // Delete photo if exists
-        if ($teacher->photo) {
-            Storage::disk('public')->delete($teacher->photo);
-        }
-        
+
         $teacher->delete();
 
         return redirect()->route('teacher')->with('success', 'Data guru berhasil dihapus');

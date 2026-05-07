@@ -366,12 +366,39 @@ class TahunAjaranController extends Controller
             session(['selected_semester' => 2]); // Set semester to 2 (genap)
             
             DB::commit();
+
+            try {
+                $notification = new \App\Models\Notification();
+                $notification->title = "Semester Genap {$newTahunAjaran->tahun_ajaran} Dimulai";
+                $notification->content = 'Semester Genap telah dimulai. '
+                    . 'Silakan perbarui Tujuan Pembelajaran dan Lingkup Materi '
+                    . 'untuk semester genap jika diperlukan. Perubahan bersifat '
+                    . 'opsional sesuai kebutuhan mengajar.';
+                $notification->target = 'guru';
+                $notification->save();
+
+                event(new \App\Events\NotificationCreated($notification));
+            } catch (\Exception $notificationException) {
+                Log::warning('[TahunAjaranController] Failed to send semester notification', [
+                    'error' => $notificationException->getMessage(),
+                    'tahun_ajaran_id' => $newTahunAjaran->id,
+                ]);
+            }
             
             return redirect()->route('tahun.ajaran.index')
                 ->with('success', 'Berhasil melanjutkan ke semester Genap. Data semester Ganjil tetap tersimpan.');
         } catch (\Exception $e) {
             DB::rollback();
-            return redirect()->back()->with('error', 'Gagal melanjutkan semester: ' . $e->getMessage());
+            Log::error('[TahunAjaranController] Advance semester failed', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'user_id' => auth()->id(),
+                'tahun_ajaran_id' => $id,
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
+
+            return redirect()->back()->with('error', 'Gagal melanjutkan semester. Silakan coba lagi.');
         }
     }
 

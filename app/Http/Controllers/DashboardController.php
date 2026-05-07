@@ -332,6 +332,7 @@ class DashboardController extends Controller
                 ->where('guru_kelas.is_wali_kelas', true)
                 ->where('guru_kelas.role', 'wali_kelas')
                 ->where('kelas.tahun_ajaran_id', $tahunAjaranId)
+                ->whereNull('kelas.deleted_at')
                 ->select('kelas.id', 'kelas.nomor_kelas', 'kelas.nama_kelas')
                 ->first();
                 
@@ -379,6 +380,8 @@ class DashboardController extends Controller
                 ->join('siswas', 'absensis.siswa_id', '=', 'siswas.id')
                 ->where('siswas.kelas_id', $kelasWali->id)
                 ->where('absensis.tahun_ajaran_id', $tahunAjaranId)
+                ->whereNull('absensis.deleted_at')
+                ->whereNull('siswas.deleted_at')
                 ->count();
                 
             // Get ekstrakurikuler count
@@ -387,6 +390,8 @@ class DashboardController extends Controller
                     ->join('siswas', 'nilai_ekstrakurikuler.siswa_id', '=', 'siswas.id')
                     ->where('siswas.kelas_id', $kelasWali->id)
                     ->where('nilai_ekstrakurikuler.tahun_ajaran_id', $tahunAjaranId)
+                    ->whereNull('nilai_ekstrakurikuler.deleted_at')
+                    ->whereNull('siswas.deleted_at')
                     ->distinct('ekstrakurikuler_id')
                     ->count('ekstrakurikuler_id');
             } catch (\Exception $e) {
@@ -418,6 +423,9 @@ class DashboardController extends Controller
                 ->join('mata_pelajarans', 'nilais.mata_pelajaran_id', '=', 'mata_pelajarans.id')
                 ->where('siswas.kelas_id', $kelasWali->id)
                 ->where('nilais.tahun_ajaran_id', $tahunAjaranId)
+                ->whereNull('nilais.deleted_at')
+                ->whereNull('siswas.deleted_at')
+                ->whereNull('mata_pelajarans.deleted_at')
                 ->whereNotNull('nilais.nilai_tp')
                 ->select(
                     'siswas.nama',
@@ -591,6 +599,7 @@ class DashboardController extends Controller
                 ->join('tujuan_pembelajarans', 'lingkup_materis.id', '=', 'tujuan_pembelajarans.lingkup_materi_id')
                 ->join('nilais', function($join) {
                     $join->on('tujuan_pembelajarans.id', '=', 'nilais.tujuan_pembelajaran_id')
+                        ->whereNull('nilais.deleted_at')
                         ->whereNotNull('nilais.nilai_tp');
                 })
                 ->where('mata_pelajarans.kelas_id', $kelas->id);
@@ -702,6 +711,7 @@ class DashboardController extends Controller
                             ->join('tujuan_pembelajarans', 'lingkup_materis.id', '=', 'tujuan_pembelajarans.lingkup_materi_id')
                             ->join('nilais', function($join) use ($tahunAjaranId) {
                                 $join->on('tujuan_pembelajarans.id', '=', 'nilais.tujuan_pembelajaran_id')
+                                    ->whereNull('nilais.deleted_at')
                                     ->whereNotNull('nilais.nilai_tp');
                                     
                                 if ($tahunAjaranId) {
@@ -880,6 +890,7 @@ class DashboardController extends Controller
                 ->join('tujuan_pembelajarans', 'lingkup_materis.id', '=', 'tujuan_pembelajarans.lingkup_materi_id')
                 ->join('nilais', function($join) {
                     $join->on('tujuan_pembelajarans.id', '=', 'nilais.tujuan_pembelajaran_id')
+                        ->whereNull('nilais.deleted_at')
                         ->whereNotNull('nilais.nilai_tp');
                 })
                 ->where('mata_pelajarans.guru_id', $guruId)
@@ -924,6 +935,7 @@ class DashboardController extends Controller
                 ->join('tujuan_pembelajarans', 'lingkup_materis.id', '=', 'tujuan_pembelajarans.lingkup_materi_id')
                 ->join('nilais', function($join) {
                     $join->on('tujuan_pembelajarans.id', '=', 'nilais.tujuan_pembelajaran_id')
+                        ->whereNull('nilais.deleted_at')
                         ->whereNotNull('nilais.nilai_tp');
                 })
                 ->where('mata_pelajarans.guru_id', $guru->id)

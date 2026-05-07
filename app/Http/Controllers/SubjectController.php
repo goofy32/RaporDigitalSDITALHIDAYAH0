@@ -312,13 +312,6 @@ class SubjectController extends Controller
             
             // Mulai transaksi database untuk memastikan semua operasi berhasil atau gagal bersama
             DB::beginTransaction();
-            
-            // Hapus semua tujuan pembelajaran terkait terlebih dahulu
-            if ($lingkupMateri->tujuanPembelajarans()->exists()) {
-                $lingkupMateri->tujuanPembelajarans()->delete();
-            }
-            
-            // Kemudian hapus lingkup materi
             $lingkupMateri->delete();
             
             DB::commit();
@@ -509,10 +502,6 @@ class SubjectController extends Controller
                     ->whereIn('id', $deleteIds)
                     ->get()
                     ->each(function ($lingkupMateri) {
-                        if ($lingkupMateri->tujuanPembelajarans()->exists()) {
-                            $lingkupMateri->tujuanPembelajarans()->delete();
-                        }
-
                         $lingkupMateri->delete();
                     });
             }
@@ -528,7 +517,10 @@ class SubjectController extends Controller
             if (!empty($toBeDeletedTitles)) {
                 $subject->lingkupMateris()
                     ->whereIn('judul_lingkup_materi', $toBeDeletedTitles)
-                    ->delete();
+                    ->get()
+                    ->each(function ($lingkupMateri) {
+                        $lingkupMateri->delete();
+                    });
             }
             
             // Tambahkan lingkup materi baru yang belum ada
@@ -940,10 +932,6 @@ class SubjectController extends Controller
                     ->whereIn('id', $deleteIds)
                     ->get()
                     ->each(function ($lingkupMateri) {
-                        if ($lingkupMateri->tujuanPembelajarans()->exists()) {
-                            $lingkupMateri->tujuanPembelajarans()->delete();
-                        }
-
                         $lingkupMateri->delete();
                     });
             }

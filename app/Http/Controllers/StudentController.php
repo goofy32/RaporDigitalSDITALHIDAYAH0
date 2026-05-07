@@ -226,12 +226,7 @@ class StudentController extends Controller
     public function destroy($id)
     {
         $student = Siswa::findOrFail($id);
-        
-        // Hapus foto jika ada
-        if ($student->photo) {
-            Storage::delete($student->photo);
-        }
-        
+
         $student->delete();
         return redirect()->route('student')->with('success', 'Data siswa berhasil dihapus!');
     }
@@ -487,11 +482,7 @@ class StudentController extends Controller
         
         $student = Siswa::where('kelas_id', $kelasWaliId)
             ->findOrFail($id);
-            
-        if ($student->photo) {
-            Storage::delete('public/' . $student->photo);
-        }
-            
+
         $student->delete();
         return redirect()->route('wali_kelas.student.index')
             ->with('success', 'Data siswa berhasil dihapus!');

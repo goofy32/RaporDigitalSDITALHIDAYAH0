@@ -104,10 +104,8 @@ class TujuanPembelajaranController extends Controller
             // Start a transaction to ensure all related data is deleted properly
             DB::beginTransaction();
             
-            // Delete associated grades if they exist
-            $tp->nilais()->delete();
-            
-            // Delete the TP itself
+            // Delete the TP itself.
+            // Nilai terkait akan ikut soft delete lewat model event.
             $tp->delete();
             
             DB::commit();
