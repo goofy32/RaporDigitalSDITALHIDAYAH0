@@ -3,11 +3,12 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use App\Traits\HasTahunAjaran;
 
 class NilaiEkstrakurikuler extends Model
 {
-    use HasTahunAjaran;
+    use HasTahunAjaran, SoftDeletes;
 
     protected $table = 'nilai_ekstrakurikuler';
     

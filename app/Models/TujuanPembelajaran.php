@@ -4,10 +4,11 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class TujuanPembelajaran extends Model
 {
-    use HasFactory;
+    use HasFactory, SoftDeletes;
 
     protected $table = 'tujuan_pembelajarans';
 
@@ -66,8 +67,13 @@ class TujuanPembelajaran extends Model
     protected static function booted()
     {
         static::deleting(function ($tujuanPembelajaran) {
-            // Hapus nilai terkait
-            $tujuanPembelajaran->nilais()->delete();
+            if (method_exists($tujuanPembelajaran, 'isForceDeleting') && $tujuanPembelajaran->isForceDeleting()) {
+                return;
+            }
+
+            $tujuanPembelajaran->nilais()->get()->each(function (Nilai $nilai) {
+                $nilai->delete();
+            });
         });
     }
 }

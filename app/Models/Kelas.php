@@ -4,11 +4,13 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\DB;
 use App\Traits\HasTahunAjaran;
 
 class Kelas extends Model
 {
-    use HasFactory, HasTahunAjaran;
+    use HasFactory, HasTahunAjaran, SoftDeletes;
 
     protected $table = 'kelas';
 
@@ -23,6 +25,65 @@ class Kelas extends Model
     protected $casts = [
         'nomor_kelas' => 'integer'
     ];
+
+    protected static function booted()
+    {
+        static::deleting(function ($kelas) {
+            if ($kelas->isForceDeleting()) {
+                return;
+            }
+
+            $kelas->loadMissing(['siswas', 'mataPelajarans']);
+
+            $siswaIds = $kelas->siswas->pluck('id')->all();
+            $mataPelajaranIds = $kelas->mataPelajarans->pluck('id')->all();
+            $prestasiIds = Prestasi::where('kelas_id', $kelas->id)->pluck('id')->all();
+            $absensiIds = !empty($siswaIds)
+                ? Absensi::whereIn('siswa_id', $siswaIds)->pluck('id')->all()
+                : [];
+            $guruPivots = DB::table('guru_kelas')
+                ->where('kelas_id', $kelas->id)
+                ->get()
+                ->map(fn ($pivot) => (array) $pivot)
+                ->all();
+
+            AuditLog::create([
+                'user_type' => self::resolveAuditActorType(),
+                'user_id' => self::resolveAuditActorId(),
+                'action' => 'cascade_delete_snapshot',
+                'model_type' => self::class,
+                'model_id' => $kelas->id,
+                'description' => 'Snapshot sebelum hapus Kelas dan relasinya',
+                'old_values' => [
+                    'kelas' => $kelas->attributesToArray(),
+                    'siswa_count' => $kelas->siswas->count(),
+                    'mata_pelajaran_count' => $kelas->mataPelajarans->count(),
+                    'siswa_ids' => $siswaIds,
+                    'mata_pelajaran_ids' => $mataPelajaranIds,
+                    'prestasi_ids' => $prestasiIds,
+                    'absensi_ids' => $absensiIds,
+                    'guru_pivots' => $guruPivots,
+                ],
+                'ip_address' => request()->ip(),
+                'user_agent' => request()->userAgent(),
+            ]);
+
+            if (!empty($siswaIds)) {
+                Absensi::whereIn('siswa_id', $siswaIds)
+                    ->get()
+                    ->each(fn (Absensi $absensi) => $absensi->delete());
+            }
+
+            Prestasi::where('kelas_id', $kelas->id)
+                ->get()
+                ->each(fn (Prestasi $prestasi) => $prestasi->delete());
+
+            $kelas->siswas->each(fn (Siswa $siswa) => $siswa->delete());
+            $kelas->mataPelajarans->each(fn (MataPelajaran $mataPelajaran) => $mataPelajaran->delete());
+
+            DB::table('guru_kelas')->where('kelas_id', $kelas->id)->delete();
+        });
+    }
 
     // Relasi dengan guru
     public function guru()
@@ -100,6 +161,11 @@ class Kelas extends Model
     public function mataPelajarans()
     {
         return $this->hasMany(MataPelajaran::class, 'kelas_id');
+    }
+
+    public function prestasis()
+    {
+        return $this->hasMany(Prestasi::class, 'kelas_id');
     }
 
     public function isWaliKelas($guruId)
@@ -207,5 +273,31 @@ class Kelas extends Model
             return $query->where('tahun_ajaran_id', $tahunAjaranAktif->id);
         }
         return $query;
+    }
+
+    protected static function resolveAuditActorType(): ?string
+    {
+        if (auth()->guard('web')->check()) {
+            return User::class;
+        }
+
+        if (auth()->guard('guru')->check()) {
+            return Guru::class;
+        }
+
+        return null;
+    }
+
+    protected static function resolveAuditActorId(): ?int
+    {
+        if (auth()->guard('web')->check()) {
+            return auth()->guard('web')->id();
+        }
+
+        if (auth()->guard('guru')->check()) {
+            return auth()->guard('guru')->id();
+        }
+
+        return null;
     }
 }

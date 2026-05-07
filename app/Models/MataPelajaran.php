@@ -5,10 +5,11 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use App\Traits\HasTahunAjaran;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class MataPelajaran extends Model
 {
-    use HasFactory, HasTahunAjaran;
+    use HasFactory, HasTahunAjaran, SoftDeletes;
 
     protected $table = 'mata_pelajarans';
 
@@ -56,11 +57,47 @@ class MataPelajaran extends Model
     protected static function booted()
     {
         static::deleting(function ($mataPelajaran) {
-            $mataPelajaran->nilais()->delete();
-            $mataPelajaran->lingkupMateris->each(function ($lingkupMateri) {
-                $lingkupMateri->tujuanPembelajarans()->delete();
+            if (method_exists($mataPelajaran, 'isForceDeleting') && $mataPelajaran->isForceDeleting()) {
+                return;
+            }
+
+            $mataPelajaran->loadMissing(['lingkupMateris.tujuanPembelajarans', 'nilais']);
+
+            AuditLog::create([
+                'user_type' => static::resolveAuditActorType(),
+                'user_id' => static::resolveAuditActorId(),
+                'action' => 'cascade_delete_snapshot',
+                'model_type' => self::class,
+                'model_id' => $mataPelajaran->id,
+                'description' => 'Snapshot sebelum hapus MataPelajaran dan relasinya',
+                'old_values' => [
+                    'mata_pelajaran' => $mataPelajaran->attributesToArray(),
+                    'lingkup_materis' => $mataPelajaran->lingkupMateris
+                        ->map(fn ($lingkupMateri) => $lingkupMateri->attributesToArray())
+                        ->values()
+                        ->all(),
+                    'tujuan_pembelajarans' => $mataPelajaran->lingkupMateris
+                        ->flatMap(fn ($lingkupMateri) => $lingkupMateri->tujuanPembelajarans
+                            ->map(fn ($tujuanPembelajaran) => $tujuanPembelajaran->attributesToArray()))
+                        ->values()
+                        ->all(),
+                    'nilai_ids' => $mataPelajaran->nilais
+                        ->pluck('id')
+                        ->values()
+                        ->all(),
+                ],
+                'new_values' => null,
+                'ip_address' => request()?->ip(),
+                'user_agent' => request()?->userAgent(),
+            ]);
+
+            $mataPelajaran->nilais->each(function (Nilai $nilai) {
+                $nilai->delete();
             });
-            $mataPelajaran->lingkupMateris()->delete();
+
+            $mataPelajaran->lingkupMateris->each(function ($lingkupMateri) {
+                $lingkupMateri->delete();
+            });
         });
     }
     
@@ -100,5 +137,31 @@ class MataPelajaran extends Model
             return $query->where('tahun_ajaran_id', $tahunAjaranAktif->id);
         }
         return $query;
+    }
+
+    protected static function resolveAuditActorType(): ?string
+    {
+        if (auth()->guard('web')->check()) {
+            return User::class;
+        }
+
+        if (auth()->guard('guru')->check()) {
+            return Guru::class;
+        }
+
+        return null;
+    }
+
+    protected static function resolveAuditActorId(): ?int
+    {
+        if (auth()->guard('web')->check()) {
+            return auth()->guard('web')->id();
+        }
+
+        if (auth()->guard('guru')->check()) {
+            return auth()->guard('guru')->id();
+        }
+
+        return null;
     }
 }
