@@ -70,9 +70,9 @@
                 <div>
                     <p class="text-sm text-gray-600">Bobot Nilai:</p>
                     <ul class="text-sm text-gray-500 list-disc list-inside ml-2">
-                        <li>Sumatif TP: {{ number_format($bobotNilai->bobot_tp * 100, 0) }}%</li>
-                        <li>Sumatif LM: {{ number_format($bobotNilai->bobot_lm * 100, 0) }}%</li>
-                        <li>Sumatif Akhir Semester: {{ number_format($bobotNilai->bobot_as * 100, 0) }}%</li>
+                        <li>Sumatif TP: {{ $bobotNilai->bobot_tp }} ({{ $bobotNilai->getTpPercentage() }}%)</li>
+                        <li>Sumatif LM: {{ $bobotNilai->bobot_lm }} ({{ $bobotNilai->getLmPercentage() }}%)</li>
+                        <li>Sumatif Akhir Semester: {{ $bobotNilai->bobot_as }} ({{ $bobotNilai->getAsPercentage() }}%)</li>
                     </ul>
                 </div>
             </div>

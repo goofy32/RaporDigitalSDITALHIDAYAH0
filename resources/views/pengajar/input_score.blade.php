@@ -54,9 +54,9 @@
                 <div>
                     <p class="text-sm text-gray-600">Bobot Nilai:</p>
                     <ul class="text-sm text-gray-500 list-disc list-inside ml-2">
-                        <li>Sumatif TP: {{ number_format($bobotNilai->bobot_tp * 100, 0) }}%</li>
-                        <li>Sumatif LM: {{ number_format($bobotNilai->bobot_lm * 100, 0) }}%</li>
-                        <li>Sumatif Akhir Semester: {{ number_format($bobotNilai->bobot_as * 100, 0) }}%</li>
+                        <li>Sumatif TP: {{ $bobotNilai->bobot_tp }} ({{ $bobotNilai->getTpPercentage() }}%)</li>
+                        <li>Sumatif LM: {{ $bobotNilai->bobot_lm }} ({{ $bobotNilai->getLmPercentage() }}%)</li>
+                        <li>Sumatif Akhir Semester: {{ $bobotNilai->bobot_as }} ({{ $bobotNilai->getAsPercentage() }}%)</li>
                     </ul>
                 </div>
             </div>
@@ -228,7 +228,7 @@
 
 <script>
     window.kkmValue = {{ json_encode($kkmValue ?? 70) }};
-    window.bobotNilai = @json($bobotNilai ?? ['bobot_tp' => 0.25, 'bobot_lm' => 0.25, 'bobot_as' => 0.5]);
+    window.bobotNilai = @json($bobotNilai ?? ['bobot_tp' => 1, 'bobot_lm' => 1, 'bobot_as' => 2]);
 </script>
 @endsection
 

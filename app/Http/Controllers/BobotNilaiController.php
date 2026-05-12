@@ -23,19 +23,10 @@ class BobotNilaiController extends Controller
     public function update(Request $request)
     {
         $validated = $request->validate([
-            'bobot_tp' => 'required|numeric|min:0|max:1',
-            'bobot_lm' => 'required|numeric|min:0|max:1',
-            'bobot_as' => 'required|numeric|min:0|max:1',
+            'bobot_tp' => 'required|integer|min:1|max:100',
+            'bobot_lm' => 'required|integer|min:1|max:100',
+            'bobot_as' => 'required|integer|min:1|max:100',
         ]);
-        
-        // Pastikan total bobot adalah 1 (100%)
-        $total = $validated['bobot_tp'] + $validated['bobot_lm'] + $validated['bobot_as'];
-        if (round($total, 2) != 1) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Total bobot harus 100% (1.0)'
-            ], 422);
-        }
         
         // Ambil nilai bobot lama untuk logging
         $bobotNilai = BobotNilai::getDefault();

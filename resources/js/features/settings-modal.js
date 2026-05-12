@@ -16,9 +16,9 @@ export function registerSettingsModalFeatures() {
             overwriteExisting: false
         },
         bobotData: {
-            bobot_tp: 0.25,
-            bobot_lm: 0.25,
-            bobot_as: 0.50
+            bobot_tp: 1,
+            bobot_lm: 1,
+            bobot_as: 2
         },
         kkmNotificationSettings: {
             completeScoresOnly: false
@@ -40,10 +40,44 @@ export function registerSettingsModalFeatures() {
         },
 
         get isTotalValid() {
-            const total = parseFloat(this.bobotData.bobot_tp) +
-                parseFloat(this.bobotData.bobot_lm) +
-                parseFloat(this.bobotData.bobot_as);
-            return Math.abs(total - 1) < 0.01;
+            return this.bobotTpValue >= 1 && this.bobotLmValue >= 1 && this.bobotAsValue >= 1;
+        },
+
+        get bobotTpValue() {
+            return this.normalizeBobotValue(this.bobotData.bobot_tp);
+        },
+
+        get bobotLmValue() {
+            return this.normalizeBobotValue(this.bobotData.bobot_lm);
+        },
+
+        get bobotAsValue() {
+            return this.normalizeBobotValue(this.bobotData.bobot_as);
+        },
+
+        get totalBobot() {
+            return this.bobotTpValue + this.bobotLmValue + this.bobotAsValue;
+        },
+
+        get tpPercentage() {
+            return this.totalBobot > 0 ? ((this.bobotTpValue / this.totalBobot) * 100).toFixed(1) : '0.0';
+        },
+
+        get lmPercentage() {
+            return this.totalBobot > 0 ? ((this.bobotLmValue / this.totalBobot) * 100).toFixed(1) : '0.0';
+        },
+
+        get asPercentage() {
+            return this.totalBobot > 0 ? ((this.bobotAsValue / this.totalBobot) * 100).toFixed(1) : '0.0';
+        },
+
+        get ratioLabel() {
+            return `${this.bobotTpValue} : ${this.bobotLmValue} : ${this.bobotAsValue}`;
+        },
+
+        normalizeBobotValue(value) {
+            const parsed = Number.parseInt(value, 10);
+            return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
         },
 
         open() {
@@ -142,9 +176,9 @@ export function registerSettingsModalFeatures() {
                 const response = await fetch('/admin/bobot-nilai/data');
                 const data = await response.json();
                 this.bobotData = {
-                    bobot_tp: data.bobot_tp,
-                    bobot_lm: data.bobot_lm,
-                    bobot_as: data.bobot_as
+                    bobot_tp: this.normalizeBobotValue(data.bobot_tp) || 1,
+                    bobot_lm: this.normalizeBobotValue(data.bobot_lm) || 1,
+                    bobot_as: this.normalizeBobotValue(data.bobot_as) || 2
                 };
             } catch (error) {
                 console.error('Error fetching bobot data:', error);
@@ -284,7 +318,7 @@ export function registerSettingsModalFeatures() {
 
         async saveBobot() {
             if (!this.isTotalValid) {
-                this.showAlert('error', 'Total bobot harus 100%');
+                this.showAlert('error', 'Semua bobot harus berupa bilangan bulat minimal 1');
                 return;
             }
 
@@ -329,7 +363,11 @@ export function registerSettingsModalFeatures() {
                         'Content-Type': 'application/json',
                         'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content
                     },
-                    body: JSON.stringify(this.bobotData)
+                    body: JSON.stringify({
+                        bobot_tp: this.bobotTpValue,
+                        bobot_lm: this.bobotLmValue,
+                        bobot_as: this.bobotAsValue
+                    })
                 });
 
                 const data = await response.json();

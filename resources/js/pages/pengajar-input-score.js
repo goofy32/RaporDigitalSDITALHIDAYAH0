@@ -22,6 +22,54 @@ function hasUnsavedChanges() {
     return formChanged || Boolean(getFormProtectionStore()?.formChanged);
 }
 
+function parseNumericInputValue(input) {
+    if (!input || input.value === '') {
+        return null;
+    }
+
+    const value = parseFloat(input.value);
+    return Number.isNaN(value) ? null : value;
+}
+
+function getBobotNilai() {
+    var tp = parseInt(window.bobotNilai?.bobot_tp || 1, 10);
+    var lm = parseInt(window.bobotNilai?.bobot_lm || 1, 10);
+    var as = parseInt(window.bobotNilai?.bobot_as || 2, 10);
+    var total = tp + lm + as;
+
+    return {
+        bobotTP: tp / total,
+        bobotLM: lm / total,
+        bobotAS: as / total,
+        total: total,
+        rawTP: tp,
+        rawLM: lm,
+        rawAS: as,
+    };
+}
+
+function calculateSemesterAverage(nilaiTes, nilaiNonTes) {
+    if (nilaiTes === null || nilaiNonTes === null) {
+        return null;
+    }
+
+    return (nilaiTes + nilaiNonTes) / 2;
+}
+
+function calculateNilaiAkhirRapor(naTP, naLM, nilaiAkhirSemester) {
+    if (nilaiAkhirSemester === null) {
+        return null;
+    }
+
+    const { bobotTP, bobotLM, bobotAS } = getBobotNilai();
+
+    return Math.round(
+        ((naTP ?? 0) * bobotTP) +
+        ((naLM ?? 0) * bobotLM) +
+        (nilaiAkhirSemester * bobotAS)
+    );
+}
+
 function bindInputScorePage() {
     if (!isInputScorePage()) return;
 
@@ -134,11 +182,11 @@ function calculateIntermediateValues(row) {
     if (!nilaiAkhirInput.value) {
         let nilaiTesInput = row.querySelector('input[name*="[nilai_tes]"]');
         let nilaiNonTesInput = row.querySelector('input[name*="[nilai_non_tes]"]');
-        let nilaiTes = parseFloat(nilaiTesInput.value) || 0;
-        let nilaiNonTes = parseFloat(nilaiNonTesInput.value) || 0;
+        let nilaiTes = parseNumericInputValue(nilaiTesInput);
+        let nilaiNonTes = parseNumericInputValue(nilaiNonTesInput);
+        let nilaiAkhirSemester = calculateSemesterAverage(nilaiTes, nilaiNonTes);
 
-        let nilaiAkhirSemester = (nilaiTes * 0.6) + (nilaiNonTes * 0.4);
-        nilaiAkhirInput.value = !nilaiTesInput.value && !nilaiNonTesInput.value
+        nilaiAkhirInput.value = nilaiAkhirSemester === null
             ? '0'
             : nilaiAkhirSemester.toFixed(2);
     }
@@ -146,14 +194,12 @@ function calculateIntermediateValues(row) {
     // 4. Calculate Nilai Akhir Rapor if empty
     let nilaiAkhirRaporInput = row.querySelector('input[name*="[nilai_akhir_rapor]"]');
     if (!nilaiAkhirRaporInput.value) {
-        let bobotTP = parseFloat(window.bobotNilai?.bobot_tp || 0.25);
-        let bobotLM = parseFloat(window.bobotNilai?.bobot_lm || 0.25);
-        let bobotAS = parseFloat(window.bobotNilai?.bobot_as || 0.50);
         let naTP = parseFloat(row.querySelector('.na-tp')?.value) || 0;
         let naLM = parseFloat(row.querySelector('.na-lm')?.value) || 0;
-        let nilaiAkhirSemester = parseFloat(nilaiAkhirInput.value) || 0;
+        let nilaiAkhirSemester = parseNumericInputValue(nilaiAkhirInput);
+        let nilaiAkhirRapor = calculateNilaiAkhirRapor(naTP, naLM, nilaiAkhirSemester);
 
-        nilaiAkhirRaporInput.value = Math.round((naTP * bobotTP) + (naLM * bobotLM) + (nilaiAkhirSemester * bobotAS));
+        nilaiAkhirRaporInput.value = nilaiAkhirRapor === null ? '0' : nilaiAkhirRapor;
     }
 }
 
@@ -195,14 +241,15 @@ function calculateAverages(row) {
     // 3. Hitung Nilai Akhir Semester
     let nilaiTesInput = row.querySelector('input[name*="[nilai_tes]"]');
     let nilaiNonTesInput = row.querySelector('input[name*="[nilai_non_tes]"]');
-    let nilaiTes = nilaiTesInput.value !== '' ? parseFloat(nilaiTesInput.value) : null;
-    let nilaiNonTes = nilaiNonTesInput.value !== '' ? parseFloat(nilaiNonTesInput.value) : null;
+    let nilaiTes = parseNumericInputValue(nilaiTesInput);
+    let nilaiNonTes = parseNumericInputValue(nilaiNonTesInput);
     
     let nilaiAkhirSemesterInput = row.querySelector('input[name*="[nilai_akhir]"]');
     
-    // Calculate only if both test scores are available
-    if (nilaiTes !== null && nilaiNonTes !== null) {
-        let nilaiAkhirSemester = (nilaiTes * 0.6) + (nilaiNonTes * 0.4);
+    // Nilai akhir semester dihitung sebagai rata-rata tes dan non-tes.
+    let nilaiAkhirSemester = calculateSemesterAverage(nilaiTes, nilaiNonTes);
+
+    if (nilaiAkhirSemester !== null) {
         nilaiAkhirSemesterInput.value = nilaiAkhirSemester.toFixed(2);
     } else {
         nilaiAkhirSemesterInput.value = '0';
@@ -213,19 +260,13 @@ function calculateAverages(row) {
     let naLMInput = row.querySelector('.na-lm');
     let naTP = naTPInput.value !== '' ? parseFloat(naTPInput.value) : null;
     let naLM = naLMInput.value !== '' ? parseFloat(naLMInput.value) : null;
-    let nilaiAkhirSemester = nilaiAkhirSemesterInput.value !== '' ? parseFloat(nilaiAkhirSemesterInput.value) : null;
-
-    // Ambil bobot dari variabel global
-    let bobotTP = parseFloat(window.bobotNilai?.bobot_tp || 0.25);
-    let bobotLM = parseFloat(window.bobotNilai?.bobot_lm || 0.25);
-    let bobotAS = parseFloat(window.bobotNilai?.bobot_as || 0.50);
 
     let nilaiAkhirRaporInput = row.querySelector('input[name*="[nilai_akhir_rapor]"]');
     
-    // Calculate final grade only if all components are available
-    if (naTP !== null && naLM !== null && nilaiAkhirSemester !== null) {
-        let nilaiAkhirRapor = (naTP * bobotTP) + (naLM * bobotLM) + (nilaiAkhirSemester * bobotAS);
-        nilaiAkhirRaporInput.value = Math.round(nilaiAkhirRapor);
+    let nilaiAkhirRapor = calculateNilaiAkhirRapor(naTP, naLM, nilaiAkhirSemester);
+
+    if (nilaiAkhirRapor !== null) {
+        nilaiAkhirRaporInput.value = nilaiAkhirRapor;
     } else {
         nilaiAkhirRaporInput.value = '0';
     }

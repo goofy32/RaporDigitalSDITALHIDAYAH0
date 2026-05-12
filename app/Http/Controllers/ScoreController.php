@@ -60,6 +60,7 @@ class ScoreController extends Controller
 
         try {
             DB::beginTransaction();
+            $bobotNilai = BobotNilai::getDefault();
             $savedData = [];
             $notSavedData = []; // Tracking data yang tidak tersimpan
 
@@ -150,21 +151,21 @@ class ScoreController extends Controller
 
                 // Simpan nilai agregat
                 $finalScores = [];
-                $fieldsToCheck = [
-                    'na_tp', 'na_lm', 'nilai_tes', 'nilai_non_tes', 
-                    'nilai_akhir', 'nilai_akhir_rapor'
+                $naTp = $this->calculateAverageScore($scoreData['tp'] ?? []);
+                $naLm = $this->calculateAverageScore($scoreData['lm'] ?? []);
+                $nilaiTes = $this->normalizeScoreValue($scoreData['nilai_tes'] ?? null);
+                $nilaiNonTes = $this->normalizeScoreValue($scoreData['nilai_non_tes'] ?? null);
+                $nilaiAkhirSemester = $this->calculateNilaiAkhirSemester($nilaiTes, $nilaiNonTes);
+                $nilaiAkhirRapor = $this->calculateNilaiAkhirRapor($naTp, $naLm, $nilaiAkhirSemester, $bobotNilai);
+
+                $finalScores = [
+                    'na_tp' => $naTp,
+                    'na_lm' => $naLm,
+                    'nilai_tes' => $nilaiTes,
+                    'nilai_non_tes' => $nilaiNonTes,
+                    'nilai_akhir_semester' => $nilaiAkhirSemester,
+                    'nilai_akhir_rapor' => $nilaiAkhirRapor,
                 ];
-                
-                foreach ($fieldsToCheck as $field) {
-                    if (isset($scoreData[$field])) {
-                        $value = $scoreData[$field];
-                        if ($value !== '') {
-                            $finalScores[$field === 'nilai_akhir' ? 'nilai_akhir_semester' : $field] = $value;
-                        } else {
-                            $finalScores[$field === 'nilai_akhir' ? 'nilai_akhir_semester' : $field] = null;
-                        }
-                    }
-                }
 
                 if ($tahunAjaranId) {
                     $finalScores['tahun_ajaran_id'] = $tahunAjaranId;
@@ -405,7 +406,65 @@ class ScoreController extends Controller
         }
         return false;
     }
-    
+
+    private function normalizeScoreValue($value): ?float
+    {
+        if ($value === '' || $value === null) {
+            return null;
+        }
+
+        return is_numeric($value) ? (float) $value : null;
+    }
+
+    private function calculateAverageScore(array $scores): float
+    {
+        $sum = 0;
+        $count = 0;
+
+        array_walk_recursive($scores, function ($value) use (&$sum, &$count) {
+            $count++;
+            $sum += ($value === '' || $value === null || !is_numeric($value))
+                ? 0
+                : (float) $value;
+        });
+
+        if ($count === 0) {
+            return 0.0;
+        }
+
+        return round($sum / $count, 2);
+    }
+
+    private function calculateNilaiAkhirSemester(?float $nilaiTes, ?float $nilaiNonTes): float
+    {
+        if ($nilaiTes === null || $nilaiNonTes === null) {
+            return 0.0;
+        }
+
+        return round(($nilaiTes + $nilaiNonTes) / 2, 2);
+    }
+
+    private function calculateNilaiAkhirRapor(
+        float $naTp,
+        float $naLm,
+        float $nilaiAkhirSemester,
+        BobotNilai $bobotNilai
+    ): float {
+        $totalBobot = $bobotNilai->getTotal();
+
+        if ($totalBobot === 0) {
+            return 0.0;
+        }
+
+        return round(
+            (
+                ($naTp * (int) $bobotNilai->bobot_tp) +
+                ($naLm * (int) $bobotNilai->bobot_lm) +
+                ($nilaiAkhirSemester * (int) $bobotNilai->bobot_as)
+            ) / $totalBobot
+        );
+    }
+      
     public function previewScore($id)
     {
         try {

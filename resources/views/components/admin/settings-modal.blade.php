@@ -202,7 +202,7 @@
                                 </svg>
                             </div>
                             <div class="ml-3">
-                                <p>Bobot nilai menentukan persentase masing-masing komponen dalam perhitungan nilai akhir rapor. Total bobot harus 100% (1.0).</p>
+                                <p>Bobot nilai menentukan rasio masing-masing komponen dalam perhitungan nilai akhir rapor. Gunakan bilangan bulat seperti 1 : 1 : 2.</p>
                             </div>
                         </div>
                     </div>
@@ -220,38 +220,40 @@
                     <div class="mb-4">
                         <label class="block mb-2 text-sm font-medium text-gray-900">Bobot Sumatif Tujuan Pembelajaran (S.TP)</label>
                         <div class="flex items-center">
-                            <input type="number" x-model="bobotData.bobot_tp" step="0.01" min="0" max="1" 
+                            <input type="number" x-model.number="bobotData.bobot_tp" step="1" min="1" max="100" 
                                    class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-green-500 focus:border-green-500 block w-full p-2.5">
-                            <span class="ml-2 text-gray-700">x 100% = <span x-text="Math.round(bobotData.bobot_tp * 100) + '%'"></span></span>
+                            <span class="ml-2 text-gray-700">Rasio <span x-text="bobotTpValue"></span> = <span x-text="tpPercentage + '%'"></span></span>
                         </div>
                     </div>
                     
                     <div class="mb-4">
                         <label class="block mb-2 text-sm font-medium text-gray-900">Bobot Sumatif Lingkup Materi (S.LM)</label>
                         <div class="flex items-center">
-                            <input type="number" x-model="bobotData.bobot_lm" step="0.01" min="0" max="1" 
+                            <input type="number" x-model.number="bobotData.bobot_lm" step="1" min="1" max="100" 
                                    class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-green-500 focus:border-green-500 block w-full p-2.5">
-                            <span class="ml-2 text-gray-700">x 100% = <span x-text="Math.round(bobotData.bobot_lm * 100) + '%'"></span></span>
+                            <span class="ml-2 text-gray-700">Rasio <span x-text="bobotLmValue"></span> = <span x-text="lmPercentage + '%'"></span></span>
                         </div>
                     </div>
                     
                     <div class="mb-4">
                         <label class="block mb-2 text-sm font-medium text-gray-900">Bobot Sumatif Akhir Semester (S.AS)</label>
                         <div class="flex items-center">
-                            <input type="number" x-model="bobotData.bobot_as" step="0.01" min="0" max="1" 
+                            <input type="number" x-model.number="bobotData.bobot_as" step="1" min="1" max="100" 
                                    class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-green-500 focus:border-green-500 block w-full p-2.5">
-                            <span class="ml-2 text-gray-700">x 100% = <span x-text="Math.round(bobotData.bobot_as * 100) + '%'"></span></span>
+                            <span class="ml-2 text-gray-700">Rasio <span x-text="bobotAsValue"></span> = <span x-text="asPercentage + '%'"></span></span>
                         </div>
                     </div>
                     
                     <div class="mt-2 mb-4">
                         <div class="flex items-center">
-                            <span class="font-medium text-gray-700">Total Bobot: </span>
-                            <span class="ml-2" :class="isTotalValid ? 'text-green-600' : 'text-red-600'" 
-                                  x-text="Math.round((parseFloat(bobotData.bobot_tp) + parseFloat(bobotData.bobot_lm) + parseFloat(bobotData.bobot_as)) * 100) + '%'"></span>
+                            <span class="font-medium text-gray-700">Rasio: </span>
+                            <span class="ml-2" :class="isTotalValid ? 'text-green-600' : 'text-red-600'" x-text="ratioLabel"></span>
                         </div>
+                        <p class="mt-1 text-sm text-gray-600">
+                            Total = <span x-text="totalBobot"></span> | S.TP = <span x-text="tpPercentage"></span>%, S.LM = <span x-text="lmPercentage"></span>%, S.AS = <span x-text="asPercentage"></span>%
+                        </p>
                         <p x-show="!isTotalValid" class="mt-1 text-sm text-red-600">
-                            Total bobot harus 100%. Mohon sesuaikan nilai di atas.
+                            Semua bobot harus berupa bilangan bulat minimal 1.
                         </p>
                     </div>
                     
@@ -259,9 +261,9 @@
                         <h4 class="text-md font-medium text-gray-900 mb-2">Rumus Perhitungan Nilai Akhir:</h4>
                         <p class="text-sm text-gray-700">
                             <span class="font-medium">NA RAPOR</span> = 
-                            (<span x-text="bobotData.bobot_tp"></span> * S.TP + 
-                            <span x-text="bobotData.bobot_lm"></span> * S.LM + 
-                            <span x-text="bobotData.bobot_as"></span> * S.AS)
+                            (<span x-text="bobotTpValue"></span> x S.TP + 
+                            <span x-text="bobotLmValue"></span> x S.LM + 
+                            <span x-text="bobotAsValue"></span> x S.AS) / <span x-text="totalBobot"></span>
                         </p>
                     </div>
                     
