@@ -5,11 +5,10 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
-use App\Traits\InvalidatesDashboardCache;
 
 class TujuanPembelajaran extends Model
 {
-    use HasFactory, InvalidatesDashboardCache, SoftDeletes;
+    use HasFactory, SoftDeletes;
 
     protected $table = 'tujuan_pembelajarans';
 
@@ -76,20 +75,5 @@ class TujuanPembelajaran extends Model
                 $nilai->delete();
             });
         });
-
-        $invalidateCaches = function (TujuanPembelajaran $tujuanPembelajaran) {
-            $lingkupMateri = LingkupMateri::withTrashed()->find($tujuanPembelajaran->lingkup_materi_id);
-            $mataPelajaran = $lingkupMateri
-                ? MataPelajaran::withTrashed()->find($lingkupMateri->mata_pelajaran_id)
-                : null;
-
-            $tujuanPembelajaran->invalidateDashboardCaches($mataPelajaran?->guru_id, $mataPelajaran?->kelas_id);
-        };
-
-        static::created($invalidateCaches);
-        static::updated($invalidateCaches);
-        static::deleted($invalidateCaches);
-        static::restored($invalidateCaches);
-        static::forceDeleted($invalidateCaches);
     }
 }

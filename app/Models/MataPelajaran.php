@@ -5,12 +5,11 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use App\Traits\HasTahunAjaran;
-use App\Traits\InvalidatesDashboardCache;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class MataPelajaran extends Model
 {
-    use HasFactory, HasTahunAjaran, InvalidatesDashboardCache, SoftDeletes;
+    use HasFactory, HasTahunAjaran, SoftDeletes;
 
     protected $table = 'mata_pelajarans';
 
@@ -100,16 +99,6 @@ class MataPelajaran extends Model
                 $lingkupMateri->delete();
             });
         });
-
-        $invalidateCaches = function (MataPelajaran $mataPelajaran) {
-            $mataPelajaran->invalidateDashboardCaches($mataPelajaran->guru_id, $mataPelajaran->kelas_id);
-        };
-
-        static::created($invalidateCaches);
-        static::updated($invalidateCaches);
-        static::deleted($invalidateCaches);
-        static::restored($invalidateCaches);
-        static::forceDeleted($invalidateCaches);
     }
     
     public function catatanMataPelajaran()

@@ -6,11 +6,10 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use App\Traits\HasTahunAjaran;
-use App\Traits\InvalidatesDashboardCache;
 
 class Nilai extends Model
 {
-    use HasFactory, HasTahunAjaran, InvalidatesDashboardCache, SoftDeletes;
+    use HasFactory, HasTahunAjaran, SoftDeletes;
 
     protected $table = 'nilais';
 
@@ -42,20 +41,6 @@ class Nilai extends Model
         'nilai_non_tes' => 'float',
         'nilai_akhir_rapor' => 'float'
     ];
-
-    protected static function booted()
-    {
-        $invalidateCaches = function (Nilai $nilai) {
-            $mataPelajaran = MataPelajaran::withTrashed()->find($nilai->mata_pelajaran_id);
-            $nilai->invalidateDashboardCaches($mataPelajaran?->guru_id, $mataPelajaran?->kelas_id);
-        };
-
-        static::created($invalidateCaches);
-        static::updated($invalidateCaches);
-        static::deleted($invalidateCaches);
-        static::restored($invalidateCaches);
-        static::forceDeleted($invalidateCaches);
-    }
 
     public static $rules = [
         'siswa_id' => 'required|exists:siswas,id',
