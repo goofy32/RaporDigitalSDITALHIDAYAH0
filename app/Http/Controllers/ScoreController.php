@@ -80,7 +80,7 @@ class ScoreController extends Controller
                                 $lm = LingkupMateri::find($lmId);
                                 
                                 $nilaiData = [
-                                    'nilai_tp' => $nilai !== '' ? $nilai : 0
+                                    'nilai_tp' => $this->normalizeScoreValue($nilai)
                                 ];
                                 
                                 if ($tahunAjaranId) {
@@ -118,9 +118,9 @@ class ScoreController extends Controller
                         try {
                             $lm = LingkupMateri::find($lmId);
                             
-                            $nilaiData = [
-                                'nilai_lm' => $nilai !== '' ? $nilai : 0
-                            ];
+                                $nilaiData = [
+                                    'nilai_lm' => $this->normalizeScoreValue($nilai)
+                                ];
                             
                             if ($tahunAjaranId) {
                                 $nilaiData['tahun_ajaran_id'] = $tahunAjaranId;
@@ -422,10 +422,12 @@ class ScoreController extends Controller
         $count = 0;
 
         array_walk_recursive($scores, function ($value) use (&$sum, &$count) {
+            if ($value === '' || $value === null || !is_numeric($value)) {
+                return;
+            }
+
             $count++;
-            $sum += ($value === '' || $value === null || !is_numeric($value))
-                ? 0
-                : (float) $value;
+            $sum += (float) $value;
         });
 
         if ($count === 0) {

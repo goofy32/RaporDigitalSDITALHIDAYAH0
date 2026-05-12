@@ -70,6 +70,30 @@ function calculateNilaiAkhirRapor(naTP, naLM, nilaiAkhirSemester) {
     );
 }
 
+function calculateFilledAverage(inputs) {
+    let sum = 0;
+    let filledCount = 0;
+
+    inputs.forEach(input => {
+        const value = input.value.trim();
+        if (value === '' || value === '-') {
+            return;
+        }
+
+        const parsed = parseFloat(value);
+        if (!Number.isNaN(parsed)) {
+            sum += parsed;
+            filledCount++;
+        }
+    });
+
+    if (filledCount === 0) {
+        return 0;
+    }
+
+    return sum / filledCount;
+}
+
 function bindInputScorePage() {
     if (!isInputScorePage()) return;
 
@@ -141,40 +165,16 @@ function calculateIntermediateValues(row) {
     let naTPInput = row.querySelector('.na-tp');
     if (!naTPInput.value) {
         let tpInputs = row.querySelectorAll('.tp-score');
-        let tpSum = 0;
-        let totalTpCount = tpInputs.length;
-
-        tpInputs.forEach(input => {
-            let value = input.value === '' ? 0 : parseFloat(input.value);
-            tpSum += isNaN(value) ? 0 : value;
-        });
-
-        if (totalTpCount > 0) {
-            let naTP = tpSum / totalTpCount;
-            naTPInput.value = naTP.toFixed(2);
-        } else {
-            naTPInput.value = '0';
-        }
+        let naTP = calculateFilledAverage(tpInputs);
+        naTPInput.value = naTP.toFixed(2);
     }
 
     // 2. Calculate NA Sumatif LM if empty
     let naLMInput = row.querySelector('.na-lm');
     if (!naLMInput.value) {
         let lmInputs = row.querySelectorAll('.lm-score');
-        let lmSum = 0;
-        let totalLmCount = lmInputs.length;
-
-        lmInputs.forEach(input => {
-            let value = input.value === '' ? 0 : parseFloat(input.value);
-            lmSum += isNaN(value) ? 0 : value;
-        });
-
-        if (totalLmCount > 0) {
-            let naLM = lmSum / totalLmCount;
-            naLMInput.value = naLM.toFixed(2);
-        } else {
-            naLMInput.value = '0';
-        }
+        let naLM = calculateFilledAverage(lmInputs);
+        naLMInput.value = naLM.toFixed(2);
     }
 
     // 3. Calculate NA Sumatif Akhir Semester if empty
@@ -206,37 +206,13 @@ function calculateIntermediateValues(row) {
 function calculateAverages(row) {
     // 1. Hitung rata-rata Nilai TP
     let tpInputs = row.querySelectorAll('.tp-score');
-    let tpSum = 0;
-    let totalTpCount = tpInputs.length;
-
-    tpInputs.forEach(input => {
-        let value = input.value === '' ? 0 : parseFloat(input.value);
-        tpSum += isNaN(value) ? 0 : value;
-    });
-
-    if (totalTpCount > 0) {
-        let naTP = tpSum / totalTpCount;
-        row.querySelector('.na-tp').value = naTP.toFixed(2);
-    } else {
-        row.querySelector('.na-tp').value = '0';
-    }
+    let naTP = calculateFilledAverage(tpInputs);
+    row.querySelector('.na-tp').value = naTP.toFixed(2);
 
     // 2. Hitung rata-rata Nilai LM 
     let lmInputs = row.querySelectorAll('.lm-score');
-    let lmSum = 0;
-    let totalLmCount = lmInputs.length;
-
-    lmInputs.forEach(input => {
-        let value = input.value === '' ? 0 : parseFloat(input.value);
-        lmSum += isNaN(value) ? 0 : value;
-    });
-
-    if (totalLmCount > 0) {
-        let naLM = lmSum / totalLmCount;
-        row.querySelector('.na-lm').value = naLM.toFixed(2);
-    } else {
-        row.querySelector('.na-lm').value = '0';
-    }
+    let naLM = calculateFilledAverage(lmInputs);
+    row.querySelector('.na-lm').value = naLM.toFixed(2);
 
     // 3. Hitung Nilai Akhir Semester
     let nilaiTesInput = row.querySelector('input[name*="[nilai_tes]"]');
@@ -256,11 +232,6 @@ function calculateAverages(row) {
     }
 
     // 4. Hitung Nilai Akhir Rapor dengan bobot dinamis
-    let naTPInput = row.querySelector('.na-tp');
-    let naLMInput = row.querySelector('.na-lm');
-    let naTP = naTPInput.value !== '' ? parseFloat(naTPInput.value) : null;
-    let naLM = naLMInput.value !== '' ? parseFloat(naLMInput.value) : null;
-
     let nilaiAkhirRaporInput = row.querySelector('input[name*="[nilai_akhir_rapor]"]');
     
     let nilaiAkhirRapor = calculateNilaiAkhirRapor(naTP, naLM, nilaiAkhirSemester);
