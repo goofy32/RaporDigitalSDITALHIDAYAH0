@@ -61,7 +61,7 @@
                             :class="Alpine.store('navigation').isImageLoaded('score-icon') ? 'opacity-100' : 'opacity-0'"
                             id="score-icon">
                     </div>
-                    <span class="ml-3">Data Pembelajaran</span>
+                    <span class="ml-3">Data Nilai Pelajaran</span>
                     
                     <!-- Warning Indicator with Modified Logic -->
                     @php

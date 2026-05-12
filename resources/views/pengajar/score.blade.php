@@ -21,129 +21,69 @@
         </div>
     @endif
 
-    <!-- Dashboard KKM Summary Cards -->
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6 mt-4">
-        @php
-        $totalMataPelajaran = 0;
-        $mapelDenganNilaiRendah = [];
-        $siswaDibawahKKM = [];
+    @php
+    $mapelDenganNilaiRendah = [];
+    $siswaDibawahKKM = [];
 
-        // Pengaturan completeScoresOnly diabaikan.
-        // Notifikasi KKM selalu menampilkan semua nilai di bawah KKM.
+    // Pengaturan completeScoresOnly diabaikan.
+    // Notifikasi KKM selalu menampilkan semua nilai di bawah KKM.
 
-        foreach($kelasData as $kelas) {
-            foreach($kelas->mataPelajarans as $mapel) {
-                $totalMataPelajaran++;
+    foreach($kelasData as $kelas) {
+        foreach($kelas->mataPelajarans as $mapel) {
+            // Ambil KKM untuk mata pelajaran ini
+            $kkm = \App\Models\Kkm::where('mata_pelajaran_id', $mapel->id)
+                ->where('tahun_ajaran_id', session('tahun_ajaran_id'))
+                ->first();
+            
+            $kkmValue = $kkm ? $kkm->nilai : 70; // Default ke 70 jika tidak ada
+            
+            // Build query for students with scores below KKM
+            $query = \App\Models\Nilai::where('mata_pelajaran_id', $mapel->id)
+                ->whereNotNull('nilai_akhir_rapor')
+                ->where('nilai_akhir_rapor', '<', $kkmValue);
                 
-                // Ambil KKM untuk mata pelajaran ini
-                $kkm = \App\Models\Kkm::where('mata_pelajaran_id', $mapel->id)
-                    ->where('tahun_ajaran_id', session('tahun_ajaran_id'))
-                    ->first();
+            $lowScores = $query->count();
                 
-                $kkmValue = $kkm ? $kkm->nilai : 70; // Default ke 70 jika tidak ada
+            if ($lowScores > 0) {
+                $mapelDenganNilaiRendah[] = [
+                    'mapel' => $mapel,
+                    'kelas' => $kelas,
+                    'kkm' => $kkmValue,
+                    'jumlah_siswa' => $lowScores
+                ];
                 
-                // Build query for students with scores below KKM
-                $query = \App\Models\Nilai::where('mata_pelajaran_id', $mapel->id)
+                // Get students with low scores
+                $siswaLowQuery = \App\Models\Nilai::where('mata_pelajaran_id', $mapel->id)
                     ->whereNotNull('nilai_akhir_rapor')
                     ->where('nilai_akhir_rapor', '<', $kkmValue);
                     
-                $lowScores = $query->count();
+                $siswaLow = $siswaLowQuery->with('siswa')->get();
                     
-                if ($lowScores > 0) {
-                    $mapelDenganNilaiRendah[] = [
-                        'mapel' => $mapel,
-                        'kelas' => $kelas,
-                        'kkm' => $kkmValue,
-                        'jumlah_siswa' => $lowScores
-                    ];
-                    
-                    // Get students with low scores
-                    $siswaLowQuery = \App\Models\Nilai::where('mata_pelajaran_id', $mapel->id)
-                        ->whereNotNull('nilai_akhir_rapor')
-                        ->where('nilai_akhir_rapor', '<', $kkmValue);
-                        
-                    $siswaLow = $siswaLowQuery->with('siswa')->get();
-                        
-                    foreach($siswaLow as $nilai) {
-                        if (!isset($siswaDibawahKKM[$nilai->siswa_id])) {
-                            $siswaDibawahKKM[$nilai->siswa_id] = [
-                                'siswa' => $nilai->siswa,
-                                'mapel' => []
-                            ];
-                        }
-                        
-                        $siswaDibawahKKM[$nilai->siswa_id]['mapel'][] = [
-                            'nama' => $mapel->nama_pelajaran,
-                            'nilai' => $nilai->nilai_akhir_rapor,
-                            'kkm' => $kkmValue,
-                            'complete' => $nilai->nilai_tp !== null && 
-                                        $nilai->nilai_lm !== null && 
-                                        $nilai->nilai_tes !== null && 
-                                        $nilai->nilai_non_tes !== null
+                foreach($siswaLow as $nilai) {
+                    if (!isset($siswaDibawahKKM[$nilai->siswa_id])) {
+                        $siswaDibawahKKM[$nilai->siswa_id] = [
+                            'siswa' => $nilai->siswa,
+                            'mapel' => []
                         ];
                     }
+                    
+                    $siswaDibawahKKM[$nilai->siswa_id]['mapel'][] = [
+                        'nama' => $mapel->nama_pelajaran,
+                        'nilai' => $nilai->nilai_akhir_rapor,
+                        'kkm' => $kkmValue,
+                        'complete' => $nilai->nilai_tp !== null && 
+                                    $nilai->nilai_lm !== null && 
+                                    $nilai->nilai_tes !== null && 
+                                    $nilai->nilai_non_tes !== null
+                    ];
                 }
             }
         }
+    }
 
-        $totalSiswaDibawahKKM = count($siswaDibawahKKM);
-        $totalMapelBermasalah = count($mapelDenganNilaiRendah);
-        @endphp
-
-        <!-- Card: Total Mata Pelajaran -->
-        <div class="bg-white rounded-lg shadow p-4 border-l-4 {{ $totalMapelBermasalah > 0 ? 'border-green-700' : 'border-green-700' }}">
-            <div class="flex items-center">
-                <div class="p-3 rounded-full {{ $totalMapelBermasalah > 0 ? 'bg-green-100 text-green-800' : 'bg-green-100 text-green-800' }} mr-5">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-                    </svg>
-                </div>
-                <div>
-                    <p class="text-sm text-gray-500">Total Mata Pelajaran</p>
-                    <p class="text-xl font-semibold">{{ $totalMataPelajaran }}</p>
-                    <p class="text-sm {{ $totalMapelBermasalah > 0 ? 'text-yellow-600' : 'text-green-600' }}">
-                        {{ $totalMapelBermasalah > 0 ? $totalMapelBermasalah . ' mata pelajaran memiliki nilai di bawah KKM' : 'Semua mata pelajaran memenuhi KKM' }}
-                    </p>
-                </div>
-            </div>
-        </div>
-
-        <!-- Card: Siswa Dibawah KKM -->
-        <div class="bg-white rounded-lg shadow p-4 border-l-4 {{ $totalSiswaDibawahKKM > 0 ? 'border-green-700' : 'border-green-700' }}">
-            <div class="flex items-center">
-                <div class="p-3 rounded-full {{ $totalSiswaDibawahKKM > 0 ? 'bg-green-100 text-green-800' : 'bg-green-100 text-green-800' }} mr-5">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
-                    </svg>
-                </div>
-                <div>
-                    <p class="text-sm text-gray-500">Siswa Dibawah KKM</p>
-                    <p class="text-xl font-semibold">{{ $totalSiswaDibawahKKM }}</p>
-                    <p class="text-sm {{ $totalSiswaDibawahKKM > 0 ? 'text-red-600' : 'text-green-600' }}">
-                        {{ $totalSiswaDibawahKKM > 0 ? 'Perlu perhatian lebih' : 'Semua siswa memenuhi KKM' }}
-                    </p>
-                </div>
-            </div>
-        </div>
-
-        <!-- Card: KKM Terendah -->
-        <div class="bg-white rounded-lg shadow p-4 border-l-4 border-green-700">
-            <div class="flex items-center">
-                <div class="p-3 rounded-full bg-green-100 text-green-800 mr-5">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-                    </svg>
-                </div>
-                <div>
-                    <p class="text-sm text-gray-500">Nilai KKM Default</p>
-                    <p class="text-xl font-semibold">70</p>
-                    <p class="text-sm text-green-600">
-                        Diatur di pengaturan rapor
-                    </p>
-                </div>
-            </div>
-        </div>
-    </div>
+    $totalSiswaDibawahKKM = count($siswaDibawahKKM);
+    $totalMapelBermasalah = count($mapelDenganNilaiRendah);
+    @endphp
 
     <!-- Warning Alerts sesuai kondisi -->
     @if($totalMapelBermasalah > 0)

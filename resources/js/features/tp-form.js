@@ -6,12 +6,16 @@ function getDeleteIconUrl(pageEl) {
     return pageEl.dataset.deleteIconUrl || '/images/icons/delete.png';
 }
 
-export function initTpFormPage(pageSelector) {
+export function initTpFormPage(pageSelector, options = {}) {
     var pageEl = document.querySelector(`[data-page="${pageSelector}"]`);
     if (!pageEl || pageEl.dataset.tpFormBound === 'true') return;
 
     pageEl.dataset.tpFormBound = 'true';
 
+    var settings = {
+        enableUnsavedWarning: false,
+        ...options,
+    };
     var csrfToken = pageEl.dataset.csrfToken || document.querySelector('meta[name="csrf-token"]')?.content || '';
     var mataPelajaranId = pageEl.dataset.mataPelajaranId || '';
     var listUrl = pageEl.dataset.listUrl || '';
@@ -21,6 +25,50 @@ export function initTpFormPage(pageSelector) {
     var tpData = [];
     var existingData = [];
     var activeFilterLingkupMateri = '';
+    var tpTableHasUnsavedData = false;
+    var unsavedWarningListenersAttached = false;
+
+    function setTpTableUnsavedState(hasUnsaved) {
+        tpTableHasUnsavedData = hasUnsaved;
+    }
+
+    function syncTpTableUnsavedState() {
+        if (!settings.enableUnsavedWarning) return;
+        setTpTableUnsavedState(tpData.length > 0);
+    }
+
+    function handleTpBeforeUnload(event) {
+        if (!tpTableHasUnsavedData) return;
+        event.preventDefault();
+        event.returnValue = '';
+        return event.returnValue;
+    }
+
+    function handleTpTurboBeforeVisit(event) {
+        if (!tpTableHasUnsavedData) return;
+        if (!confirm('Ada data TP yang belum disimpan. Yakin ingin keluar?')) {
+            event.preventDefault();
+            return;
+        }
+
+        setTpTableUnsavedState(false);
+    }
+
+    function cleanupTpUnsavedWarning() {
+        setTpTableUnsavedState(false);
+        window.removeEventListener('beforeunload', handleTpBeforeUnload);
+        document.removeEventListener('turbo:before-visit', handleTpTurboBeforeVisit);
+        document.removeEventListener('turbo:before-cache', cleanupTpUnsavedWarning);
+        unsavedWarningListenersAttached = false;
+    }
+
+    function setupTpUnsavedWarning() {
+        if (!settings.enableUnsavedWarning || unsavedWarningListenersAttached) return;
+        window.addEventListener('beforeunload', handleTpBeforeUnload);
+        document.addEventListener('turbo:before-visit', handleTpTurboBeforeVisit);
+        document.addEventListener('turbo:before-cache', cleanupTpUnsavedWarning);
+        unsavedWarningListenersAttached = true;
+    }
 
     function renderTable() {
         var tableBody = document.getElementById('tpTableBody');
@@ -88,6 +136,7 @@ export function initTpFormPage(pageSelector) {
             if (!data.success) return console.error('Error loading data:', data.message);
             existingData = data.tujuanPembelajarans.map(tp => ({ id: tp.id, lingkupMateriId: tp.lingkup_materi_id, lingkupMateriText: tp.lingkup_materi.judul_lingkup_materi, kodeTP: tp.kode_tp, deskripsiTP: tp.deskripsi_tp, isNew: false }));
             renderTable();
+            syncTpTableUnsavedState();
         } catch (error) {
             console.error('Error fetching existing data:', error);
         }
@@ -130,6 +179,7 @@ export function initTpFormPage(pageSelector) {
         renderTable();
         clearForm();
         markTpFormChanged();
+        syncTpTableUnsavedState();
     };
 
     window.deleteNewRow = function (index) {
@@ -137,6 +187,7 @@ export function initTpFormPage(pageSelector) {
         tpData.splice(index, 1);
         renderTable();
         markTpFormChanged();
+        syncTpTableUnsavedState();
     };
 
     window.deleteExistingRow = async function (index, id) {
@@ -207,6 +258,8 @@ export function initTpFormPage(pageSelector) {
             var response = await fetch(storeUrl, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-CSRF-TOKEN': csrfToken }, body: JSON.stringify({ tpData, mataPelajaranId }) });
             var data = await response.json();
             if (!data.success) throw new Error(data.message || 'Terjadi kesalahan saat menyimpan data.');
+            tpData = [];
+            setTpTableUnsavedState(false);
             window.Alpine?.store('formProtection')?.reset?.();
             alert('Data berhasil disimpan!');
             window.location.reload();
@@ -219,6 +272,7 @@ export function initTpFormPage(pageSelector) {
 
     activeFilterLingkupMateri = '';
     document.getElementById('table-filter').value = '';
+    setupTpUnsavedWarning();
     loadExistingData();
     document.getElementById('table-filter')?.addEventListener('change', function () { activeFilterLingkupMateri = this.value; renderTable(); if (this.value) document.getElementById('lingkup_materi').value = this.value; });
     document.getElementById('addTPForm')?.addEventListener('keypress', function (event) { if (event.key === 'Enter') { event.preventDefault(); if (validateInputs()) window.addRow(); } });

@@ -1,5 +1,7 @@
 import { initTpFormPage } from '../features/tp-form';
 
 export function initPengajarAddTpPage() {
-    initTpFormPage('pengajar-add-tp');
+    initTpFormPage('pengajar-add-tp', {
+        enableUnsavedWarning: true,
+    });
 }
