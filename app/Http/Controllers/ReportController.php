@@ -2265,6 +2265,13 @@ class ReportController extends Controller
                 'kelas_id' => $template->kelas_id
             ]);
 
+            $otherType = $template->type === 'UTS' ? 'UAS' : 'UTS';
+
+            ReportTemplate::where('type', $otherType)
+                ->where('tahun_ajaran_id', $template->tahun_ajaran_id)
+                ->where('is_active', true)
+                ->update(['is_active' => false]);
+
             // Dapatkan semua kelas yang terkait dengan template ini
             $targetKelasIds = [];
             
@@ -2288,6 +2295,7 @@ class ReportController extends Controller
             if (!empty($targetKelasIds)) {
                 // Cari template lain dengan tipe yang sama dan untuk kelas yang sama
                 $conflictingTemplates = ReportTemplate::where('type', $template->type)
+                    ->where('tahun_ajaran_id', $template->tahun_ajaran_id)
                     ->where('id', '!=', $template->id)
                     ->where(function($query) use ($targetKelasIds) {
                         // Template dengan kelas_id yang cocok
@@ -2315,6 +2323,7 @@ class ReportController extends Controller
             } else {
                 // Ini adalah template global, nonaktifkan semua template global dengan tipe yang sama
                 ReportTemplate::where('type', $template->type)
+                    ->where('tahun_ajaran_id', $template->tahun_ajaran_id)
                     ->whereNull('kelas_id')
                     ->where('id', '!=', $template->id)
                     ->where('is_active', true)

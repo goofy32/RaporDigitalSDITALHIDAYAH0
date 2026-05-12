@@ -216,9 +216,6 @@ class ClassController extends Controller
         $validated = $request->validate([
             'nomor_kelas' => 'required|integer|min:1|max:99',
             'nama_kelas' => 'required|string|max:255',
-            'wali_kelas_id' => 'nullable|exists:gurus,id',
-            'change_wali_kelas' => 'nullable|boolean',
-            'current_wali_kelas_id' => 'nullable|exists:gurus,id',
         ], [
             'nomor_kelas.required' => 'Nomor kelas harus diisi',
             'nomor_kelas.integer' => 'Nomor kelas harus berupa angka',
@@ -226,8 +223,6 @@ class ClassController extends Controller
             'nomor_kelas.max' => 'Nomor kelas maksimal 99',
             'nama_kelas.required' => 'Nama kelas harus diisi',
             'nama_kelas.max' => 'Nama kelas maksimal 255 karakter',
-            'wali_kelas_id.exists' => 'Guru yang dipilih tidak valid',
-            'current_wali_kelas_id.exists' => 'Wali kelas saat ini tidak valid'
         ]);
 
         // Ambil tahun ajaran dari kelas yang sedang diedit
@@ -267,130 +262,6 @@ class ClassController extends Controller
                 'nomor_kelas' => $validated['nomor_kelas'],
                 'nama_kelas' => $validated['nama_kelas']
             ]);
-            
-                        // Menangani perubahan wali kelas
-            $currentWaliKelas = $kelas->guru()
-                                ->wherePivot('is_wali_kelas', true)
-                                ->wherePivot('role', 'wali_kelas')
-                                ->first();
-            
-            // Kasus 1: Ada wali kelas saat ini dan pengguna ingin menggantinya
-            if ($currentWaliKelas && $request->has('change_wali_kelas') && $request->change_wali_kelas == 1) {
-                // Validasi wali kelas baru harus dipilih
-                if (!$request->filled('wali_kelas_id')) {
-                    return back()
-                        ->withInput()
-                        ->with('error', 'Anda harus memilih wali kelas baru.');
-                }
-                
-                // Validasi wali kelas baru tidak boleh sama dengan wali kelas lama
-                if ($request->wali_kelas_id == $currentWaliKelas->id) {
-                    DB::commit();
-                    return redirect()->route('kelas.index')
-                        ->with('info', 'Tidak ada perubahan yang disimpan. Wali kelas yang dipilih sama dengan sebelumnya.');
-                }
-                
-                // Ambil data guru baru
-                $newWaliKelas = Guru::find($request->wali_kelas_id);
-                
-                if (!$newWaliKelas) {
-                    throw new \Exception('Guru baru tidak ditemukan');
-                }
-                
-                // Pastikan guru baru belum menjadi wali kelas di kelas lain
-                $guruAlreadyWaliKelas = DB::table('guru_kelas')
-                    ->where('guru_id', $newWaliKelas->id)
-                    ->where('is_wali_kelas', true)
-                    ->where('role', 'wali_kelas')
-                    ->exists();
-                    
-                if ($guruAlreadyWaliKelas) {
-                    return back()
-                        ->withInput()
-                        ->with('error', 'Guru yang dipilih sudah menjadi wali kelas di kelas lain.');
-                }
-                
-                // 1. Hapus relasi wali kelas lama
-                DB::table('guru_kelas')
-                    ->where('guru_id', $currentWaliKelas->id)
-                    ->where('kelas_id', $kelas->id)
-                    ->where('is_wali_kelas', true)
-                    ->where('role', 'wali_kelas')
-                    ->delete();
-                
-                // 2. Cek apakah guru lama masih menjadi wali kelas di kelas lain
-                $stillWaliKelasElsewhere = DB::table('guru_kelas')
-                    ->where('guru_id', $currentWaliKelas->id)
-                    ->where('kelas_id', '!=', $kelas->id)
-                    ->where('is_wali_kelas', true)
-                    ->where('role', 'wali_kelas')
-                    ->exists();
-                    
-                // 3. Jika tidak menjadi wali kelas di kelas lain, ubah jabatan guru lama menjadi 'guru'
-                if (!$stillWaliKelasElsewhere) {
-                    $currentWaliKelas->jabatan = 'guru';
-                    $currentWaliKelas->save();
-                    
-                    Log::info('Mengubah jabatan guru dari guru_wali menjadi guru', [
-                        'guru_id' => $currentWaliKelas->id,
-                        'nama' => $currentWaliKelas->nama
-                    ]);
-                }
-                
-                // 4. Attach guru baru sebagai wali kelas
-                $kelas->guru()->attach($newWaliKelas->id, [
-                    'is_wali_kelas' => true,
-                    'role' => 'wali_kelas'
-                ]);
-                
-                // 5. Update jabatan guru baru menjadi guru_wali
-                $newWaliKelas->jabatan = 'guru_wali';
-                $newWaliKelas->save();
-                
-                Log::info('Mengganti wali kelas', [
-                    'kelas_id' => $kelas->id,
-                    'old_wali_kelas' => $currentWaliKelas->id,
-                    'new_wali_kelas' => $newWaliKelas->id
-                ]);
-            }
-            // Kasus 2: Belum ada wali kelas dan pengguna ingin menambahkan wali kelas
-            elseif (!$currentWaliKelas && $request->filled('wali_kelas_id')) {
-                // Ambil data guru
-                $guru = Guru::find($request->wali_kelas_id);
-                
-                if (!$guru) {
-                    throw new \Exception('Guru tidak ditemukan');
-                }
-                
-                // Pastikan guru belum menjadi wali kelas di kelas lain
-                $guruAlreadyWaliKelas = DB::table('guru_kelas')
-                    ->where('guru_id', $guru->id)
-                    ->where('is_wali_kelas', true)
-                    ->where('role', 'wali_kelas')
-                    ->exists();
-                    
-                if ($guruAlreadyWaliKelas) {
-                    return back()
-                        ->withInput()
-                        ->with('error', 'Guru yang dipilih sudah menjadi wali kelas di kelas lain.');
-                }
-                
-                // Attach guru sebagai wali kelas
-                $kelas->guru()->attach($guru->id, [
-                    'is_wali_kelas' => true,
-                    'role' => 'wali_kelas'
-                ]);
-                
-                // Update jabatan guru menjadi guru_wali
-                $guru->jabatan = 'guru_wali';
-                $guru->save();
-                
-                Log::info('Menambahkan wali kelas pada kelas yang sudah ada', [
-                    'kelas_id' => $kelas->id,
-                    'guru_id' => $guru->id,
-                    'nama_guru' => $guru->nama
-                ]);
-            }
 
             
             DB::commit();
