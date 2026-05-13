@@ -152,12 +152,29 @@ export const raporManagerPdf = {
 
     async handlePreviewPdf(siswaId, nilaiCount, hasAbsensi) {
         if (!this.validateData(nilaiCount, hasAbsensi)) return;
+        var newWindow = window.open('', '_blank');
+        if (!newWindow) {
+            alert('Popup diblokir browser. Izinkan popup untuk situs ini.');
+            return;
+        }
+
+        newWindow.document.write(
+            '<html><body style="font-family:sans-serif;' +
+            'display:flex;align-items:center;justify-content:center;' +
+            'height:100vh;margin:0;background:#f3f4f6;">' +
+            '<div style="text-align:center">' +
+            '<p style="font-size:18px;color:#374151;">⏳ Memuat PDF rapor...</p>' +
+            '<p style="color:#6b7280;font-size:14px;">Mohon tunggu sebentar</p>' +
+            '</div></body></html>'
+        );
+
         try {
             this.loading = true;
             var url = `/wali-kelas/rapor/preview-pdf/${siswaId}?type=${this.activeTab}&tahun_ajaran_id=${this.tahunAjaranId}`;
             var result = await resolvePdfRequest(url);
 
             if (!result.ok) {
+                newWindow.close();
                 Swal.fire({
                     icon: 'error',
                     title: 'Gagal Membuat PDF',
@@ -167,15 +184,9 @@ export const raporManagerPdf = {
                 return;
             }
 
-            var newWindow = window.open(result.url, '_blank');
-            if (!newWindow) {
-                Swal.fire({
-                    icon: 'warning',
-                    title: 'Popup Diblokir',
-                    html: `<a href="${result.url}" target="_blank" class="text-blue-600 underline">Buka PDF Preview</a>`
-                });
-            }
+            newWindow.location.href = result.url;
         } catch (error) {
+            newWindow.close();
             console.error('Error previewing PDF:', error);
             Swal.fire({
                 icon: 'error',

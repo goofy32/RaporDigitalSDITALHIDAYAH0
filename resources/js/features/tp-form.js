@@ -28,6 +28,24 @@ export function initTpFormPage(pageSelector, options = {}) {
     var tpTableHasUnsavedData = false;
     var unsavedWarningListenersAttached = false;
 
+    function sanitizeKodeTpValue(value) {
+        return String(value ?? '').replace(/[^0-9]/g, '');
+    }
+
+    function bindKodeTpNumericOnly(root = document) {
+        root.querySelectorAll('input[name="kode_tp[]"]').forEach((input) => {
+            if (input.dataset.kodeTpBound === 'true') {
+                return;
+            }
+
+            input.dataset.kodeTpBound = 'true';
+            input.setAttribute('inputmode', 'numeric');
+            input.addEventListener('input', function () {
+                this.value = sanitizeKodeTpValue(this.value);
+            });
+        });
+    }
+
     function setTpTableUnsavedState(hasUnsaved) {
         tpTableHasUnsavedData = hasUnsaved;
     }
@@ -107,12 +125,13 @@ export function initTpFormPage(pageSelector, options = {}) {
 
         tpContainer.innerHTML = `
             <div class="flex items-center mb-2">
-                <input type="text" name="kode_tp[]" placeholder="Kode TP" required class="block w-1/3 p-2.5 bg-gray-50 border border-gray-300 rounded-lg focus:ring-green-500 focus:border-green-500 mr-2">
+                <input type="text" name="kode_tp[]" placeholder="Kode TP (contoh: 1)" inputmode="numeric" required class="block w-1/3 p-2.5 bg-gray-50 border border-gray-300 rounded-lg focus:ring-green-500 focus:border-green-500 mr-2">
                 <input type="text" name="deskripsi_tp[]" placeholder="Deskripsi TP" required class="block w-2/3 p-2.5 bg-gray-50 border border-gray-300 rounded-lg focus:ring-green-500 focus:border-green-500">
                 <button type="button" onclick="addTPRow()" class="ml-2 p-2 bg-green-600 text-white rounded-lg hover:bg-green-700" title="Tambah baris input"><svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 5a1 1 0 011 1v3h3a1 1 0 110 2h-3v3a1 1 0 11-2 0v-3H6a1 1 0 110-2h3V6a1 1 0 011-1z" clip-rule="evenodd"/></svg></button>
             </div>
         `;
         if (activeFilterLingkupMateri) document.getElementById('lingkup_materi').value = activeFilterLingkupMateri;
+        bindKodeTpNumericOnly(tpContainer);
     }
 
     function validateInputs() {
@@ -123,7 +142,15 @@ export function initTpFormPage(pageSelector, options = {}) {
 
         if (!lingkupMateri) return alert('Lingkup Materi harus dipilih!'), false;
         for (i = 0; i < kodeTPs.length; i += 1) {
-            if (!kodeTPs[i].value.trim()) return alert(`Kode TP ${i + 1} tidak boleh kosong!`), kodeTPs[i].focus(), false;
+            var kodeTpValue = kodeTPs[i].value.trim();
+            var sanitizedKodeTp = sanitizeKodeTpValue(kodeTpValue);
+            if (!kodeTpValue) return alert(`Kode TP ${i + 1} tidak boleh kosong!`), kodeTPs[i].focus(), false;
+            if (kodeTpValue !== sanitizedKodeTp || !sanitizedKodeTp) {
+                alert(`Kode TP ${i + 1} harus berupa angka.`);
+                kodeTPs[i].focus();
+                return false;
+            }
+            kodeTPs[i].value = sanitizedKodeTp;
             if (!deskripsiTPs[i].value.trim()) return alert(`Deskripsi TP ${i + 1} tidak boleh kosong!`), deskripsiTPs[i].focus(), false;
         }
         return true;
@@ -147,11 +174,12 @@ export function initTpFormPage(pageSelector, options = {}) {
         var div = document.createElement('div');
         div.className = 'flex items-center mb-2';
         div.innerHTML = `
-            <input type="text" name="kode_tp[]" placeholder="Kode TP" required class="block w-1/3 p-2.5 bg-gray-50 border border-gray-300 rounded-lg focus:ring-green-500 focus:border-green-500 mr-2">
+            <input type="text" name="kode_tp[]" placeholder="Kode TP (contoh: 1)" inputmode="numeric" required class="block w-1/3 p-2.5 bg-gray-50 border border-gray-300 rounded-lg focus:ring-green-500 focus:border-green-500 mr-2">
             <input type="text" name="deskripsi_tp[]" placeholder="Deskripsi TP" required class="block w-2/3 p-2.5 bg-gray-50 border border-gray-300 rounded-lg focus:ring-green-500 focus:border-green-500">
             <button type="button" onclick="removeTPRow(this)" class="ml-2 p-2 bg-red-600 text-white rounded-lg hover:bg-red-700" title="Hapus baris input"><svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg></button>
         `;
         container.appendChild(div);
+        bindKodeTpNumericOnly(div);
         markTpFormChanged();
     };
 
@@ -166,8 +194,9 @@ export function initTpFormPage(pageSelector, options = {}) {
         var newRows = [];
 
         for (var index = 0; index < kodeTPs.length; index += 1) {
-            var kodeTP = kodeTPs[index].value.trim();
+            var kodeTP = sanitizeKodeTpValue(kodeTPs[index].value.trim());
             var deskripsiTP = deskripsiTPs[index].value.trim();
+            kodeTPs[index].value = kodeTP;
             if (tpData.some(item => item.kodeTP === kodeTP) || existingData.some(item => item.kodeTP === kodeTP && item.lingkupMateriId == lingkupMateriId) || newRows.some(item => item.kodeTP === kodeTP)) {
                 alert(`Kode TP "${kodeTP}" sudah ada dalam tabel!`);
                 return;
@@ -273,6 +302,7 @@ export function initTpFormPage(pageSelector, options = {}) {
     activeFilterLingkupMateri = '';
     document.getElementById('table-filter').value = '';
     setupTpUnsavedWarning();
+    bindKodeTpNumericOnly(pageEl);
     loadExistingData();
     document.getElementById('table-filter')?.addEventListener('change', function () { activeFilterLingkupMateri = this.value; renderTable(); if (this.value) document.getElementById('lingkup_materi').value = this.value; });
     document.getElementById('addTPForm')?.addEventListener('keypress', function (event) { if (event.key === 'Enter') { event.preventDefault(); if (validateInputs()) window.addRow(); } });
