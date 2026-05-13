@@ -189,7 +189,7 @@
                             <div class="flex flex-col gap-1">
                                 @if($diagnosisResults[$s->id]['absensi_status'])
                                     <span class="bg-green-100 text-green-800 text-xs font-medium px-2.5 py-0.5 rounded-full">
-                                        Lengkap
+                                        Sudah Diinput
                                     </span>
                                 @else
                                     <span class="bg-red-100 text-red-800 text-xs font-medium px-2.5 py-0.5 rounded-full relative group">

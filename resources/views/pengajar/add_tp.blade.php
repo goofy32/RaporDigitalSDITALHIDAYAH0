@@ -67,7 +67,7 @@
             <!-- Kode TP dan Deskripsi TP Inputs -->
             <div id="tpContainer">
                 <div class="flex items-center mb-2">
-                    <input type="text" name="kode_tp[]" placeholder="Kode TP (contoh: TP1)" required
+                    <input type="text" name="kode_tp[]" placeholder="Kode TP (contoh: 1)" inputmode="numeric" required
                         class="block w-1/3 p-2.5 bg-gray-50 border border-gray-300 rounded-lg focus:ring-green-500 focus:border-green-500 mr-2">
                     <input type="text" name="deskripsi_tp[]" placeholder="Deskripsi TP" required
                         class="block w-2/3 p-2.5 bg-gray-50 border border-gray-300 rounded-lg focus:ring-green-500 focus:border-green-500">

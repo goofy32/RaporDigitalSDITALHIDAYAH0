@@ -216,7 +216,7 @@
         }
 
         .main-table .col-subject {
-            width: 25%;
+            width: 22%;
             font-weight: bold;
         }
 
@@ -226,8 +226,9 @@
             font-weight: bold;
         }
 
-        .main-table .col-achievement {
-            width: 63%;
+        .main-table .col-achievement-high,
+        .main-table .col-achievement-low {
+            width: 33%;
             text-align: justify;
             line-height: 1.4;
         }
@@ -272,7 +273,7 @@
         }
 
         .muatan-lokal-table .col-subject {
-            width: 25%;
+            width: 22%;
             font-weight: bold;
         }
 
@@ -282,8 +283,9 @@
             font-weight: bold;
         }
 
-        .muatan-lokal-table .col-achievement {
-            width: 63%;
+        .muatan-lokal-table .col-achievement-high,
+        .muatan-lokal-table .col-achievement-low {
+            width: 33%;
             text-align: justify;
             line-height: 1.4;
         }
@@ -529,7 +531,8 @@
                     <th class="col-no">No.</th>
                     <th class="col-subject">Mata Pelajaran</th>
                     <th class="col-grade">Nilai</th>
-                    <th class="col-achievement">Capaian Kompetensi</th>
+                    <th class="col-achievement-high">Capaian Tertinggi</th>
+                    <th class="col-achievement-low">Capaian Terendah</th>
                 </tr>
             </thead>
             <tbody>
@@ -548,16 +551,15 @@
                         <td class="col-no">{{ $no++ }}</td>
                         <td class="col-subject">{{ $nilai->mataPelajaran->nama_pelajaran }}</td>
                         <td class="col-grade">{{ number_format($nilai->nilai_akhir_rapor, 0) }}</td>
-                        <td class="col-achievement">
-                            @php
-                                // Generate capaian kompetensi using the service
-                                echo \App\Http\Controllers\CapaianKompetensiController::generateCapaianForRapor(
-                                    $siswa->id,
-                                    $nilai->mata_pelajaran_id,
-                                    $tahunAjaranId ?? session('tahun_ajaran_id')
-                                );
-                            @endphp
-                        </td>
+                        @php
+                            $capaian = \App\Http\Controllers\CapaianKompetensiController::generateCapaianTertinggiTerendah(
+                                $siswa->id,
+                                $nilai->mata_pelajaran_id,
+                                $tahunAjaranId ?? session('tahun_ajaran_id')
+                            );
+                        @endphp
+                        <td class="col-achievement-high">{{ $capaian['tertinggi'] }}</td>
+                        <td class="col-achievement-low">{{ $capaian['terendah'] }}</td>
                     </tr>
                 @endforeach
 
@@ -567,7 +569,8 @@
                     <td class="col-no">{{ $i }}</td>
                     <td class="col-subject"></td>
                     <td class="col-grade"></td>
-                    <td class="col-achievement"></td>
+                    <td class="col-achievement-high"></td>
+                    <td class="col-achievement-low"></td>
                 </tr>
                 @endfor
             </tbody>
@@ -581,7 +584,8 @@
                     <th class="col-no">No.</th>
                     <th class="col-subject">Muatan Lokal</th>
                     <th class="col-grade">Nilai</th>
-                    <th class="col-achievement">Capaian Kompetensi</th>
+                    <th class="col-achievement-high">Capaian Tertinggi</th>
+                    <th class="col-achievement-low">Capaian Terendah</th>
                 </tr>
             </thead>
             <tbody>
@@ -600,15 +604,15 @@
                         <td class="col-no">{{ $no++ }}</td>
                         <td class="col-subject">{{ $nilai->mataPelajaran->nama_pelajaran }}</td>
                         <td class="col-grade">{{ number_format($nilai->nilai_akhir_rapor, 0) }}</td>
-                        <td class="col-achievement">
-                            @php
-                                echo \App\Http\Controllers\CapaianKompetensiController::generateCapaianForRapor(
-                                    $siswa->id,
-                                    $nilai->mata_pelajaran_id,
-                                    $tahunAjaranId ?? session('tahun_ajaran_id')
-                                );
-                            @endphp
-                        </td>
+                        @php
+                            $capaian = \App\Http\Controllers\CapaianKompetensiController::generateCapaianTertinggiTerendah(
+                                $siswa->id,
+                                $nilai->mata_pelajaran_id,
+                                $tahunAjaranId ?? session('tahun_ajaran_id')
+                            );
+                        @endphp
+                        <td class="col-achievement-high">{{ $capaian['tertinggi'] }}</td>
+                        <td class="col-achievement-low">{{ $capaian['terendah'] }}</td>
                     </tr>
                 @endforeach
                 
@@ -618,7 +622,8 @@
                     <td class="col-no">{{ $i }}</td>
                     <td class="col-subject"></td>
                     <td class="col-grade"></td>
-                    <td class="col-achievement"></td>
+                    <td class="col-achievement-high"></td>
+                    <td class="col-achievement-low"></td>
                 </tr>
                 @endfor
             </tbody>

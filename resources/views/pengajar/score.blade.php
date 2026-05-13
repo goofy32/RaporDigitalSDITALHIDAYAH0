@@ -245,8 +245,8 @@
                                 <td class="px-6 py-4">{{ $mapel->nama_pelajaran }}</td>
                                 <td class="px-6 py-4">
                                     <div class="flex gap-2">
-                                    @if($mapel->lingkupMateris->every(function($lm) { return $lm->tujuanPembelajarans->isNotEmpty(); }))
-                                        @if(!$mapel->nilais()->exists())
+                                    @if(!$mapel->requires_lm_tp_setup)
+                                        @if(!$mapel->has_saved_scores)
                                         <a href="{{ route('pengajar.score.input_score', $mapel->id) }}"
                                         class="text-green-600 hover:text-green-800" title="Masukkan Nilai">
                                                 <img src="{{ asset('images/icons/edit.png') }}" alt="Input Icon" class="w-5 h-5">
@@ -259,8 +259,9 @@
                                         @endif
                                         @else
                                             <button type="button" 
-                                                    class="text-yellow-600 hover:text-yellow-800"
-                                                    onclick="alert('Harap isi Tujuan Pembelajaran untuk mata pelajaran ini terlebih dahulu.')" title="Anda belum menambah Tujuan Pembelajaran ke Mata Pelajaran Ini">
+                                                    disabled
+                                                    class="cursor-not-allowed text-gray-400 opacity-70"
+                                                    title="{{ $mapel->lm_tp_warning_message }}">
                                                 <img src="{{ asset('images/icons/warning.png') }}" alt="Warning Icon" class="w-5 h-5">
                                             </button>
                                         @endif

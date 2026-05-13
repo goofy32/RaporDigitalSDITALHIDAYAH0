@@ -230,10 +230,34 @@ window.handleDelete = async function (event) {
     try {
         const response = await fetch(form.action, {
             method: 'DELETE',
-            headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content }
+            headers: {
+                'Content-Type': 'application/json',
+                Accept: 'application/json',
+                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content
+            }
         });
-        const result = await response.json();
-        result.success ? window.location.reload() : (alert(result.message || 'Gagal menghapus template'), button.disabled = false);
+        const text = await response.text();
+        let result;
+
+        try {
+            result = JSON.parse(text);
+        } catch (parseError) {
+            if (response.ok || response.status === 404) {
+                window.location.reload();
+                return false;
+            }
+
+            alert('Terjadi kesalahan saat menghapus template');
+            button.disabled = false;
+            return false;
+        }
+
+        if (result.success) {
+            window.location.reload();
+        } else {
+            alert(result.message || 'Gagal menghapus template');
+            button.disabled = false;
+        }
     } catch (error) {
         console.error('Error:', error);
         alert('Terjadi kesalahan saat menghapus template');

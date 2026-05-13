@@ -41,6 +41,16 @@
 </style>
 
 <div class="p-4 mt-16 bg-white shadow-md rounded-lg">
+    @php
+        $hasLm = $mataPelajaran->lingkupMateris->isNotEmpty();
+        $hasCompleteTp = $hasLm && $mataPelajaran->lingkupMateris->every(function($lm) {
+            return $lm->tujuanPembelajarans->isNotEmpty();
+        });
+        $lmTpWarningMessage = !$hasLm
+            ? 'Mata pelajaran ini belum memiliki Lingkup Materi dan Tujuan Pembelajaran. Silakan lengkapi terlebih dahulu sebelum melakukan input nilai.'
+            : 'Lengkapi Tujuan Pembelajaran pada setiap Lingkup Materi terlebih dahulu sebelum melakukan input nilai.';
+    @endphp
+
     <!-- Header -->
     <div class="flex justify-between items-center mb-6">
         <h2 class="text-2xl font-bold text-green-700">
@@ -51,10 +61,20 @@
             class="bg-gray-500 text-white px-4 py-2 rounded-lg hover:bg-gray-600">
                 Kembali
             </a>
-            <a href="{{ route('pengajar.score.input_score', $mataPelajaran->id) }}"
-            class="bg-green-700 text-white px-4 py-2 rounded-lg hover:bg-green-800">
-                Edit Nilai
-            </a>
+            @if($hasCompleteTp)
+                <a href="{{ route('pengajar.score.input_score', $mataPelajaran->id) }}"
+                class="bg-green-700 text-white px-4 py-2 rounded-lg hover:bg-green-800">
+                    Edit Nilai
+                </a>
+            @else
+                <button
+                    type="button"
+                    disabled
+                    class="cursor-not-allowed rounded-lg bg-gray-300 px-4 py-2 text-white opacity-70"
+                    title="{{ $lmTpWarningMessage }}">
+                    Edit Nilai
+                </button>
+            @endif
         </div>
     </div>
     

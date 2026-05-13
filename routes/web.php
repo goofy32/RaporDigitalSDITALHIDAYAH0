@@ -657,6 +657,7 @@ Route::prefix('siswa')->name('student.')->group(function () {
 Route::prefix('ekstrakurikuler')->name('ekstrakurikuler.')->group(function () {
     Route::get('/', [EkstrakurikulerController::class, 'waliKelasIndex'])->name('index');
     Route::get('/create', [EkstrakurikulerController::class, 'waliKelasCreate'])->name('create');
+    Route::post('/bulk-save', [EkstrakurikulerController::class, 'bulkSave'])->name('bulk-save');
     Route::post('/', [EkstrakurikulerController::class, 'waliKelasStore'])->name('store');
     Route::get('/{id}/edit', [EkstrakurikulerController::class, 'waliKelasEdit'])->name('edit');
     Route::put('/{id}', [EkstrakurikulerController::class, 'waliKelasUpdate'])->name('update');
@@ -664,6 +665,7 @@ Route::prefix('ekstrakurikuler')->name('ekstrakurikuler.')->group(function () {
 });
 
 // Absence Management
+Route::post('absensi/bulk-save', [AbsensiController::class, 'bulkSave'])->name('absence.bulk-save');
 Route::resource('absensi', AbsensiController::class)->names([
     'index' => 'absence.index',
     'create' => 'absence.create', 
@@ -714,7 +716,7 @@ Route::prefix('rapor')->name('rapor.')->group(function () {
     Route::get('/', [ReportController::class, 'indexWaliKelas'])->name('index');
     
     // Basic rapor routes with middleware
-    Route::middleware(['check.rapor.access', 'throttle:10,1'])->group(function () {
+    Route::middleware(['check.rapor.access', 'throttle:60,1'])->group(function () {
         Route::post('/generate/{siswa}', [ReportController::class, 'generateReport'])->name('generate');
     });
 
@@ -725,12 +727,12 @@ Route::prefix('rapor')->name('rapor.')->group(function () {
     Route::get('/preview/{siswa}', [ReportController::class, 'previewRapor'])->name('preview');
     Route::get('/check-templates', [ReportController::class, 'checkActiveTemplates'])->name('check-templates');
     Route::post('/batch-generate', [ReportController::class, 'generateBatchReport'])
-        ->middleware('throttle:10,1')
+        ->middleware('throttle:60,1')
         ->name('batch.generate');
     
     Route::delete('/clear-cache/{siswa}', [ReportController::class, 'clearPdfCache'])->name('clear-cache');
     Route::post('/request-pdf/{siswa}', [ReportController::class, 'requestPdf'])
-        ->middleware('throttle:10,1')
+        ->middleware('throttle:60,1')
         ->name('request-pdf');
     Route::get('/pdf-progress/{requestId}', [ReportController::class, 'checkPdfProgress'])->name('pdf-progress');
     Route::get('/secure-file', [ReportController::class, 'downloadSecureFile'])->name('secure-file');
@@ -742,7 +744,7 @@ Route::prefix('rapor')->name('rapor.')->group(function () {
     })->name('cache-stats');
 
     // PDF Routes with middleware
-    Route::middleware(['check.rapor.access', 'throttle:10,1'])->group(function () {
+    Route::middleware(['check.rapor.access', 'throttle:60,1'])->group(function () {
         Route::get('/preview-pdf/{siswa}', [ReportController::class, 'previewPdf'])->name('preview-pdf');
         Route::get('/download-pdf/{siswa}', [ReportController::class, 'downloadPdf'])->name('download-pdf');
         Route::post('/generate-pdf/{siswa}', [ReportController::class, 'generatePdfDirect'])->name('generate-pdf');

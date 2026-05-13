@@ -63,10 +63,10 @@
             <select id="predikat" name="predikat" required
                     class="block w-full p-2.5 bg-gray-50 border border-gray-300 rounded-lg focus:ring-green-500 focus:border-green-500 text-gray-900">
                 <option value="">Pilih Predikat</option>
-                <option value="Sangat Baik" {{ old('predikat') == 'Sangat Baik' ? 'selected' : '' }}>Sangat Baik</option>
-                <option value="Baik" {{ old('predikat') == 'Baik' ? 'selected' : '' }}>Baik</option>
-                <option value="Cukup" {{ old('predikat') == 'Cukup' ? 'selected' : '' }}>Cukup</option>
-                <option value="Kurang" {{ old('predikat') == 'Kurang' ? 'selected' : '' }}>Kurang</option>
+                <option value="A" {{ old('predikat') == 'A' ? 'selected' : '' }}>A</option>
+                <option value="B" {{ old('predikat') == 'B' ? 'selected' : '' }}>B</option>
+                <option value="C" {{ old('predikat') == 'C' ? 'selected' : '' }}>C</option>
+                <option value="D" {{ old('predikat') == 'D' ? 'selected' : '' }}>D</option>
             </select>
             @error('predikat')
                 <p class="text-red-500 text-sm mt-1">{{ $message }}</p>
