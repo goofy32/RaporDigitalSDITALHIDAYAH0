@@ -82,6 +82,18 @@ class PdfCacheService
 
         Cache::put($cacheKey, $cacheData, now()->addHours(self::CACHE_DURATION));
 
+        $indexKey = "pdf_cache_index_{$siswa->id}";
+        $index = Cache::get($indexKey, []);
+        $index[] = [
+            'type' => $type,
+            'tahun_ajaran_id' => $tahunAjaranId,
+        ];
+        $index = collect($index)
+            ->unique(fn ($item) => ($item['type'] ?? '') . '_' . ($item['tahun_ajaran_id'] ?? ''))
+            ->values()
+            ->toArray();
+        Cache::put($indexKey, $index, now()->addDays(30));
+
         Log::info("PDF cached successfully", [
             'cache_key' => $cacheKey,
             'file_path' => $filePath,
@@ -115,17 +127,31 @@ class PdfCacheService
     /**
      * Clear all PDF cache for a student
      */
-    public static function clearStudentCache(Siswa $siswa)
+    public static function clearStudentCache(Siswa $siswa, ?int $tahunAjaranId = null): void
     {
-        $patterns = [
-            self::CACHE_PREFIX . $siswa->id . '_UTS_*',
-            self::CACHE_PREFIX . $siswa->id . '_UAS_*'
-        ];
+        $types = ['UTS', 'UAS'];
 
-        foreach ($patterns as $pattern) {
-            // Note: This is a simplified approach
-            // In production, you might want to use Redis with pattern matching
-            Cache::forget($pattern);
+        if ($tahunAjaranId) {
+            foreach ($types as $type) {
+                self::removeCachedPdf($siswa, $type, $tahunAjaranId);
+            }
+        } else {
+            $indexKey = "pdf_cache_index_{$siswa->id}";
+            $index = Cache::get($indexKey, []);
+
+            foreach ($index as $entry) {
+                if (!isset($entry['type'], $entry['tahun_ajaran_id'])) {
+                    continue;
+                }
+
+                self::removeCachedPdf(
+                    $siswa,
+                    $entry['type'],
+                    $entry['tahun_ajaran_id']
+                );
+            }
+
+            Cache::forget($indexKey);
         }
 
         Log::info("Student PDF cache cleared", ['siswa_id' => $siswa->id]);

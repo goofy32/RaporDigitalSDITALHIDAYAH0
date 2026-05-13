@@ -204,7 +204,7 @@ class Siswa extends Model
         
         if ($absensi) {
             $result['absensi_status'] = true;
-            $result['absensi_message'] = "Data absensi lengkap";
+            $result['absensi_message'] = "Absensi sudah diinput";
         } else {
             $result['absensi_message'] = "Data absensi belum diinput untuk semester {$semester}";
         }

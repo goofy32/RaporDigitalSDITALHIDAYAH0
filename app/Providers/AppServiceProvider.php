@@ -13,6 +13,7 @@ use App\Services\RaporTemplateProcessor;
 
 // Add these imports for the audit system
 use App\Observers\AuditObserver;
+use App\Observers\PdfCacheInvalidationObserver;
 use App\Models\User;
 use App\Models\Guru;
 use App\Models\Siswa;
@@ -26,6 +27,8 @@ use App\Models\Ekstrakurikuler;
 use App\Models\NilaiEkstrakurikuler;
 use App\Models\ReportTemplate;
 use App\Models\TujuanPembelajaran;
+use App\Models\CatatanSiswa;
+use App\Models\CapaianKompetensiCustom;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -76,6 +79,7 @@ class AppServiceProvider extends ServiceProvider
 
         // Register the audit observers for various models
         $this->registerAuditObservers();
+        $this->registerPdfCacheInvalidationObservers();
 
         if (app()->environment('production') && config('app.force_https', false)) {
             URL::forceScheme('https');
@@ -103,6 +107,15 @@ class AppServiceProvider extends ServiceProvider
         ReportTemplate::observe(AuditObserver::class);
         
         // 
+    }
+
+    protected function registerPdfCacheInvalidationObservers(): void
+    {
+        Nilai::observe(PdfCacheInvalidationObserver::class);
+        Absensi::observe(PdfCacheInvalidationObserver::class);
+        CatatanSiswa::observe(PdfCacheInvalidationObserver::class);
+        NilaiEkstrakurikuler::observe(PdfCacheInvalidationObserver::class);
+        CapaianKompetensiCustom::observe(PdfCacheInvalidationObserver::class);
     }
 
     protected function ensureProtectedFileDirectories(): void

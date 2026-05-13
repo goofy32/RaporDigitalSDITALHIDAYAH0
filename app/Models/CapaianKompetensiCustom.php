@@ -15,6 +15,8 @@ class CapaianKompetensiCustom extends Model
         'siswa_id',
         'mata_pelajaran_id',
         'custom_capaian',
+        'custom_capaian_tertinggi',
+        'custom_capaian_terendah',
         'tahun_ajaran_id',
         'semester'
     ];

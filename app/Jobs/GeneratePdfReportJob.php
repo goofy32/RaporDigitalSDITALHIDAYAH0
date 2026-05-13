@@ -6,6 +6,7 @@ use App\Models\Siswa;
 use App\Models\ReportTemplate;
 use App\Services\RaporTemplateProcessor;
 use App\Services\DocumentConversionService;
+use App\Services\PdfCacheService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -60,10 +61,14 @@ class GeneratePdfReportJob implements ShouldQueue
             $this->updateProgress(10, 'Memulai generate PDF...');
 
             // Step 1: Check if PDF already cached
-            $cacheKey = $this->getCacheKey();
-            $cachedPdf = Cache::get($cacheKey);
-            
-            if ($cachedPdf && Storage::disk('public')->exists($cachedPdf['path'])) {
+            $cacheKey = PdfCacheService::getCacheKey($this->siswa, $this->type, $this->tahunAjaranId);
+            $cachedPdf = PdfCacheService::getCachedPdf(
+                $this->siswa,
+                $this->type,
+                $this->tahunAjaranId
+            );
+
+            if ($cachedPdf) {
                 Log::info("PDF found in cache", [
                     'request_id' => $this->requestId,
                     'cache_key' => $cacheKey,
@@ -138,17 +143,14 @@ class GeneratePdfReportJob implements ShouldQueue
             $filename = "Rapor_{$this->type}_{$cleanName}_{$this->siswa->nis}.pdf";
 
             // Cache the result for 24 hours
-            $cacheData = [
-                'path' => $pdfPath,
-                'filename' => $filename,
-                'file_size' => $fileSize,
-                'generated_at' => now()->toISOString(),
-                'siswa_id' => $this->siswa->id,
-                'type' => $this->type,
-                'tahun_ajaran_id' => $this->tahunAjaranId
-            ];
-
-            Cache::put($cacheKey, $cacheData, now()->addHours(24));
+            PdfCacheService::cachePdf(
+                $this->siswa,
+                $this->type,
+                $this->tahunAjaranId,
+                $pdfPath,
+                $filename,
+                $fileSize
+            );
 
             // Update progress: Completed
             $this->updateProgress(100, 'PDF siap diunduh', [
@@ -203,11 +205,6 @@ class GeneratePdfReportJob implements ShouldQueue
             'final_failure' => true,
             'error_message' => $exception->getMessage()
         ]);
-    }
-
-    private function getCacheKey()
-    {
-        return "pdf_rapor_{$this->siswa->id}_{$this->type}_{$this->tahunAjaranId}";
     }
 
     private function getTemplateForSiswa()
