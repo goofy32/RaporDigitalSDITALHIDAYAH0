@@ -98,17 +98,28 @@ class ReportPlaceholdersSeeder extends Seeder
                 'category' => 'mapel',
                 'is_required' => $i <= 4
             ];
-            
-            // UBAH: Ganti dari capaian_matapelajaran menjadi capaian_kompetensi
+
             $mapelPlaceholders[] = [
                 'placeholder_key' => "capaian_kompetensi{$i}",
-                'description' => "Capaian kompetensi mata pelajaran {$i} (otomatis berdasarkan nilai + kustomisasi wali kelas)",
+                'description' => "Capaian kompetensi mata pelajaran {$i} (legacy)",
+                'category' => 'mapel',
+                'is_required' => false
+            ];
+
+            $mapelPlaceholders[] = [
+                'placeholder_key' => "capaian_tertinggi{$i}",
+                'description' => "Capaian tertinggi mapel {$i}",
                 'category' => 'mapel',
                 'is_required' => $i <= 4
             ];
-            
-            // HAPUS: catatan_matapelajaran karena sudah diganti dengan capaian kompetensi
-            // KKM tetap ada
+
+            $mapelPlaceholders[] = [
+                'placeholder_key' => "capaian_terendah{$i}",
+                'description' => "Capaian terendah mapel {$i}",
+                'category' => 'mapel',
+                'is_required' => $i <= 4
+            ];
+
             $mapelPlaceholders[] = [
                 'placeholder_key' => "kkm_matapelajaran{$i}",
                 'description' => "KKM mata pelajaran {$i}",
@@ -135,16 +146,28 @@ class ReportPlaceholdersSeeder extends Seeder
                 'category' => 'mulok',
                 'is_required' => false
             ];
-            
-            // PERBAIKAN: Ubah dari capaian_kompetensi_mulok menjadi capaian_mulok untuk konsistensi dengan template DOCX
+
             $mulokPlaceholders[] = [
                 'placeholder_key' => "capaian_mulok{$i}",
-                'description' => "Capaian kompetensi muatan lokal {$i} (otomatis berdasarkan nilai + kustomisasi)",
+                'description' => "Capaian kompetensi muatan lokal {$i} (legacy)",
                 'category' => 'mulok',
                 'is_required' => false
             ];
-            
-            // KKM tetap ada
+
+            $mulokPlaceholders[] = [
+                'placeholder_key' => "capaian_tertinggi_mulok{$i}",
+                'description' => "Capaian tertinggi muatan lokal {$i}",
+                'category' => 'mulok',
+                'is_required' => false
+            ];
+
+            $mulokPlaceholders[] = [
+                'placeholder_key' => "capaian_terendah_mulok{$i}",
+                'description' => "Capaian terendah muatan lokal {$i}",
+                'category' => 'mulok',
+                'is_required' => false
+            ];
+
             $mulokPlaceholders[] = [
                 'placeholder_key' => "kkm_mulok{$i}",
                 'description' => "KKM muatan lokal {$i}",
