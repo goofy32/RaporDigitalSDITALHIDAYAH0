@@ -258,9 +258,9 @@
                                         </a>
                                         @endif
                                         @else
-                                            <button type="button" 
-                                                    disabled
-                                                    class="cursor-not-allowed text-gray-400 opacity-70"
+                                            <button type="button"
+                                                    onclick='showLmTpWarning(@json($mapel->nama_pelajaran))'
+                                                    class="cursor-pointer text-gray-400 opacity-70 hover:text-yellow-600"
                                                     title="{{ $mapel->lm_tp_warning_message }}">
                                                 <img src="{{ asset('images/icons/warning.png') }}" alt="Warning Icon" class="w-5 h-5">
                                             </button>
@@ -287,3 +287,20 @@
 </div>
 
 @endsection
+
+@push('scripts')
+<script>
+    function showLmTpWarning(namaPelajaran) {
+        window.Swal.fire({
+            title: 'Belum Ada LM & TP',
+            html: 'Mata pelajaran <strong>' +
+                namaPelajaran +
+                '</strong> belum memiliki Lingkup Materi dan Tujuan Pembelajaran.' +
+                '<br><br>Silahkan hubungi admin untuk menambahkan LM dan TP terlebih dahulu sebelum dapat mengisi nilai.',
+            icon: 'warning',
+            confirmButtonText: 'Mengerti',
+            confirmButtonColor: '#3F7858'
+        });
+    }
+</script>
+@endpush
