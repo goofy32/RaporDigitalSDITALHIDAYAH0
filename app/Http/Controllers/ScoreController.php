@@ -29,6 +29,9 @@ class ScoreController extends Controller
         
         $kelasData = Kelas::with(['mataPelajarans' => function($query) use ($guru, $tahunAjaranId) {
             $query->where('guru_id', $guru->id);
+            $query->with([
+                'lingkupMateris.tujuanPembelajarans',
+            ])->withCount('nilais');
             if ($tahunAjaranId) {
                 $query->where('tahun_ajaran_id', $tahunAjaranId);
             }
@@ -43,6 +46,26 @@ class ScoreController extends Controller
             return $query->where('tahun_ajaran_id', $tahunAjaranId);
         })
         ->get();
+
+        $kelasData->each(function ($kelas) {
+            $kelas->mataPelajarans->each(function ($mapel) {
+                $hasLm = $mapel->lingkupMateris->isNotEmpty();
+                $hasCompleteTp = $hasLm && $mapel->lingkupMateris->every(function ($lm) {
+                    return $lm->tujuanPembelajarans->isNotEmpty();
+                });
+
+                $mapel->setAttribute('has_lm', $hasLm);
+                $mapel->setAttribute('has_complete_tp', $hasCompleteTp);
+                $mapel->setAttribute('requires_lm_tp_setup', !($hasLm && $hasCompleteTp));
+                $mapel->setAttribute(
+                    'lm_tp_warning_message',
+                    !$hasLm
+                        ? 'Mata pelajaran ini belum memiliki Lingkup Materi dan Tujuan Pembelajaran. Silakan lengkapi terlebih dahulu sebelum melakukan input nilai.'
+                        : 'Lengkapi Tujuan Pembelajaran pada setiap Lingkup Materi terlebih dahulu sebelum melakukan input nilai.'
+                );
+                $mapel->setAttribute('has_saved_scores', (int) ($mapel->nilais_count ?? 0) > 0);
+            });
+        });
         
         Log::info('Kelas Data:', $kelasData->toArray());
         
@@ -232,12 +255,7 @@ class ScoreController extends Controller
     public function inputScore($id)
     {
         try {
-            $mataPelajaran = MataPelajaran::with([
-                'kelas.siswas' => function($query) {
-                    $query->orderBy('nama', 'asc');
-                },
-                'lingkupMateris.tujuanPembelajarans',
-            ])->findOrFail($id);
+            $mataPelajaran = MataPelajaran::findOrFail($id);
 
             // Validasi akses guru - with improved type checking
             $guru = Auth::guard('guru')->user();
@@ -258,14 +276,42 @@ class ScoreController extends Controller
                 return redirect()->route('pengajar.score')
                     ->with('error', 'Anda tidak memiliki akses ke mata pelajaran ini');
             }
-            // Periksa apakah ada TP untuk setiap Lingkup Materi
-            $hasTp = $mataPelajaran->lingkupMateris->every(function($lm) {
+
+            $hasLm = DB::table('lingkup_materis')
+                ->where('mata_pelajaran_id', $mataPelajaran->id)
+                ->whereNull('deleted_at')
+                ->exists();
+
+            $hasTp = DB::table('tujuan_pembelajarans')
+                ->join('lingkup_materis', 'tujuan_pembelajarans.lingkup_materi_id', '=', 'lingkup_materis.id')
+                ->where('lingkup_materis.mata_pelajaran_id', $mataPelajaran->id)
+                ->whereNull('lingkup_materis.deleted_at')
+                ->whereNull('tujuan_pembelajarans.deleted_at')
+                ->exists();
+
+            if (!$hasLm || !$hasTp) {
+                return redirect()->back()->with(
+                    'error',
+                    'Mata pelajaran ini belum memiliki Lingkup Materi dan Tujuan Pembelajaran. Silakan lengkapi terlebih dahulu sebelum melakukan input nilai.'
+                );
+            }
+
+            $mataPelajaran->load([
+                'kelas.siswas' => function($query) {
+                    $query->orderBy('nama', 'asc');
+                },
+                'lingkupMateris.tujuanPembelajarans',
+            ]);
+
+            $hasCompleteTp = $mataPelajaran->lingkupMateris->every(function($lm) {
                 return $lm->tujuanPembelajarans->isNotEmpty();
             });
 
-            if (!$hasTp) {
-                return redirect()->route('pengajar.score')
-                    ->with('warning', 'Harap isi Tujuan Pembelajaran untuk mata pelajaran ini terlebih dahulu.');
+            if (!$hasCompleteTp) {
+                return redirect()->back()->with(
+                    'error',
+                    'Lengkapi Tujuan Pembelajaran pada setiap Lingkup Materi terlebih dahulu sebelum melakukan input nilai.'
+                );
             }
 
             // Siapkan data

@@ -58,6 +58,9 @@ class TujuanPembelajaranController extends Controller
     {
         $request->validate([
             'tpData' => 'required|array',
+            'tpData.*.lingkupMateriId' => 'required|integer|exists:lingkup_materis,id',
+            'tpData.*.kodeTP' => 'required|integer|min:1',
+            'tpData.*.deskripsiTP' => 'required|string',
             'mataPelajaranId' => 'required|exists:mata_pelajarans,id'
         ]);
 
@@ -163,6 +166,9 @@ class TujuanPembelajaranController extends Controller
     {
         $request->validate([
             'tpData' => 'required|array',
+            'tpData.*.lingkupMateriId' => 'required|integer|exists:lingkup_materis,id',
+            'tpData.*.kodeTP' => 'required|integer|min:1',
+            'tpData.*.deskripsiTP' => 'required|string',
             'mataPelajaranId' => 'required|exists:mata_pelajarans,id'
         ]);
 

@@ -1453,6 +1453,23 @@ class ReportController extends Controller
             }
 
             $disposition = $request->query('disposition', 'inline') === 'attachment' ? 'attachment' : 'inline';
+
+            $cachedPdf = PdfCacheService::getCachedPdf(
+                $siswa,
+                $type,
+                $tahunAjaranId
+            );
+
+            if ($cachedPdf) {
+                return redirect()->away(
+                    $this->createSecureRaporFileUrl(
+                        $cachedPdf['path'],
+                        $cachedPdf['filename'],
+                        $disposition,
+                        60
+                    )
+                );
+            }
             
             // Similar to downloadPdf but return for inline viewing
             $conversionService = new \App\Services\DocumentConversionService();
@@ -1475,13 +1492,22 @@ class ReportController extends Controller
             $docxPath = $result['path'];
             
             // Convert to PDF
-            $pdfResult = $conversionService->convertStorageDocxToPdf($docxPath, 'pdf_previews');
+            $pdfResult = $conversionService->convertStorageDocxToPdf($docxPath, 'pdf_reports');
             
             if (!$pdfResult['success']) {
                 throw new \Exception('Konversi ke PDF gagal: ' . $pdfResult['message']);
             }
 
             $downloadFilename = pathinfo($result['filename'], PATHINFO_FILENAME) . '.pdf';
+
+            PdfCacheService::cachePdf(
+                $siswa,
+                $type,
+                $tahunAjaranId,
+                $pdfResult['storage_path'],
+                $downloadFilename,
+                Storage::disk('public')->size($pdfResult['storage_path'])
+            );
             
             return redirect()->away(
                 $this->createSecureRaporFileUrl(

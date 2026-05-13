@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use App\Models\CapaianKompetensiTemplate;
 use App\Models\CapaianKompetensiCustom;
 use App\Models\MataPelajaran;
+use App\Models\Nilai;
 use App\Models\Siswa;
 use App\Models\TahunAjaran;
 use App\Traits\RequiresTahunAjaran;
@@ -148,6 +149,21 @@ class CapaianKompetensiController extends Controller
         return view('wali_kelas.capaian_kompetensi.index', compact('mataPelajarans', 'kelas'));
     }
 
+    private function getWaliKelasKelas($guru, $tahunAjaranId)
+    {
+        return DB::table('guru_kelas')
+            ->join('kelas', function ($join) {
+                $join->on('guru_kelas.kelas_id', '=', 'kelas.id')
+                    ->whereNull('kelas.deleted_at');
+            })
+            ->where('guru_kelas.guru_id', $guru->id)
+            ->where('guru_kelas.is_wali_kelas', true)
+            ->where('guru_kelas.role', 'wali_kelas')
+            ->where('kelas.tahun_ajaran_id', $tahunAjaranId)
+            ->select('kelas.*')
+            ->first();
+    }
+
     /**
      * Tampilkan form edit capaian kompetensi untuk mata pelajaran tertentu (Wali Kelas)
      */
@@ -161,7 +177,7 @@ class CapaianKompetensiController extends Controller
         $mataPelajaran = MataPelajaran::findOrFail($mataPelajaranId);
 
         // Cek akses wali kelas
-        $kelas = $guru->kelasWali()->first();
+        $kelas = $this->getWaliKelasKelas($guru, $tahunAjaranId);
         if (!$kelas || $mataPelajaran->kelas_id !== $kelas->id) {
             return redirect()->back()->with('error', 'Anda tidak memiliki akses untuk mengedit capaian kompetensi mata pelajaran ini.');
         }
@@ -201,23 +217,33 @@ class CapaianKompetensiController extends Controller
         $mataPelajaran = MataPelajaran::findOrFail($mataPelajaranId);
 
         // Cek akses wali kelas
-        $kelas = $guru->kelasWali()->first();
+        $kelas = $this->getWaliKelasKelas($guru, $tahunAjaranId);
         if (!$kelas || $mataPelajaran->kelas_id !== $kelas->id) {
             return redirect()->back()->with('error', 'Anda tidak memiliki akses untuk mengedit capaian kompetensi mata pelajaran ini.');
         }
 
         $request->validate([
-            'capaian' => 'array',
-            'capaian.*' => 'nullable|string|max:1000',
+            'capaian_tertinggi' => 'array',
+            'capaian_tertinggi.*' => 'nullable|string|max:1000',
+            'capaian_terendah' => 'array',
+            'capaian_terendah.*' => 'nullable|string|max:1000',
         ]);
 
         DB::beginTransaction();
 
         try {
-            $capaianData = $request->input('capaian', []);
+            $capaianTertinggi = $request->input('capaian_tertinggi', []);
+            $capaianTerendah = $request->input('capaian_terendah', []);
+            $siswaIds = collect(array_keys($capaianTertinggi))
+                ->merge(array_keys($capaianTerendah))
+                ->unique()
+                ->values();
 
-            foreach ($capaianData as $siswaId => $customCapaian) {
-                if (!empty($customCapaian)) {
+            foreach ($siswaIds as $siswaId) {
+                $customTertinggi = trim((string) ($capaianTertinggi[$siswaId] ?? ''));
+                $customTerendah = trim((string) ($capaianTerendah[$siswaId] ?? ''));
+
+                if ($customTertinggi !== '' || $customTerendah !== '') {
                     CapaianKompetensiCustom::updateOrCreate(
                         [
                             'siswa_id' => $siswaId,
@@ -226,7 +252,8 @@ class CapaianKompetensiController extends Controller
                             'semester' => $semester,
                         ],
                         [
-                            'custom_capaian' => $customCapaian,
+                            'custom_capaian_tertinggi' => $customTertinggi !== '' ? $customTertinggi : null,
+                            'custom_capaian_terendah' => $customTerendah !== '' ? $customTerendah : null,
                         ]
                     );
                 } else {
@@ -250,6 +277,150 @@ class CapaianKompetensiController extends Controller
             Log::error('Error updating capaian kompetensi: ' . $e->getMessage());
             return redirect()->back()->with('error', 'Gagal menyimpan capaian kompetensi: ' . $e->getMessage());
         }
+    }
+
+    public static function generateCapaianTertinggiTerendah(
+        $siswaId,
+        $mataPelajaranId,
+        $tahunAjaranId = null
+    ): array {
+        $tahunAjaranId = $tahunAjaranId ?: session('tahun_ajaran_id');
+        $tahunAjaran = TahunAjaran::find($tahunAjaranId);
+        $semester = $tahunAjaran ? $tahunAjaran->semester : 1;
+
+        $custom = CapaianKompetensiCustom::where([
+            'siswa_id' => $siswaId,
+            'mata_pelajaran_id' => $mataPelajaranId,
+            'tahun_ajaran_id' => $tahunAjaranId,
+            'semester' => $semester,
+        ])->first();
+
+        $autoCapaian = self::generateAutoCapaianTertinggiTerendah($siswaId, $mataPelajaranId, $tahunAjaranId);
+
+        return [
+            'tertinggi' => $custom?->custom_capaian_tertinggi ?: $autoCapaian['tertinggi'],
+            'terendah' => $custom?->custom_capaian_terendah ?: $autoCapaian['terendah'],
+        ];
+    }
+
+    public static function preloadCapaianData(
+        int $siswaId,
+        array $mataPelajaranIds,
+        int $tahunAjaranId
+    ): array {
+        $mataPelajaranIds = array_values(array_unique(array_filter($mataPelajaranIds)));
+
+        if (empty($mataPelajaranIds)) {
+            return [];
+        }
+
+        $tahunAjaran = TahunAjaran::find($tahunAjaranId);
+        $semester = $tahunAjaran ? $tahunAjaran->semester : 1;
+        $siswa = Siswa::find($siswaId);
+        $namaSiswa = $siswa ? $siswa->nama : '';
+
+        $customCapaians = CapaianKompetensiCustom::where('siswa_id', $siswaId)
+            ->where('tahun_ajaran_id', $tahunAjaranId)
+            ->where('semester', $semester)
+            ->whereIn('mata_pelajaran_id', $mataPelajaranIds)
+            ->get()
+            ->keyBy('mata_pelajaran_id');
+
+        $lmData = Nilai::query()
+            ->join('lingkup_materis', 'nilais.lingkup_materi_id', '=', 'lingkup_materis.id')
+            ->where('nilais.siswa_id', $siswaId)
+            ->where('nilais.tahun_ajaran_id', $tahunAjaranId)
+            ->whereIn('nilais.mata_pelajaran_id', $mataPelajaranIds)
+            ->whereNull('nilais.deleted_at')
+            ->whereNull('lingkup_materis.deleted_at')
+            ->whereNotNull('nilais.nilai_lm')
+            ->select([
+                'nilais.mata_pelajaran_id',
+                'lingkup_materis.judul_lingkup_materi',
+                'nilais.nilai_lm',
+            ])
+            ->get()
+            ->groupBy('mata_pelajaran_id');
+
+        $result = [];
+
+        foreach ($mataPelajaranIds as $mapelId) {
+            $custom = $customCapaians->get($mapelId);
+            $lms = $lmData->get($mapelId, collect())
+                ->groupBy('judul_lingkup_materi')
+                ->map(function ($rows, $judul) {
+                    return (object) [
+                        'judul_lingkup_materi' => $judul,
+                        'nilai_lm' => $rows->max('nilai_lm'),
+                    ];
+                })
+                ->values();
+
+            $lmTertinggi = $lms->sortByDesc('nilai_lm')->first();
+            $lmTerendah = $lms->sortBy('nilai_lm')->first();
+
+            $autoTertinggi = $lmTertinggi
+                ? "{$namaSiswa} menunjukkan pemahaman dalam {$lmTertinggi->judul_lingkup_materi}."
+                : "{$namaSiswa} menunjukkan pemahaman yang baik.";
+
+            $autoTerendah = $lmTerendah
+                ? "{$namaSiswa} berkembang dalam {$lmTerendah->judul_lingkup_materi}."
+                : "{$namaSiswa} terus berkembang dalam pembelajaran.";
+
+            $result[$mapelId] = [
+                'tertinggi' => $custom?->custom_capaian_tertinggi ?: $autoTertinggi,
+                'terendah' => $custom?->custom_capaian_terendah ?: $autoTerendah,
+            ];
+        }
+
+        return $result;
+    }
+
+    public static function generateAutoCapaianTertinggiTerendah(
+        $siswaId,
+        $mataPelajaranId,
+        $tahunAjaranId = null
+    ): array {
+        $tahunAjaranId = $tahunAjaranId ?: session('tahun_ajaran_id');
+        $siswa = Siswa::find($siswaId);
+
+        if (!$siswa) {
+            return [
+                'tertinggi' => 'Data siswa tidak tersedia.',
+                'terendah' => 'Data siswa tidak tersedia.',
+            ];
+        }
+
+        $lmData = DB::table('nilais')
+            ->join('lingkup_materis', 'nilais.lingkup_materi_id', '=', 'lingkup_materis.id')
+            ->where('nilais.siswa_id', $siswaId)
+            ->where('nilais.mata_pelajaran_id', $mataPelajaranId)
+            ->where('nilais.tahun_ajaran_id', $tahunAjaranId)
+            ->whereNull('nilais.deleted_at')
+            ->whereNull('lingkup_materis.deleted_at')
+            ->whereNotNull('nilais.nilai_lm')
+            ->groupBy('lingkup_materis.id', 'lingkup_materis.judul_lingkup_materi')
+            ->select(
+                'lingkup_materis.id',
+                'lingkup_materis.judul_lingkup_materi',
+                DB::raw('MAX(nilais.nilai_lm) as nilai_lm')
+            )
+            ->get();
+
+        if ($lmData->isEmpty()) {
+            return [
+                'tertinggi' => "{$siswa->nama} menunjukkan pemahaman yang baik.",
+                'terendah' => "{$siswa->nama} terus berkembang dalam pembelajaran.",
+            ];
+        }
+
+        $lmTertinggi = $lmData->sortByDesc('nilai_lm')->first();
+        $lmTerendah = $lmData->sortBy('nilai_lm')->first();
+
+        return [
+            'tertinggi' => "{$siswa->nama} menunjukkan pemahaman dalam {$lmTertinggi->judul_lingkup_materi}.",
+            'terendah' => "{$siswa->nama} berkembang dalam {$lmTerendah->judul_lingkup_materi}.",
+        ];
     }
 
     /**
