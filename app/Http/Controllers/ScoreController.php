@@ -2,11 +2,13 @@
 
 namespace App\Http\Controllers;
 
+use App\Events\NotificationCreated;
 use App\Traits\RequiresTahunAjaran;
 use App\Models\Kelas;
 use App\Models\MataPelajaran;
 use App\Models\Siswa;
 use App\Models\Nilai;
+use App\Models\Notification;
 use App\Models\TujuanPembelajaran;
 use App\Models\LingkupMateri;
 use App\Models\Kkm;
@@ -20,6 +22,148 @@ use Illuminate\Support\Facades\Cache;
 class ScoreController extends Controller
 {
     use RequiresTahunAjaran;
+
+    private function restoreOrUpdateNilai(array $attributes, array $nilaiData): ?Nilai
+    {
+        $existingNilai = Nilai::withTrashed()
+            ->where($attributes)
+            ->first();
+
+        $hasMeaningfulScore = $this->hasMeaningfulScoreData($nilaiData);
+
+        if (!$hasMeaningfulScore && !$existingNilai) {
+            return null;
+        }
+
+        if ($existingNilai) {
+            if ($existingNilai->trashed()) {
+                if (!$hasMeaningfulScore) {
+                    return null;
+                }
+
+                $existingNilai->restore();
+            }
+
+            $existingNilai->update($nilaiData);
+            $existingNilai->refresh();
+
+            if (!$this->nilaiHasPersistedScores($existingNilai)) {
+                $existingNilai->delete();
+                return null;
+            }
+
+            return $existingNilai;
+        }
+
+        $nilai = Nilai::create(array_merge($attributes, $nilaiData));
+
+        if (!$this->nilaiHasPersistedScores($nilai)) {
+            $nilai->delete();
+            return null;
+        }
+
+        return $nilai;
+    }
+
+    private function hasMeaningfulScoreData(array $nilaiData): bool
+    {
+        foreach ($nilaiData as $key => $value) {
+            if ($key === 'tahun_ajaran_id') {
+                continue;
+            }
+
+            if ($key === 'is_submitted') {
+                if ($value === true || $value === 1 || $value === '1') {
+                    return true;
+                }
+
+                continue;
+            }
+
+            if ($value !== null && $value !== '') {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function nilaiHasPersistedScores(Nilai $nilai): bool
+    {
+        return collect([
+            $nilai->nilai_tp,
+            $nilai->nilai_lm,
+            $nilai->na_tp,
+            $nilai->na_lm,
+            $nilai->nilai_tes,
+            $nilai->nilai_non_tes,
+            $nilai->nilai_akhir_semester,
+            $nilai->nilai_akhir_rapor,
+            $nilai->is_submitted === true,
+        ])->contains(function ($value) {
+            if (is_bool($value)) {
+                return $value === true;
+            }
+
+            return $value !== null;
+        });
+    }
+
+    private function hasFilledScores(array $scores): bool
+    {
+        $hasFilled = false;
+
+        array_walk_recursive($scores, function ($value) use (&$hasFilled) {
+            if ($value !== '' && $value !== null && is_numeric($value)) {
+                $hasFilled = true;
+            }
+        });
+
+        return $hasFilled;
+    }
+
+    private function studentHasActualInput(array $scoreData): bool
+    {
+        return $this->hasFilledScores($scoreData['tp'] ?? [])
+            || $this->hasFilledScores($scoreData['lm'] ?? [])
+            || $this->normalizeScoreValue($scoreData['nilai_tes'] ?? null) !== null
+            || $this->normalizeScoreValue($scoreData['nilai_non_tes'] ?? null) !== null;
+    }
+
+    private function getAggregateNilaiFromCollection($nilais): ?Nilai
+    {
+        return $nilais->first(function ($nilai) {
+            return $nilai->deleted_at === null
+                && is_null($nilai->lingkup_materi_id)
+                && is_null($nilai->tujuan_pembelajaran_id);
+        });
+    }
+
+    private function sendScoreCompletionNotification(MataPelajaran $mataPelajaran, Siswa $siswa): void
+    {
+        $waliKelasIds = DB::table('guru_kelas')
+            ->where('kelas_id', $mataPelajaran->kelas_id)
+            ->where('is_wali_kelas', true)
+            ->where('role', 'wali_kelas')
+            ->pluck('guru_id')
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+
+        if (empty($waliKelasIds)) {
+            return;
+        }
+
+        $notification = new Notification();
+        $notification->title = "Nilai {$siswa->nama} Ditandai Selesai";
+        $notification->content = "Guru mata pelajaran telah menandai penilaian {$siswa->nama} untuk {$mataPelajaran->nama_pelajaran} sebagai selesai dan siap direview.";
+        $notification->target = 'specific';
+        $notification->specific_users = $waliKelasIds;
+        $notification->save();
+
+        event(new NotificationCreated($notification));
+    }
 
     public function index()
     {
@@ -83,13 +227,37 @@ class ScoreController extends Controller
 
         try {
             DB::beginTransaction();
+            $mataPelajaran = MataPelajaran::findOrFail($id);
             $bobotNilai = BobotNilai::getDefault();
+            $submittedStudents = (array) $request->input('submitted', []);
             $savedData = [];
             $notSavedData = []; // Tracking data yang tidak tersimpan
+            $newlySubmittedStudents = [];
 
             foreach($request->scores as $siswaId => $scoreData) {
+                $siswa = Siswa::find($siswaId);
+
+                if (!$siswa) {
+                    continue;
+                }
+
+                $existingStudentNilais = Nilai::withTrashed()
+                    ->where('siswa_id', $siswaId)
+                    ->where('mata_pelajaran_id', $id)
+                    ->where('tahun_ajaran_id', $tahunAjaranId)
+                    ->get();
+
+                $existingAggregateNilai = $this->getAggregateNilaiFromCollection($existingStudentNilais);
+                $wasSubmitted = (bool) optional($existingAggregateNilai)->is_submitted;
+                $isSubmitted = isset($submittedStudents[$siswaId]);
+
+                $hasActualInput = $this->studentHasActualInput($scoreData);
+                if (!$isSubmitted && !$hasActualInput && $existingStudentNilais->isEmpty()) {
+                    continue;
+                }
+
                 $studentData = [
-                    'nama' => Siswa::find($siswaId)->nama,
+                    'nama' => $siswa->nama,
                     'nilai' => []
                 ];
                 $studentNotSaved = []; // Tracking nilai yang tidak tersimpan per siswa
@@ -110,7 +278,7 @@ class ScoreController extends Controller
                                     $nilaiData['tahun_ajaran_id'] = $tahunAjaranId;
                                 }
                                 
-                                Nilai::updateOrCreate(
+                                $this->restoreOrUpdateNilai(
                                     [
                                         'siswa_id' => $siswaId,
                                         'mata_pelajaran_id' => $id,
@@ -149,7 +317,7 @@ class ScoreController extends Controller
                                 $nilaiData['tahun_ajaran_id'] = $tahunAjaranId;
                             }
                             
-                            Nilai::updateOrCreate(
+                            $this->restoreOrUpdateNilai(
                                 [
                                     'siswa_id' => $siswaId,
                                     'mata_pelajaran_id' => $id,
@@ -174,12 +342,18 @@ class ScoreController extends Controller
 
                 // Simpan nilai agregat
                 $finalScores = [];
-                $naTp = $this->calculateAverageScore($scoreData['tp'] ?? []);
-                $naLm = $this->calculateAverageScore($scoreData['lm'] ?? []);
+                $hasTpInput = $this->hasFilledScores($scoreData['tp'] ?? []);
+                $hasLmInput = $this->hasFilledScores($scoreData['lm'] ?? []);
+                $naTp = $hasTpInput ? $this->calculateAverageScore($scoreData['tp'] ?? []) : null;
+                $naLm = $hasLmInput ? $this->calculateAverageScore($scoreData['lm'] ?? []) : null;
                 $nilaiTes = $this->normalizeScoreValue($scoreData['nilai_tes'] ?? null);
                 $nilaiNonTes = $this->normalizeScoreValue($scoreData['nilai_non_tes'] ?? null);
-                $nilaiAkhirSemester = $this->calculateNilaiAkhirSemester($nilaiTes, $nilaiNonTes);
-                $nilaiAkhirRapor = $this->calculateNilaiAkhirRapor($naTp, $naLm, $nilaiAkhirSemester, $bobotNilai);
+                $nilaiAkhirSemester = ($nilaiTes !== null && $nilaiNonTes !== null)
+                    ? $this->calculateNilaiAkhirSemester($nilaiTes, $nilaiNonTes)
+                    : null;
+                $nilaiAkhirRapor = $nilaiAkhirSemester !== null
+                    ? $this->calculateNilaiAkhirRapor($naTp ?? 0.0, $naLm ?? 0.0, $nilaiAkhirSemester, $bobotNilai)
+                    : null;
 
                 $finalScores = [
                     'na_tp' => $naTp,
@@ -188,6 +362,7 @@ class ScoreController extends Controller
                     'nilai_non_tes' => $nilaiNonTes,
                     'nilai_akhir_semester' => $nilaiAkhirSemester,
                     'nilai_akhir_rapor' => $nilaiAkhirRapor,
+                    'is_submitted' => $isSubmitted,
                 ];
 
                 if ($tahunAjaranId) {
@@ -196,7 +371,7 @@ class ScoreController extends Controller
                 
                 try {
                     if (!empty($finalScores)) {
-                        Nilai::updateOrCreate(
+                        $savedFinalNilai = $this->restoreOrUpdateNilai(
                             [
                                 'siswa_id' => $siswaId,
                                 'mata_pelajaran_id' => $id,
@@ -206,12 +381,17 @@ class ScoreController extends Controller
                         );
 
                         foreach($finalScores as $key => $value) {
-                            if ($key !== 'tahun_ajaran_id' && $value !== null) {
+                            if (!in_array($key, ['tahun_ajaran_id', 'is_submitted'], true) && $value !== null) {
                                 $studentData['nilai'][] = [
                                     'tipe' => str_replace('_', ' ', ucwords($key)),
                                     'nilai' => $value
                                 ];
                             }
+                        }
+
+                        $isNowSubmitted = (bool) ($savedFinalNilai?->is_submitted);
+                        if (!$wasSubmitted && $isNowSubmitted) {
+                            $newlySubmittedStudents[] = $siswa;
                         }
                     }
                 } catch (\Exception $e) {
@@ -227,6 +407,24 @@ class ScoreController extends Controller
             }
 
             DB::commit();
+
+            $guru = Auth::guard('guru')->user();
+            DashboardController::clearProgressCacheForKelas(
+                $mataPelajaran->kelas_id,
+                $guru?->id
+            );
+
+            foreach (collect($newlySubmittedStudents)->unique('id') as $completedStudent) {
+                try {
+                    $this->sendScoreCompletionNotification($mataPelajaran, $completedStudent);
+                } catch (\Exception $notificationException) {
+                    Log::warning('[ScoreController] Failed to send score completion notification', [
+                    'error' => $notificationException->getMessage(),
+                        'siswa_id' => $completedStudent->id,
+                        'mata_pelajaran_id' => $mataPelajaran->id,
+                    ]);
+                }
+            }
 
             return response()->json([
                 'success' => true,
@@ -349,7 +547,8 @@ class ScoreController extends Controller
                     'nilai_tes' => null,
                     'nilai_non_tes' => null,
                     'nilai_akhir_semester' => null,
-                    'nilai_akhir_rapor' => null
+                    'nilai_akhir_rapor' => null,
+                    'is_submitted' => false,
                 ];
                 foreach ($mataPelajaran->lingkupMateris as $lm) {
                     $existingScores[$siswa->id]['lm'][$lm->id] = null;
@@ -391,6 +590,9 @@ class ScoreController extends Controller
                 }
                 if ($nilai->nilai_akhir_rapor !== null) {
                     $existingScores[$nilai->siswa_id]['nilai_akhir_rapor'] = $nilai->nilai_akhir_rapor;
+                }
+                if ($nilai->is_submitted) {
+                    $existingScores[$nilai->siswa_id]['is_submitted'] = true;
                 }
             }
 
@@ -589,7 +791,8 @@ class ScoreController extends Controller
                     'nilai_tes' => null,
                     'nilai_non_tes' => null,
                     'nilai_akhir_semester' => null,
-                    'nilai_akhir_rapor' => null
+                    'nilai_akhir_rapor' => null,
+                    'is_submitted' => false,
                 ];
                 
                 foreach ($mataPelajaran->lingkupMateris as $lm) {
@@ -643,6 +846,9 @@ class ScoreController extends Controller
                     if ($nilai->nilai_akhir_rapor !== null) {
                         $existingScores[$siswaId]['nilai_akhir_rapor'] = $nilai->nilai_akhir_rapor;
                     }
+                    if ($nilai->is_submitted) {
+                        $existingScores[$siswaId]['is_submitted'] = true;
+                    }
                 }
             }
     
@@ -694,6 +900,16 @@ class ScoreController extends Controller
             ->delete();
 
             DB::commit();
+
+            $mataPelajaran = MataPelajaran::find($request->mata_pelajaran_id);
+            $guru = Auth::guard('guru')->user();
+            if ($mataPelajaran) {
+                DashboardController::clearProgressCacheForKelas(
+                    $mataPelajaran->kelas_id,
+                    $guru?->id
+                );
+            }
+
             return response()->json([
                 'success' => true,
                 'message' => 'Nilai berhasil dihapus'

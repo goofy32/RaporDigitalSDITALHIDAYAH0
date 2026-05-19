@@ -138,14 +138,52 @@ class DashboardController extends Controller
             return collect();
         }
 
-        return Nilai::select('mata_pelajaran_id', DB::raw('COUNT(*) as total'))
+        return Nilai::select('mata_pelajaran_id', DB::raw('COUNT(DISTINCT siswa_id) as total'))
             ->whereIn('mata_pelajaran_id', $subjectIds)
-            ->whereNotNull('nilai_akhir_rapor')
+            ->where('is_submitted', true)
+            ->whereNull('deleted_at')
             ->when($tahunAjaranId, function ($query) use ($tahunAjaranId) {
                 return $query->where('tahun_ajaran_id', $tahunAjaranId);
             })
             ->groupBy('mata_pelajaran_id')
             ->pluck('total', 'mata_pelajaran_id');
+    }
+
+    public static function clearProgressCache(?int $guruId = null, ?int $waliKelasId = null): void
+    {
+        if ($guruId) {
+            Cache::forget("guru_{$guruId}_dashboard_stats");
+        }
+
+        if ($waliKelasId) {
+            Cache::forget("wali_kelas_progress_{$waliKelasId}");
+        }
+    }
+
+    public static function clearProgressCacheForKelas(int $kelasId, ?int $guruId = null): void
+    {
+        $guruIds = DB::table('guru_kelas')
+            ->where('kelas_id', $kelasId)
+            ->pluck('guru_id')
+            ->push($guruId)
+            ->filter()
+            ->unique();
+
+        foreach ($guruIds as $id) {
+            self::clearProgressCache((int) $id, (int) $id);
+        }
+    }
+
+    private function countCompletedStudentsForSubject(int $mataPelajaranId, ?int $tahunAjaranId = null): int
+    {
+        return Nilai::where('mata_pelajaran_id', $mataPelajaranId)
+            ->where('is_submitted', true)
+            ->whereNull('deleted_at')
+            ->when($tahunAjaranId, function ($query) use ($tahunAjaranId) {
+                return $query->where('tahun_ajaran_id', $tahunAjaranId);
+            })
+            ->distinct()
+            ->count('siswa_id');
     }
 
     public function pengajarDashboard()
@@ -517,6 +555,7 @@ class DashboardController extends Controller
     {
         try {
             $guru = Auth::guard('guru')->user();
+            $tahunAjaranId = session('tahun_ajaran_id');
             if (!$guru) {
                 return response()->json(['error' => 'Unauthorized'], 403);
             }
@@ -543,9 +582,7 @@ class DashboardController extends Controller
             }
 
             // Count completed scores for this subject
-            $completedCount = Nilai::where('mata_pelajaran_id', $mataPelajaranId)
-                ->whereNotNull('nilai_akhir_rapor')
-                ->count();
+            $completedCount = $this->countCompletedStudentsForSubject($mataPelajaranId, $tahunAjaranId);
 
             // Calculate progress percentage (handle division by zero)
             $progress = $siswaCount > 0 ? ($completedCount / $siswaCount) * 100 : 0;
@@ -561,7 +598,8 @@ class DashboardController extends Controller
         }
     }
 
-    // Method untuk mengambil progress keseluruhan kelas wali
+    // Legacy endpoint retained for backward compatibility.
+    // UI dashboard wali kelas yang aktif memakai progress dari server-rendered view data.
     public function getOverallProgressWaliKelas()
     {
         try {
@@ -578,19 +616,28 @@ class DashboardController extends Controller
             if (!$kelas) {
                 return response()->json(['progress' => 0]);
             }
+
+            $siswaCount = Siswa::where('kelas_id', $kelas->id)->count();
+            if ($siswaCount === 0) {
+                return response()->json(['progress' => 0]);
+            }
             
             $totalTPQuery = DB::table('mata_pelajarans')
                 ->join('lingkup_materis', 'mata_pelajarans.id', '=', 'lingkup_materis.mata_pelajaran_id')
                 ->join('tujuan_pembelajarans', 'lingkup_materis.id', '=', 'tujuan_pembelajarans.lingkup_materi_id')
-                ->where('mata_pelajarans.kelas_id', $kelas->id);
+                ->where('mata_pelajarans.kelas_id', $kelas->id)
+                ->whereNull('mata_pelajarans.deleted_at')
+                ->whereNull('lingkup_materis.deleted_at')
+                ->whereNull('tujuan_pembelajarans.deleted_at');
                 
             if ($tahunAjaranId) {
                 $totalTPQuery->where('mata_pelajarans.tahun_ajaran_id', $tahunAjaranId);
             }
             
             $totalTP = $totalTPQuery->count();
+            $totalNeeded = $totalTP * $siswaCount;
     
-            if ($totalTP === 0) {
+            if ($totalNeeded === 0) {
                 return response()->json(['progress' => 0]);
             }
     
@@ -602,16 +649,21 @@ class DashboardController extends Controller
                         ->whereNull('nilais.deleted_at')
                         ->whereNotNull('nilais.nilai_tp');
                 })
-                ->where('mata_pelajarans.kelas_id', $kelas->id);
+                ->where('mata_pelajarans.kelas_id', $kelas->id)
+                ->whereNull('mata_pelajarans.deleted_at')
+                ->whereNull('lingkup_materis.deleted_at')
+                ->whereNull('tujuan_pembelajarans.deleted_at');
                 
             if ($tahunAjaranId) {
                 $completedTPQuery->where('mata_pelajarans.tahun_ajaran_id', $tahunAjaranId);
                 $completedTPQuery->where('nilais.tahun_ajaran_id', $tahunAjaranId);
             }
             
-            $completedTP = $completedTPQuery->count();
+            $completedTP = $completedTPQuery
+                ->select(DB::raw('COUNT(DISTINCT CONCAT(nilais.siswa_id, "-", nilais.mata_pelajaran_id, "-", nilais.tujuan_pembelajaran_id)) as total'))
+                ->value('total');
     
-            $progress = ($completedTP / $totalTP) * 100;
+            $progress = ($completedTP / $totalNeeded) * 100;
     
             return response()->json(['progress' => round($progress, 2)]);
     
@@ -631,6 +683,7 @@ class DashboardController extends Controller
     {
         try {
             $guru = Auth::guard('guru')->user();
+            $tahunAjaranId = session('tahun_ajaran_id');
             if (!$guru) {
                 return response()->json(['error' => 'Unauthorized'], 403);
             }
@@ -650,9 +703,7 @@ class DashboardController extends Controller
             }
 
             // Count completed scores for this subject
-            $completedCount = Nilai::where('mata_pelajaran_id', $mataPelajaranId)
-                ->whereNotNull('nilai_akhir_rapor')
-                ->count();
+            $completedCount = $this->countCompletedStudentsForSubject($mataPelajaranId, $tahunAjaranId);
 
             // Calculate progress percentage (handle division by zero)
             $progress = $siswaCount > 0 ? ($completedCount / $siswaCount) * 100 : 0;
@@ -667,7 +718,8 @@ class DashboardController extends Controller
             return response()->json(['error' => 'Terjadi kesalahan'], 500);
         }
     }
-    // Method untuk mengambil progress per mata pelajaran untuk kelas wali
+    // Legacy endpoint retained for backward compatibility.
+    // UI dashboard wali kelas yang aktif memakai progress per mata pelajaran.
     public function getKelasProgressWaliKelas() 
     {
         try {
@@ -691,6 +743,7 @@ class DashboardController extends Controller
             $cacheDuration = now()->addMinutes(5);
             
             return Cache::remember($cacheKey, $cacheDuration, function() use ($kelas, $tahunAjaranId) {
+                $siswaCount = Siswa::where('kelas_id', $kelas->id)->count();
                 $mataPelajarans = MataPelajaran::where('kelas_id', $kelas->id)
                     ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
                         return $query->where('tahun_ajaran_id', $tahunAjaranId);
@@ -704,9 +757,13 @@ class DashboardController extends Controller
                     $totalTP = DB::table('lingkup_materis')
                         ->join('tujuan_pembelajarans', 'lingkup_materis.id', '=', 'tujuan_pembelajarans.lingkup_materi_id')
                         ->where('lingkup_materis.mata_pelajaran_id', $mapel->id)
+                        ->whereNull('lingkup_materis.deleted_at')
+                        ->whereNull('tujuan_pembelajarans.deleted_at')
                         ->count();
         
-                    if ($totalTP > 0) {
+                    $totalNeeded = $totalTP * $siswaCount;
+
+                    if ($totalNeeded > 0) {
                         $completedTP = DB::table('lingkup_materis')
                             ->join('tujuan_pembelajarans', 'lingkup_materis.id', '=', 'tujuan_pembelajarans.lingkup_materi_id')
                             ->join('nilais', function($join) use ($tahunAjaranId) {
@@ -719,9 +776,12 @@ class DashboardController extends Controller
                                 }
                             })
                             ->where('lingkup_materis.mata_pelajaran_id', $mapel->id)
-                            ->count();
+                            ->whereNull('lingkup_materis.deleted_at')
+                            ->whereNull('tujuan_pembelajarans.deleted_at')
+                            ->select(DB::raw('COUNT(DISTINCT CONCAT(nilais.siswa_id, "-", nilais.mata_pelajaran_id, "-", nilais.tujuan_pembelajaran_id)) as total'))
+                            ->value('total');
         
-                        $totalProgress += ($completedTP / $totalTP) * 100;
+                        $totalProgress += ($completedTP / $totalNeeded) * 100;
                     }
                 }
         
@@ -832,6 +892,7 @@ class DashboardController extends Controller
             ->exists();
     }
 
+    // Legacy helper retained for backward compatibility with older pengajar progress routes.
     private function calculateOverallProgress($guruId, $tahunAjaranId = null)
     {
         try {
@@ -864,23 +925,30 @@ class DashboardController extends Controller
         }
     }
     
+    // Legacy helper retained for backward compatibility with older pengajar progress routes.
     private function calculateProgressByClass($guruId, $kelasId, $tahunAjaranId = null)
     {
         try {
+            $siswaCount = Siswa::where('kelas_id', $kelasId)->count();
+
             // Hitung total TP
             $tpQuery = DB::table('mata_pelajarans')
                 ->join('lingkup_materis', 'mata_pelajarans.id', '=', 'lingkup_materis.mata_pelajaran_id')
                 ->join('tujuan_pembelajarans', 'lingkup_materis.id', '=', 'tujuan_pembelajarans.lingkup_materi_id')
                 ->where('mata_pelajarans.guru_id', $guruId)
-                ->where('mata_pelajarans.kelas_id', $kelasId);
+                ->where('mata_pelajarans.kelas_id', $kelasId)
+                ->whereNull('mata_pelajarans.deleted_at')
+                ->whereNull('lingkup_materis.deleted_at')
+                ->whereNull('tujuan_pembelajarans.deleted_at');
                 
             if ($tahunAjaranId) {
                 $tpQuery->where('mata_pelajarans.tahun_ajaran_id', $tahunAjaranId);
             }
             
             $totalTP = $tpQuery->count();
+            $totalNeeded = $totalTP * $siswaCount;
 
-            if ($totalTP === 0) {
+            if ($totalNeeded === 0) {
                 return 0;
             }
 
@@ -894,16 +962,21 @@ class DashboardController extends Controller
                         ->whereNotNull('nilais.nilai_tp');
                 })
                 ->where('mata_pelajarans.guru_id', $guruId)
-                ->where('mata_pelajarans.kelas_id', $kelasId);
+                ->where('mata_pelajarans.kelas_id', $kelasId)
+                ->whereNull('mata_pelajarans.deleted_at')
+                ->whereNull('lingkup_materis.deleted_at')
+                ->whereNull('tujuan_pembelajarans.deleted_at');
                 
             if ($tahunAjaranId) {
                 $completedTPQuery->where('mata_pelajarans.tahun_ajaran_id', $tahunAjaranId);
                 $completedTPQuery->where('nilais.tahun_ajaran_id', $tahunAjaranId);
             }
             
-            $completedTP = $completedTPQuery->count();
+            $completedTP = $completedTPQuery
+                ->select(DB::raw('COUNT(DISTINCT CONCAT(nilais.siswa_id, "-", nilais.mata_pelajaran_id, "-", nilais.tujuan_pembelajaran_id)) as total'))
+                ->value('total');
 
-            return ($completedTP / $totalTP) * 100;
+            return ($completedTP / $totalNeeded) * 100;
             
         } catch (\Exception $e) {
             \Log::error('Error calculating class progress: ' . $e->getMessage());
@@ -911,22 +984,35 @@ class DashboardController extends Controller
         }
     }
 
+    // Legacy endpoint retained for backward compatibility.
+    // UI dashboard pengajar yang aktif memakai progress per mata pelajaran.
     public function getKelasProgressPengajar($kelasId)
     {
         try {
             $guru = Auth::guard('guru')->user();
+            $tahunAjaranId = session('tahun_ajaran_id');
             if (!$guru) {
                 return response()->json(['error' => 'Unauthorized'], 403);
             }
+
+            $siswaCount = Siswa::where('kelas_id', $kelasId)->count();
 
             $totalTP = DB::table('mata_pelajarans')
                 ->join('lingkup_materis', 'mata_pelajarans.id', '=', 'lingkup_materis.mata_pelajaran_id')
                 ->join('tujuan_pembelajarans', 'lingkup_materis.id', '=', 'tujuan_pembelajarans.lingkup_materi_id')
                 ->where('mata_pelajarans.guru_id', $guru->id)
                 ->where('mata_pelajarans.kelas_id', $kelasId)
+                ->whereNull('mata_pelajarans.deleted_at')
+                ->whereNull('lingkup_materis.deleted_at')
+                ->whereNull('tujuan_pembelajarans.deleted_at')
+                ->when($tahunAjaranId, function ($query) use ($tahunAjaranId) {
+                    return $query->where('mata_pelajarans.tahun_ajaran_id', $tahunAjaranId);
+                })
                 ->count();
 
-            if ($totalTP === 0) {
+            $totalNeeded = $totalTP * $siswaCount;
+
+            if ($totalNeeded === 0) {
                 return response()->json(['progress' => 0]);
             }
 
@@ -940,9 +1026,17 @@ class DashboardController extends Controller
                 })
                 ->where('mata_pelajarans.guru_id', $guru->id)
                 ->where('mata_pelajarans.kelas_id', $kelasId)
-                ->count();
+                ->whereNull('mata_pelajarans.deleted_at')
+                ->whereNull('lingkup_materis.deleted_at')
+                ->whereNull('tujuan_pembelajarans.deleted_at')
+                ->when($tahunAjaranId, function ($query) use ($tahunAjaranId) {
+                    return $query->where('mata_pelajarans.tahun_ajaran_id', $tahunAjaranId)
+                        ->where('nilais.tahun_ajaran_id', $tahunAjaranId);
+                })
+                ->select(DB::raw('COUNT(DISTINCT CONCAT(nilais.siswa_id, "-", nilais.mata_pelajaran_id, "-", nilais.tujuan_pembelajaran_id)) as total'))
+                ->value('total');
 
-            $progress = ($completedTP / $totalTP) * 100;
+            $progress = ($completedTP / $totalNeeded) * 100;
 
             return response()->json(['progress' => round($progress, 2)]);
         } catch (\Exception $e) {

@@ -112,7 +112,7 @@ class Kelas extends Model
         $total_siswa = $this->siswas()->count();
         $completed_siswa = $this->siswas()
             ->whereHas('nilais', function($q) {
-                $q->whereNotNull('nilai_akhir_rapor');
+                $q->where('is_submitted', true);
             })->count();
         
         return [

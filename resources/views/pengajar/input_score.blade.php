@@ -21,25 +21,41 @@
 </style>
 
 <div data-page="pengajar-input-score" class="p-4 mt-16 bg-white shadow-md rounded-lg">
+    @php
+        $submittedCount = collect($students)->filter(function ($student) use ($existingScores) {
+            return !empty($existingScores[$student['id']]['is_submitted']);
+        })->count();
+    @endphp
+
     <div class="flex justify-between items-center mb-6">
         <h2 class="text-2xl font-bold text-green-700 flex items-center gap-2">
             <span>{{ $subject['class'] }} - {{ $mataPelajaran->nama_pelajaran }}</span>
         </h2>
 
-        <div class="flex gap-4">
-            <button type="button"
-                    x-data
-                    @click="window.handleKembali()"
-                    class="border border-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-50">
-                Kembali
-            </button>
-            <button type="button" 
-                    x-data
-                    @click="window.saveData()"
-                    x-bind:disabled="$store.formProtection.isSubmitting || {{ count($students) == 0 ? 'true' : 'false' }}"
-                    class="bg-green-700 text-white px-4 py-2 rounded-lg hover:bg-green-800 disabled:opacity-50 disabled:cursor-not-allowed">
-                <span x-text="$store.formProtection.isSubmitting ? 'Menyimpan...' : 'Simpan'"></span>
-            </button>
+        <div class="flex flex-col items-end gap-2">
+            <div id="submitted-counter"
+                 data-total-students="{{ count($students) }}"
+                 class="text-sm text-gray-600">
+                <span id="submitted-count-value">{{ $submittedCount }}</span> dari {{ count($students) }} siswa ditandai selesai
+            </div>
+            <p id="submitted-warning" class="hidden text-xs text-amber-600">
+                Penandaan akan dibatalkan saat Anda menyimpan perubahan.
+            </p>
+            <div class="flex gap-4">
+                <button type="button"
+                        x-data
+                        @click="window.handleKembali()"
+                        class="border border-gray-300 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-50">
+                    Kembali
+                </button>
+                <button type="button" 
+                        x-data
+                        @click="window.saveData()"
+                        x-bind:disabled="$store.formProtection.isSubmitting || {{ count($students) == 0 ? 'true' : 'false' }}"
+                        class="bg-green-700 text-white px-4 py-2 rounded-lg hover:bg-green-800 disabled:opacity-50 disabled:cursor-not-allowed">
+                    <span x-text="$store.formProtection.isSubmitting ? 'Menyimpan...' : 'Simpan'"></span>
+                </button>
+            </div>
         </div>
     </div>
 
@@ -87,6 +103,7 @@
                         <th colspan="2" class="px-4 py-2 border text-center">Sumatif Akhir Semester</th>
                         <th rowspan="2" class="px-4 py-2 border">NA Sumatif Akhir Semester</th>
                         <th rowspan="2" class="px-4 py-2 border">Nilai Akhir (Rapor)</th>
+                        <th rowspan="2" class="px-4 py-2 border text-center">Selesai</th>
                         <th rowspan="2" class="px-4 py-2 border">Aksi</th>
                     </tr>
                     <tr>
@@ -109,7 +126,12 @@
 
                 <tbody>
                     @foreach($students as $index => $student)
-                        <tr class="hover:bg-gray-50">
+                        @php
+                            $isSubmitted = (bool) ($existingScores[$student['id']]['is_submitted'] ?? false);
+                        @endphp
+                        <tr class="hover:bg-gray-50 student-score-row {{ $isSubmitted ? 'bg-green-50/60' : '' }}"
+                            data-student-id="{{ $student['id'] }}"
+                            data-initial-submitted="{{ $isSubmitted ? '1' : '0' }}">
                             <td class="px-4 py-2 border">{{ $index + 1 }}</td>
                             <td class="px-4 py-2 border student-name">{{ $student['name'] }}</td>
                             
@@ -201,6 +223,19 @@
                                        class="w-20 border border-gray-300 rounded px-2 py-1 nilai-akhir-rapor"
                                        value="{{ $existingScores[$student['id']]['nilai_akhir_rapor'] ?? '' }}"
                                        readonly>
+                            </td>
+
+                            <td class="px-4 py-2 border text-center">
+                                <label class="flex items-center justify-center gap-2">
+                                    <input
+                                        type="checkbox"
+                                        name="submitted[{{ $student['id'] }}]"
+                                        value="1"
+                                        {{ $isSubmitted ? 'checked' : '' }}
+                                        class="w-4 h-4 text-green-600 submitted-checkbox"
+                                    >
+                                    <span class="text-xs text-gray-500">Selesai</span>
+                                </label>
                             </td>
                             
                             <!-- Aksi -->

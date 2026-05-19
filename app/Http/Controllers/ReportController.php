@@ -7,6 +7,7 @@ use App\Traits\RequiresTahunAjaran;
 use App\Models\ReportTemplate;
 use App\Models\ReportPlaceholder;
 use App\Models\Siswa;
+use App\Models\MataPelajaran;
 use App\Models\Notification;
 use App\Services\RaporTemplateProcessor;
 use Illuminate\Support\Facades\Storage;
@@ -203,7 +204,7 @@ class ReportController extends Controller
                     ->whereHas('mataPelajaran', function($q) use ($semester) {
                         $q->where('semester', $semester);
                     })
-                    ->whereNotNull('nilai_akhir_rapor');
+                    ->where('is_submitted', true);
             },
             'nilais.mataPelajaran',
             'nilaiEkstrakurikuler' => function($query) use ($tahunAjaranId) {
@@ -280,7 +281,8 @@ class ReportController extends Controller
                     $query->where('tahun_ajaran_id', $tahunAjaranId)
                         ->whereHas('mataPelajaran', function ($subQuery) use ($semester) {
                             $subQuery->where('semester', $semester);
-                        });
+                        })
+                        ->where('is_submitted', true);
                 },
                 'nilais.mataPelajaran',
                 'absensi' => function ($query) use ($tahunAjaranId, $semester) {
@@ -1220,6 +1222,7 @@ class ReportController extends Controller
                     $query->whereHas('mataPelajaran', function($q) use ($semester) {
                         $q->where('semester', $semester);
                     });
+                    $query->where('is_submitted', true);
                 },
                 'nilais.mataPelajaran',
                 'nilaiEkstrakurikuler' => function($query) use ($tahunAjaranId) {
@@ -1820,7 +1823,7 @@ class ReportController extends Controller
                     $q->where('semester', $currentSemester);
                 })
                 ->where('tahun_ajaran_id', $tahunAjaranId)
-                ->whereNotNull('nilai_akhir_rapor')
+                ->where('is_submitted', true)
                 ->exists();
                 
             $hasAbsensi = $siswa->absensi()
@@ -2131,7 +2134,8 @@ class ReportController extends Controller
                     })
                     ->when($report->tahun_ajaran_id, function($q) use ($report) {
                         $q->where('tahun_ajaran_id', $report->tahun_ajaran_id);
-                    });
+                    })
+                    ->where('is_submitted', true);
                 },
                 'nilais.mataPelajaran',
                 'nilaiEkstrakurikuler' => function($query) use ($report) {
@@ -2225,7 +2229,8 @@ class ReportController extends Controller
                     $query->where('tahun_ajaran_id', $tahunAjaranId)
                         ->whereHas('mataPelajaran', function ($subQuery) use ($semester) {
                             $subQuery->where('semester', $semester);
-                        });
+                        })
+                        ->where('is_submitted', true);
                 },
                 'nilais.mataPelajaran',
                 'absensi' => function ($query) use ($tahunAjaranId, $semester) {
@@ -2236,7 +2241,7 @@ class ReportController extends Controller
             ->withCount([
                 'nilais as completed_nilai_count' => function ($query) use ($tahunAjaranId, $semester) {
                     $query->where('tahun_ajaran_id', $tahunAjaranId)
-                        ->whereNotNull('nilai_akhir_rapor')
+                        ->where('is_submitted', true)
                         ->whereHas('mataPelajaran', function ($subQuery) use ($semester) {
                             $subQuery->where('semester', $semester);
                         });
@@ -2245,10 +2250,34 @@ class ReportController extends Controller
             ->where('kelas_id', $kelas->id)
             ->orderBy('nama')
             ->get();
+
+        $totalMapelCount = MataPelajaran::where('kelas_id', $kelas->id)
+            ->whereNull('deleted_at')
+            ->where('semester', $semester)
+            ->when($tahunAjaranId, function ($query) use ($tahunAjaranId) {
+                return $query->where('tahun_ajaran_id', $tahunAjaranId);
+            })
+            ->count();
+
+        $completedMapelCounts = DB::table('nilais')
+            ->join('mata_pelajarans', 'nilais.mata_pelajaran_id', '=', 'mata_pelajarans.id')
+            ->where('mata_pelajarans.kelas_id', $kelas->id)
+            ->where('mata_pelajarans.semester', $semester)
+            ->where('nilais.is_submitted', true)
+            ->whereNull('nilais.deleted_at')
+            ->whereNull('mata_pelajarans.deleted_at')
+            ->when($tahunAjaranId, function ($query) use ($tahunAjaranId) {
+                return $query->where('nilais.tahun_ajaran_id', $tahunAjaranId)
+                    ->where('mata_pelajarans.tahun_ajaran_id', $tahunAjaranId);
+            })
+            ->groupBy('nilais.siswa_id')
+            ->select('nilais.siswa_id', DB::raw('COUNT(DISTINCT nilais.mata_pelajaran_id) as completed'))
+            ->pluck('completed', 'nilais.siswa_id');
         
         // Prepare data for each student
         $diagnosisResults = [];
         $nilaiCounts = [];
+        $completionData = [];
         
         foreach ($siswa as $s) {
             // Diagnosis tetap berdasarkan tipe, tapi perlu disesuaikan lagi
@@ -2257,13 +2286,23 @@ class ReportController extends Controller
             // Hitung jumlah nilai yang sudah memiliki nilai_akhir_rapor
             // PENTING: Untuk UTS/UAS di semester yang sama, perlu dibedakan lagi
             // dengan field tambahan di tabel nilai
-            $nilaiCounts[$s->id] = (int) $s->completed_nilai_count;
+            $completedCount = min((int) ($completedMapelCounts[$s->id] ?? 0), $totalMapelCount);
+            $nilaiCounts[$s->id] = $completedCount;
+            $completionData[$s->id] = [
+                'completed' => $completedCount,
+                'total' => $totalMapelCount,
+                'missing' => max(0, $totalMapelCount - $completedCount),
+                'status' => $completedCount === 0
+                    ? 'empty'
+                    : ($completedCount >= $totalMapelCount && $totalMapelCount > 0 ? 'complete' : 'partial'),
+            ];
         }
         
         return view('wali_kelas.rapor.index', [
             'siswa' => $siswa,
             'diagnosisResults' => $diagnosisResults,
             'nilaiCounts' => $nilaiCounts,
+            'completionData' => $completionData,
             'type' => $type, // Kirim ke view
             'semester' => $semester, // Kirim ke view
             'tahunAjaran' => $tahunAjaran,
@@ -2480,7 +2519,7 @@ class ReportController extends Controller
                         ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
                             return $query->where('tahun_ajaran_id', $tahunAjaranId);
                         })
-                        ->whereNotNull('nilai_akhir_rapor')
+                        ->where('is_submitted', true)
                         ->exists();
                         
                     // Cek kehadiran di semester yang aktif saat ini

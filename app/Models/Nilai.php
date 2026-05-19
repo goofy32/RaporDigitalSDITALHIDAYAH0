@@ -28,6 +28,7 @@ class Nilai extends Model
         'nilai_tes',
         'nilai_non_tes',
         'nilai_akhir_rapor',
+        'is_submitted',
         'tahun_ajaran_id' // Tambahkan ini
     ];
 
@@ -39,7 +40,8 @@ class Nilai extends Model
         'na_lm' => 'float',
         'nilai_tes' => 'float',
         'nilai_non_tes' => 'float',
-        'nilai_akhir_rapor' => 'float'
+        'nilai_akhir_rapor' => 'float',
+        'is_submitted' => 'boolean',
     ];
 
     public static $rules = [
@@ -104,8 +106,6 @@ class Nilai extends Model
     
     public function isComplete()
     {
-        return !is_null($this->nilai_akhir_rapor) && 
-            !is_null($this->nilai_tes) && 
-            !is_null($this->nilai_non_tes);
+        return $this->is_submitted === true;
     }
 }

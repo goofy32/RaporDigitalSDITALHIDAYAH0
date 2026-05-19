@@ -39,7 +39,7 @@
             
             // Build query for students with scores below KKM
             $query = \App\Models\Nilai::where('mata_pelajaran_id', $mapel->id)
-                ->whereNotNull('nilai_akhir_rapor')
+                ->where('is_submitted', true)
                 ->where('nilai_akhir_rapor', '<', $kkmValue);
                 
             $lowScores = $query->count();
@@ -54,7 +54,7 @@
                 
                 // Get students with low scores
                 $siswaLowQuery = \App\Models\Nilai::where('mata_pelajaran_id', $mapel->id)
-                    ->whereNotNull('nilai_akhir_rapor')
+                    ->where('is_submitted', true)
                     ->where('nilai_akhir_rapor', '<', $kkmValue);
                     
                 $siswaLow = $siswaLowQuery->with('siswa')->get();

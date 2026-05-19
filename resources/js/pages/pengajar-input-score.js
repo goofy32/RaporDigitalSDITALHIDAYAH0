@@ -88,10 +88,51 @@ function calculateFilledAverage(inputs) {
     });
 
     if (filledCount === 0) {
-        return 0;
+        return null;
     }
 
     return sum / filledCount;
+}
+
+function rowHasActualInput(row) {
+    return Array.from(
+        row.querySelectorAll('.tp-score, .lm-score, input[name*="[nilai_tes]"], input[name*="[nilai_non_tes]"]')
+    ).some(input => input.value.trim() !== '');
+}
+
+function updateSubmittedCounter() {
+    const counterElement = document.getElementById('submitted-count-value');
+    if (!counterElement) return;
+
+    counterElement.textContent = document.querySelectorAll('.submitted-checkbox:checked').length;
+}
+
+function setSubmittedRowState(row, isSubmitted) {
+    if (!row) return;
+
+    row.classList.toggle('bg-green-50/60', isSubmitted);
+    row.classList.toggle('ring-1', isSubmitted);
+    row.classList.toggle('ring-green-100', isSubmitted);
+}
+
+function showSubmittedWarning(show) {
+    const warningElement = document.getElementById('submitted-warning');
+    if (!warningElement) return;
+
+    warningElement.classList.toggle('hidden', !show);
+}
+
+function handleSubmittedCheckboxChange(event) {
+    const checkbox = event.target;
+    const row = checkbox.closest('tr');
+
+    if (!row) return;
+
+    setSubmittedRowState(row, checkbox.checked);
+    updateSubmittedCounter();
+
+    const wasInitiallySubmitted = row.dataset.initialSubmitted === '1';
+    showSubmittedWarning(wasInitiallySubmitted && !checkbox.checked);
 }
 
 function bindInputScorePage() {
@@ -106,10 +147,16 @@ function bindInputScorePage() {
         input.addEventListener('change', markFormChanged);
         input.addEventListener('input', updateCalculations);
     });
+
+    document.querySelectorAll('.submitted-checkbox').forEach(checkbox => {
+        checkbox.removeEventListener('change', handleSubmittedCheckboxChange);
+        checkbox.addEventListener('change', handleSubmittedCheckboxChange);
+    });
     
     // Initialize calculations
     document.querySelectorAll('#students-table tbody tr').forEach(row => {
         setRawInputPlaceholders(row);
+        setSubmittedRowState(row, Boolean(row.querySelector('.submitted-checkbox')?.checked));
 
         // Don't recalculate existing final scores on page load
         // Just highlight values below KKM
@@ -118,6 +165,9 @@ function bindInputScorePage() {
         // Calculate intermediate values like NA_TP and NA_LM if they're empty
         calculateIntermediateValues(row);
     });
+
+    updateSubmittedCounter();
+    showSubmittedWarning(false);
     
     // Only add these event listeners once
     setupNavigationListeners();
@@ -166,7 +216,7 @@ function calculateIntermediateValues(row) {
     if (!naTPInput.value) {
         let tpInputs = row.querySelectorAll('.tp-score');
         let naTP = calculateFilledAverage(tpInputs);
-        naTPInput.value = naTP.toFixed(2);
+        naTPInput.value = naTP === null ? '' : naTP.toFixed(2);
     }
 
     // 2. Calculate NA Sumatif LM if empty
@@ -174,7 +224,7 @@ function calculateIntermediateValues(row) {
     if (!naLMInput.value) {
         let lmInputs = row.querySelectorAll('.lm-score');
         let naLM = calculateFilledAverage(lmInputs);
-        naLMInput.value = naLM.toFixed(2);
+        naLMInput.value = naLM === null ? '' : naLM.toFixed(2);
     }
 
     // 3. Calculate NA Sumatif Akhir Semester if empty
@@ -187,19 +237,19 @@ function calculateIntermediateValues(row) {
         let nilaiAkhirSemester = calculateSemesterAverage(nilaiTes, nilaiNonTes);
 
         nilaiAkhirInput.value = nilaiAkhirSemester === null
-            ? '0'
+            ? ''
             : nilaiAkhirSemester.toFixed(2);
     }
 
     // 4. Calculate Nilai Akhir Rapor if empty
     let nilaiAkhirRaporInput = row.querySelector('input[name*="[nilai_akhir_rapor]"]');
     if (!nilaiAkhirRaporInput.value) {
-        let naTP = parseFloat(row.querySelector('.na-tp')?.value) || 0;
-        let naLM = parseFloat(row.querySelector('.na-lm')?.value) || 0;
+        let naTP = parseNumericInputValue(row.querySelector('.na-tp')) ?? 0;
+        let naLM = parseNumericInputValue(row.querySelector('.na-lm')) ?? 0;
         let nilaiAkhirSemester = parseNumericInputValue(nilaiAkhirInput);
         let nilaiAkhirRapor = calculateNilaiAkhirRapor(naTP, naLM, nilaiAkhirSemester);
 
-        nilaiAkhirRaporInput.value = nilaiAkhirRapor === null ? '0' : nilaiAkhirRapor;
+        nilaiAkhirRaporInput.value = nilaiAkhirRapor === null ? '' : nilaiAkhirRapor;
     }
 }
 
@@ -207,12 +257,12 @@ function calculateAverages(row) {
     // 1. Hitung rata-rata Nilai TP
     let tpInputs = row.querySelectorAll('.tp-score');
     let naTP = calculateFilledAverage(tpInputs);
-    row.querySelector('.na-tp').value = naTP.toFixed(2);
+    row.querySelector('.na-tp').value = naTP === null ? '' : naTP.toFixed(2);
 
     // 2. Hitung rata-rata Nilai LM 
     let lmInputs = row.querySelectorAll('.lm-score');
     let naLM = calculateFilledAverage(lmInputs);
-    row.querySelector('.na-lm').value = naLM.toFixed(2);
+    row.querySelector('.na-lm').value = naLM === null ? '' : naLM.toFixed(2);
 
     // 3. Hitung Nilai Akhir Semester
     let nilaiTesInput = row.querySelector('input[name*="[nilai_tes]"]');
@@ -228,7 +278,7 @@ function calculateAverages(row) {
     if (nilaiAkhirSemester !== null) {
         nilaiAkhirSemesterInput.value = nilaiAkhirSemester.toFixed(2);
     } else {
-        nilaiAkhirSemesterInput.value = '0';
+        nilaiAkhirSemesterInput.value = '';
     }
 
     // 4. Hitung Nilai Akhir Rapor dengan bobot dinamis
@@ -239,7 +289,7 @@ function calculateAverages(row) {
     if (nilaiAkhirRapor !== null) {
         nilaiAkhirRaporInput.value = nilaiAkhirRapor;
     } else {
-        nilaiAkhirRaporInput.value = '0';
+        nilaiAkhirRaporInput.value = '';
     }
     
     // 5. Sorot nilai yang dibawah KKM
@@ -261,8 +311,18 @@ function clearStudentScoreRow(row) {
     });
 
     row.querySelectorAll('.na-tp, .na-lm, input[name*="[nilai_akhir]"], input[name*="[nilai_akhir_rapor]"]').forEach(input => {
-        input.value = '0';
+        input.value = '';
     });
+
+    const submittedCheckbox = row.querySelector('.submitted-checkbox');
+    if (submittedCheckbox) {
+        submittedCheckbox.checked = false;
+    }
+
+    row.dataset.initialSubmitted = '0';
+    setSubmittedRowState(row, false);
+    updateSubmittedCounter();
+    showSubmittedWarning(false);
 
     calculateAverages(row);
 }
@@ -328,19 +388,31 @@ function highlightBelowKkm(row) {
 }
 
 function validateForm() {
-    const form = document.getElementById('saveForm');
-    const inputs = form.querySelectorAll('input[type="number"]:not([readonly])');
-    let hasEmptyValues = false;
+    const rows = document.querySelectorAll('#students-table tbody tr');
+    let hasSubmittedWithoutInput = false;
+    let hasInputButNotSubmitted = false;
 
-    inputs.forEach(input => {
-        if (!input.value && !input.readOnly) {
-            hasEmptyValues = true;
+    rows.forEach(row => {
+        const isSubmitted = Boolean(row.querySelector('.submitted-checkbox')?.checked);
+        const hasInput = rowHasActualInput(row);
+
+        if (isSubmitted && !hasInput) {
+            hasSubmittedWithoutInput = true;
+        }
+
+        if (!isSubmitted && hasInput) {
+            hasInputButNotSubmitted = true;
         }
     });
 
-    if (hasEmptyValues) {
-        return confirm('Beberapa nilai masih kosong. Apakah Anda yakin ingin melanjutkan?');
+    if (hasSubmittedWithoutInput) {
+        return confirm('Ada siswa yang ditandai selesai tetapi belum memiliki nilai yang diisi. Apakah Anda yakin ingin melanjutkan?');
     }
+
+    if (hasInputButNotSubmitted) {
+        return confirm('Ada siswa yang sudah diisi nilainya tetapi belum ditandai selesai. Simpan sebagai draft?');
+    }
+
     return true;
 }
 
@@ -597,5 +669,8 @@ document.addEventListener('turbo:load', function() {
         
         // Highlight any values below KKM
         highlightBelowKkm(row);
+        setSubmittedRowState(row, Boolean(row.querySelector('.submitted-checkbox')?.checked));
     });
+
+    updateSubmittedCounter();
 });

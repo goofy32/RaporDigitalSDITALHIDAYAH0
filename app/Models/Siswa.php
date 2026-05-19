@@ -154,14 +154,14 @@ class Siswa extends Model
                     return false;
                 }
 
-                if (is_null($nilai->nilai_akhir_rapor)) {
+                if (!$nilai->is_submitted) {
                     return false;
                 }
 
                 $mataPelajaran = $nilai->mataPelajaran;
 
                 return $mataPelajaran && (int) $mataPelajaran->semester === (int) $semester;
-            })->count();
+            })->pluck('mata_pelajaran_id')->filter()->unique()->count();
         } else {
             $nilaiCount = $this->nilais()
                 ->whereHas('mataPelajaran', function($q) use ($semester) {
@@ -170,8 +170,9 @@ class Siswa extends Model
                 ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
                     return $query->where('tahun_ajaran_id', $tahunAjaranId);
                 })
-                ->whereNotNull('nilai_akhir_rapor')
-                ->count();
+                ->where('is_submitted', true)
+                ->distinct('mata_pelajaran_id')
+                ->count('mata_pelajaran_id');
         }
         
         if ($nilaiCount > 0) {
@@ -334,7 +335,7 @@ class Siswa extends Model
             ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
                 return $query->where('tahun_ajaran_id', $tahunAjaranId);
             })
-            ->whereNotNull('nilai_akhir_rapor')
+            ->where('is_submitted', true)
             ->exists();
         
         // Check absensi for current semester

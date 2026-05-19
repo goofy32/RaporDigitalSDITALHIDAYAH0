@@ -197,6 +197,7 @@ class RaporTemplateProcessor
                 $q->where('semester', $semester);
             })
             ->where('tahun_ajaran_id', $tahunAjaranId)
+            ->where('is_submitted', true)
             ->get()
             ->groupBy('mata_pelajaran_id');
 
@@ -265,7 +266,8 @@ class RaporTemplateProcessor
             ->whereHas('mataPelajaran', function($q) use ($semester) {
                 $q->where('semester', $semester);
             })
-            ->where('tahun_ajaran_id', $tahunAjaranId);
+            ->where('tahun_ajaran_id', $tahunAjaranId)
+            ->where('is_submitted', true);
             
         $nilaiCollection = $nilaiQuery->get();
         
@@ -430,44 +432,24 @@ class RaporTemplateProcessor
                         'mata_pelajaran_id' => $mataPelajaranId
                     ]);
                 } else {
-                    // Jika tidak ada nilai_akhir_rapor, gunakan rata-rata nilai lain dengan filter tahun ajaran
-                    $avgNilai = $this->calculateAverageTreatingNullAsZero(
-                        $nilaiMapel->when($tahunAjaranId, function($collection) use ($tahunAjaranId) {
-                            return $collection->where('tahun_ajaran_id', $tahunAjaranId);
-                        }),
-                        'nilai_tp'
-                    );
-                        
-                    if (!is_null($avgNilai)) {
-                        $data["nilai_$key"] = number_format($avgNilai, 1);
+                    // Jika nilai akhir rapor belum tersimpan, gunakan placeholder kosong
+                    // agar output rapor konsisten dengan source of truth di database.
+                    $data["nilai_$key"] = '-';
+                    $data["capaian_tertinggi_$key"] = '-';
+                    $data["capaian_terendah_$key"] = '-';
+                    $data["capaian_kompetensi_$key"] = '';
+                    $data["kkm_$key"] = isset($kkmData[$mataPelajaranId]) ? $kkmData[$mataPelajaranId] : '70';
 
-                        $capaianData = $preloadedCapaian[$mataPelajaranId]
-                            ?? ['tertinggi' => '-', 'terendah' => '-'];
-                        $data["capaian_tertinggi_$key"] = $capaianData['tertinggi'];
-                        $data["capaian_terendah_$key"] = $capaianData['terendah'];
-                        $data["capaian_kompetensi_$key"] = '';
-                        
-                        // KKM untuk mata pelajaran dengan rata-rata nilai
-                        $data["kkm_$key"] = isset($kkmData[$mataPelajaranId]) ? $kkmData[$mataPelajaranId] : '70';
-                        
-                        // Tambahkan ke placeholder dinamis
-                        $dynamicPlaceholders[$mapelCount] = [
-                            'nama' => $mapelName,
-                            'nilai' => $data["nilai_$key"],
-                            'capaian_tertinggi' => $data["capaian_tertinggi_$key"],
-                            'capaian_terendah' => $data["capaian_terendah_$key"],
-                            'kkm' => $data["kkm_$key"],
-                            'mata_pelajaran_id' => $mataPelajaranId
-                        ];
-                        
-                        $mapelCount++;
-                    } else {
-                        $data["nilai_$key"] = '-';
-                        $data["capaian_tertinggi_$key"] = '-';
-                        $data["capaian_terendah_$key"] = '-';
-                        $data["capaian_kompetensi_$key"] = '';
-                        $data["kkm_$key"] = isset($kkmData[$mataPelajaranId]) ? $kkmData[$mataPelajaranId] : '70';
-                    }
+                    $dynamicPlaceholders[$mapelCount] = [
+                        'nama' => $mapelName,
+                        'nilai' => $data["nilai_$key"],
+                        'capaian_tertinggi' => $data["capaian_tertinggi_$key"],
+                        'capaian_terendah' => $data["capaian_terendah_$key"],
+                        'kkm' => $data["kkm_$key"],
+                        'mata_pelajaran_id' => $mataPelajaranId
+                    ];
+
+                    $mapelCount++;
                 }
             } else {
                 // Jika key tidak ada di data, set nilai default
@@ -522,6 +504,18 @@ class RaporTemplateProcessor
                         'tahun_ajaran_id' => $tahunAjaranId,
                         'mata_pelajaran_id' => $mataPelajaranId
                     ]);
+                } else {
+                    $dynamicPlaceholders[$mapelCount] = [
+                        'nama' => $mapelName,
+                        'nilai' => '-',
+                        'capaian_tertinggi' => '-',
+                        'capaian_terendah' => '-',
+                        'kkm' => isset($kkmData[$mataPelajaranId]) ? $kkmData[$mataPelajaranId] : '70',
+                        'mata_pelajaran_id' => $mataPelajaranId
+                    ];
+
+                    $processedMapelNames[] = $mapelName;
+                    $mapelCount++;
                 }
             }
         }
@@ -572,25 +566,9 @@ class RaporTemplateProcessor
                     $data["capaian_terendah_mulok$mulokCount"] = $capaianMulok['terendah'];
                     $data["capaian_mulok$mulokCount"] = '';
                 } else {
-                    // Jika tidak ada nilai_akhir_rapor, cari alternatif dengan filter tahun ajaran
-                    $avgNilai = $this->calculateAverageTreatingNullAsZero(
-                        $nilaiMulok->when($tahunAjaranId, function($collection) use ($tahunAjaranId) {
-                            return $collection->where('tahun_ajaran_id', $tahunAjaranId);
-                        }),
-                        'nilai_tp'
-                    );
-                        
-                    $data["nilai_mulok$mulokCount"] = !is_null($avgNilai) ? number_format($avgNilai, 1) : '-';
-
-                    if (!is_null($avgNilai)) {
-                        $capaianMulok = $preloadedCapaian[$mataPelajaranId]
-                            ?? ['tertinggi' => '-', 'terendah' => '-'];
-                        $data["capaian_tertinggi_mulok$mulokCount"] = $capaianMulok['tertinggi'];
-                        $data["capaian_terendah_mulok$mulokCount"] = $capaianMulok['terendah'];
-                    } else {
-                        $data["capaian_tertinggi_mulok$mulokCount"] = '-';
-                        $data["capaian_terendah_mulok$mulokCount"] = '-';
-                    }
+                    $data["nilai_mulok$mulokCount"] = '-';
+                    $data["capaian_tertinggi_mulok$mulokCount"] = '-';
+                    $data["capaian_terendah_mulok$mulokCount"] = '-';
                     $data["capaian_mulok$mulokCount"] = '';
                 }
                 
@@ -1529,6 +1507,7 @@ protected function prepareFotoSiswa()
             ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
                 return $query->where('tahun_ajaran_id', $tahunAjaranId);
             })
+            ->where('is_submitted', true)
             ->exists();
             
         if (!$hasAnyNilai) {

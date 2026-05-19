@@ -123,6 +123,7 @@
                     <th colspan="2" class="px-4 py-2 border text-center">Sumatif Akhir Semester</th>
                     <th rowspan="2" class="px-4 py-2 border">NA Sumatif Akhir Semester</th>
                     <th rowspan="2" class="px-4 py-2 border">Nilai Akhir (Rapor)</th>
+                    <th rowspan="2" class="px-4 py-2 border text-center">Selesai</th>
                 </tr>
                 <tr>
                     @foreach($mataPelajaran->lingkupMateris as $lm)
@@ -220,6 +221,16 @@
                         @endphp
                         <td class="px-4 py-2 border text-center {{ $belowKkm ? 'bg-red-100 text-red-800' : '' }}">
                             {{ $nilaiAkhirRapor ?? '-' }}
+                        </td>
+
+                        <td class="px-4 py-2 border text-center">
+                            @if(!empty($existingScores[$student['id']]['is_submitted']))
+                                <span class="inline-flex items-center justify-center rounded-full bg-green-100 px-2 py-1 text-xs font-medium text-green-700">
+                                    ✓ Selesai
+                                </span>
+                            @else
+                                <span class="text-gray-400">-</span>
+                            @endif
                         </td>
                     </tr>
                 @endforeach
