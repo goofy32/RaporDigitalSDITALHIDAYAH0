@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use App\Http\Controllers\DashboardController;
 use App\Traits\HasTahunAjaran;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
@@ -98,6 +99,20 @@ class MataPelajaran extends Model
             $mataPelajaran->lingkupMateris->each(function ($lingkupMateri) {
                 $lingkupMateri->delete();
             });
+        });
+
+        static::deleted(function ($mataPelajaran) {
+            DashboardController::clearProgressCacheForKelas(
+                $mataPelajaran->kelas_id,
+                $mataPelajaran->guru_id
+            );
+        });
+
+        static::restored(function ($mataPelajaran) {
+            DashboardController::clearProgressCacheForKelas(
+                $mataPelajaran->kelas_id,
+                $mataPelajaran->guru_id
+            );
         });
     }
     

@@ -47,7 +47,7 @@
             </div>
         </div>
 
-        <div class="mt-14">
+        <div class="mt-16">
             <div id="main">
                 @php
                     $activeTahunAjaran = \App\Models\TahunAjaran::where('is_active', true)->first();

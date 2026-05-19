@@ -82,6 +82,10 @@
         <input type="hidden" name="tahun_ajaran_id" value="{{ session('tahun_ajaran_id') }}">
         <input type="hidden" name="mata_pelajaran_id" value="{{ $mataPelajaran->id }}">
 
+        <p class="mb-2 text-xs italic text-gray-400">
+            Geser tabel ke kanan untuk melihat semua kolom nilai
+        </p>
+
         <div class="overflow-x-auto">
             <table id="students-table" class="min-w-full text-sm text-left text-gray-500 border-collapse">
             <thead class="text-xs text-gray-700 uppercase bg-gray-50">

@@ -7,6 +7,8 @@ export function registerNotificationStore() {
         loading: false,
         refreshInterval: null,
         baseTitle: '',
+        showModal: false,
+        hideRead: false,
 
         init() {
             this.baseTitle = document.title.replace(/^\(\d+\)\s/, '');
@@ -28,18 +30,112 @@ export function registerNotificationStore() {
             document.title = baseTitle;
         },
 
+        resolveListUrl() {
+            const path = window.location.pathname;
+
+            if (path.includes('/admin/')) return '/admin/information/list';
+            if (path.includes('/pengajar/')) return '/pengajar/notifications';
+            if (path.includes('/wali-kelas/')) return '/wali-kelas/notifications';
+
+            return null;
+        },
+
+        resolveReadBaseUrl() {
+            const path = window.location.pathname;
+
+            if (path.includes('/pengajar/')) return '/pengajar/notifications';
+            if (path.includes('/wali-kelas/')) return '/wali-kelas/notifications';
+
+            return null;
+        },
+
+        formatTime(dateString) {
+            if (!dateString) return '';
+
+            const date = new Date(dateString);
+            if (Number.isNaN(date.getTime())) {
+                return dateString;
+            }
+
+            const now = new Date();
+            const diff = Math.floor((now - date) / 1000);
+
+            if (diff < 60) return 'Baru saja';
+            if (diff < 3600) return `${Math.floor(diff / 60)} menit lalu`;
+            if (diff < 86400) return `${Math.floor(diff / 3600)} jam lalu`;
+            if (diff < 172800) return 'Kemarin';
+
+            return `${Math.floor(diff / 86400)} hari lalu`;
+        },
+
+        formatDateTime(dateString) {
+            if (!dateString) return '';
+
+            const date = new Date(dateString);
+            if (Number.isNaN(date.getTime())) {
+                return dateString;
+            }
+
+            const monthNames = [
+                'Januari',
+                'Februari',
+                'Maret',
+                'April',
+                'Mei',
+                'Juni',
+                'Juli',
+                'Agustus',
+                'September',
+                'Oktober',
+                'November',
+                'Desember',
+            ];
+
+            const day = date.getDate();
+            const month = monthNames[date.getMonth()];
+            const year = date.getFullYear();
+            const hours = String(date.getHours()).padStart(2, '0');
+            const minutes = String(date.getMinutes()).padStart(2, '0');
+
+            return `${day} ${month} ${year}, ${hours}:${minutes}`;
+        },
+
+        normalizeNotification(item) {
+            return {
+                ...item,
+                created_at_raw: item.created_at,
+                created_at: this.formatTime(item.created_at),
+                created_at_formatted: this.formatDateTime(item.created_at),
+                is_read: Boolean(item.is_read),
+            };
+        },
+
+        getUnreadItems() {
+            return this.items.filter(item => item.is_read !== true);
+        },
+
+        getReadItems() {
+            return this.items.filter(item => item.is_read === true);
+        },
+
+        get visibleItems() {
+            if (this.hideRead) {
+                return this.items.filter(item => item.is_read !== true);
+            }
+
+            return this.items;
+        },
+
+        toggleHideRead() {
+            this.hideRead = !this.hideRead;
+        },
+
         async fetchNotifications() {
             if (this.loading) return;
             this.loading = true;
 
             try {
-                const path = window.location.pathname;
-                let url;
-
-                if (path.includes('/admin/')) url = '/admin/information/list';
-                else if (path.includes('/pengajar/')) url = '/pengajar/notifications';
-                else if (path.includes('/wali-kelas/')) url = '/wali-kelas/notifications';
-
+                const url = this.resolveListUrl();
                 if (!url) return;
 
                 const response = await fetch(url, {
@@ -54,7 +150,7 @@ export function registerNotificationStore() {
                 }
 
                 const data = await response.json();
-                this.items = data.items || [];
+                this.items = (data.items || []).map(item => this.normalizeNotification(item));
                 this.updateTabTitle();
             } catch (error) {
                 console.error('Error fetching notifications:', error);
@@ -63,15 +159,19 @@ export function registerNotificationStore() {
             }
         },
 
-        async markAsRead(notificationId) {
+        async markAsRead(notificationId, options = {}) {
+            const { refreshCount = true } = options;
+
             try {
-                const path = window.location.pathname;
-                let baseUrl = '';
+                const item = this.items.find(entry => entry.id === notificationId);
+                if (item && item.is_read) {
+                    return true;
+                }
 
-                if (path.includes('/pengajar/')) baseUrl = '/pengajar/notifications';
-                else if (path.includes('/wali-kelas/')) baseUrl = '/wali-kelas/notifications';
-
-                if (!baseUrl) return false;
+                const baseUrl = this.resolveReadBaseUrl();
+                if (!baseUrl) {
+                    return false;
+                }
 
                 const response = await fetch(`${baseUrl}/${notificationId}/read`, {
                     method: 'POST',
@@ -83,18 +183,42 @@ export function registerNotificationStore() {
                     },
                 });
 
-                if (response.ok) {
-                    this.items = this.items.map(item => item.id === notificationId ? { ...item, is_read: true } : item);
-                    await this.fetchUnreadCount();
-                    this.updateTabTitle();
-                    return true;
+                if (!response.ok) {
+                    return false;
                 }
 
-                return false;
+                this.items = this.items.map(entry => entry.id === notificationId ? { ...entry, is_read: true } : entry);
+
+                if (refreshCount) {
+                    await this.fetchUnreadCount();
+                } else {
+                    this.unreadCount = Math.max(
+                        0,
+                        this.items.filter(entry => entry.is_read !== true).length
+                    );
+                    this.updateTabTitle();
+                }
+
+                return true;
             } catch (error) {
                 console.error('Error marking notification as read:', error);
                 return false;
             }
+        },
+
+        async markAllAsRead() {
+            const unreadItems = this.items.filter(item => item.is_read !== true);
+
+            if (unreadItems.length === 0) {
+                return true;
+            }
+
+            const results = await Promise.all(
+                unreadItems.map(item => this.markAsRead(item.id, { refreshCount: false }))
+            );
+
+            await this.fetchUnreadCount();
+            return results.every(Boolean);
         },
 
         async fetchUnreadCount() {
@@ -119,6 +243,16 @@ export function registerNotificationStore() {
                 this.updateTabTitle();
                 return 0;
             }
+        },
+
+        async openModal() {
+            this.showModal = true;
+            await this.fetchNotifications();
+            await this.fetchUnreadCount();
+        },
+
+        closeModal() {
+            this.showModal = false;
         },
 
         async addNotification(notification) {

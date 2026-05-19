@@ -738,10 +738,10 @@ class RecycleBinController extends Controller
                 [
                     'guru_id' => $guru->id,
                     'kelas_id' => $kelas->id,
+                    'role' => $pivot['role'] ?? 'pengajar',
                 ],
                 [
                     'is_wali_kelas' => (bool) ($pivot['is_wali_kelas'] ?? false),
-                    'role' => $pivot['role'] ?? 'pengajar',
                     'created_at' => $pivot['created_at'] ?? now(),
                     'updated_at' => now(),
                 ]

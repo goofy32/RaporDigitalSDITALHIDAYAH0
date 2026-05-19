@@ -45,7 +45,7 @@ class NotificationController extends Controller
                     'content' => $notification->content,
                     'target' => $notification->target,
                     'specific_users' => $notification->specific_users,
-                    'created_at' => $notification->created_at->diffForHumans(),
+                    'created_at' => $notification->created_at?->toISOString(),
                     'is_read' => false
                 ]
             ]);
@@ -89,7 +89,8 @@ class NotificationController extends Controller
                     'target' => $notification->target,
                     'specific_users' => $notification->specific_users,
                     'target_display' => $targetDisplay,
-                    'created_at' => $notification->created_at->diffForHumans()
+                    'created_at' => $notification->created_at?->toISOString(),
+                    'is_read' => true,
                 ];
             });
         
@@ -117,8 +118,7 @@ class NotificationController extends Controller
             ->with(['readers' => function ($query) use ($guru) {
                 $query->where('guru_id', $guru->id);
             }])
-            ->orderBy('created_at', 'desc') // Tambahkan ordering
-            ->take(5) // Batasi 5 notifikasi terakhir
+            ->orderBy('created_at', 'desc')
             ->get()
             ->map(function ($notification) use ($guru) {
                 return [
@@ -126,7 +126,7 @@ class NotificationController extends Controller
                     'title' => $notification->title,
                     'content' => $notification->content,
                     'target' => $notification->target,
-                    'created_at' => $notification->created_at->diffForHumans(),
+                    'created_at' => $notification->created_at?->toISOString(),
                     'is_read' => $notification->isReadBy($guru->id)
                 ];
             });

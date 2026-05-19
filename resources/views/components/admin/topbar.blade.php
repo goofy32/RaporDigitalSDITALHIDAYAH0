@@ -29,7 +29,7 @@
              });
          }
      }"
-     x-init="initImages">
+     x-init="initImages()">
     <div class="px-3 py-3 lg:px-5 lg:pl-3">
         <div class="flex items-center justify-between">
             <!-- Logo dan Toggle Sidebar -->
@@ -279,4 +279,5 @@
             </div>
         </div>
     </div>
+
 </div>

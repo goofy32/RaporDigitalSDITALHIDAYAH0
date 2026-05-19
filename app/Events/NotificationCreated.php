@@ -63,7 +63,7 @@ class NotificationCreated implements ShouldBroadcast
             'content' => $this->notification->content,
             'target' => $this->notification->target,
             'specific_users' => $this->notification->specific_users,
-            'created_at' => $this->notification->created_at->diffForHumans(),
+            'created_at' => $this->notification->created_at?->toISOString(),
             'is_read' => false
         ];
     }

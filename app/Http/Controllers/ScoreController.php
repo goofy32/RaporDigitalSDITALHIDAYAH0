@@ -165,27 +165,26 @@ class ScoreController extends Controller
         });
     }
 
-    private function sendScoreCompletionNotification(MataPelajaran $mataPelajaran, Siswa $siswa): void
+    private function sendScoreCompletionNotification(MataPelajaran $mataPelajaran, Siswa $siswa, string $guruNama): void
     {
-        $waliKelasIds = DB::table('guru_kelas')
+        $waliKelasGuru = DB::table('guru_kelas')
             ->where('kelas_id', $mataPelajaran->kelas_id)
             ->where('is_wali_kelas', true)
             ->where('role', 'wali_kelas')
-            ->pluck('guru_id')
-            ->filter()
-            ->unique()
-            ->values()
-            ->all();
+            ->value('guru_id');
 
-        if (empty($waliKelasIds)) {
+        if (!$waliKelasGuru) {
             return;
         }
 
+        $mapelNama = $mataPelajaran->nama_pelajaran;
+        $siswaNama = $siswa->nama;
+
         $notification = new Notification();
-        $notification->title = "Nilai {$siswa->nama} Sudah Lengkap";
-        $notification->content = "Nilai {$siswa->nama} untuk mata pelajaran {$mataPelajaran->nama_pelajaran} telah lengkap dan siap direview.";
+        $notification->title = "Nilai {$mapelNama} Selesai";
+        $notification->content = "{$guruNama}: nilai {$mapelNama} {$siswaNama} selesai diinput";
         $notification->target = 'specific';
-        $notification->specific_users = $waliKelasIds;
+        $notification->specific_users = [(int) $waliKelasGuru];
         $notification->save();
 
         event(new NotificationCreated($notification));
@@ -272,8 +271,11 @@ class ScoreController extends Controller
                     ->where('tahun_ajaran_id', $tahunAjaranId)
                     ->get();
 
-                $existingAggregateNilai = $this->getAggregateNilaiFromCollection($existingStudentNilais);
-                $wasSubmitted = (bool) optional($existingAggregateNilai)->is_submitted;
+                $wasSubmitted = Nilai::where('siswa_id', $siswaId)
+                    ->where('mata_pelajaran_id', $id)
+                    ->where('tahun_ajaran_id', $tahunAjaranId)
+                    ->where('is_submitted', true)
+                    ->exists();
                 $hasActualInput = $this->studentHasActualInput($scoreData);
                 if (!$hasActualInput && $existingStudentNilais->isEmpty()) {
                     continue;
@@ -445,12 +447,17 @@ class ScoreController extends Controller
 
             foreach (collect($newlySubmittedStudents)->unique('id') as $completedStudent) {
                 try {
-                    $this->sendScoreCompletionNotification($mataPelajaran, $completedStudent);
+                    $this->sendScoreCompletionNotification(
+                        $mataPelajaran,
+                        $completedStudent,
+                        $guru?->nama ?? 'Guru'
+                    );
                 } catch (\Exception $notificationException) {
-                    Log::warning('[ScoreController] Failed to send score completion notification', [
-                    'error' => $notificationException->getMessage(),
+                    Log::warning('Notification failed', [
+                        'error' => $notificationException->getMessage(),
                         'siswa_id' => $completedStudent->id,
                         'mata_pelajaran_id' => $mataPelajaran->id,
+                        'guru_id' => $guru?->id,
                     ]);
                 }
             }
