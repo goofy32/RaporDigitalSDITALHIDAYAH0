@@ -1,7 +1,7 @@
 <div class="space-y-6">
     <!-- Header Info -->
     <div class="bg-gray-50 p-4 rounded-lg">
-        <div class="grid grid-cols-2 gap-4">
+        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
                 <h3 class="text-lg font-semibold text-green-700">Rapor {{ $report->type }}</h3>
                 <p class="text-sm text-gray-600">Tahun Ajaran: {{ $report->tahun_ajaran }}</p>
@@ -17,7 +17,7 @@
     <!-- Data Siswa -->
     <div>
         <h3 class="text-lg font-semibold mb-3">Data Siswa</h3>
-        <div class="grid grid-cols-2 gap-4">
+        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
                 <p class="text-sm text-gray-600">Nama Siswa</p>
                 <p class="font-medium">{{ $siswa->nama }}</p>
@@ -190,7 +190,7 @@
     <!-- Kehadiran -->
     <div>
         <h3 class="text-lg font-semibold mb-3">Kehadiran</h3>
-        <div class="grid grid-cols-3 gap-4">
+        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <div class="bg-white p-4 rounded-lg shadow">
                 <p class="text-sm text-gray-600">Sakit</p>
                 <p class="text-2xl font-bold">{{ $siswa->absensi->sakit ?? 0 }}</p>

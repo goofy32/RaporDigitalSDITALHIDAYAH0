@@ -41,7 +41,7 @@
         <div class="flex flex-col lg:flex-row gap-4 mt-14">
             <!-- Statistics Grid - Takes 2/3 of the space -->
             <div class="lg:w-2/3">
-                <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
+                <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
                     <!-- Siswa Card -->
                     <div class="rounded-lg bg-white border border-gray-200 shadow-sm overflow-hidden cursor-pointer hover:bg-gray-50 transition-colors" onclick="navigateTo('{{ route('student') }}')">
                         <div class="p-4">
@@ -99,7 +99,7 @@
                         <button 
                             @click="$store.notification.toggleHideRead()"
                             :title="$store.notification.hideRead ? 'Tampilkan semua' : 'Sembunyikan yang sudah dibaca'"
-                            class="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors">
+                            class="flex min-h-10 min-w-10 items-center justify-center rounded p-2 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600">
                             <svg x-show="!$store.notification.hideRead"
                                 class="w-4 h-4" fill="none" stroke="currentColor" 
                                 viewBox="0 0 24 24">
@@ -128,7 +128,7 @@
                         </button>
                         <button type="button" 
                                 @click="showModal = true"
-                                class="text-gray-400 bg-transparent hover:bg-gray-200 hover:text-gray-900 rounded-lg text-sm w-8 h-8 flex items-center justify-center">
+                                class="flex h-10 w-10 items-center justify-center rounded-lg bg-transparent text-sm text-gray-400 hover:bg-gray-200 hover:text-gray-900">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
                             </svg>
@@ -267,7 +267,7 @@
                         <h3 class="text-xl font-semibold">Tambah Informasi</h3>
                         <button type="button" 
                                 @click="showModal = false"
-                                class="text-gray-400 bg-transparent hover:bg-gray-200 hover:text-gray-900 rounded-lg text-sm w-8 h-8 flex items-center justify-center">
+                                class="flex h-10 w-10 items-center justify-center rounded-lg bg-transparent text-sm text-gray-400 hover:bg-gray-200 hover:text-gray-900">
                             <svg class="w-3 h-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 14 14">
                                 <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m1 1 6 6m0 0 6 6M7 7l6-6M7 7l-6 6"/>
                             </svg>

@@ -9,7 +9,7 @@
         <!-- Left Section - Stats (col-span-2) -->
         <div class="lg:col-span-2">
             <!-- Top Row - 2 Cards -->
-            <div class="grid grid-cols-2 gap-4 mb-4">
+            <div class="grid grid-cols-1 gap-4 mb-4 sm:grid-cols-2">
                 <!-- Kelas Card -->
                 <div class="rounded-lg bg-white border border-gray-200 shadow-sm overflow-hidden cursor-pointer hover:bg-gray-50">
                     <div class="p-4">
@@ -28,7 +28,7 @@
             </div>
 
             <!-- Bottom Row - 1 Card -->
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <!-- Mata Pelajaran Card -->
                 <div class="rounded-lg bg-white border border-gray-200 shadow-sm overflow-hidden cursor-pointer hover:bg-gray-50">
                     <div class="p-4">
@@ -57,7 +57,7 @@
                 <button 
                     @click="$store.notification.toggleHideRead()"
                     :title="$store.notification.hideRead ? 'Tampilkan semua' : 'Sembunyikan yang sudah dibaca'"
-                    class="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors">
+                    class="flex min-h-10 min-w-10 items-center justify-center rounded p-2 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600">
                     <svg x-show="!$store.notification.hideRead"
                         class="w-4 h-4" fill="none" stroke="currentColor" 
                         viewBox="0 0 24 24">

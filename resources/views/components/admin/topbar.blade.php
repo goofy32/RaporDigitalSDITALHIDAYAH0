@@ -47,9 +47,17 @@
                 </button>
                 
                 <!-- Logo section with large logo but standard topbar height -->
-                <div class="flex items-center ms-2 md:me-24 relative">
+                <div class="relative flex min-w-0 items-center ms-2 md:me-24">
+                    <div class="mr-2 flex h-10 w-10 items-center justify-center sm:hidden">
+                        <img src="{{ asset('images/logo.png') }}"
+                             id="school-logo-mobile"
+                             data-persist-visibility="true"
+                             onerror="this.style.display='none';"
+                             class="h-10 w-auto"
+                             alt="Logo Sekolah">
+                    </div>
                     <!-- Large logo that extends below the topbar -->
-                    <div class="relative h-12 w-32 mr-3"> <!-- Wider container for the large logo -->
+                    <div class="relative hidden h-12 w-32 mr-3 sm:block"> <!-- Wider container for the large logo -->
                         <img src="{{ asset('images/logo.png') }}"
                              id="school-logo"
                              data-persist-visibility="true"
@@ -60,7 +68,7 @@
                     </div>
                     
                     <!-- School name -->
-                    <span class="text-2xl font-semibold text-gray-700">
+                    <span class="truncate text-base font-semibold text-gray-700 sm:text-xl lg:text-2xl">
                         {{ $schoolProfile->nama_sekolah ?? 'SD IT Al-Hidayah Logam' }}
                     </span>
                 </div>

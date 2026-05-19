@@ -10,9 +10,9 @@
     </div>
 
     <!-- Detail Profile -->
-    <div class="flex space-x-8">
+    <div class="flex flex-col gap-8 md:flex-row">
         <!-- Foto Profile -->
-        <div class="flex items-start justify-center w-48 h-full bg-gray-200 rounded-lg shadow-md">
+        <div class="flex items-start justify-center w-full max-w-xs h-full mx-auto bg-gray-200 rounded-lg shadow-md md:mx-0 md:w-48">
             @if(Auth::guard('guru')->user()->photo)
                 <img src="{{ asset('storage/' . Auth::guard('guru')->user()->photo) }}" 
                      alt="Foto Profile" 
@@ -28,6 +28,7 @@
 
         <!-- Informasi Detail -->
         <div class="w-full">
+            <div class="overflow-x-auto">
             <table class="w-full text-sm text-left text-gray-500">
                 <tbody>
                     <tr class="border-b">
@@ -97,6 +98,7 @@
                     </tr>
                 </tbody>
             </table>
+            </div>
         </div>
     </div>
 </div>

@@ -9,15 +9,15 @@
 @section('content')
 <div class="p-4 bg-white rounded-lg shadow-sm mt-14">
     <!-- Header -->
-    <div class="flex justify-between items-center mb-6">
+    <div class="flex flex-wrap items-center justify-between gap-3 mb-6">
         <h2 class="text-2xl font-bold text-green-700">Detail Data Siswa</h2>
-        <div class="flex gap-2">
+        <div class="flex flex-wrap gap-2">
             <a href="{{ route('wali_kelas.student.edit', $student->id) }}" 
-                class="bg-green-700 text-white px-4 py-2 rounded-lg hover:bg-green-800 focus:ring-4 focus:ring-green-300">
+                class="bg-green-700 text-white px-4 py-2 min-h-10 rounded-lg hover:bg-green-800 focus:ring-4 focus:ring-green-300">
                 Edit
             </a>
             <button onclick="window.history.back()" 
-                class="bg-gray-500 text-white px-4 py-2 rounded-lg hover:bg-gray-600 focus:ring-4 focus:ring-gray-300">
+                class="bg-gray-500 text-white px-4 py-2 min-h-10 rounded-lg hover:bg-gray-600 focus:ring-4 focus:ring-gray-300">
                 Kembali
             </button>
         </div>
@@ -27,7 +27,7 @@
         <!-- Photo Section -->
         <div class="w-full md:w-1/4">
             <div class="bg-gray-100 rounded-lg p-4">
-                <div class="flex items-start justify-center w-64 h-80 bg-gray-200 rounded-lg shadow-md overflow-hidden">
+                <div class="flex items-start justify-center w-full h-80 mx-auto bg-gray-200 rounded-lg shadow-md overflow-hidden sm:w-auto sm:max-w-xs md:w-64">
                     @if($student->photo)
                         <img src="{{ asset('storage/' . $student->photo) }}" 
                              alt="{{ $student->nama }}" 
@@ -48,7 +48,8 @@
         <div class="w-full md:w-3/4">
             <div class="grid grid-cols-1 gap-4">
                 <div class="border rounded-lg overflow-hidden">
-                    <table class="w-full">
+                    <div class="overflow-x-auto">
+                    <table class="w-full min-w-full">
                         <tbody>
                             <tr class="border-b">
                                 <th class="text-left px-4 py-2 bg-gray-50 w-1/3">NISN</th>
@@ -112,6 +113,7 @@
                             </tr>
                         </tbody>
                     </table>
+                    </div>
                 </div>
             </div>
         </div>
