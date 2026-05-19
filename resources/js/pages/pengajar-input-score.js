@@ -100,39 +100,63 @@ function rowHasActualInput(row) {
     ).some(input => input.value.trim() !== '');
 }
 
-function updateSubmittedCounter() {
-    const counterElement = document.getElementById('submitted-count-value');
+function isStudentComplete(row) {
+    const hasAnyTp = Array.from(row.querySelectorAll('.tp-score')).some(input => {
+        const val = input.value.trim();
+        return val !== '' && val !== '-';
+    });
+
+    const hasAnyLm = Array.from(row.querySelectorAll('.lm-score')).some(input => {
+        const val = input.value.trim();
+        return val !== '' && val !== '-';
+    });
+
+    const nilaiTes = row.querySelector('.nilai-tes');
+    const hasNilaiTes = Boolean(nilaiTes && nilaiTes.value.trim() !== '');
+
+    const nilaiNonTes = row.querySelector('.nilai-non-tes');
+    const hasNilaiNonTes = Boolean(nilaiNonTes && nilaiNonTes.value.trim() !== '');
+
+    return hasAnyTp && hasAnyLm && hasNilaiTes && hasNilaiNonTes;
+}
+
+function setCompletionRowState(row, isComplete) {
+    if (!row) return;
+
+    row.classList.toggle('bg-green-50/60', isComplete);
+    row.classList.toggle('ring-1', isComplete);
+    row.classList.toggle('ring-green-100', isComplete);
+    row.classList.toggle('bg-white', !isComplete);
+}
+
+function updateCompletionStatus(row) {
+    if (!row) return;
+
+    const siswaId = row.dataset.studentId;
+    const statusElement = document.querySelector('.completion-status[data-siswa-id="' + siswaId + '"]');
+    if (!statusElement) return;
+
+    const isComplete = isStudentComplete(row);
+
+    if (isComplete) {
+        statusElement.textContent = '\u2713 Lengkap';
+        statusElement.className = 'completion-status inline-flex items-center justify-center rounded-full bg-green-100 px-2 py-1 text-xs font-medium text-green-700';
+    } else {
+        statusElement.textContent = 'Belum Lengkap';
+        statusElement.className = 'completion-status inline-flex items-center justify-center rounded-full bg-gray-100 px-2 py-1 text-xs font-medium text-gray-500';
+    }
+
+    setCompletionRowState(row, isComplete);
+}
+
+function updateCompletionCounter() {
+    const counterElement = document.getElementById('completion-counter');
     if (!counterElement) return;
 
-    counterElement.textContent = document.querySelectorAll('.submitted-checkbox:checked').length;
-}
+    const rows = document.querySelectorAll('tr[data-student-id]');
+    const completeCount = Array.from(rows).filter(row => isStudentComplete(row)).length;
 
-function setSubmittedRowState(row, isSubmitted) {
-    if (!row) return;
-
-    row.classList.toggle('bg-green-50/60', isSubmitted);
-    row.classList.toggle('ring-1', isSubmitted);
-    row.classList.toggle('ring-green-100', isSubmitted);
-}
-
-function showSubmittedWarning(show) {
-    const warningElement = document.getElementById('submitted-warning');
-    if (!warningElement) return;
-
-    warningElement.classList.toggle('hidden', !show);
-}
-
-function handleSubmittedCheckboxChange(event) {
-    const checkbox = event.target;
-    const row = checkbox.closest('tr');
-
-    if (!row) return;
-
-    setSubmittedRowState(row, checkbox.checked);
-    updateSubmittedCounter();
-
-    const wasInitiallySubmitted = row.dataset.initialSubmitted === '1';
-    showSubmittedWarning(wasInitiallySubmitted && !checkbox.checked);
+    counterElement.textContent = completeCount + ' dari ' + rows.length + ' siswa lengkap';
 }
 
 function bindInputScorePage() {
@@ -148,15 +172,9 @@ function bindInputScorePage() {
         input.addEventListener('input', updateCalculations);
     });
 
-    document.querySelectorAll('.submitted-checkbox').forEach(checkbox => {
-        checkbox.removeEventListener('change', handleSubmittedCheckboxChange);
-        checkbox.addEventListener('change', handleSubmittedCheckboxChange);
-    });
-    
     // Initialize calculations
     document.querySelectorAll('#students-table tbody tr').forEach(row => {
         setRawInputPlaceholders(row);
-        setSubmittedRowState(row, Boolean(row.querySelector('.submitted-checkbox')?.checked));
 
         // Don't recalculate existing final scores on page load
         // Just highlight values below KKM
@@ -164,10 +182,10 @@ function bindInputScorePage() {
         
         // Calculate intermediate values like NA_TP and NA_LM if they're empty
         calculateIntermediateValues(row);
+        updateCompletionStatus(row);
     });
 
-    updateSubmittedCounter();
-    showSubmittedWarning(false);
+    updateCompletionCounter();
     
     // Only add these event listeners once
     setupNavigationListeners();
@@ -194,6 +212,8 @@ function updateCalculations(e) {
         row.dataset.scoresChanged = 'true';
         
         calculateAverages(row);
+        updateCompletionStatus(row);
+        updateCompletionCounter();
         
         // Mark form as changed without relying on Alpine.js
         formChanged = true;
@@ -313,18 +333,9 @@ function clearStudentScoreRow(row) {
     row.querySelectorAll('.na-tp, .na-lm, input[name*="[nilai_akhir]"], input[name*="[nilai_akhir_rapor]"]').forEach(input => {
         input.value = '';
     });
-
-    const submittedCheckbox = row.querySelector('.submitted-checkbox');
-    if (submittedCheckbox) {
-        submittedCheckbox.checked = false;
-    }
-
-    row.dataset.initialSubmitted = '0';
-    setSubmittedRowState(row, false);
-    updateSubmittedCounter();
-    showSubmittedWarning(false);
-
     calculateAverages(row);
+    updateCompletionStatus(row);
+    updateCompletionCounter();
 }
 
 // Fungsi untuk highlight nilai di bawah KKM
@@ -389,28 +400,17 @@ function highlightBelowKkm(row) {
 
 function validateForm() {
     const rows = document.querySelectorAll('#students-table tbody tr');
-    let hasSubmittedWithoutInput = false;
-    let hasInputButNotSubmitted = false;
+    let hasIncompleteDrafts = false;
 
     rows.forEach(row => {
-        const isSubmitted = Boolean(row.querySelector('.submitted-checkbox')?.checked);
         const hasInput = rowHasActualInput(row);
-
-        if (isSubmitted && !hasInput) {
-            hasSubmittedWithoutInput = true;
-        }
-
-        if (!isSubmitted && hasInput) {
-            hasInputButNotSubmitted = true;
+        if (hasInput && !isStudentComplete(row)) {
+            hasIncompleteDrafts = true;
         }
     });
 
-    if (hasSubmittedWithoutInput) {
-        return confirm('Ada siswa yang ditandai selesai tetapi belum memiliki nilai yang diisi. Apakah Anda yakin ingin melanjutkan?');
-    }
-
-    if (hasInputButNotSubmitted) {
-        return confirm('Ada siswa yang sudah diisi nilainya tetapi belum ditandai selesai. Simpan sebagai draft?');
+    if (hasIncompleteDrafts) {
+        return confirm('Masih ada siswa dengan data nilai yang belum lengkap. Simpan sebagai draft?');
     }
 
     return true;
@@ -669,8 +669,8 @@ document.addEventListener('turbo:load', function() {
         
         // Highlight any values below KKM
         highlightBelowKkm(row);
-        setSubmittedRowState(row, Boolean(row.querySelector('.submitted-checkbox')?.checked));
+        updateCompletionStatus(row);
     });
 
-    updateSubmittedCounter();
+    updateCompletionCounter();
 });

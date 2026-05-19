@@ -22,7 +22,7 @@
 
 <div data-page="pengajar-input-score" class="p-4 mt-16 bg-white shadow-md rounded-lg">
     @php
-        $submittedCount = collect($students)->filter(function ($student) use ($existingScores) {
+        $completionCount = collect($students)->filter(function ($student) use ($existingScores) {
             return !empty($existingScores[$student['id']]['is_submitted']);
         })->count();
     @endphp
@@ -33,14 +33,11 @@
         </h2>
 
         <div class="flex flex-col items-end gap-2">
-            <div id="submitted-counter"
+            <div id="completion-counter"
                  data-total-students="{{ count($students) }}"
                  class="text-sm text-gray-600">
-                <span id="submitted-count-value">{{ $submittedCount }}</span> dari {{ count($students) }} siswa ditandai selesai
+                {{ $completionCount }} dari {{ count($students) }} siswa lengkap
             </div>
-            <p id="submitted-warning" class="hidden text-xs text-amber-600">
-                Penandaan akan dibatalkan saat Anda menyimpan perubahan.
-            </p>
             <div class="flex gap-4">
                 <button type="button"
                         x-data
@@ -103,7 +100,7 @@
                         <th colspan="2" class="px-4 py-2 border text-center">Sumatif Akhir Semester</th>
                         <th rowspan="2" class="px-4 py-2 border">NA Sumatif Akhir Semester</th>
                         <th rowspan="2" class="px-4 py-2 border">Nilai Akhir (Rapor)</th>
-                        <th rowspan="2" class="px-4 py-2 border text-center">Selesai</th>
+                        <th rowspan="2" class="px-4 py-2 border text-center">Status</th>
                         <th rowspan="2" class="px-4 py-2 border">Aksi</th>
                     </tr>
                     <tr>
@@ -129,9 +126,8 @@
                         @php
                             $isSubmitted = (bool) ($existingScores[$student['id']]['is_submitted'] ?? false);
                         @endphp
-                        <tr class="hover:bg-gray-50 student-score-row {{ $isSubmitted ? 'bg-green-50/60' : '' }}"
-                            data-student-id="{{ $student['id'] }}"
-                            data-initial-submitted="{{ $isSubmitted ? '1' : '0' }}">
+                        <tr class="student-score-row bg-white hover:bg-gray-50 {{ $isSubmitted ? 'bg-green-50/60' : '' }}"
+                            data-student-id="{{ $student['id'] }}">
                             <td class="px-4 py-2 border">{{ $index + 1 }}</td>
                             <td class="px-4 py-2 border student-name">{{ $student['name'] }}</td>
                             
@@ -189,7 +185,7 @@
                             <td class="px-4 py-2 border">
                                 <input type="number" 
                                        name="scores[{{ $student['id'] }}][nilai_tes]"
-                                       class="w-20 border border-gray-300 rounded px-2 py-1 nilai-semester"
+                                       class="w-20 border border-gray-300 rounded px-2 py-1 nilai-semester nilai-tes"
                                        value="{{ $existingScores[$student['id']]['nilai_tes'] ?? '' }}"
                                        min="0"
                                        max="100">
@@ -199,7 +195,7 @@
                             <td class="px-4 py-2 border">
                                 <input type="number" 
                                        name="scores[{{ $student['id'] }}][nilai_non_tes]"
-                                       class="w-20 border border-gray-300 rounded px-2 py-1 nilai-semester"
+                                       class="w-20 border border-gray-300 rounded px-2 py-1 nilai-semester nilai-non-tes"
                                        value="{{ $existingScores[$student['id']]['nilai_non_tes'] ?? '' }}"
                                        min="0"
                                        max="100">
@@ -226,16 +222,15 @@
                             </td>
 
                             <td class="px-4 py-2 border text-center">
-                                <label class="flex items-center justify-center gap-2">
-                                    <input
-                                        type="checkbox"
-                                        name="submitted[{{ $student['id'] }}]"
-                                        value="1"
-                                        {{ $isSubmitted ? 'checked' : '' }}
-                                        class="w-4 h-4 text-green-600 submitted-checkbox"
-                                    >
-                                    <span class="text-xs text-gray-500">Selesai</span>
-                                </label>
+                                <span
+                                    class="completion-status inline-flex items-center justify-center rounded-full px-2 py-1 text-xs font-medium {{ $isSubmitted ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500' }}"
+                                    data-siswa-id="{{ $student['id'] }}">
+                                    @if($isSubmitted)
+                                        &#10003; Lengkap
+                                    @else
+                                        Belum Lengkap
+                                    @endif
+                                </span>
                             </td>
                             
                             <!-- Aksi -->

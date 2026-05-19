@@ -130,6 +130,32 @@ class ScoreController extends Controller
             || $this->normalizeScoreValue($scoreData['nilai_non_tes'] ?? null) !== null;
     }
 
+    private function detectIsSubmitted(
+        array $tpScores,
+        array $lmScores,
+        ?float $nilaiTes,
+        ?float $nilaiNonTes
+    ): bool {
+        $hasAnyTp = false;
+        array_walk_recursive($tpScores, function ($value) use (&$hasAnyTp) {
+            if ($value !== null && $value !== '') {
+                $hasAnyTp = true;
+            }
+        });
+
+        $hasAnyLm = false;
+        array_walk_recursive($lmScores, function ($value) use (&$hasAnyLm) {
+            if ($value !== null && $value !== '') {
+                $hasAnyLm = true;
+            }
+        });
+
+        return $hasAnyTp
+            && $hasAnyLm
+            && $nilaiTes !== null
+            && $nilaiNonTes !== null;
+    }
+
     private function getAggregateNilaiFromCollection($nilais): ?Nilai
     {
         return $nilais->first(function ($nilai) {
@@ -156,8 +182,8 @@ class ScoreController extends Controller
         }
 
         $notification = new Notification();
-        $notification->title = "Nilai {$siswa->nama} Ditandai Selesai";
-        $notification->content = "Guru mata pelajaran telah menandai penilaian {$siswa->nama} untuk {$mataPelajaran->nama_pelajaran} sebagai selesai dan siap direview.";
+        $notification->title = "Nilai {$siswa->nama} Sudah Lengkap";
+        $notification->content = "Nilai {$siswa->nama} untuk mata pelajaran {$mataPelajaran->nama_pelajaran} telah lengkap dan siap direview.";
         $notification->target = 'specific';
         $notification->specific_users = $waliKelasIds;
         $notification->save();
@@ -229,7 +255,6 @@ class ScoreController extends Controller
             DB::beginTransaction();
             $mataPelajaran = MataPelajaran::findOrFail($id);
             $bobotNilai = BobotNilai::getDefault();
-            $submittedStudents = (array) $request->input('submitted', []);
             $savedData = [];
             $notSavedData = []; // Tracking data yang tidak tersimpan
             $newlySubmittedStudents = [];
@@ -249,10 +274,8 @@ class ScoreController extends Controller
 
                 $existingAggregateNilai = $this->getAggregateNilaiFromCollection($existingStudentNilais);
                 $wasSubmitted = (bool) optional($existingAggregateNilai)->is_submitted;
-                $isSubmitted = isset($submittedStudents[$siswaId]);
-
                 $hasActualInput = $this->studentHasActualInput($scoreData);
-                if (!$isSubmitted && !$hasActualInput && $existingStudentNilais->isEmpty()) {
+                if (!$hasActualInput && $existingStudentNilais->isEmpty()) {
                     continue;
                 }
 
@@ -348,6 +371,12 @@ class ScoreController extends Controller
                 $naLm = $hasLmInput ? $this->calculateAverageScore($scoreData['lm'] ?? []) : null;
                 $nilaiTes = $this->normalizeScoreValue($scoreData['nilai_tes'] ?? null);
                 $nilaiNonTes = $this->normalizeScoreValue($scoreData['nilai_non_tes'] ?? null);
+                $isSubmitted = $this->detectIsSubmitted(
+                    $scoreData['tp'] ?? [],
+                    $scoreData['lm'] ?? [],
+                    $nilaiTes,
+                    $nilaiNonTes
+                );
                 $nilaiAkhirSemester = ($nilaiTes !== null && $nilaiNonTes !== null)
                     ? $this->calculateNilaiAkhirSemester($nilaiTes, $nilaiNonTes)
                     : null;
