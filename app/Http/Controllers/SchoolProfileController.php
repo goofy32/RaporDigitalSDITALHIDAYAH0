@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use App\Models\ProfilSekolah;
+use Illuminate\Support\Facades\Cache;
 
 class SchoolProfileController extends Controller
 {
@@ -88,6 +89,12 @@ class SchoolProfileController extends Controller
             // Jika data profil belum ada, buat baru
             $profil = ProfilSekolah::create($data);
         }
+
+        Cache::forget('profil_sekolah');
+        Cache::forget('active_tahun_ajaran');
+        Cache::forget('latest_tahun_ajaran');
+        Cache::forget('all_tahun_ajaran_selector');
+        Cache::forget('all_tahun_ajaran_selector_archived');
     
         // Setelah menyimpan data, arahkan ke halaman data profil sekolah
         return redirect()->route('profile')->with('success', 'Profil sekolah berhasil disimpan.');

@@ -236,8 +236,6 @@ class ScoreController extends Controller
             });
         });
         
-        Log::info('Kelas Data:', $kelasData->toArray());
-        
         return view('pengajar.score', ['kelasData' => $kelasData]);
     }
 

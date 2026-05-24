@@ -396,6 +396,17 @@ function highlightBelowKkm(row) {
             nilaiAkhirInput.classList.remove('bg-red-50', 'border-red-300', 'text-red-800');
         }
     }
+
+    // Nilai Akhir (Rapor)
+    const nilaiAkhirRaporInput = row.querySelector('.nilai-akhir-rapor');
+    if (nilaiAkhirRaporInput) {
+        const value = parseFloat(nilaiAkhirRaporInput.value);
+        if (!isNaN(value) && value < kkmValue) {
+            nilaiAkhirRaporInput.classList.add('bg-red-50', 'border-red-400', 'text-red-600', 'font-semibold');
+        } else {
+            nilaiAkhirRaporInput.classList.remove('bg-red-50', 'border-red-400', 'text-red-600', 'font-semibold');
+        }
+    }
 }
 
 function validateForm() {

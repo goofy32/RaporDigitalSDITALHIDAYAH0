@@ -3,7 +3,7 @@
 @section('title', 'Dashboard Pengajar')
 
 @section('content')
-<div x-data="dashboard" data-dashboard-role="pengajar" data-page="pengajar-dashboard" data-overall-progress="{{ $overallProgress ?? 0 }}" data-progress-endpoint="{{ url('/pengajar/mata-pelajaran-progress') }}" x-init="$store.notification.fetchNotifications(); $store.notification.fetchUnreadCount(); $store.notification.startAutoRefresh()">
+<div x-data="dashboard" data-dashboard-role="pengajar" data-page="pengajar-dashboard" data-overall-progress="{{ $overallProgress ?? 0 }}" data-progress-endpoint="{{ url('/pengajar/mata-pelajaran-progress') }}" x-init="$store.notification.bootstrap()">
     <!-- Statistics Grid -->
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <!-- Left Section - Stats (col-span-2) -->

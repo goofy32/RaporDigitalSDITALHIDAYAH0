@@ -61,7 +61,17 @@ class NotificationController extends Controller
     public function list()
     {
         try {
-            $notifications = Notification::latest()->get();
+            $notifications = Notification::select([
+                'id',
+                'title',
+                'content',
+                'created_at',
+                'target',
+                'specific_users',
+            ])
+                ->latest()
+                ->limit(50)
+                ->get();
 
             $singleSpecificUserIds = $notifications
                 ->filter(function ($notification) {
@@ -107,29 +117,38 @@ class NotificationController extends Controller
             $guru = Auth::guard('guru')->user();
             $selected_role = session('selected_role') === 'wali_kelas' ? 'wali_kelas' : 'guru';
         
-            $notifications = Notification::where(function($query) use ($guru, $selected_role) {
-                $query->where('target', 'all')
-                      ->orWhere('target', $selected_role) // Menggunakan selected_role dari session
-                      ->orWhere(function($q) use ($guru) {
-                          $q->where('target', 'specific')
-                            ->whereJsonContains('specific_users', $guru->id);
-                      });
-            })
-            ->with(['readers' => function ($query) use ($guru) {
-                $query->where('guru_id', $guru->id);
-            }])
-            ->orderBy('created_at', 'desc')
-            ->get()
-            ->map(function ($notification) use ($guru) {
-                return [
-                    'id' => $notification->id,
-                    'title' => $notification->title,
-                    'content' => $notification->content,
-                    'target' => $notification->target,
-                    'created_at' => $notification->created_at?->toISOString(),
-                    'is_read' => $notification->isReadBy($guru->id)
-                ];
-            });
+            $notifications = Notification::select([
+                'id',
+                'title',
+                'content',
+                'target',
+                'specific_users',
+                'created_at',
+            ])
+                ->where(function($query) use ($guru, $selected_role) {
+                    $query->where('target', 'all')
+                          ->orWhere('target', $selected_role) // Menggunakan selected_role dari session
+                          ->orWhere(function($q) use ($guru) {
+                              $q->where('target', 'specific')
+                                ->whereJsonContains('specific_users', $guru->id);
+                          });
+                })
+                ->with(['readers' => function ($query) use ($guru) {
+                    $query->where('guru_id', $guru->id);
+                }])
+                ->orderBy('created_at', 'desc')
+                ->limit(50)
+                ->get()
+                ->map(function ($notification) use ($guru) {
+                    return [
+                        'id' => $notification->id,
+                        'title' => $notification->title,
+                        'content' => $notification->content,
+                        'target' => $notification->target,
+                        'created_at' => $notification->created_at?->toISOString(),
+                        'is_read' => $notification->isReadBy($guru->id)
+                    ];
+                });
         
             return response()->json(['items' => $notifications]);
         } catch (\Exception $e) {

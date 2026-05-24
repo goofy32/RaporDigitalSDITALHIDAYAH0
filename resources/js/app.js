@@ -1,38 +1,37 @@
 import './bootstrap';
-import 'flowbite';
 import '@hotwired/turbo';
 import Alpine from 'alpinejs';
 
 import { registerTurboCore } from './core/turbo';
 import { registerSessionTimeout } from './core/session-timeout';
 
-import { registerGeminiStore } from './stores/gemini-store';
 import { registerHelpersStore } from './stores/helpers-store';
 import { registerSidebarStore } from './stores/sidebar-store';
 import { registerKeyboardStore } from './stores/keyboard-store';
 import { registerNavigationStore } from './stores/navigation-store';
-import { registerReportStore } from './stores/report-store';
 import { registerNotificationStore } from './stores/notification-store';
 import { registerFormProtectionStore } from './stores/form-protection-store';
 import { registerPageLoadingStore } from './stores/page-loading-store';
+import { registerAnalisisNilaiStore } from './stores/analisis-nilai-store';
+import { registerContentLoadingStore } from './stores/content-loading-store';
 
-import { registerGeminiChat } from './features/gemini-chat';
-import { registerReportTemplateFeatures } from './features/report-template-manager';
-import { registerNotificationHandler } from './features/notification-handler';
 import { registerFormDiagnostics } from './features/form-diagnostics';
 import { registerSidebarFeatures } from './features/sidebar';
 import { registerTopbarFeatures } from './features/topbar';
-import { registerSettingsModalFeatures } from './features/settings-modal';
-import { registerGeminiChatDebug } from './features/gemini-chat-debug';
 import { registerDashboard } from './features/dashboard';
-import { registerBobotNilaiForm } from './features/bobot-nilai-form';
-import { registerKkmForm } from './features/kkm-form';
-import { registerPlaceholderGuide } from './features/placeholder-guide';
-import { registerRaporManager } from './features/rapor-manager';
 
 import { registerFormProtectionComponent } from './components/form-protection';
-import { registerAnalisisNilaiStore } from './stores/analisis-nilai-store';
-import { registerContentLoadingStore } from './stores/content-loading-store';
+
+const loadedDynamicModules = new Set();
+let flowbiteLoader = null;
+
+const flowbiteSelectors = [
+    '[data-drawer-target]',
+    '[data-drawer-toggle]',
+    '[data-dropdown-toggle]',
+    '[data-modal-target]',
+    '[data-modal-toggle]',
+];
 
 const pageLoaders = {
     'add-subject': () => import('./pages/add-subject').then(module => module.initAddSubjectPage()),
@@ -61,6 +60,168 @@ const pageLoaders = {
     'edit-class': () => import('./pages/edit-class').then(module => module.initEditClassPage()),
 };
 
+function shouldLoadFlowbite() {
+    return Boolean(document.querySelector(flowbiteSelectors.join(', ')));
+}
+
+async function ensureFlowbiteLoaded() {
+    if (typeof window.initFlowbite === 'function') {
+        window.initFlowbite();
+        return window.initFlowbite;
+    }
+
+    if (!flowbiteLoader) {
+        flowbiteLoader = import('flowbite')
+            .then(module => {
+                const initFlowbite = module.initFlowbite;
+
+                if (typeof initFlowbite === 'function') {
+                    window.initFlowbite = initFlowbite;
+                    return initFlowbite;
+                }
+
+                return null;
+            })
+            .catch(error => {
+                console.error('Failed to lazy load Flowbite:', error);
+                flowbiteLoader = null;
+                return null;
+            });
+    }
+
+    const initFlowbite = await flowbiteLoader;
+    if (typeof initFlowbite === 'function') {
+        initFlowbite();
+    }
+
+    return initFlowbite;
+}
+
+function bindFlowbiteLoader() {
+    window.ensureFlowbiteLoaded = ensureFlowbiteLoaded;
+
+    const loadFlowbiteIfNeeded = () => {
+        if (shouldLoadFlowbite()) {
+            ensureFlowbiteLoaded();
+        }
+    };
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', loadFlowbiteIfNeeded);
+    } else {
+        loadFlowbiteIfNeeded();
+    }
+
+    document.addEventListener('turbo:load', loadFlowbiteIfNeeded);
+}
+
+async function registerDynamicModuleOnce(key, loader) {
+    if (loadedDynamicModules.has(key)) {
+        return;
+    }
+
+    await loader();
+    loadedDynamicModules.add(key);
+}
+
+function getConditionalModules() {
+    return [
+        {
+            key: 'report-store',
+            shouldLoad: () => Boolean(document.querySelector('#admin-report-page, [x-data="raporManager"], [x-data="reportTemplateManager"]')),
+            load: async () => {
+                const module = await import('./stores/report-store');
+                module.registerReportStore();
+            },
+        },
+        {
+            key: 'notification-handler',
+            shouldLoad: () => Boolean(document.querySelector('[x-data="notificationHandler"]')),
+            load: async () => {
+                const module = await import('./features/notification-handler');
+                module.registerNotificationHandler();
+            },
+        },
+        {
+            key: 'settings-modal',
+            shouldLoad: () => Boolean(document.getElementById('settings-modal')),
+            load: async () => {
+                const module = await import('./features/settings-modal');
+                module.registerSettingsModalFeatures();
+            },
+        },
+        {
+            key: 'report-template-manager',
+            shouldLoad: () => Boolean(document.querySelector('[x-data="reportTemplateManager"]')),
+            load: async () => {
+                const module = await import('./features/report-template-manager');
+                module.registerReportTemplateFeatures();
+            },
+        },
+        {
+            key: 'bobot-nilai-form',
+            shouldLoad: () => Boolean(document.querySelector('[x-data="bobotNilaiForm"]')),
+            load: async () => {
+                const module = await import('./features/bobot-nilai-form');
+                module.registerBobotNilaiForm();
+            },
+        },
+        {
+            key: 'kkm-form',
+            shouldLoad: () => Boolean(document.querySelector('[x-data="kkmForm"]')),
+            load: async () => {
+                const module = await import('./features/kkm-form');
+                module.registerKkmForm();
+            },
+        },
+        {
+            key: 'placeholder-guide',
+            shouldLoad: () => Boolean(document.querySelector('[x-data="placeholderGuide"]')),
+            load: async () => {
+                const module = await import('./features/placeholder-guide');
+                module.registerPlaceholderGuide();
+            },
+        },
+        {
+            key: 'rapor-manager',
+            shouldLoad: () => Boolean(document.querySelector('[x-data="raporManager"]')),
+            load: async () => {
+                const module = await import('./features/rapor-manager');
+                module.registerRaporManager();
+            },
+        },
+        {
+            key: 'gemini-chat',
+            shouldLoad: () => Boolean(document.querySelector('[x-data="geminiChat"]')),
+            load: async () => {
+                const [storeModule, chatModule] = await Promise.all([
+                    import('./stores/gemini-store'),
+                    import('./features/gemini-chat'),
+                ]);
+
+                storeModule.registerGeminiStore();
+                chatModule.registerGeminiChat();
+            },
+        },
+        {
+            key: 'gemini-chat-debug',
+            shouldLoad: () => Boolean(document.querySelector('.chatbot-container, [x-data="geminiChatDebug"]')),
+            load: async () => {
+                const module = await import('./features/gemini-chat-debug');
+                module.registerGeminiChatDebug();
+            },
+        },
+    ];
+}
+
+async function loadConditionalModules() {
+    const modules = getConditionalModules()
+        .filter(module => module.shouldLoad())
+        .map(module => registerDynamicModuleOnce(module.key, module.load));
+
+    await Promise.all(modules);
+}
+
 async function loadCurrentPageModule() {
     const pageEl = document.querySelector('[data-page]');
     const pageName = pageEl?.dataset?.page;
@@ -69,40 +230,36 @@ async function loadCurrentPageModule() {
     await pageLoaders[pageName]();
 }
 
+async function hydrateCurrentPage() {
+    await loadConditionalModules();
+    await loadCurrentPageModule();
+}
+
 window.Alpine = Alpine;
-window.__loadCurrentPageModule = loadCurrentPageModule;
+window.__loadCurrentPageModule = hydrateCurrentPage;
+
+bindFlowbiteLoader();
 
 registerTurboCore();
 registerDashboard();
-registerGeminiChat();
-registerGeminiChatDebug();
 registerFormDiagnostics();
 registerTopbarFeatures();
-registerSettingsModalFeatures();
-registerBobotNilaiForm();
-registerKkmForm();
-registerPlaceholderGuide();
-registerRaporManager();
 
-registerGeminiStore();
 registerHelpersStore();
 registerSidebarStore();
 registerKeyboardStore();
-registerReportTemplateFeatures();
 registerNavigationStore();
-registerReportStore();
 registerFormProtectionStore();
 registerFormProtectionComponent();
 registerNotificationStore();
 registerSessionTimeout();
-registerNotificationHandler();
 registerPageLoadingStore();
 registerAnalisisNilaiStore();
 registerContentLoadingStore();
 registerSidebarFeatures();
 
 async function bootstrapApp() {
-    await loadCurrentPageModule();
+    await hydrateCurrentPage();
 
     if (!window.alpineInitialized) {
         Alpine.start();

@@ -175,7 +175,8 @@ class RecycleBinController extends Controller
                 continue;
             }
 
-            $query = $config['class']::onlyTrashed();
+            $query = $config['class']::onlyTrashed()
+                ->select($this->getSelectColumnsForType($type));
 
             if (!empty($config['with'])) {
                 $query->with($config['with']);
@@ -202,7 +203,10 @@ class RecycleBinController extends Controller
                 }
             }
 
-            $records = $query->orderByDesc('deleted_at')->get();
+            $records = $query
+                ->orderByDesc('deleted_at')
+                ->limit(100)
+                ->get();
 
             $items = $items->concat($records->map(function (Model $record) use ($type, $config) {
                 return [
@@ -223,6 +227,22 @@ class RecycleBinController extends Controller
         }
 
         return $items->sortByDesc('deleted_at')->values();
+    }
+
+    protected function getSelectColumnsForType(string $type): array
+    {
+        return match ($type) {
+            'kelas' => ['id', 'nomor_kelas', 'nama_kelas', 'tahun_ajaran_id', 'deleted_at'],
+            'mata-pelajaran' => ['id', 'nama_pelajaran', 'semester', 'deleted_at'],
+            'lingkup-materi' => ['id', 'judul_lingkup_materi', 'mata_pelajaran_id', 'deleted_at'],
+            'tujuan-pembelajaran' => ['id', 'kode_tp', 'deskripsi_tp', 'lingkup_materi_id', 'deleted_at'],
+            'ekstrakurikuler' => ['id', 'nama_ekstrakurikuler', 'pembina', 'deleted_at'],
+            'prestasi' => ['id', 'siswa_id', 'kelas_id', 'jenis_prestasi', 'keterangan', 'deleted_at'],
+            'absensi' => ['id', 'siswa_id', 'semester', 'sakit', 'izin', 'tanpa_keterangan', 'deleted_at'],
+            'siswa' => ['id', 'nama', 'nis', 'nisn', 'deleted_at'],
+            'guru' => ['id', 'nama', 'nuptk', 'username', 'email', 'deleted_at'],
+            default => ['id', 'deleted_at'],
+        };
     }
 
     protected function paginateCollection(Collection $items, int $perPage, Request $request): LengthAwarePaginator

@@ -240,8 +240,8 @@
                         </td>
 
                         <!-- Actions -->
-                        <td class="px-6 py-4">
-                            <div class="flex items-center space-x-3">                                
+                        <td class="px-1 py-4 text-center whitespace-nowrap">
+                            <div class="flex items-center justify-center space-x-2">                                
                                 <!-- Download DOCX Button -->
                                 <button @click="handleGenerate({{ $s->id }}, {{ $nilaiCounts[$s->id] ?? 0 }}, {{ $s->absensi ? 'true' : 'false' }}, '{{ $s->nama }}')"
                                     :disabled="!{{ $nilaiCounts[$s->id] ?? 0 }} || !{{ $s->absensi ? 'true' : 'false' }}"

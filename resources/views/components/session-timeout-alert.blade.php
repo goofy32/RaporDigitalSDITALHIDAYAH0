@@ -52,14 +52,3 @@
         </div>
     </div>
 </div>
-
-<!-- Debug info (remove in production) -->
-<div x-data="sessionTimeout" 
-     x-show="window.location.hostname === 'localhost'" 
-     class="fixed bottom-4 right-4 bg-black bg-opacity-75 text-white p-2 rounded text-xs z-50"
-     style="display: none;">
-    <div>Last Activity: <span x-text="new Date(parseInt(sessionStorage.getItem('lastActivityTime') || Date.now())).toLocaleTimeString()"></span></div>
-    <div>Is Expired: <span x-text="isExpired"></span></div>
-    <div>Is Logging Out: <span x-text="isLoggingOut"></span></div>
-    <div>Check Interval: <span x-text="checkInterval ? 'Running' : 'Stopped'"></span></div>
-</div>

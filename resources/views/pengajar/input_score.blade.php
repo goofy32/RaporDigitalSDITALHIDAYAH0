@@ -220,7 +220,7 @@
                             <td class="px-4 py-2 border">
                                 <input type="number" 
                                        name="scores[{{ $student['id'] }}][nilai_akhir_rapor]"
-                                       class="w-20 border border-gray-300 rounded px-2 py-1 nilai-akhir-rapor"
+                                       class="w-20 border border-gray-300 rounded px-2 py-1 nilai-akhir-rapor transition-colors duration-150"
                                        value="{{ $existingScores[$student['id']]['nilai_akhir_rapor'] ?? '' }}"
                                        readonly>
                             </td>

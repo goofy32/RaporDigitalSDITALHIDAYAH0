@@ -110,13 +110,15 @@ class Siswa extends Model
 
         $semester = $semesterCache[$tahunAjaranId];
         
-        \Log::info('diagnoseDataCompleteness untuk', [
-            'siswa_id' => $this->id,
-            'siswa_nama' => $this->nama,
-            'type' => $type, // UTS atau UAS
-            'semester' => $semester, // 1 atau 2
-            'tahun_ajaran_id' => $tahunAjaranId
-        ]);
+        if (config('app.debug')) {
+            \Log::info('diagnoseDataCompleteness untuk', [
+                'siswa_id' => $this->id,
+                'siswa_nama' => $this->nama,
+                'type' => $type, // UTS atau UAS
+                'semester' => $semester, // 1 atau 2
+                'tahun_ajaran_id' => $tahunAjaranId
+            ]);
+        }
         
         $result = [
             'nilai_status' => false,

@@ -15,41 +15,7 @@ class AuditController extends Controller
      */
     public function index(Request $request)
     {
-        $query = AuditLog::query();
-        
-        // Apply filters
-        if ($request->has('action') && $request->action) {
-            $query->where('action', $request->action);
-        }
-        
-        if ($request->has('user_type') && $request->user_type) {
-            $query->where('user_type', $request->user_type);
-        }
-        
-        if ($request->has('user_id') && $request->user_id) {
-            $query->where('user_id', $request->user_id);
-        }
-        
-        if ($request->has('model_type') && $request->model_type) {
-            $query->where('model_type', $request->model_type);
-        }
-        
-        if ($request->has('date_from') && $request->date_from) {
-            $query->whereDate('created_at', '>=', $request->date_from);
-        }
-        
-        if ($request->has('date_to') && $request->date_to) {
-            $query->whereDate('created_at', '<=', $request->date_to);
-        }
-        
-        if ($request->has('search') && $request->search) {
-            $search = $request->search;
-            $query->where(function($q) use ($search) {
-                $q->where('description', 'LIKE', "%{$search}%")
-                  ->orWhere('ip_address', 'LIKE', "%{$search}%")
-                  ->orWhere('action', 'LIKE', "%{$search}%");
-            });
-        }
+        $query = $this->applyFilters(AuditLog::query(), $request);
         
         // Get actions for filter dropdown
         $actions = AuditLog::select('action')->distinct()->pluck('action');
@@ -95,18 +61,6 @@ class AuditController extends Controller
      */
     public function export(Request $request)
     {
-        $query = AuditLog::query();
-        
-        // Apply the same filters as in the index method
-        if ($request->has('action') && $request->action) {
-            $query->where('action', $request->action);
-        }
-        
-        // Add other filters here...
-        
-        $logs = $query->latest()->get();
-        
-        // Generate CSV
         $filename = 'audit_logs_' . Carbon::now()->format('Y-m-d_H-i-s') . '.csv';
         $headers = [
             'Content-Type' => 'text/csv',
@@ -115,29 +69,68 @@ class AuditController extends Controller
         
         $columns = ['ID', 'User', 'Action', 'Model Type', 'Model ID', 'Description', 'IP Address', 'Date/Time'];
         
-        $callback = function() use ($logs, $columns) {
+        $callback = function() use ($request, $columns) {
             $file = fopen('php://output', 'w');
             fputcsv($file, $columns);
-            
-            foreach ($logs as $log) {
-                $row = [
-                    $log->id,
-                    $log->user_type && $log->user_id ? "{$log->user_type} (ID: {$log->user_id})" : 'System',
-                    $log->action,
-                    $log->model_type ?: 'N/A',
-                    $log->model_id ?: 'N/A',
-                    $log->description ?: 'N/A',
-                    $log->ip_address ?: 'N/A',
-                    $log->created_at->format('Y-m-d H:i:s')
-                ];
-                
-                fputcsv($file, $row);
-            }
+
+            $this->applyFilters(AuditLog::query(), $request)
+                ->latest()
+                ->cursor()
+                ->each(function ($log) use ($file) {
+                    fputcsv($file, [
+                        $log->id,
+                        $log->user_type && $log->user_id ? "{$log->user_type} (ID: {$log->user_id})" : 'System',
+                        $log->action,
+                        $log->model_type ?: 'N/A',
+                        $log->model_id ?: 'N/A',
+                        $log->description ?: 'N/A',
+                        $log->ip_address ?: 'N/A',
+                        $log->created_at->format('Y-m-d H:i:s'),
+                    ]);
+                });
             
             fclose($file);
         };
         
         return response()->stream($callback, 200, $headers);
+    }
+
+    private function applyFilters($query, Request $request)
+    {
+        if ($request->has('action') && $request->action) {
+            $query->where('action', $request->action);
+        }
+        
+        if ($request->has('user_type') && $request->user_type) {
+            $query->where('user_type', $request->user_type);
+        }
+        
+        if ($request->has('user_id') && $request->user_id) {
+            $query->where('user_id', $request->user_id);
+        }
+        
+        if ($request->has('model_type') && $request->model_type) {
+            $query->where('model_type', $request->model_type);
+        }
+        
+        if ($request->has('date_from') && $request->date_from) {
+            $query->whereDate('created_at', '>=', $request->date_from);
+        }
+        
+        if ($request->has('date_to') && $request->date_to) {
+            $query->whereDate('created_at', '<=', $request->date_to);
+        }
+        
+        if ($request->has('search') && $request->search) {
+            $search = $request->search;
+            $query->where(function($q) use ($search) {
+                $q->where('description', 'LIKE', "%{$search}%")
+                  ->orWhere('ip_address', 'LIKE', "%{$search}%")
+                  ->orWhere('action', 'LIKE', "%{$search}%");
+            });
+        }
+
+        return $query;
     }
     
     /**

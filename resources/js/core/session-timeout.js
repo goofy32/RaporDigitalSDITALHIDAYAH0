@@ -7,6 +7,7 @@ export function registerSessionTimeout() {
         checkInterval: null,
         isLoggingOut: false,
         configLoaded: false,
+        turboListenersBound: false,
 
         async init() {
             if (this.isLoginPage()) return;
@@ -18,23 +19,58 @@ export function registerSessionTimeout() {
         },
 
         async loadSessionConfig() {
-            try {
-                const response = await fetch('/api/session-config', {
-                    method: 'GET',
-                    headers: {
-                        Accept: 'application/json',
-                        'X-Requested-With': 'XMLHttpRequest',
-                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || '',
-                    },
-                });
+            if (window._sessionConfigData) {
+                this.timeoutDuration = window._sessionConfigData.lifetime ?? 7200000;
+                this.configLoaded = true;
+                return;
+            }
 
-                if (response.ok) {
+            if (window._sessionConfigPromise) {
+                const config = await window._sessionConfigPromise;
+                this.timeoutDuration = config.lifetime ?? 7200000;
+                this.configLoaded = true;
+                return;
+            }
+
+            if (window._sessionConfigLoaded) {
+                this.configLoaded = true;
+                return;
+            }
+
+            window._sessionConfigLoaded = true;
+            window._sessionConfigPromise = (async () => {
+                try {
+                    const response = await fetch('/api/session-config', {
+                        method: 'GET',
+                        headers: {
+                            Accept: 'application/json',
+                            'X-Requested-With': 'XMLHttpRequest',
+                            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || '',
+                        },
+                    });
+
+                    if (!response.ok) {
+                        throw new Error('Config load failed');
+                    }
+
                     const config = await response.json();
-                    this.timeoutDuration = config.lifetime;
-                    this.configLoaded = true;
-                } else {
-                    throw new Error('Config load failed');
+                    window._sessionConfigData = config;
+
+                    return config;
+                } catch {
+                    const fallbackConfig = { lifetime: 7200000 };
+                    window._sessionConfigData = fallbackConfig;
+
+                    return fallbackConfig;
+                } finally {
+                    window._sessionConfigPromise = null;
                 }
+            })();
+
+            try {
+                const config = await window._sessionConfigPromise;
+                this.timeoutDuration = config.lifetime ?? 7200000;
+                this.configLoaded = true;
             } catch {
                 this.timeoutDuration = 7200000;
                 this.configLoaded = true;
@@ -109,6 +145,12 @@ export function registerSessionTimeout() {
         },
 
         setupTurboListeners() {
+            if (this.turboListenersBound) {
+                return;
+            }
+
+            this.turboListenersBound = true;
+
             document.addEventListener('turbo:before-visit', event => {
                 if (event.detail.url.includes('/login') || event.detail.url.includes('/logout')) {
                     this.isLoggingOut = true;
@@ -128,7 +170,7 @@ export function registerSessionTimeout() {
                 }
 
                 sessionStorage.setItem('lastActivityTime', Date.now().toString());
-                this.loadSessionConfig().then(() => this.setupSessionCheck());
+                this.setupSessionCheck();
             });
         },
 

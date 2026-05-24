@@ -59,7 +59,7 @@
                         <th scope="col" class="px-6 py-3">Semester</th>
                         <th scope="col" class="px-6 py-3">Guru Pengampu</th>
                         <th scope="col" class="px-6 py-3">Lingkup Materi</th>
-                        <th scope="col" class="px-6 py-3 text center">Aksi</th>
+                        <th scope="col" class="px-6 py-3 text-center min-w-[100px] w-28">Aksi</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -82,33 +82,33 @@
                             @endif
                         </td>
 
-                        <td class="px-6 py-4 text-center">
-                        <div class="flex space-x-2">
-                            <!-- Lihat TP -->
-                            <a href="{{ route('tujuan_pembelajaran.create', $subject->id) }}" class="text-green-600 hover:underline" title="Ubah atau Lihat Tujuan Pembelajaran">
-                                <!-- Ikon Lihat TP -->
-                                <img src="{{ asset('images/icons/edittp.png') }}" alt="Extracurricular Icon" class="w-8 h-5">
+                        <td class="px-1 py-4 text-center whitespace-nowrap">
+                            <div class="flex items-center justify-center gap-2">
+                                <a href="{{ route('tujuan_pembelajaran.create', $subject->id) }}"
+                                   class="inline-flex items-center justify-center text-green-600 hover:text-green-800"
+                                   title="Ubah atau Lihat Tujuan Pembelajaran">
+                                    <img src="{{ asset('images/icons/edittp.png') }}" alt="Extracurricular Icon" class="w-5 h-5 object-contain">
+                                </a>
 
-                            </a>
-                        
-                            <!-- Edit Data Mata Pelajaran -->
-                            <a href="{{ route('subject.edit', $subject->id) }}" data-turbo-action="replace" class="text-green-600 hover:underline" title="Ubah Data">
-                                <!-- Ikon Edit -->
-                                <img src="{{ asset('images/icons/edit.png') }}" alt="Extracurricular Icon" class="w-5 h-5">
+                                <a href="{{ route('subject.edit', $subject->id) }}"
+                                   data-turbo-action="replace"
+                                   class="inline-flex items-center justify-center text-green-600 hover:text-green-800"
+                                   title="Ubah Data">
+                                    <img src="{{ asset('images/icons/edit.png') }}" alt="Extracurricular Icon" class="w-5 h-5 object-contain">
+                                </a>
 
-                            </a>
-                        
-                            <!-- Hapus Mata Pelajaran dan Lingkup Materi terkait -->
-                            <form action="{{ route('subject.destroy', $subject->id) }}" method="POST" class="inline">
-                                @csrf
-                                @method('DELETE')
-                                <button type="submit" class="text-red-600 hover:underline" onclick="return confirm('Apakah Anda yakin ingin menghapus data ini?')" title="Hapus Data">
-                                    <!-- Ikon Hapus -->
-                                    <img src="{{ asset('images/icons/delete.png') }}" alt="Extracurricular Icon" class="w-5 h-5">
-                                </button>
-                            </form>
+                                <form action="{{ route('subject.destroy', $subject->id) }}" method="POST" class="inline-flex items-center">
+                                    @csrf
+                                    @method('DELETE')
+                                    <button type="submit"
+                                            class="inline-flex items-center justify-center text-red-600 hover:text-red-800"
+                                            onclick="return confirm('Apakah Anda yakin ingin menghapus data ini?')"
+                                            title="Hapus Data">
+                                        <img src="{{ asset('images/icons/delete.png') }}" alt="Extracurricular Icon" class="w-5 h-5 object-contain">
+                                    </button>
+                                </form>
+                            </div>
                         </td>
-                        </div>
                     </tr>
                     @empty
                     <tr class="bg-white border-b">

@@ -211,7 +211,7 @@ class TeacherController extends Controller
         return DB::transaction(function() use ($request) {
             // Validasi dasar tetap sama
             $rules = [
-                'nuptk' => 'required|numeric|digits_between:9,15|unique:gurus,nuptk',
+                'nuptk' => 'nullable|numeric|digits_between:9,15|unique:gurus,nuptk',
                 'nama' => 'required|string|max:255',
                 'jenis_kelamin' => 'required|in:Laki-laki,Perempuan',
                 'tanggal_lahir' => 'required|date',
@@ -234,7 +234,6 @@ class TeacherController extends Controller
             }
     
             $validated = $request->validate($rules, [
-                'nuptk.required' => 'NUPTK wajib diisi',
                 'nuptk.numeric' => 'NUPTK harus berupa angka',
                 'nuptk.digits_between' => 'NUPTK harus antara 9-15 digit',
                 'nuptk.unique' => 'NUPTK sudah digunakan',
@@ -402,7 +401,7 @@ class TeacherController extends Controller
         
             // Validasi dasar
             $rules = [
-                'nuptk' => 'required|numeric|digits_between:9,15|unique:gurus,nuptk,'.$id,
+                'nuptk' => 'nullable|numeric|digits_between:9,15|unique:gurus,nuptk,'.$id,
                 'nama' => 'required|string|max:255',
                 'jenis_kelamin' => 'required|in:Laki-laki,Perempuan',
                 'tanggal_lahir' => 'required|date',

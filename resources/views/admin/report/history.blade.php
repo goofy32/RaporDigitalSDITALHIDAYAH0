@@ -128,7 +128,7 @@
         <th class="px-6 py-3">Tahun Ajaran</th>
         <th class="px-6 py-3">Dicetak Oleh</th>
         <th class="px-6 py-3">Waktu Cetak</th>
-        <th class="px-6 py-3">Aksi</th>
+        <th class="px-6 py-3 text-center min-w-[120px] w-32">Aksi</th>
     </tr>
         </thead>
         <tbody>
@@ -158,35 +158,35 @@
                 <td class="px-6 py-4">{{ $report->tahun_ajaran }}</td>
                 <td class="px-6 py-4">{{ $report->generator->nama }}</td>
                 <td class="px-6 py-4">{{ $report->created_at->format('d M Y H:i') }}</td>
-                <td class="px-6 py-4">
-                    <div class="flex space-x-2">
+                <td class="px-1 py-4 text-center whitespace-nowrap">
+                    <div class="flex items-center justify-center space-x-2">
                         <!-- Tombol Preview yang diperbarui -->
                         <button onclick="previewRapor({{ $report->id }})" 
-                                class="text-blue-600 hover:text-blue-900 flex items-center justify-center"
+                                class="text-blue-600 hover:text-blue-800"
                                 title="Preview Rapor">
-                            <img src="{{ asset('images/icons/detail.png') }}" alt="Preview" class="w-6 h-6 object-contain">
+                            <img src="{{ asset('images/icons/detail.png') }}" alt="Preview" class="w-5 h-5 object-contain">
                         </button>
                         
                         <!-- Tombol Download - tampilkan dengan kondisi jika file ada -->
                         @if($report->generated_file && Storage::disk('public')->exists($report->generated_file))
                             <a href="{{ route('admin.report.history.download', $report->id) }}" 
-                                class="text-green-600 hover:text-green-900"
+                                class="text-green-600 hover:text-green-800"
                                 title="Unduh Rapor">
-                                <img src="{{ asset('images/icons/download.png') }}" alt="Preview" class="w-6 h-6 object-contain">
+                                <img src="{{ asset('images/icons/download.png') }}" alt="Preview" class="w-5 h-5 object-contain">
                             </a>
                         @else
                             <button onclick="showFileNotAvailableAlert()"
                                     class="text-gray-400 cursor-not-allowed"
                                     title="File Tidak Tersedia">
-                                <img src="{{ asset('images/icons/download.png') }}" alt="Preview" class="w-6 h-6 object-contain">
+                                <img src="{{ asset('images/icons/download.png') }}" alt="Preview" class="w-5 h-5 object-contain">
                             </button>
                         @endif
 
                         <button @click="confirmDelete({{ $report->id }}, @js($report->generated_file))"
                                 title="Hapus Riwayat"
-                                class="text-red-600 hover:text-red-900">
+                                class="text-red-600 hover:text-red-800">
                             <img src="{{ asset('images/icons/delete.png') }}"
-                                 alt="Hapus" class="w-6 h-6 object-contain">
+                                 alt="Hapus" class="w-5 h-5 object-contain">
                         </button>
                         
                         <!-- Tombol Regenerate jika 

@@ -9,6 +9,7 @@ export function registerNotificationStore() {
         baseTitle: '',
         showModal: false,
         hideRead: false,
+        visibilityHandlerBound: false,
 
         init() {
             this.baseTitle = document.title.replace(/^\(\d+\)\s/, '');
@@ -130,6 +131,30 @@ export function registerNotificationStore() {
             this.hideRead = !this.hideRead;
         },
 
+        async bootstrap() {
+            this.bindVisibilityHandler();
+            await this.fetchNotifications();
+            this.startAutoRefresh();
+        },
+
+        bindVisibilityHandler() {
+            if (this.visibilityHandlerBound) {
+                return;
+            }
+
+            this.visibilityHandlerBound = true;
+
+            document.addEventListener('visibilitychange', () => {
+                if (document.hidden) {
+                    this.stopAutoRefresh();
+                    return;
+                }
+
+                this.startAutoRefresh();
+                this.fetchUnreadCount();
+            });
+        },
+
         async fetchNotifications() {
             if (this.loading) return;
             this.loading = true;
@@ -151,6 +176,7 @@ export function registerNotificationStore() {
 
                 const data = await response.json();
                 this.items = (data.items || []).map(item => this.normalizeNotification(item));
+                this.unreadCount = this.items.filter(item => item.is_read !== true).length;
                 this.updateTabTitle();
             } catch (error) {
                 console.error('Error fetching notifications:', error);
@@ -223,6 +249,13 @@ export function registerNotificationStore() {
 
         async fetchUnreadCount() {
             try {
+                if (!this.resolveReadBaseUrl()) {
+                    this.unreadCount = this.items.filter(item => item.is_read !== true).length;
+                    this.updateTabTitle();
+                    return this.unreadCount;
+                }
+
+                const previousCount = Number(this.unreadCount || 0);
                 const response = await fetch('/notifications/unread-count', {
                     headers: {
                         Accept: 'application/json',
@@ -235,9 +268,16 @@ export function registerNotificationStore() {
                 }
 
                 const data = await response.json();
-                this.unreadCount = data.count;
+                const newCount = Number(data.count ?? 0);
+
+                if (newCount > previousCount) {
+                    await this.fetchNotifications();
+                } else {
+                    this.unreadCount = newCount;
+                }
+
                 this.updateTabTitle();
-                return data.count;
+                return newCount;
             } catch (error) {
                 console.error('Error fetching unread count:', error);
                 this.updateTabTitle();
@@ -315,10 +355,13 @@ export function registerNotificationStore() {
 
         startAutoRefresh() {
             this.stopAutoRefresh();
+            if (!this.resolveReadBaseUrl()) {
+                return;
+            }
+
             this.refreshInterval = setInterval(() => {
-                this.fetchNotifications();
                 this.fetchUnreadCount();
-            }, 30000);
+            }, 60000);
         },
 
         stopAutoRefresh() {

@@ -217,7 +217,9 @@ export function initTahunAjaranCopyPage() {
         return false;
     });
 
-    if (typeof initFlowbite === 'function') {
-        initFlowbite();
+    if (typeof window.ensureFlowbiteLoaded === 'function') {
+        window.ensureFlowbiteLoaded();
+    } else if (typeof window.initFlowbite === 'function') {
+        window.initFlowbite();
     }
 }

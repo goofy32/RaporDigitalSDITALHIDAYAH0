@@ -14,6 +14,7 @@ use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Cache;
 
 class TahunAjaranController extends Controller
 {
@@ -366,6 +367,7 @@ class TahunAjaranController extends Controller
             session(['selected_semester' => 2]); // Set semester to 2 (genap)
             
             DB::commit();
+            $this->clearTahunAjaranCaches($newTahunAjaran->id);
 
             try {
                 $notification = new \App\Models\Notification();
@@ -471,6 +473,7 @@ class TahunAjaranController extends Controller
             }
             
             DB::commit();
+            $this->clearTahunAjaranCaches($tahunAjaran->id);
 
             return redirect()->route('tahun.ajaran.index')
                         ->with('success', 'Tahun ajaran berhasil dibuat dengan struktur dasar!');
@@ -702,6 +705,7 @@ class TahunAjaranController extends Controller
             }
             
             DB::commit();
+            $this->clearTahunAjaranCaches($tahunAjaran->id);
             
             // Pesan sukses khusus untuk perubahan semester
             if ($oldSemester != $newSemester) {
@@ -738,6 +742,7 @@ class TahunAjaranController extends Controller
                 'tahun_pelajaran' => $tahunAjaran->tahun_ajaran,
                 'semester' => $tahunAjaran->semester
             ]);
+            Cache::forget('profil_sekolah');
             
             Log::info('Profil sekolah diperbarui dengan tahun ajaran aktif', [
                 'tahun_ajaran' => $tahunAjaran->tahun_ajaran,
@@ -859,6 +864,7 @@ class TahunAjaranController extends Controller
             session(['tahun_ajaran_id' => $id]);
             
             DB::commit();
+            $this->clearTahunAjaranCaches($tahunAjaran->id);
             
             return redirect()->route('tahun.ajaran.index')
             ->with('success', 'Tahun ajaran ' . $tahunAjaran->tahun_ajaran . ' berhasil diaktifkan!');
@@ -928,6 +934,7 @@ class TahunAjaranController extends Controller
             
             // Hapus permanen
             $tahunAjaran->forceDelete();
+            $this->clearTahunAjaranCaches($id);
 
             if (request()->expectsJson()) {
                 return response()->json([
@@ -1003,6 +1010,7 @@ class TahunAjaranController extends Controller
             
             // Soft delete tahun ajaran daripada menghapusnya permanen
             $tahunAjaran->delete();
+            $this->clearTahunAjaranCaches($id);
             
             return redirect()->route('tahun.ajaran.index')
                 ->with('success', 'Tahun ajaran berhasil diarsipkan. Data terkait masih dapat diakses dengan menampilkan tahun ajaran terarsip.');
@@ -1186,6 +1194,7 @@ class TahunAjaranController extends Controller
             }
             
             DB::commit();
+            $this->clearTahunAjaranCaches($newTahunAjaran->id);
 
             if ($request->expectsJson()) {
                 return response()->json([
@@ -1572,6 +1581,7 @@ class TahunAjaranController extends Controller
             }
             
             $tahunAjaran->restore();
+            $this->clearTahunAjaranCaches($tahunAjaran->id);
             
             return redirect()->route('tahun.ajaran.index', ['showArchived' => true])
                 ->with('success', 'Tahun ajaran ' . $tahunAjaran->tahun_ajaran . ' berhasil dipulihkan!');
@@ -1584,6 +1594,18 @@ class TahunAjaranController extends Controller
             
             return redirect()->back()
                 ->with('error', 'Terjadi kesalahan saat memulihkan tahun ajaran: ' . $e->getMessage());
+        }
+    }
+
+    private function clearTahunAjaranCaches(?int $tahunAjaranId = null): void
+    {
+        Cache::forget('active_tahun_ajaran');
+        Cache::forget('latest_tahun_ajaran');
+        Cache::forget('all_tahun_ajaran_selector');
+        Cache::forget('all_tahun_ajaran_selector_archived');
+
+        if ($tahunAjaranId) {
+            Cache::forget("tahun_ajaran_{$tahunAjaranId}");
         }
     }
 }

@@ -103,7 +103,11 @@ export function safeInitFlowbite() {
     window.clearTimeout(window.__flowbiteInitTimer);
 
     window.__flowbiteInitTimer = window.setTimeout(() => {
-        if (typeof initFlowbite !== 'function') return;
+        const initFlowbiteFn = window.initFlowbite;
+        if (typeof initFlowbiteFn !== 'function') {
+            window.ensureFlowbiteLoaded?.();
+            return;
+        }
 
         const drawerTriggers = document.querySelectorAll('[data-drawer-target], [data-drawer-toggle]');
         const hasMissingDrawerTarget = Array.from(drawerTriggers).some(trigger => {
@@ -113,7 +117,7 @@ export function safeInitFlowbite() {
 
         if (hasMissingDrawerTarget) return;
 
-        initFlowbite();
+        initFlowbiteFn();
     }, 50);
 }
 

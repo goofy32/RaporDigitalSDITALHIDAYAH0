@@ -47,28 +47,30 @@
                                 Tidak ada Lingkup Materi
                             @endif
                         </td>
-                        <td class="px-6 py-4 text-center flex justify-around">
+                        <td class="px-4 py-4 text-center whitespace-nowrap">
+                            <div class="flex items-center gap-2">
 
                             <!-- Edit TP Button -->
-                            <a href="{{ route('pengajar.tujuan_pembelajaran.create', $subject->id) }}" class="text-blue-600 hover:underline" title="Ubah Tujuan Pembelajaran">
-                                <img src="{{ asset('images/icons/edittp.png') }}" alt="Edit TP Icon" class="w-8 h-5">
+                            <a href="{{ route('pengajar.tujuan_pembelajaran.create', $subject->id) }}" class="inline-flex items-center justify-center text-blue-600 hover:text-blue-800" title="Ubah Tujuan Pembelajaran">
+                                <img src="{{ asset('images/icons/edittp.png') }}" alt="Edit TP Icon" class="w-5 h-5 object-contain">
                             </a>
                         
                             <!-- Edit Subject Button -->
-                            <a href="{{ route('pengajar.subject.edit', $subject->id) }}" class="text-yellow-600 hover:underline" title="Ubah Mata Pelajaran">
-                                <img src="{{ asset('images/icons/edit.png') }}" alt="Edit Icon" class="w-5 h-5">
+                            <a href="{{ route('pengajar.subject.edit', $subject->id) }}" class="inline-flex items-center justify-center text-yellow-600 hover:text-yellow-800" title="Ubah Mata Pelajaran">
+                                <img src="{{ asset('images/icons/edit.png') }}" alt="Edit Icon" class="w-5 h-5 object-contain">
                             </a>
                         
                             <!-- Delete Button -->
-                            <form action="{{ route('pengajar.subject.destroy', $subject->id) }}" method="POST" class="inline">
+                            <form action="{{ route('pengajar.subject.destroy', $subject->id) }}" method="POST" class="inline-flex items-center">
                                 @csrf
                                 @method('DELETE')
-                                <button type="submit" class="text-red-600 hover:underline" 
+                                <button type="submit" class="inline-flex items-center justify-center text-red-600 hover:text-red-800" 
                                         onclick="return confirm('Apakah Anda yakin ingin menghapus data ini?')"
                                         title="Hapus Mata Pelajaran">
-                                    <img src="{{ asset('images/icons/delete.png') }}" alt="Delete Icon" class="w-5 h-5">
+                                    <img src="{{ asset('images/icons/delete.png') }}" alt="Delete Icon" class="w-5 h-5 object-contain">
                                 </button>
                             </form>
+                            </div>
                         </td>
                     </tr>
                     @empty
