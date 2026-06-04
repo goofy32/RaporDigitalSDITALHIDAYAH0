@@ -22,6 +22,7 @@ use App\Jobs\GeneratePdfReportJob;
 use App\Services\PdfCacheService;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\URL;
+use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 
 class ReportController extends Controller
 {
@@ -183,17 +184,11 @@ class ReportController extends Controller
      */
     public function printRaporHtml(Siswa $siswa, Request $request)
     {
+        $tahunAjaranId = $this->resolveRaporTahunAjaranId($request);
+        abort_unless($tahunAjaranId, 403);
+        $this->authorizeWaliRaporAccess($siswa, $tahunAjaranId);
+
         $guru = auth()->guard('guru')->user();
-        
-        if (!$guru || !$guru->isWaliKelas()) {
-            abort(403, 'Hanya wali kelas yang dapat mencetak rapor');
-        }
-        
-        if (!$siswa->isInKelasWali($guru->id)) {
-            abort(403, 'Anda hanya dapat mencetak rapor siswa di kelas yang Anda walikan');
-        }
-        
-        $tahunAjaranId = session('tahun_ajaran_id');
         $tahunAjaran = TahunAjaran::find($tahunAjaranId);
         $semester = $tahunAjaran ? $tahunAjaran->semester : 1;
         
@@ -940,7 +935,9 @@ class ReportController extends Controller
             $validationStart = microtime(true);
             
             $type = $request->query('type', 'UTS');
-            $tahunAjaranId = $request->query('tahun_ajaran_id', session('tahun_ajaran_id'));
+            $tahunAjaranId = $this->resolveRaporTahunAjaranId($request);
+            abort_unless($tahunAjaranId, 403);
+            $this->authorizeWaliRaporAccess($siswa, $tahunAjaranId);
             
             Log::info("PDF generation process started", [
                 'request_id' => $requestId,
@@ -1067,6 +1064,10 @@ class ReportController extends Controller
             ]);
             
         } catch (\Exception $e) {
+            if ($e instanceof HttpExceptionInterface) {
+                throw $e;
+            }
+
             $this->logPerformanceMetrics($requestId, 'error', $startTime, $memoryStart, [
                 'error_message' => $e->getMessage(),
                 'error_file' => $e->getFile(),
@@ -1196,11 +1197,39 @@ class ReportController extends Controller
         Log::info("Performance Metrics - {$status}", $metrics);
     }
 
-    public function previewRapor($siswa_id) {
+    private function resolveRaporTahunAjaranId(Request $request): ?int
+    {
+        $hasRequestedYear = $request->has('tahun_ajaran_id')
+            && $request->input('tahun_ajaran_id') !== null
+            && $request->input('tahun_ajaran_id') !== '';
+
+        return $this->getValidTahunAjaranId(
+            $hasRequestedYear ? (int) $request->input('tahun_ajaran_id') : null
+        );
+    }
+
+    private function authorizeWaliRaporAccess(Siswa $siswa, int $tahunAjaranId): void
+    {
+        $guru = auth()->guard('guru')->user();
+
+        abort_unless(
+            $guru &&
+            session('selected_role') === 'wali_kelas' &&
+            $siswa->isInKelasWali($guru->id, $tahunAjaranId),
+            403
+        );
+    }
+
+    public function previewRapor(Request $request, $siswa_id) {
         try {
             // Ambil tipe rapor dari query param
-            $type = request('type', 'UTS');
-            $tahunAjaranId = session('tahun_ajaran_id');
+            $type = $request->query('type', 'UTS');
+            $tahunAjaranId = $this->resolveRaporTahunAjaranId($request);
+            abort_unless($tahunAjaranId, 403);
+
+            $siswa = Siswa::find($siswa_id);
+            abort_unless($siswa, 403);
+            $this->authorizeWaliRaporAccess($siswa, $tahunAjaranId);
             
             // Ambil semester dari tahun ajaran
             $tahunAjaran = \App\Models\TahunAjaran::find($tahunAjaranId);
@@ -1214,7 +1243,7 @@ class ReportController extends Controller
             ]);
             
             // Cari siswa dengan relasi yang dibutuhkan
-            $siswa = Siswa::with([
+            $siswa->load([
                 'kelas',
                 'nilais' => function($query) use ($tahunAjaranId, $semester) {
                     // Filter nilai berdasarkan semester dan tahun ajaran
@@ -1233,7 +1262,7 @@ class ReportController extends Controller
                     $query->where('semester', $semester)
                         ->where('tahun_ajaran_id', $tahunAjaranId);
                 }
-            ])->findOrFail($siswa_id);
+            ]);
             
             // Logging untuk debug
             \Log::info('Preview data loaded', [
@@ -1256,6 +1285,10 @@ class ReportController extends Controller
                 'html' => $html
             ]);
         } catch (\Exception $e) {
+            if ($e instanceof HttpExceptionInterface) {
+                throw $e;
+            }
+
             // Log error untuk debugging
             \Log::error('Error in previewRapor: ' . $e->getMessage());
             \Log::error($e->getTraceAsString());
@@ -1455,6 +1488,8 @@ class ReportController extends Controller
                 return $this->failTahunAjaranNotSet($request, true);
             }
 
+            $this->authorizeWaliRaporAccess($siswa, $tahunAjaranId);
+
             $disposition = $request->query('disposition', 'inline') === 'attachment' ? 'attachment' : 'inline';
 
             $cachedPdf = PdfCacheService::getCachedPdf(
@@ -1522,6 +1557,10 @@ class ReportController extends Controller
             );
             
         } catch (\Exception $e) {
+            if ($e instanceof HttpExceptionInterface) {
+                throw $e;
+            }
+
             Log::error('[ReportController] Preview PDF failed', [
                 'siswa_id' => $siswa->id,
                 'error' => $e->getMessage(),
@@ -1548,6 +1587,8 @@ class ReportController extends Controller
         if (!$tahunAjaranId) {
             return $this->failTahunAjaranNotSet($request, true);
         }
+
+        $this->authorizeWaliRaporAccess($siswa, $tahunAjaranId);
 
         $requestId = uniqid('pdf_', true);
 
@@ -1715,8 +1756,12 @@ class ReportController extends Controller
     /**
      * Clear PDF cache for student
      */
-    public function clearPdfCache(Siswa $siswa)
+    public function clearPdfCache(Siswa $siswa, Request $request)
     {
+        $tahunAjaranId = $this->resolveRaporTahunAjaranId($request);
+        abort_unless($tahunAjaranId, 403);
+        $this->authorizeWaliRaporAccess($siswa, $tahunAjaranId);
+
         try {
             PdfCacheService::clearStudentCache($siswa);
             
@@ -1793,6 +1838,8 @@ class ReportController extends Controller
         if (!$tahunAjaranId) {
             return $this->failTahunAjaranNotSet($request, true);
         }
+
+        $this->authorizeWaliRaporAccess($siswa, $tahunAjaranId);
         
         try {
             \Log::info('Generate report request', [
@@ -2449,7 +2496,16 @@ class ReportController extends Controller
             
             // Validasi siswa
             $guru = auth()->guard('guru')->user();
-            $kelas = $guru->kelasWali;
+            abort_unless($guru && session('selected_role') === 'wali_kelas', 403);
+
+            $kelas = DB::table('guru_kelas')
+                ->join('kelas', 'guru_kelas.kelas_id', '=', 'kelas.id')
+                ->where('guru_kelas.guru_id', $guru->id)
+                ->where('guru_kelas.is_wali_kelas', true)
+                ->where('guru_kelas.role', 'wali_kelas')
+                ->where('kelas.tahun_ajaran_id', $tahunAjaranId)
+                ->select('kelas.*')
+                ->first();
             
             if (!$kelas) {
                 throw new \Exception('Anda tidak memiliki kelas yang diwalikan');
@@ -2675,6 +2731,10 @@ class ReportController extends Controller
             ]);
             
         } catch (\Exception $e) {
+            if ($e instanceof HttpExceptionInterface) {
+                throw $e;
+            }
+
             \Log::error("Batch generate report error: " . $e->getMessage(), [
                 'trace' => $e->getTraceAsString()
             ]);
