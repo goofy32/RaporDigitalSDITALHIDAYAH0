@@ -530,7 +530,6 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
         Route::get('/{id}/input', [ScoreController::class, 'inputScore'])->name('input_score');
         Route::post('/{id}/save', [ScoreController::class, 'saveScore'])->name('save_scores');
         Route::get('/{id}/preview', [ScoreController::class, 'previewScore'])->name('preview_score');
-        Route::delete('/{id}', [ScoreController::class, 'deleteScores'])->name('delete');
         Route::post('/score/nilai/delete', [ScoreController::class, 'deleteNilai'])->name('nilai.delete');
         Route::post('/validate', [ScoreController::class, 'validateScores'])->name('validate');
         Route::post('/get-class-subjects', [ScoreController::class, 'getClassSubjects'])->name('get_class_subjects');

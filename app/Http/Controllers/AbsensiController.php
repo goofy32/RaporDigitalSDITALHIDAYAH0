@@ -3,14 +3,13 @@
 namespace App\Http\Controllers;
 
 use App\Models\Absensi;
-use App\Models\Siswa;
 use App\Models\TahunAjaran;
+use App\Services\SiswaKelasSemesterResolver;
 use App\Traits\RequiresTahunAjaran;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Validation\ValidationException;
 
 class AbsensiController extends Controller
 {
@@ -25,6 +24,8 @@ class AbsensiController extends Controller
         }
 
         $waliKelas = auth()->guard('guru')->user();
+        abort_unless($waliKelas, 403);
+
         $kelasWaliId = $this->getKelasWaliId($waliKelas->id, $tahunAjaranId) ?? $waliKelas->getWaliKelasId();
 
         if (!$kelasWaliId) {
@@ -32,7 +33,7 @@ class AbsensiController extends Controller
         }
 
         $currentSemester = $this->getCurrentSemester($tahunAjaranId);
-        $siswas = $this->getWaliKelasSiswas($kelasWaliId);
+        $siswas = $this->getWaliKelasSiswas($kelasWaliId, $tahunAjaranId, $currentSemester);
         $absensiData = $this->buildAbsensiPayload($siswas, $currentSemester, $tahunAjaranId);
 
         return view('wali_kelas.absence', compact('siswas', 'absensiData', 'currentSemester'));
@@ -47,6 +48,8 @@ class AbsensiController extends Controller
         }
 
         $waliKelas = auth()->guard('guru')->user();
+        abort_unless($waliKelas, 403);
+
         $kelasWaliId = $this->getKelasWaliId($waliKelas->id, $tahunAjaranId) ?? $waliKelas->getWaliKelasId();
 
         if (!$kelasWaliId) {
@@ -65,15 +68,13 @@ class AbsensiController extends Controller
         ]);
 
         $currentSemester = $this->getCurrentSemester($tahunAjaranId);
-        $siswas = $this->getWaliKelasSiswas($kelasWaliId);
+        $siswas = $this->getWaliKelasSiswas($kelasWaliId, $tahunAjaranId, $currentSemester);
         $allowedStudentIds = $siswas->pluck('id')->map(fn ($id) => (int) $id)->all();
         $rows = collect($validated['rows'])->values();
 
-        foreach ($rows as $index => $row) {
+        foreach ($rows as $row) {
             if (!in_array((int) $row['siswa_id'], $allowedStudentIds, true)) {
-                throw ValidationException::withMessages([
-                    "rows.{$index}.siswa_id" => ['Siswa tidak terdaftar di kelas Anda.'],
-                ]);
+                abort(403);
             }
         }
 
@@ -104,7 +105,14 @@ class AbsensiController extends Controller
     public function create()
     {
         $guru = auth()->guard('guru')->user();
-        $tahunAjaranId = session('tahun_ajaran_id');
+        abort_unless($guru, 403);
+
+        $tahunAjaranId = $this->getValidTahunAjaranId();
+
+        if (!$tahunAjaranId) {
+            return $this->failTahunAjaranNotSet(request());
+        }
+
         $kelasWaliId = $this->getKelasWaliId($guru->id, $tahunAjaranId);
 
         $tahunAjaran = TahunAjaran::find($tahunAjaranId);
@@ -121,9 +129,7 @@ class AbsensiController extends Controller
             return redirect()->back()->with('error', 'Anda belum ditugaskan sebagai wali kelas untuk kelas manapun pada tahun ajaran ini.');
         }
 
-        $siswa = Siswa::where('kelas_id', $kelasWaliId)
-            ->orderBy('nama')
-            ->get();
+        $siswa = $this->getWaliKelasSiswas($kelasWaliId, $tahunAjaranId, $currentSemester);
 
         \Log::info('AbsensiController found:', [
             'siswa_count' => $siswa->count(),
@@ -143,6 +149,8 @@ class AbsensiController extends Controller
 
         $tahunAjaran = TahunAjaran::find($tahunAjaranId);
         $currentSemester = $tahunAjaran ? $tahunAjaran->semester : $request->semester;
+        $waliKelas = auth()->guard('guru')->user();
+        abort_unless($waliKelas, 403);
 
         $request->validate([
             'siswa_id' => 'required|exists:siswas,id',
@@ -150,6 +158,9 @@ class AbsensiController extends Controller
             'izin' => 'required|integer|min:0',
             'tanpa_keterangan' => 'required|integer|min:0',
         ]);
+
+        $kelasWaliId = $this->getKelasWaliId($waliKelas->id, $tahunAjaranId) ?? $waliKelas->getWaliKelasId();
+        abort_unless($kelasWaliId && $this->isStudentInWaliClass((int) $request->siswa_id, $kelasWaliId, $tahunAjaranId, $currentSemester), 403);
 
         $existingAbsensi = Absensi::where('siswa_id', $request->siswa_id)
             ->where('semester', $currentSemester)
@@ -176,25 +187,30 @@ class AbsensiController extends Controller
     {
         try {
             $waliKelas = auth()->guard('guru')->user();
-            $tahunAjaranId = session('tahun_ajaran_id');
+            abort_unless($waliKelas, 403);
+
+            $tahunAjaranId = $this->getValidTahunAjaranId();
+            abort_unless($tahunAjaranId, 403);
+
+            $currentSemester = $this->getCurrentSemester($tahunAjaranId);
             $kelasWaliId = $this->getKelasWaliId($waliKelas->id, $tahunAjaranId) ?? $waliKelas->getWaliKelasId();
+            abort_unless($kelasWaliId, 403);
 
             \Log::info('Editing absensi', [
                 'id' => $id,
                 'kelasWaliId' => $kelasWaliId,
             ]);
 
-            $absensi = Absensi::with('siswa')
-                ->where('tahun_ajaran_id', $tahunAjaranId)
-                ->whereHas('siswa', function ($query) use ($kelasWaliId) {
-                    $query->where('kelas_id', $kelasWaliId);
-                })
-                ->findOrFail($id);
+            $absensi = $this->findAuthorizedAbsensi($id, $kelasWaliId, $tahunAjaranId, $currentSemester);
 
             $tahunAjaran = TahunAjaran::find($tahunAjaranId);
 
             return view('wali_kelas.edit_absence', compact('absensi', 'tahunAjaran'));
         } catch (\Exception $e) {
+            if ($e instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface) {
+                throw $e;
+            }
+
             \Log::error('Error editing absensi: ' . $e->getMessage());
 
             return redirect()->route('wali_kelas.absence.index')
@@ -216,9 +232,16 @@ class AbsensiController extends Controller
             'tanpa_keterangan' => 'required|integer|min:0',
         ]);
 
-        $absensi = Absensi::findOrFail($id);
+        $waliKelas = auth()->guard('guru')->user();
+        abort_unless($waliKelas, 403);
 
-        $data = $request->all();
+        $currentSemester = $this->getCurrentSemester($tahunAjaranId);
+        $kelasWaliId = $this->getKelasWaliId($waliKelas->id, $tahunAjaranId) ?? $waliKelas->getWaliKelasId();
+        abort_unless($kelasWaliId, 403);
+
+        $absensi = $this->findAuthorizedAbsensi($id, $kelasWaliId, $tahunAjaranId, $currentSemester);
+
+        $data = $request->only(['sakit', 'izin', 'tanpa_keterangan']);
         $data['semester'] = $absensi->semester;
         $data['tahun_ajaran_id'] = $tahunAjaranId;
 
@@ -230,7 +253,17 @@ class AbsensiController extends Controller
 
     public function destroy($id)
     {
-        $absensi = Absensi::findOrFail($id);
+        $tahunAjaranId = $this->getValidTahunAjaranId();
+        abort_unless($tahunAjaranId, 403);
+
+        $waliKelas = auth()->guard('guru')->user();
+        abort_unless($waliKelas, 403);
+
+        $currentSemester = $this->getCurrentSemester($tahunAjaranId);
+        $kelasWaliId = $this->getKelasWaliId($waliKelas->id, $tahunAjaranId) ?? $waliKelas->getWaliKelasId();
+        abort_unless($kelasWaliId, 403);
+
+        $absensi = $this->findAuthorizedAbsensi($id, $kelasWaliId, $tahunAjaranId, $currentSemester);
         $absensi->delete();
 
         return redirect()->route('wali_kelas.absence.index')
@@ -255,11 +288,31 @@ class AbsensiController extends Controller
         return (int) (TahunAjaran::find($tahunAjaranId)?->semester ?? 1);
     }
 
-    private function getWaliKelasSiswas(int $kelasWaliId): Collection
+    private function getWaliKelasSiswas(int $kelasWaliId, int $tahunAjaranId, int $semester): Collection
     {
-        return Siswa::where('kelas_id', $kelasWaliId)
-            ->orderBy('nama')
-            ->get(['id', 'nis', 'nama']);
+        return app(SiswaKelasSemesterResolver::class)
+            ->studentsForClass($kelasWaliId, $tahunAjaranId, $semester, true);
+    }
+
+    private function isStudentInWaliClass(int $siswaId, int $kelasWaliId, int $tahunAjaranId, int $semester): bool
+    {
+        return app(SiswaKelasSemesterResolver::class)
+            ->isEnrolledInClass($siswaId, $kelasWaliId, $tahunAjaranId, $semester, true);
+    }
+
+    private function findAuthorizedAbsensi(int $id, int $kelasWaliId, int $tahunAjaranId, int $semester): Absensi
+    {
+        $absensi = Absensi::with('siswa')
+            ->where('tahun_ajaran_id', $tahunAjaranId)
+            ->where('semester', $semester)
+            ->find($id);
+
+        abort_unless(
+            $absensi && $this->isStudentInWaliClass((int) $absensi->siswa_id, $kelasWaliId, $tahunAjaranId, $semester),
+            403
+        );
+
+        return $absensi;
     }
 
     private function buildAbsensiPayload(Collection $siswas, int $currentSemester, int $tahunAjaranId): array
