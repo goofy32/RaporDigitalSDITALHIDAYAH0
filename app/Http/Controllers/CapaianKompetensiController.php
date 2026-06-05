@@ -6,10 +6,12 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use App\Models\CapaianKompetensiTemplate;
 use App\Models\CapaianKompetensiCustom;
+use App\Models\Kelas;
 use App\Models\MataPelajaran;
 use App\Models\Nilai;
 use App\Models\Siswa;
 use App\Models\TahunAjaran;
+use App\Services\SiswaKelasSemesterResolver;
 use App\Traits\RequiresTahunAjaran;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -119,24 +121,20 @@ class CapaianKompetensiController extends Controller
      */
     public function waliKelasIndex()
     {
-        $guru = auth()->user();
-        $tahunAjaranId = session('tahun_ajaran_id');
-        $tahunAjaran = TahunAjaran::find($tahunAjaranId);
-        $semester = $tahunAjaran ? $tahunAjaran->semester : 1;
+        $guru = auth()->guard('guru')->user();
+        abort_unless($guru && session('selected_role') === 'wali_kelas', 403);
+
+        $tahunAjaranId = $this->getValidTahunAjaranId();
+
+        if (!$tahunAjaranId) {
+            return $this->failTahunAjaranNotSet(request());
+        }
+
+        $semester = $this->getCurrentSemester($tahunAjaranId);
 
         // Ambil kelas yang diwalikan
-        $kelas = DB::table('guru_kelas')
-            ->join('kelas', 'guru_kelas.kelas_id', '=', 'kelas.id')
-            ->where('guru_kelas.guru_id', $guru->id)
-            ->where('guru_kelas.is_wali_kelas', true)
-            ->where('guru_kelas.role', 'wali_kelas')
-            ->where('kelas.tahun_ajaran_id', $tahunAjaranId)
-            ->select('kelas.*')
-            ->first();
-
-        if (!$kelas) {
-            return redirect()->back()->with('error', 'Anda tidak menjadi wali kelas untuk tahun ajaran yang dipilih.');
-        }
+        $kelas = $this->getWaliKelasKelas($guru, $tahunAjaranId);
+        abort_unless($kelas, 403);
 
         // Ambil mata pelajaran di kelas ini
         $mataPelajarans = MataPelajaran::where('kelas_id', $kelas->id)
@@ -146,12 +144,30 @@ class CapaianKompetensiController extends Controller
             ->orderBy('nama_pelajaran')
             ->get();
 
-        return view('wali_kelas.capaian_kompetensi.index', compact('mataPelajarans', 'kelas'));
+        $siswaList = $this->studentsForWaliClass((int) $kelas->id, $tahunAjaranId, $semester);
+        $totalSiswa = $siswaList->count();
+        $studentIds = $siswaList->pluck('id');
+        $customCounts = CapaianKompetensiCustom::whereIn('mata_pelajaran_id', $mataPelajarans->pluck('id'))
+            ->whereIn('siswa_id', $studentIds)
+            ->where('tahun_ajaran_id', $tahunAjaranId)
+            ->where('semester', $semester)
+            ->select('mata_pelajaran_id', DB::raw('count(*) as aggregate'))
+            ->groupBy('mata_pelajaran_id')
+            ->pluck('aggregate', 'mata_pelajaran_id');
+
+        return view('wali_kelas.capaian_kompetensi.index', compact(
+            'mataPelajarans',
+            'kelas',
+            'totalSiswa',
+            'customCounts',
+            'tahunAjaranId',
+            'semester'
+        ));
     }
 
     private function getWaliKelasKelas($guru, $tahunAjaranId)
     {
-        return DB::table('guru_kelas')
+        $kelasId = DB::table('guru_kelas')
             ->join('kelas', function ($join) {
                 $join->on('guru_kelas.kelas_id', '=', 'kelas.id')
                     ->whereNull('kelas.deleted_at');
@@ -160,8 +176,9 @@ class CapaianKompetensiController extends Controller
             ->where('guru_kelas.is_wali_kelas', true)
             ->where('guru_kelas.role', 'wali_kelas')
             ->where('kelas.tahun_ajaran_id', $tahunAjaranId)
-            ->select('kelas.*')
-            ->first();
+            ->value('kelas.id');
+
+        return $kelasId ? Kelas::find($kelasId) : null;
     }
 
     /**
@@ -169,24 +186,26 @@ class CapaianKompetensiController extends Controller
      */
     public function waliKelasEdit($mataPelajaranId)
     {
-        $guru = auth()->user();
-        $tahunAjaranId = session('tahun_ajaran_id');
-        $tahunAjaran = TahunAjaran::find($tahunAjaranId);
-        $semester = $tahunAjaran ? $tahunAjaran->semester : 1;
+        $tahunAjaranId = $this->getValidTahunAjaranId();
+
+        if (!$tahunAjaranId) {
+            return $this->failTahunAjaranNotSet(request());
+        }
+
+        $semester = $this->getCurrentSemester($tahunAjaranId);
 
         $mataPelajaran = MataPelajaran::findOrFail($mataPelajaranId);
 
         // Cek akses wali kelas
-        $kelas = $this->getWaliKelasKelas($guru, $tahunAjaranId);
-        if (!$kelas || $mataPelajaran->kelas_id !== $kelas->id) {
-            return redirect()->back()->with('error', 'Anda tidak memiliki akses untuk mengedit capaian kompetensi mata pelajaran ini.');
-        }
+        $kelas = $this->authorizeWaliSubject($mataPelajaran, $tahunAjaranId, $semester);
 
         // Ambil semua siswa di kelas
-        $siswaList = Siswa::where('kelas_id', $kelas->id)->orderBy('nama')->get();
+        $siswaList = $this->studentsForWaliClass((int) $kelas->id, $tahunAjaranId, $semester);
+        $studentIds = $siswaList->pluck('id');
 
         // Ambil capaian kompetensi custom yang sudah ada
         $existingCapaian = CapaianKompetensiCustom::where('mata_pelajaran_id', $mataPelajaranId)
+            ->whereIn('siswa_id', $studentIds)
             ->where('tahun_ajaran_id', $tahunAjaranId)
             ->where('semester', $semester)
             ->get()
@@ -195,7 +214,9 @@ class CapaianKompetensiController extends Controller
         return view('wali_kelas.capaian_kompetensi.edit', compact(
             'mataPelajaran',
             'siswaList', 
-            'existingCapaian'
+            'existingCapaian',
+            'tahunAjaranId',
+            'semester'
         ));
     }
 
@@ -210,17 +231,12 @@ class CapaianKompetensiController extends Controller
             return $this->failTahunAjaranNotSet($request);
         }
 
-        $guru = auth()->user();
-        $tahunAjaran = TahunAjaran::find($tahunAjaranId);
-        $semester = $tahunAjaran ? $tahunAjaran->semester : 1;
+        $semester = $this->getCurrentSemester($tahunAjaranId);
 
         $mataPelajaran = MataPelajaran::findOrFail($mataPelajaranId);
 
         // Cek akses wali kelas
-        $kelas = $this->getWaliKelasKelas($guru, $tahunAjaranId);
-        if (!$kelas || $mataPelajaran->kelas_id !== $kelas->id) {
-            return redirect()->back()->with('error', 'Anda tidak memiliki akses untuk mengedit capaian kompetensi mata pelajaran ini.');
-        }
+        $kelas = $this->authorizeWaliSubject($mataPelajaran, $tahunAjaranId, $semester);
 
         $request->validate([
             'capaian_tertinggi' => 'array',
@@ -229,54 +245,107 @@ class CapaianKompetensiController extends Controller
             'capaian_terendah.*' => 'nullable|string|max:1000',
         ]);
 
-        DB::beginTransaction();
+        $capaianTertinggi = $request->input('capaian_tertinggi', []);
+        $capaianTerendah = $request->input('capaian_terendah', []);
+        $siswaIds = collect(array_keys($capaianTertinggi))
+            ->merge(array_keys($capaianTerendah))
+            ->unique()
+            ->values();
+
+        $this->assertAllStudentsBelongToWaliClass(
+            $siswaIds->all(),
+            (int) $kelas->id,
+            $tahunAjaranId,
+            $semester
+        );
 
         try {
-            $capaianTertinggi = $request->input('capaian_tertinggi', []);
-            $capaianTerendah = $request->input('capaian_terendah', []);
-            $siswaIds = collect(array_keys($capaianTertinggi))
-                ->merge(array_keys($capaianTerendah))
-                ->unique()
-                ->values();
+            DB::transaction(function () use ($siswaIds, $capaianTertinggi, $capaianTerendah, $mataPelajaranId, $tahunAjaranId, $semester) {
+                foreach ($siswaIds as $siswaId) {
+                    $siswaId = (int) $siswaId;
+                    $customTertinggi = trim((string) ($capaianTertinggi[$siswaId] ?? ''));
+                    $customTerendah = trim((string) ($capaianTerendah[$siswaId] ?? ''));
 
-            foreach ($siswaIds as $siswaId) {
-                $customTertinggi = trim((string) ($capaianTertinggi[$siswaId] ?? ''));
-                $customTerendah = trim((string) ($capaianTerendah[$siswaId] ?? ''));
-
-                if ($customTertinggi !== '' || $customTerendah !== '') {
-                    CapaianKompetensiCustom::updateOrCreate(
-                        [
+                    if ($customTertinggi !== '' || $customTerendah !== '') {
+                        CapaianKompetensiCustom::updateOrCreate(
+                            [
+                                'siswa_id' => $siswaId,
+                                'mata_pelajaran_id' => $mataPelajaranId,
+                                'tahun_ajaran_id' => $tahunAjaranId,
+                                'semester' => $semester,
+                            ],
+                            [
+                                'custom_capaian_tertinggi' => $customTertinggi !== '' ? $customTertinggi : null,
+                                'custom_capaian_terendah' => $customTerendah !== '' ? $customTerendah : null,
+                            ]
+                        );
+                    } else {
+                        // Hapus jika kosong
+                        CapaianKompetensiCustom::where([
                             'siswa_id' => $siswaId,
                             'mata_pelajaran_id' => $mataPelajaranId,
                             'tahun_ajaran_id' => $tahunAjaranId,
                             'semester' => $semester,
-                        ],
-                        [
-                            'custom_capaian_tertinggi' => $customTertinggi !== '' ? $customTertinggi : null,
-                            'custom_capaian_terendah' => $customTerendah !== '' ? $customTerendah : null,
-                        ]
-                    );
-                } else {
-                    // Hapus jika kosong
-                    CapaianKompetensiCustom::where([
-                        'siswa_id' => $siswaId,
-                        'mata_pelajaran_id' => $mataPelajaranId,
-                        'tahun_ajaran_id' => $tahunAjaranId,
-                        'semester' => $semester,
-                    ])->delete();
+                        ])->delete();
+                    }
                 }
-            }
-
-            DB::commit();
+            });
 
             return redirect()->route('wali_kelas.capaian_kompetensi.index')
                 ->with('success', 'Capaian kompetensi berhasil disimpan.');
 
         } catch (\Exception $e) {
-            DB::rollBack();
             Log::error('Error updating capaian kompetensi: ' . $e->getMessage());
             return redirect()->back()->with('error', 'Gagal menyimpan capaian kompetensi: ' . $e->getMessage());
         }
+    }
+
+    private function getCurrentSemester(int $tahunAjaranId): int
+    {
+        return (int) (TahunAjaran::find($tahunAjaranId)?->semester ?? 1);
+    }
+
+    private function authorizeWaliSubject(MataPelajaran $mataPelajaran, int $tahunAjaranId, int $semester): Kelas
+    {
+        $guru = auth()->guard('guru')->user();
+        abort_unless($guru && session('selected_role') === 'wali_kelas', 403);
+
+        $kelas = $this->getWaliKelasKelas($guru, $tahunAjaranId);
+
+        abort_unless(
+            $kelas
+            && (int) $mataPelajaran->kelas_id === (int) $kelas->id
+            && (int) $mataPelajaran->tahun_ajaran_id === $tahunAjaranId
+            && (int) $mataPelajaran->semester === $semester,
+            403
+        );
+
+        return $kelas;
+    }
+
+    private function studentsForWaliClass(int $kelasId, int $tahunAjaranId, int $semester)
+    {
+        return app(SiswaKelasSemesterResolver::class)
+            ->studentsForClass($kelasId, $tahunAjaranId, $semester, true);
+    }
+
+    private function assertAllStudentsBelongToWaliClass(array $studentIds, int $kelasId, int $tahunAjaranId, int $semester): void
+    {
+        $submittedCount = count($studentIds);
+        $studentIds = collect($studentIds)
+            ->map(fn ($id) => (int) $id)
+            ->filter()
+            ->unique()
+            ->values();
+
+        abort_unless($studentIds->count() === $submittedCount, 403);
+
+        $authorizedCount = app(SiswaKelasSemesterResolver::class)
+            ->studentQueryForClass($kelasId, $tahunAjaranId, $semester, true)
+            ->whereIn('siswas.id', $studentIds)
+            ->count();
+
+        abort_unless($authorizedCount === $studentIds->count(), 403);
     }
 
     public static function generateCapaianTertinggiTerendah(
@@ -328,11 +397,15 @@ class CapaianKompetensiController extends Controller
 
         $lmData = Nilai::query()
             ->join('lingkup_materis', 'nilais.lingkup_materi_id', '=', 'lingkup_materis.id')
+            ->join('mata_pelajarans', 'nilais.mata_pelajaran_id', '=', 'mata_pelajarans.id')
             ->where('nilais.siswa_id', $siswaId)
             ->where('nilais.tahun_ajaran_id', $tahunAjaranId)
+            ->where('mata_pelajarans.tahun_ajaran_id', $tahunAjaranId)
+            ->where('mata_pelajarans.semester', $semester)
             ->whereIn('nilais.mata_pelajaran_id', $mataPelajaranIds)
             ->whereNull('nilais.deleted_at')
             ->whereNull('lingkup_materis.deleted_at')
+            ->whereNull('mata_pelajarans.deleted_at')
             ->whereNotNull('nilais.nilai_lm')
             ->select([
                 'nilais.mata_pelajaran_id',
@@ -382,6 +455,8 @@ class CapaianKompetensiController extends Controller
         $tahunAjaranId = null
     ): array {
         $tahunAjaranId = $tahunAjaranId ?: session('tahun_ajaran_id');
+        $tahunAjaran = TahunAjaran::find($tahunAjaranId);
+        $semester = $tahunAjaran ? $tahunAjaran->semester : 1;
         $siswa = Siswa::find($siswaId);
 
         if (!$siswa) {
@@ -393,11 +468,15 @@ class CapaianKompetensiController extends Controller
 
         $lmData = DB::table('nilais')
             ->join('lingkup_materis', 'nilais.lingkup_materi_id', '=', 'lingkup_materis.id')
+            ->join('mata_pelajarans', 'nilais.mata_pelajaran_id', '=', 'mata_pelajarans.id')
             ->where('nilais.siswa_id', $siswaId)
             ->where('nilais.mata_pelajaran_id', $mataPelajaranId)
             ->where('nilais.tahun_ajaran_id', $tahunAjaranId)
+            ->where('mata_pelajarans.tahun_ajaran_id', $tahunAjaranId)
+            ->where('mata_pelajarans.semester', $semester)
             ->whereNull('nilais.deleted_at')
             ->whereNull('lingkup_materis.deleted_at')
+            ->whereNull('mata_pelajarans.deleted_at')
             ->whereNotNull('nilais.nilai_lm')
             ->groupBy('lingkup_materis.id', 'lingkup_materis.judul_lingkup_materi')
             ->select(
@@ -448,7 +527,12 @@ class CapaianKompetensiController extends Controller
         $siswa = Siswa::find($siswaId);
         $mataPelajaran = MataPelajaran::find($mataPelajaranId);
 
-        if (!$siswa || !$mataPelajaran) {
+        if (
+            !$siswa
+            || !$mataPelajaran
+            || (int) $mataPelajaran->tahun_ajaran_id !== (int) $tahunAjaranId
+            || (int) $mataPelajaran->semester !== (int) $semester
+        ) {
             return 'Data tidak lengkap.';
         }
 
@@ -456,9 +540,10 @@ class CapaianKompetensiController extends Controller
         $nilai = $siswa->nilais()
             ->where('mata_pelajaran_id', $mataPelajaranId)
             ->where('tahun_ajaran_id', $tahunAjaranId)
+            ->whereNotNull('nilai_akhir_rapor')
             ->first();
 
-        if (!$nilai || !$nilai->nilai_akhir_rapor) {
+        if (!$nilai || is_null($nilai->nilai_akhir_rapor)) {
             return 'Nilai belum tersedia.';
         }
 

@@ -114,13 +114,18 @@
                             $existingCapaianTerendah = $existingRow?->custom_capaian_terendah ?? '';
                             $nilai = $siswa->nilais()
                                 ->where('mata_pelajaran_id', $mataPelajaran->id)
-                                ->where('tahun_ajaran_id', session('tahun_ajaran_id'))
+                                ->where('tahun_ajaran_id', $tahunAjaranId)
+                                ->whereHas('mataPelajaran', function ($query) use ($tahunAjaranId, $semester) {
+                                    $query->where('tahun_ajaran_id', $tahunAjaranId)
+                                        ->where('semester', $semester);
+                                })
+                                ->whereNotNull('nilai_akhir_rapor')
                                 ->first();
                             $nilaiAkhir = $nilai ? $nilai->nilai_akhir_rapor : null;
                             $autoCapaian = \App\Http\Controllers\CapaianKompetensiController::generateAutoCapaianTertinggiTerendah(
                                 $siswa->id,
                                 $mataPelajaran->id,
-                                session('tahun_ajaran_id')
+                                $tahunAjaranId
                             );
                         @endphp
                         <tr class="border-b bg-white align-top hover:bg-gray-50"

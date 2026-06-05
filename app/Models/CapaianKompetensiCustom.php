@@ -2,13 +2,13 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Model;
 use App\Traits\HasTahunAjaran;
+use Illuminate\Database\Eloquent\Model;
 
 class CapaianKompetensiCustom extends Model
 {
     use HasTahunAjaran;
-    
+
     protected $table = 'capaian_custom';
 
     protected $fillable = [
@@ -18,7 +18,7 @@ class CapaianKompetensiCustom extends Model
         'custom_capaian_tertinggi',
         'custom_capaian_terendah',
         'tahun_ajaran_id',
-        'semester'
+        'semester',
     ];
 
     protected $casts = [
@@ -50,9 +50,14 @@ class CapaianKompetensiCustom extends Model
         $nilai = $this->siswa->nilais()
             ->where('mata_pelajaran_id', $this->mata_pelajaran_id)
             ->where('tahun_ajaran_id', $this->tahun_ajaran_id)
+            ->whereNotNull('nilai_akhir_rapor')
+            ->whereHas('mataPelajaran', function ($query) {
+                $query->where('tahun_ajaran_id', $this->tahun_ajaran_id)
+                    ->where('semester', $this->semester);
+            })
             ->first();
 
-        if (!$nilai || !$nilai->nilai_akhir_rapor) {
+        if (! $nilai || is_null($nilai->nilai_akhir_rapor)) {
             return $this->custom_capaian ?: 'Nilai belum tersedia.';
         }
 
@@ -63,16 +68,16 @@ class CapaianKompetensiCustom extends Model
             $this->tahun_ajaran_id
         );
 
-        if (!$template) {
+        if (! $template) {
             // Fallback ke template default jika tidak ada
             return $this->custom_capaian ?: $this->generateDefaultCapaian($nilai->nilai_akhir_rapor);
         }
 
         $autoText = $template->generateCapaianText($this->siswa->nama);
-        
+
         // Gabungkan dengan custom text jika ada
         if ($this->custom_capaian) {
-            return $autoText . ' ' . $this->custom_capaian;
+            return $autoText.' '.$this->custom_capaian;
         }
 
         return $autoText;
@@ -105,8 +110,8 @@ class CapaianKompetensiCustom extends Model
         $tahunAjaranId = session('tahun_ajaran_id');
         $tahunAjaran = TahunAjaran::find($tahunAjaranId);
         $semester = $tahunAjaran ? $tahunAjaran->semester : 1;
-        
+
         return $query->where('tahun_ajaran_id', $tahunAjaranId)
-                    ->where('semester', $semester);
+            ->where('semester', $semester);
     }
 }

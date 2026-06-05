@@ -44,12 +44,7 @@
             <tbody>
                 @forelse($mataPelajarans as $index => $mataPelajaran)
                     @php
-                        $customCount = \App\Models\CapaianKompetensiCustom::where('mata_pelajaran_id', $mataPelajaran->id)
-                            ->where('tahun_ajaran_id', session('tahun_ajaran_id'))
-                            ->where('semester', \App\Models\TahunAjaran::find(session('tahun_ajaran_id'))->semester ?? 1)
-                            ->count();
-                        
-                        $totalSiswa = \App\Models\Siswa::where('kelas_id', $kelas->id)->count();
+                        $customCount = (int) ($customCounts[$mataPelajaran->id] ?? 0);
                     @endphp
                     <tr class="bg-white border-b hover:bg-gray-50">
                         <td class="px-6 py-4">{{ $index + 1 }}</td>
