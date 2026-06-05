@@ -29,13 +29,15 @@ class CheckRaporAccess
         }
         
         $tahunAjaranId = $this->resolveTahunAjaranId($request);
+        $semester = $tahunAjaranId ? $this->resolveSemester($tahunAjaranId) : null;
 
         if (
             !$guru ||
             session('selected_role') !== 'wali_kelas' ||
             !$siswa instanceof Siswa ||
             !$tahunAjaranId ||
-            !$siswa->isInKelasWali($guru->id, $tahunAjaranId)
+            !$semester ||
+            !$siswa->isInKelasWali($guru->id, $tahunAjaranId, $semester)
         ) {
             abort(403);
         }
@@ -52,5 +54,10 @@ class CheckRaporAccess
         }
 
         return (int) $tahunAjaranId;
+    }
+
+    private function resolveSemester(int $tahunAjaranId): ?int
+    {
+        return TahunAjaran::whereKey($tahunAjaranId)->value('semester');
     }
 }

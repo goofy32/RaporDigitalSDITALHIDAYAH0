@@ -219,6 +219,7 @@ class PengajarScoreAuthorizationTest extends TestCase
             'lingkup_materis',
             'bobot_nilais',
             'mata_pelajarans',
+            'siswa_kelas_semester',
             'siswas',
             'guru_kelas',
             'kelas',
@@ -285,6 +286,16 @@ class PengajarScoreAuthorizationTest extends TestCase
             $table->foreignId('kelas_id')->nullable();
             $table->timestamps();
             $table->softDeletes();
+        });
+
+        Schema::create('siswa_kelas_semester', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('siswa_id');
+            $table->foreignId('kelas_id');
+            $table->foreignId('tahun_ajaran_id');
+            $table->tinyInteger('semester');
+            $table->timestamps();
+            $table->unique(['siswa_id', 'tahun_ajaran_id', 'semester']);
         });
 
         Schema::create('mata_pelajarans', function (Blueprint $table) {
@@ -418,6 +429,15 @@ class PengajarScoreAuthorizationTest extends TestCase
             'nisn' => '1001000',
             'nama' => 'Ahmad Fauzan',
             'kelas_id' => $this->classId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        DB::table('siswa_kelas_semester')->insert([
+            'siswa_id' => $this->studentId,
+            'kelas_id' => $this->classId,
+            'tahun_ajaran_id' => $this->activeYearId,
+            'semester' => 1,
             'created_at' => now(),
             'updated_at' => now(),
         ]);

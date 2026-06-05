@@ -7,6 +7,7 @@ use App\Traits\RequiresTahunAjaran;
 use App\Models\ReportTemplate;
 use App\Models\ReportPlaceholder;
 use App\Models\Siswa;
+use App\Models\Kelas;
 use App\Models\MataPelajaran;
 use App\Models\Notification;
 use App\Services\RaporTemplateProcessor;
@@ -20,6 +21,7 @@ use App\Models\ReportGeneration;
 use App\Models\TahunAjaran;
 use App\Jobs\GeneratePdfReportJob;
 use App\Services\PdfCacheService;
+use App\Services\SiswaKelasSemesterResolver;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\URL;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
@@ -265,13 +267,18 @@ class ReportController extends Controller
         $tahunAjaran = TahunAjaran::find($tahunAjaranId);
         $semester = $tahunAjaran ? $tahunAjaran->semester : 1;
 
-        $siswa = Siswa::with([
-                'kelas.mataPelajarans' => function ($query) use ($tahunAjaranId, $semester) {
+        $kelasModel = Kelas::with([
+                'mataPelajarans' => function ($query) use ($tahunAjaranId, $semester) {
                     $query->where('semester', $semester)
                         ->when($tahunAjaranId, function ($subQuery) use ($tahunAjaranId) {
                             return $subQuery->where('tahun_ajaran_id', $tahunAjaranId);
                         });
                 },
+            ])->find($kelas->id);
+
+        $siswa = app(SiswaKelasSemesterResolver::class)
+            ->studentQueryForClass((int) $kelas->id, (int) $tahunAjaranId, (int) $semester, true)
+            ->with([
                 'nilais' => function ($query) use ($tahunAjaranId, $semester) {
                     $query->where('tahun_ajaran_id', $tahunAjaranId)
                         ->whereHas('mataPelajaran', function ($subQuery) use ($semester) {
@@ -285,9 +292,14 @@ class ReportController extends Controller
                         ->where('tahun_ajaran_id', $tahunAjaranId);
                 },
             ])
-            ->where('kelas_id', $kelas->id)
             ->orderBy('nama')
             ->get();
+
+        $siswa->each(function (Siswa $student) use ($kelasModel) {
+            if ($kelasModel) {
+                $student->setRelation('kelas', $kelasModel);
+            }
+        });
         
         $diagnosisResults = [];
         foreach ($siswa as $s) {
@@ -1211,11 +1223,13 @@ class ReportController extends Controller
     private function authorizeWaliRaporAccess(Siswa $siswa, int $tahunAjaranId): void
     {
         $guru = auth()->guard('guru')->user();
+        $tahunAjaran = TahunAjaran::find($tahunAjaranId);
 
         abort_unless(
             $guru &&
+            $tahunAjaran &&
             session('selected_role') === 'wali_kelas' &&
-            $siswa->isInKelasWali($guru->id, $tahunAjaranId),
+            $siswa->isInKelasWali($guru->id, $tahunAjaranId, (int) $tahunAjaran->semester),
             403
         );
     }
@@ -2228,7 +2242,7 @@ class ReportController extends Controller
 
     public function indexWaliKelas()
     {
-        $guru = auth()->user();
+        $guru = auth()->guard('guru')->user();
         $tahunAjaranId = session('tahun_ajaran_id');
         
         // Ambil data tahun ajaran untuk mendapatkan semester yang benar
@@ -2264,14 +2278,19 @@ class ReportController extends Controller
             return redirect()->back()->with('error', 'Anda tidak menjadi wali kelas untuk tahun ajaran yang dipilih.');
         }
         
-        // Query siswa
-        $siswa = Siswa::with([
-                'kelas.mataPelajarans' => function ($query) use ($tahunAjaranId, $semester) {
+        $kelasModel = Kelas::with([
+                'mataPelajarans' => function ($query) use ($tahunAjaranId, $semester) {
                     $query->where('semester', $semester)
                         ->when($tahunAjaranId, function ($subQuery) use ($tahunAjaranId) {
                             return $subQuery->where('tahun_ajaran_id', $tahunAjaranId);
                         });
                 },
+            ])->find($kelas->id);
+
+        // Query siswa
+        $siswa = app(SiswaKelasSemesterResolver::class)
+            ->studentQueryForClass((int) $kelas->id, (int) $tahunAjaranId, (int) $semester, true)
+            ->with([
                 'nilais' => function ($query) use ($tahunAjaranId, $semester) {
                     $query->where('tahun_ajaran_id', $tahunAjaranId)
                         ->whereHas('mataPelajaran', function ($subQuery) use ($semester) {
@@ -2294,9 +2313,14 @@ class ReportController extends Controller
                         });
                 }
             ])
-            ->where('kelas_id', $kelas->id)
             ->orderBy('nama')
             ->get();
+
+        $siswa->each(function (Siswa $student) use ($kelasModel) {
+            if ($kelasModel) {
+                $student->setRelation('kelas', $kelasModel);
+            }
+        });
 
         $totalMapelCount = MataPelajaran::where('kelas_id', $kelas->id)
             ->whereNull('deleted_at')
@@ -2517,9 +2541,14 @@ class ReportController extends Controller
                 throw new \Exception('Tidak ada siswa yang dipilih');
             }
             
-            // Verifikasi siswa
+            // Verifikasi siswa berdasarkan enrollment semester/tahun ajaran
+            $authorizedStudentIds = app(SiswaKelasSemesterResolver::class)
+                ->studentsForClass((int) $kelas->id, (int) $tahunAjaranId, (int) $currentSemester, true)
+                ->pluck('id')
+                ->all();
+
             $siswaList = Siswa::whereIn('id', $siswaIds)
-                ->where('kelas_id', $kelas->id)
+                ->whereIn('id', $authorizedStudentIds)
                 ->get();
                 
             if ($siswaList->count() !== count($siswaIds)) {

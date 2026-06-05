@@ -289,7 +289,7 @@ class Siswa extends Model
      * @param  int  $guruId
      * @return bool
      */
-    public function isInKelasWali($guruId, ?int $tahunAjaranId = null)
+    public function isInKelasWali($guruId, ?int $tahunAjaranId = null, ?int $semester = null)
     {
         // Log untuk debugging
         \Log::info('Checking isInKelasWali', [
@@ -297,21 +297,70 @@ class Siswa extends Model
             'kelas_id' => $this->kelas_id,
             'guru_id' => $guruId,
             'tahun_ajaran_id' => $tahunAjaranId,
+            'semester' => $semester,
         ]);
 
-        // Cek jika siswa memiliki kelas
-        if (! $this->kelas) {
-            \Log::warning('Siswa tidak memiliki kelas', ['siswa_id' => $this->id]);
+        // Cari guru yang bersangkutan
+        $guru = \App\Models\Guru::find($guruId);
+        if (!$guru) {
+            \Log::warning('Guru tidak ditemukan', ['guru_id' => $guruId]);
 
             return false;
         }
 
-        // Cari guru yang bersangkutan
-        $guru = \App\Models\Guru::find($guruId);
-        if (! $guru) {
-            \Log::warning('Guru tidak ditemukan', ['guru_id' => $guruId]);
+        if ($tahunAjaranId) {
+            $tahunAjaran = \App\Models\TahunAjaran::find($tahunAjaranId);
+            $semester = $semester ?: (int) ($tahunAjaran?->semester);
 
-            return false;
+            if (!$tahunAjaran || !$semester) {
+                \Log::warning('Tahun ajaran atau semester tidak ditemukan saat cek wali kelas', [
+                    'siswa_id' => $this->id,
+                    'guru_id' => $guruId,
+                    'tahun_ajaran_id' => $tahunAjaranId,
+                    'semester' => $semester,
+                ]);
+
+                return false;
+            }
+
+            try {
+                $classContext = app(\App\Services\SiswaKelasSemesterResolver::class)
+                    ->resolveClassContext($this, $tahunAjaranId, $semester, true);
+            } catch (\RuntimeException $exception) {
+                \Log::warning('Konteks kelas siswa ambigu saat cek wali kelas', [
+                    'siswa_id' => $this->id,
+                    'guru_id' => $guruId,
+                    'tahun_ajaran_id' => $tahunAjaranId,
+                    'semester' => $semester,
+                    'error' => $exception->getMessage(),
+                ]);
+
+                return false;
+            }
+
+            if (!$classContext['kelas']) {
+                \Log::warning('Konteks kelas siswa tidak ditemukan saat cek wali kelas', [
+                    'siswa_id' => $this->id,
+                    'guru_id' => $guruId,
+                    'tahun_ajaran_id' => $tahunAjaranId,
+                    'semester' => $semester,
+                    'source' => $classContext['source'],
+                ]);
+
+                return false;
+            }
+
+            $studentClassId = (int) $classContext['kelas']->id;
+            $studentClassSource = $classContext['source'];
+        } else {
+            if (!$this->kelas) {
+                \Log::warning('Siswa tidak memiliki kelas', ['siswa_id' => $this->id]);
+
+                return false;
+            }
+
+            $studentClassId = (int) $this->kelas_id;
+            $studentClassSource = 'legacy_kelas_id_without_context';
         }
 
         // Gunakan method manual yang baru dibuat
@@ -326,12 +375,11 @@ class Siswa extends Model
             ->pluck('guru_kelas.kelas_id');
 
         // Periksa apakah kelas siswa termasuk dalam kelas-kelas yang diwalikan
-        $studentMatchesYear = ! $tahunAjaranId
-            || ($this->kelas && (int) $this->kelas->tahun_ajaran_id === (int) $tahunAjaranId);
-        $result = $studentMatchesYear && $kelasWaliIds->contains($this->kelas_id);
+        $result = $kelasWaliIds->contains($studentClassId);
 
         \Log::info('isInKelasWali result', [
-            'siswa_kelas_id' => $this->kelas_id,
+            'siswa_kelas_id' => $studentClassId,
+            'class_context_source' => $studentClassSource,
             'wali_kelas_ids' => $kelasWaliIds->toArray(),
             'is_match' => $result,
         ]);

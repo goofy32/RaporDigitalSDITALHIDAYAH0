@@ -8,6 +8,8 @@ use App\Imports\StudentImport;
 use Maatwebsite\Excel\Facades\Excel;
 use App\Models\Siswa;
 use App\Models\Kelas;
+use App\Models\TahunAjaran;
+use App\Services\SiswaKelasSemesterResolver;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
@@ -231,7 +233,7 @@ class StudentController extends Controller
         return redirect()->route('student')->with('success', 'Data siswa berhasil dihapus!');
     }
 
-    public function waliKelasIndex(Request $request)
+    public function waliKelasIndex(Request $request, SiswaKelasSemesterResolver $enrollmentResolver)
     {
         $guru = auth()->guard('guru')->user();
         $tahunAjaranId = session('tahun_ajaran_id');
@@ -243,6 +245,13 @@ class StudentController extends Controller
         
         if (!$guru) {
             return redirect()->route('login')->with('error', 'Silakan login terlebih dahulu');
+        }
+
+        $tahunAjaran = $tahunAjaranId ? TahunAjaran::find($tahunAjaranId) : null;
+
+        if (!$tahunAjaran) {
+            return redirect()->route('wali_kelas.dashboard')
+                ->with('error', 'Data tahun ajaran tidak ditemukan.');
         }
         
         // Ambil kelas wali untuk guru ini
@@ -271,8 +280,8 @@ class StudentController extends Controller
                 ->with('error', 'Anda belum ditugaskan sebagai wali kelas untuk tahun ajaran yang dipilih.');
         }
         
-        $query = \App\Models\Siswa::with('kelas')
-            ->where('kelas_id', $kelasWali->kelas_id);
+        $query = $enrollmentResolver
+            ->studentQueryForClass((int) $kelasWali->kelas_id, (int) $tahunAjaranId, (int) $tahunAjaran->semester, true);
         
         \Log::info("Query students for kelas_id: " . $kelasWali->kelas_id);
         
@@ -285,7 +294,14 @@ class StudentController extends Controller
             });
         }
         
-        $students = $query->paginate(10);
+        $students = $query->orderBy('nama')->paginate(10);
+
+        $kelasModel = Kelas::find($kelasWali->kelas_id);
+        $students->getCollection()->each(function (Siswa $student) use ($kelasModel) {
+            if ($kelasModel) {
+                $student->setRelation('kelas', $kelasModel);
+            }
+        });
         
         \Log::info("Students found:", ['count' => $students->count()]);
         

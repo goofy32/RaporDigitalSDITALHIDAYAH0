@@ -14,6 +14,7 @@ use App\Models\LingkupMateri;
 use App\Models\Kkm;
 use App\Models\BobotNilai;
 use App\Models\TahunAjaran;
+use App\Services\SiswaKelasSemesterResolver;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -243,11 +244,15 @@ class ScoreController extends Controller
             ->values();
 
         if ($studentIds->isNotEmpty()) {
-            $authorizedStudentCount = Siswa::whereIn('id', $studentIds)
-                ->where('kelas_id', $mataPelajaran->kelas_id)
-                ->whereHas('kelas', function ($query) use ($tahunAjaranId) {
-                    $query->where('tahun_ajaran_id', $tahunAjaranId);
-                })
+            $semester = (int) ($mataPelajaran->semester ?: $this->currentSemesterForTahunAjaran($tahunAjaranId));
+
+            if (!$mataPelajaran->kelas_id || !$semester) {
+                abort(403);
+            }
+
+            $authorizedStudentCount = app(SiswaKelasSemesterResolver::class)
+                ->studentQueryForClass((int) $mataPelajaran->kelas_id, $tahunAjaranId, $semester, true)
+                ->whereIn('siswas.id', $studentIds)
                 ->count();
 
             if ($authorizedStudentCount !== $studentIds->count()) {
@@ -296,6 +301,30 @@ class ScoreController extends Controller
                 abort(403);
             }
         }
+    }
+
+    private function studentsForSubjectRoster(MataPelajaran $mataPelajaran, int $tahunAjaranId)
+    {
+        $semester = (int) ($mataPelajaran->semester ?: $this->currentSemesterForTahunAjaran($tahunAjaranId));
+
+        if (!$mataPelajaran->kelas_id || !$semester) {
+            return collect();
+        }
+
+        return app(SiswaKelasSemesterResolver::class)
+            ->studentsForClass((int) $mataPelajaran->kelas_id, $tahunAjaranId, $semester, true);
+    }
+
+    private function studentOptionsForRoster($siswas)
+    {
+        return $siswas->sortBy('nama')
+            ->values()
+            ->map(function ($siswa) {
+                return [
+                    'id' => $siswa->id,
+                    'name' => $siswa->nama,
+                ];
+            });
     }
 
     public function index()
@@ -639,9 +668,7 @@ class ScoreController extends Controller
             }
 
             $mataPelajaran->load([
-                'kelas.siswas' => function($query) {
-                    $query->orderBy('nama', 'asc');
-                },
+                'kelas',
                 'lingkupMateris.tujuanPembelajarans',
             ]);
 
@@ -663,21 +690,9 @@ class ScoreController extends Controller
                 'class' => $mataPelajaran->kelas->nomor_kelas . ' ' . $mataPelajaran->kelas->nama_kelas
             ];
 
-            // Filter siswa berdasarkan tahun ajaran yang aktif
-            $siswas = $mataPelajaran->kelas->siswas;
-            
-            if ($tahunAjaranId) {
-                $siswas = $siswas->filter(function($siswa) use ($tahunAjaranId) {
-                    return $siswa->kelas && $siswa->kelas->tahun_ajaran_id == $tahunAjaranId;
-                });
-            }
-            
-            $students = $siswas->sortBy('nama')->map(function($siswa) {
-                return [
-                    'id' => $siswa->id,
-                    'name' => $siswa->nama
-                ];
-            });
+            // Filter siswa berdasarkan enrollment kelas/tahun ajaran/semester mata pelajaran
+            $siswas = $this->studentsForSubjectRoster($mataPelajaran, $tahunAjaranId);
+            $students = $this->studentOptionsForRoster($siswas);
 
             // Inisialisasi struktur data nilai
             $existingScores = [];
@@ -710,6 +725,10 @@ class ScoreController extends Controller
             
             // Isi struktur data dengan nilai yang ada
             foreach ($existingNilais as $nilai) {
+                if (!isset($existingScores[$nilai->siswa_id])) {
+                    continue;
+                }
+
                 if ($nilai->nilai_tp !== null) {
                     $existingScores[$nilai->siswa_id]['tp'][$nilai->lingkup_materi_id][$nilai->tujuan_pembelajaran_id] = $nilai->nilai_tp;
                 }
@@ -861,13 +880,15 @@ class ScoreController extends Controller
     public function previewScore($id)
     {
         try {
-            $tahunAjaranId = session('tahun_ajaran_id');
+            $tahunAjaranId = $this->getValidTahunAjaranId();
+
+            if (!$tahunAjaranId) {
+                return $this->failTahunAjaranNotSet(request(), false);
+            }
             
             // Load mata pelajaran dengan relasi yang diperlukan
             $mataPelajaran = MataPelajaran::with([
-                'kelas.siswas' => function($query) {
-                    $query->orderBy('nama', 'asc');
-                },
+                'kelas',
                 'lingkupMateris.tujuanPembelajarans',
                 'lingkupMateris.nilais' => function($query) use ($tahunAjaranId) {
                     $query->select(
@@ -903,25 +924,14 @@ class ScoreController extends Controller
                 'tahun_ajaran_mapel' => $mataPelajaran->tahun_ajaran_id,
                 'tahun_ajaran_session' => $tahunAjaranId
             ]);
-            if ($mataPelajaran->guru_id !== $guru->id) {
+            if (!$this->isAuthorizedPengajarSubject($mataPelajaran, $tahunAjaranId)) {
                 return redirect()->route('pengajar.score.index')
                     ->with('error', 'Anda tidak memiliki akses ke mata pelajaran ini');
             }
     
-            // Filter siswa berdasarkan tahun ajaran aktif
-            $students = $mataPelajaran->kelas->siswas
-                ->when($tahunAjaranId, function($collection) use ($tahunAjaranId) {
-                    return $collection->filter(function($siswa) use ($tahunAjaranId) {
-                        return $siswa->kelas && $siswa->kelas->tahun_ajaran_id == $tahunAjaranId;
-                    });
-                })
-                ->sortBy('nama')
-                ->map(function($siswa) {
-                    return [
-                        'id' => $siswa->id,
-                        'name' => $siswa->nama
-                    ];
-                });
+            // Filter siswa berdasarkan enrollment kelas/tahun ajaran/semester mata pelajaran
+            $siswas = $this->studentsForSubjectRoster($mataPelajaran, $tahunAjaranId);
+            $students = $this->studentOptionsForRoster($siswas);
             
             // Inisialisasi struktur data nilai
             $existingScores = [];

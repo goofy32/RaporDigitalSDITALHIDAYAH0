@@ -22,6 +22,8 @@ class ReportCardAuthorizationTest extends TestCase
 
     private int $activeYearId;
 
+    private int $oldYearId;
+
     private int $currentClassId;
 
     private int $otherClassId;
@@ -81,6 +83,59 @@ class ReportCardAuthorizationTest extends TestCase
                 'siswa' => $this->oldYearStudentId,
                 'tahun_ajaran_id' => $this->activeYearId,
             ]))
+            ->assertForbidden();
+    }
+
+    public function test_enrollment_grants_wali_access_even_when_legacy_student_class_differs(): void
+    {
+        $studentId = $this->insertStudent('1004', 'Enrollment Authorized Student', $this->otherClassId);
+        $this->insertEnrollment($studentId, $this->currentClassId, $this->activeYearId, 1);
+        $this->insertReportData($studentId, $this->currentClassId, $this->activeYearId, $this->wali->id);
+
+        $this->actingAsWali()
+            ->get(route('wali_kelas.rapor.preview', $studentId))
+            ->assertOk()
+            ->assertJsonPath('success', true);
+    }
+
+    public function test_matching_legacy_student_class_still_grants_wali_access_without_enrollment(): void
+    {
+        $studentId = $this->insertStudent('1008', 'Legacy Authorized Student', $this->currentClassId);
+        $this->insertReportData($studentId, $this->currentClassId, $this->activeYearId, $this->wali->id);
+
+        $this->actingAsWali()
+            ->get(route('wali_kelas.rapor.preview', $studentId))
+            ->assertOk()
+            ->assertJsonPath('success', true);
+    }
+
+    public function test_unrelated_legacy_student_class_does_not_grant_wali_access_when_enrollment_differs(): void
+    {
+        $studentId = $this->insertStudent('1005', 'Enrollment Denied Student', $this->currentClassId);
+        $this->insertEnrollment($studentId, $this->otherClassId, $this->activeYearId, 1);
+
+        $this->actingAsWali()
+            ->get(route('wali_kelas.rapor.preview', $studentId))
+            ->assertForbidden();
+    }
+
+    public function test_other_semester_enrollment_does_not_fall_back_to_legacy_student_class(): void
+    {
+        $studentId = $this->insertStudent('1006', 'Genap Only Student', $this->currentClassId);
+        $this->insertEnrollment($studentId, $this->currentClassId, $this->activeYearId, 2);
+
+        $this->actingAsWali()
+            ->get(route('wali_kelas.rapor.preview', $studentId))
+            ->assertForbidden();
+    }
+
+    public function test_other_year_enrollment_does_not_fall_back_to_legacy_student_class(): void
+    {
+        $studentId = $this->insertStudent('1007', 'Old Year Only Student', $this->currentClassId);
+        $this->insertEnrollment($studentId, $this->oldClassId, $this->oldYearId, 1);
+
+        $this->actingAsWali()
+            ->get(route('wali_kelas.rapor.preview', $studentId))
             ->assertForbidden();
     }
 
@@ -258,6 +313,7 @@ class ReportCardAuthorizationTest extends TestCase
             'absensis',
             'nilais',
             'mata_pelajarans',
+            'siswa_kelas_semester',
             'siswas',
             'guru_kelas',
             'kelas',
@@ -336,6 +392,16 @@ class ReportCardAuthorizationTest extends TestCase
             $table->foreignId('kelas_id')->nullable();
             $table->timestamps();
             $table->softDeletes();
+        });
+
+        Schema::create('siswa_kelas_semester', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('siswa_id');
+            $table->foreignId('kelas_id');
+            $table->foreignId('tahun_ajaran_id');
+            $table->tinyInteger('semester');
+            $table->timestamps();
+            $table->unique(['siswa_id', 'tahun_ajaran_id', 'semester']);
         });
 
         Schema::create('mata_pelajarans', function (Blueprint $table) {
@@ -457,7 +523,7 @@ class ReportCardAuthorizationTest extends TestCase
             'updated_at' => now(),
         ]);
 
-        $oldYearId = DB::table('tahun_ajarans')->insertGetId([
+        $this->oldYearId = DB::table('tahun_ajarans')->insertGetId([
             'tahun_ajaran' => '2024/2025',
             'is_active' => false,
             'semester' => 1,
@@ -494,7 +560,7 @@ class ReportCardAuthorizationTest extends TestCase
 
         $this->currentClassId = $this->insertClass(1, 'A', $this->activeYearId, '2025/2026');
         $this->otherClassId = $this->insertClass(1, 'B', $this->activeYearId, '2025/2026');
-        $this->oldClassId = $this->insertClass(1, 'A', $oldYearId, '2024/2025');
+        $this->oldClassId = $this->insertClass(1, 'A', $this->oldYearId, '2024/2025');
 
         $this->attachWali($waliId, $this->currentClassId);
         $this->attachWali($waliId, $this->oldClassId);
@@ -502,6 +568,10 @@ class ReportCardAuthorizationTest extends TestCase
         $this->authorizedStudentId = $this->insertStudent('1001', 'Authorized Student', $this->currentClassId);
         $this->otherClassStudentId = $this->insertStudent('1002', 'Other Class Student', $this->otherClassId);
         $this->oldYearStudentId = $this->insertStudent('1003', 'Old Year Student', $this->oldClassId);
+
+        $this->insertEnrollment($this->authorizedStudentId, $this->currentClassId, $this->activeYearId, 1);
+        $this->insertEnrollment($this->otherClassStudentId, $this->otherClassId, $this->activeYearId, 1);
+        $this->insertEnrollment($this->oldYearStudentId, $this->oldClassId, $this->oldYearId, 1);
 
         $this->insertReportData($this->authorizedStudentId, $this->currentClassId, $this->activeYearId, $waliId);
 
@@ -539,6 +609,18 @@ class ReportCardAuthorizationTest extends TestCase
             'nisn' => $nis.'000',
             'nama' => $name,
             'kelas_id' => $kelasId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function insertEnrollment(int $studentId, int $kelasId, int $yearId, int $semester): void
+    {
+        DB::table('siswa_kelas_semester')->insert([
+            'siswa_id' => $studentId,
+            'kelas_id' => $kelasId,
+            'tahun_ajaran_id' => $yearId,
+            'semester' => $semester,
             'created_at' => now(),
             'updated_at' => now(),
         ]);

@@ -6,7 +6,9 @@ use App\Models\Kelas;
 use App\Models\Siswa;
 use App\Models\SiswaKelasSemester;
 use App\Models\TahunAjaran;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
+use Illuminate\Support\Facades\Log;
 use RuntimeException;
 
 class SiswaKelasSemesterResolver
@@ -53,6 +55,15 @@ class SiswaKelasSemesterResolver
             $legacyClass = $this->resolveLegacyClass($siswa, $tahunAjaranId, $semester);
 
             if ($legacyClass) {
+                $studentId = $siswa instanceof Siswa ? $siswa->id : $siswa;
+
+                Log::info('Using legacy siswa.kelas_id class context fallback', [
+                    'siswa_id' => $studentId,
+                    'kelas_id' => $legacyClass->id,
+                    'tahun_ajaran_id' => $tahunAjaranId,
+                    'semester' => $semester,
+                ]);
+
                 return [
                     'source' => 'legacy_kelas_id',
                     'enrollment' => null,
@@ -132,24 +143,43 @@ class SiswaKelasSemesterResolver
         int $semester,
         bool $includeLegacyFallback = false
     ): EloquentCollection {
-        $query = Siswa::query()
-            ->whereHas('semesterEnrollments', function ($query) use ($kelasId, $tahunAjaranId, $semester) {
-                $query->where('kelas_id', $kelasId)
-                    ->where('tahun_ajaran_id', $tahunAjaranId)
-                    ->where('semester', $semester);
-            });
+        return $this->studentQueryForClass($kelasId, $tahunAjaranId, $semester, $includeLegacyFallback)
+            ->orderBy('nama')
+            ->get();
+    }
 
-        if ($includeLegacyFallback && $this->classMatchesContext($kelasId, $tahunAjaranId, $semester)) {
-            $query->orWhere(function ($query) use ($kelasId, $tahunAjaranId, $semester) {
-                $query->where('kelas_id', $kelasId)
-                    ->whereDoesntHave('semesterEnrollments', function ($query) use ($tahunAjaranId, $semester) {
-                        $query->where('tahun_ajaran_id', $tahunAjaranId)
-                            ->where('semester', $semester);
-                    });
-            });
+    public function studentQueryForClass(
+        int $kelasId,
+        int $tahunAjaranId,
+        int $semester,
+        bool $includeLegacyFallback = false
+    ): Builder {
+        $canUseLegacyFallback = $includeLegacyFallback
+            && $this->classMatchesContext($kelasId, $tahunAjaranId, $semester);
+
+        if ($canUseLegacyFallback) {
+            Log::info('Student roster legacy siswa.kelas_id fallback enabled', [
+                'kelas_id' => $kelasId,
+                'tahun_ajaran_id' => $tahunAjaranId,
+                'semester' => $semester,
+            ]);
         }
 
-        return $query->orderBy('nama')->get();
+        return Siswa::query()
+            ->where(function ($query) use ($kelasId, $tahunAjaranId, $semester, $canUseLegacyFallback) {
+                $query->whereHas('semesterEnrollments', function ($query) use ($kelasId, $tahunAjaranId, $semester) {
+                    $query->where('kelas_id', $kelasId)
+                        ->where('tahun_ajaran_id', $tahunAjaranId)
+                        ->where('semester', $semester);
+                });
+
+                if ($canUseLegacyFallback) {
+                    $query->orWhere(function ($query) use ($kelasId) {
+                        $query->where('kelas_id', $kelasId)
+                            ->whereDoesntHave('semesterEnrollments');
+                    });
+                }
+            });
     }
 
     private function resolveLegacyClass(int|Siswa $siswa, int $tahunAjaranId, int $semester): ?Kelas
@@ -157,6 +187,10 @@ class SiswaKelasSemesterResolver
         $student = $siswa instanceof Siswa ? $siswa : Siswa::find($siswa);
 
         if (! $student || ! $student->kelas_id) {
+            return null;
+        }
+
+        if ($student->semesterEnrollments()->exists()) {
             return null;
         }
 

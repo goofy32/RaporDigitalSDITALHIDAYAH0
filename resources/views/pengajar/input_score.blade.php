@@ -121,10 +121,6 @@
                     </tr>
                 </thead>
 
-                @php
-                $siswas = $mataPelajaran->kelas->siswas()->orderBy('nama', 'asc')->get();
-                @endphp
-
                 <tbody>
                     @foreach($students as $index => $student)
                         @php
