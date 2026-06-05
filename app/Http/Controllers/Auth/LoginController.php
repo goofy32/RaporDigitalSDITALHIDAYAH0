@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Auth;
 use App\Models\Guru;
 use Illuminate\Support\Facades\Hash;
 use App\Models\User;
+use App\Models\TahunAjaran;
 use App\Services\AuditService;
 
 class LoginController extends Controller
@@ -39,14 +40,16 @@ class LoginController extends Controller
         if ($guru && Hash::check($password, $guru->password)) {
             Auth::guard('guru')->login($guru);
 
+            $selectedRole = $this->defaultGuruRole($guru);
+
             session([
-                'selected_role' => 'pengajar',
+                'selected_role' => $selectedRole,
                 'last_activity' => time(),
             ]);
 
             AuditService::logLogin('success', $identifier);
 
-            return redirect()->route('pengajar.dashboard');
+            return redirect()->route($this->dashboardRouteForRole($selectedRole));
         }
     
         // Log failed login attempt
@@ -65,23 +68,60 @@ class LoginController extends Controller
             return redirect()->route('login');
         }
 
-        if (!in_array($role, ['pengajar', 'wali_kelas'])) {
-            return redirect()->back()
-                ->with('error', 'Role tidak valid.');
+        if (!in_array($role, ['pengajar', 'wali_kelas'], true)) {
+            abort(403);
         }
 
-        if ($role === 'wali_kelas' && !$guru->isWaliKelas()) {
-            return redirect()->back()
-                ->with('error', 'Anda bukan wali kelas.');
+        if (!in_array($role, $this->availableGuruRoles($guru), true)) {
+            abort(403);
         }
 
         session(['selected_role' => $role]);
 
-        if ($role === 'wali_kelas') {
-            return redirect()->route('wali_kelas.dashboard');
+        return redirect()->route($this->dashboardRouteForRole($role));
+    }
+
+    private function defaultGuruRole(Guru $guru): string
+    {
+        $roles = $this->availableGuruRoles($guru);
+
+        if (in_array('pengajar', $roles, true)) {
+            return 'pengajar';
         }
 
-        return redirect()->route('pengajar.dashboard');
+        if (in_array('wali_kelas', $roles, true)) {
+            return 'wali_kelas';
+        }
+
+        return 'pengajar';
+    }
+
+    private function availableGuruRoles(Guru $guru): array
+    {
+        $tahunAjaran = $this->currentTahunAjaran();
+
+        return $guru->availableRoles(
+            $tahunAjaran?->id,
+            $tahunAjaran?->semester
+        );
+    }
+
+    private function currentTahunAjaran(): ?TahunAjaran
+    {
+        $tahunAjaranId = session('tahun_ajaran_id');
+
+        if ($tahunAjaranId) {
+            return TahunAjaran::find($tahunAjaranId);
+        }
+
+        return TahunAjaran::where('is_active', true)->first();
+    }
+
+    private function dashboardRouteForRole(string $role): string
+    {
+        return $role === 'wali_kelas'
+            ? 'wali_kelas.dashboard'
+            : 'pengajar.dashboard';
     }
 
     public function logout(Request $request)

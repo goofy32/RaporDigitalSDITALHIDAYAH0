@@ -23,6 +23,7 @@
 @endpush
 
 @php
+    $pdfAvailable = $pdfAvailable ?? false;
     $readyCount = collect($siswa)->filter(function ($student) use ($nilaiCounts) {
         return ($nilaiCounts[$student->id] ?? 0) > 0 && !is_null($student->absensi);
     })->count();
@@ -68,6 +69,13 @@
                 Manajemen Rapor Kelas {{ auth()->user()->kelasWali->nama_kelas ?? 'N/A' }}
             </h2>
         </div>
+
+        @if(!$pdfAvailable)
+            <div class="mb-6 rounded-lg border border-yellow-300 bg-yellow-50 p-4 text-sm text-yellow-800">
+                <p class="font-semibold">PDF belum tersedia di perangkat ini.</p>
+                <p class="mt-1">LibreOffice tidak terdeteksi, sehingga preview dan unduh PDF dinonaktifkan. Unduh DOCX dan cetak HTML tetap dapat digunakan.</p>
+            </div>
+        @endif
 
         <!-- Tabs -->
         <div class="mb-6">
@@ -256,24 +264,26 @@
                                 
                                 <!-- Preview PDF Button -->
                                 <button @click="handlePreviewPdf({{ $s->id }}, {{ $nilaiCounts[$s->id] ?? 0 }}, {{ $s->absensi ? 'true' : 'false' }})"
-                                        :disabled="!{{ $nilaiCounts[$s->id] ?? 0 }} || !{{ $s->absensi ? 'true' : 'false' }} || loading"
-                                        :class="{ 
-                                            'opacity-50 cursor-not-allowed': !{{ $nilaiCounts[$s->id] ?? 0 }} || !{{ $s->absensi ? 'true' : 'false' }} || loading, 
-                                            'text-purple-600 hover:text-purple-900': {{ $nilaiCounts[$s->id] ?? 0 }} && {{ $s->absensi ? 'true' : 'false' }} && !loading 
+                                        @disabled(!$pdfAvailable)
+                                        :disabled="!{{ $pdfAvailable ? 'true' : 'false' }} || !{{ $nilaiCounts[$s->id] ?? 0 }} || !{{ $s->absensi ? 'true' : 'false' }} || loading"
+                                        :class="{
+                                            'opacity-50 cursor-not-allowed': !{{ $pdfAvailable ? 'true' : 'false' }} || !{{ $nilaiCounts[$s->id] ?? 0 }} || !{{ $s->absensi ? 'true' : 'false' }} || loading,
+                                            'text-purple-600 hover:text-purple-900': {{ $pdfAvailable ? 'true' : 'false' }} && {{ $nilaiCounts[$s->id] ?? 0 }} && {{ $s->absensi ? 'true' : 'false' }} && !loading
                                         }"
                                         class="transition-colors"
-                                        title="Preview PDF">
+                                        title="{{ $pdfAvailable ? 'Preview PDF' : 'PDF belum tersedia karena LibreOffice tidak terdeteksi' }}">
                                     <img src="{{ asset('images/icons/detail.png') }}" alt="Preview" class="action-icon">
                                 </button>
 
                                 <button @click="handleDownloadPdf({{ $s->id }}, {{ $nilaiCounts[$s->id] ?? 0 }}, {{ $s->absensi ? 'true' : 'false' }}, '{{ $s->nama }}')"
-                                        :disabled="!{{ $nilaiCounts[$s->id] ?? 0 }} || !{{ $s->absensi ? 'true' : 'false' }} || loading"
-                                        :class="{ 
-                                            'opacity-50 cursor-not-allowed': !{{ $nilaiCounts[$s->id] ?? 0 }} || !{{ $s->absensi ? 'true' : 'false' }} || loading, 
-                                            'text-red-600 hover:text-red-900': {{ $nilaiCounts[$s->id] ?? 0 }} && {{ $s->absensi ? 'true' : 'false' }} && !loading 
+                                        @disabled(!$pdfAvailable)
+                                        :disabled="!{{ $pdfAvailable ? 'true' : 'false' }} || !{{ $nilaiCounts[$s->id] ?? 0 }} || !{{ $s->absensi ? 'true' : 'false' }} || loading"
+                                        :class="{
+                                            'opacity-50 cursor-not-allowed': !{{ $pdfAvailable ? 'true' : 'false' }} || !{{ $nilaiCounts[$s->id] ?? 0 }} || !{{ $s->absensi ? 'true' : 'false' }} || loading,
+                                            'text-red-600 hover:text-red-900': {{ $pdfAvailable ? 'true' : 'false' }} && {{ $nilaiCounts[$s->id] ?? 0 }} && {{ $s->absensi ? 'true' : 'false' }} && !loading
                                         }"
                                         class="transition-colors"
-                                        title="Unduh Rapor PDF">
+                                        title="{{ $pdfAvailable ? 'Unduh Rapor PDF' : 'PDF belum tersedia karena LibreOffice tidak terdeteksi' }}">
                                     <template x-if="loadingPdf === {{ $s->id }}">
                                         <svg class="action-icon animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>

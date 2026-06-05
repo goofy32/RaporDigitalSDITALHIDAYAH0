@@ -28,6 +28,8 @@
        }"
        x-init="initImages">
     <div class="h-full px-3 pb-4 overflow-y-auto">
+        <x-guru.role-switcher />
+
         <ul class="space-y-2 font-medium">
             <!-- Dashboard -->
             <li>

@@ -571,15 +571,21 @@ Route::prefix('rapor-html')->name('rapor_html.')->group(function () {
     Route::get('/', [ReportController::class, 'indexPrintRapor'])->name('index');
     
     // Halaman cetak rapor HTML untuk siswa tertentu
-    Route::get('/print/{siswa}', [ReportController::class, 'printRaporHtml'])->name('print');
+    Route::get('/print/{siswa}', [ReportController::class, 'printRaporHtml'])
+        ->middleware('check.rapor.access')
+        ->name('print');
     
     // Route alternatif dengan nama yang lebih jelas
-    Route::get('/cetak/{siswa}', [ReportController::class, 'printRaporHtml'])->name('cetak');
+    Route::get('/cetak/{siswa}', [ReportController::class, 'printRaporHtml'])
+        ->middleware('check.rapor.access')
+        ->name('cetak');
 });
 
 // Alternative routes for rapor HTML
 Route::get('/cetak-rapor', [ReportController::class, 'indexPrintRapor'])->name('rapor.print_index');
-Route::get('/cetak-rapor/{siswa}', [ReportController::class, 'printRaporHtml'])->name('rapor.print_html');
+Route::get('/cetak-rapor/{siswa}', [ReportController::class, 'printRaporHtml'])
+    ->middleware('check.rapor.access')
+    ->name('rapor.print_html');
 
 Route::prefix('gemini')->name('gemini.')->middleware('throttle:20,1')->group(function () {
     Route::post('/send-message', [GeminiChatController::class, 'sendMessage'])->name('send');
@@ -590,15 +596,16 @@ Route::prefix('gemini')->name('gemini.')->middleware('throttle:20,1')->group(fun
 
 Route::prefix('capaian-kompetensi')->name('capaian_kompetensi.')->group(function () {
     Route::get('/', [CapaianKompetensiController::class, 'waliKelasIndex'])->name('index');
-    Route::get('/{mataPelajaran}/edit', [CapaianKompetensiController::class, 'waliKelasEdit'])->name('edit');
-    Route::put('/{mataPelajaran}', [CapaianKompetensiController::class, 'waliKelasUpdate'])->name('update');
-    
+
     // Route baru untuk range templates
-    Route::get('/range-templates', [CapaianKompetensiController::class, 'rangeTemplates'])->name('range_templates');
+    Route::get('/range-templates', [CapaianRangeTemplateController::class, 'index'])->name('range_templates');
     Route::put('/range-templates', [CapaianRangeTemplateController::class, 'update'])->name('range_templates.update');
     Route::post('/range-templates', [CapaianRangeTemplateController::class, 'store'])->name('range_templates.store');
     Route::delete('/range-templates/{id}', [CapaianRangeTemplateController::class, 'destroy'])->name('range_templates.destroy');
     Route::post('/range-templates/reset', [CapaianRangeTemplateController::class, 'resetToDefault'])->name('range_templates.reset');
+
+    Route::get('/{mataPelajaran}/edit', [CapaianKompetensiController::class, 'waliKelasEdit'])->name('edit');
+    Route::put('/{mataPelajaran}', [CapaianKompetensiController::class, 'waliKelasUpdate'])->name('update');
 });
 
 Route::prefix('catatan')->name('catatan.')->group(function () {
@@ -721,18 +728,32 @@ Route::prefix('rapor')->name('rapor.')->group(function () {
     });
 
     Route::middleware('check.rapor.access')->group(function () {
-        Route::get('/download/{siswa}/{type}', [ReportController::class, 'downloadReport'])->name('download');
+        Route::get('/download/{siswa}/{type}', function () {
+            if (request()->wantsJson()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unduh DOCX tersedia melalui tombol generate rapor pada halaman Rapor.',
+                ], 404);
+            }
+
+            return redirect()->route('wali_kelas.rapor.index')
+                ->with('error', 'Unduh DOCX tersedia melalui tombol generate rapor pada halaman Rapor.');
+        })->name('download');
     });
 
-    Route::get('/preview/{siswa}', [ReportController::class, 'previewRapor'])->name('preview');
+    Route::get('/preview/{siswa}', [ReportController::class, 'previewRapor'])
+        ->middleware('check.rapor.access')
+        ->name('preview');
     Route::get('/check-templates', [ReportController::class, 'checkActiveTemplates'])->name('check-templates');
     Route::post('/batch-generate', [ReportController::class, 'generateBatchReport'])
         ->middleware('throttle:60,1')
         ->name('batch.generate');
     
-    Route::delete('/clear-cache/{siswa}', [ReportController::class, 'clearPdfCache'])->name('clear-cache');
+    Route::delete('/clear-cache/{siswa}', [ReportController::class, 'clearPdfCache'])
+        ->middleware('check.rapor.access')
+        ->name('clear-cache');
     Route::post('/request-pdf/{siswa}', [ReportController::class, 'requestPdf'])
-        ->middleware('throttle:60,1')
+        ->middleware(['check.rapor.access', 'throttle:60,1'])
         ->name('request-pdf');
     Route::get('/pdf-progress/{requestId}', [ReportController::class, 'checkPdfProgress'])->name('pdf-progress');
     Route::get('/secure-file', [ReportController::class, 'downloadSecureFile'])->name('secure-file');
@@ -744,14 +765,24 @@ Route::prefix('rapor')->name('rapor.')->group(function () {
     })->name('cache-stats');
 
     // PDF Routes with middleware
-    Route::middleware(['check.rapor.access', 'throttle:60,1'])->group(function () {
+    Route::middleware(['check.rapor.access', 'check.libreoffice', 'throttle:60,1'])->group(function () {
         Route::get('/preview-pdf/{siswa}', [ReportController::class, 'previewPdf'])->name('preview-pdf');
         Route::get('/download-pdf/{siswa}', [ReportController::class, 'downloadPdf'])->name('download-pdf');
-        Route::post('/generate-pdf/{siswa}', [ReportController::class, 'generatePdfDirect'])->name('generate-pdf');
+        Route::post('/generate-pdf/{siswa}', function () {
+            return response()->json([
+                'success' => false,
+                'message' => 'Generate PDF langsung belum tersedia. Gunakan preview atau unduh PDF per siswa.',
+            ], 404);
+        })->name('generate-pdf');
     });
     
     // Batch PDF Route
-    Route::post('/batch-generate-pdf', [ReportController::class, 'generateBatchPdf'])
+    Route::post('/batch-generate-pdf', function () {
+        return response()->json([
+            'success' => false,
+            'message' => 'Batch PDF belum tersedia untuk demo. Gunakan unduh PDF per siswa.',
+        ], 503);
+    })
         ->middleware('throttle:10,1')
         ->name('batch.generate-pdf');
     

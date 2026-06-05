@@ -76,30 +76,31 @@
                 @enderror
             </div>
 
-            <!-- Muatan Lokal Checkbox -->
-            <div class="mb-4 muatan-lokal-options">
-                <div class="flex items-center">
-                    <input id="is_muatan_lokal" name="is_muatan_lokal" type="checkbox" 
-                        class="h-4 w-4 text-green-600 focus:ring-green-500 border-gray-300 rounded muatan-lokal-checkbox"
-                        {{ old('is_muatan_lokal', $subject->is_muatan_lokal) ? 'checked' : '' }}>
-                    <label for="is_muatan_lokal" class="ml-2 block text-sm text-gray-900">
-                        <span class="font-medium">Pelajaran Muatan Lokal</span>
-                    </label>
-                </div>
-                <p class="mt-1 text-xs text-gray-500">Pelajaran ini hanya dapat diajar oleh guru mapel (bukan wali kelas)</p>
-            </div>
+            @php
+                $teachingType = old('teaching_type');
+                if (! $teachingType) {
+                    $teachingType = $subject->is_muatan_lokal ? 'muatan_lokal' : ($subject->allow_non_wali ? 'specialist' : 'regular');
+                }
+            @endphp
 
-            <!-- Opsi Non-muatan lokal dengan guru bukan wali kelas -->
-            <div class="mb-4 non-muatan-lokal-options" style="{{ $subject->is_muatan_lokal ? 'display: none;' : '' }}">
-                <div class="flex items-center">
-                    <input id="allow_non_wali" name="allow_non_wali" type="checkbox" 
-                        class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded allow-non-wali-checkbox"
-                        {{ old('allow_non_wali', $subject->allow_non_wali) ? 'checked' : '' }}>
-                    <label for="allow_non_wali" class="ml-2 block text-sm text-gray-900">
-                        <span class="font-medium">Pelajaran Wajib - Guru Mapel</span>
-                    </label>
-                </div>
-                <p class="mt-1 text-xs text-gray-500">Pelajaran wajib ini akan diajar oleh guru mapel, bukan wali kelas</p>
+            <div>
+                <label for="teaching_type" class="block mb-2 text-sm font-medium text-gray-900">Jenis Pengajaran</label>
+                <select id="teaching_type" name="teaching_type"
+                    class="subject-type-select block w-full p-2.5 bg-gray-50 border border-gray-300 rounded-lg focus:ring-green-500 focus:border-green-500"
+                    onchange="handleTeachingTypeChange(this)">
+                    <option value="regular" {{ $teachingType === 'regular' ? 'selected' : '' }}>Regular Mandatory - diajar wali kelas</option>
+                    <option value="muatan_lokal" {{ $teachingType === 'muatan_lokal' ? 'selected' : '' }}>Muatan Lokal - diajar guru non-wali</option>
+                    <option value="specialist" {{ $teachingType === 'specialist' ? 'selected' : '' }}>Mandatory Specialist - diajar guru non-wali</option>
+                </select>
+                <p class="mt-1 text-xs text-gray-500">Guru yang tidak memenuhi aturan akan ditolak oleh sistem saat disimpan.</p>
+                <input id="is_muatan_lokal" name="is_muatan_lokal" type="checkbox"
+                    class="hidden muatan-lokal-checkbox"
+                    {{ $teachingType === 'muatan_lokal' ? 'checked' : '' }}
+                    aria-hidden="true" tabindex="-1">
+                <input id="allow_non_wali" name="allow_non_wali" type="checkbox"
+                    class="hidden allow-non-wali-checkbox"
+                    {{ $teachingType === 'specialist' ? 'checked' : '' }}
+                    aria-hidden="true" tabindex="-1">
             </div>
 
             <!-- Kelas Dropdown -->
@@ -142,8 +143,13 @@
                     class="block w-full p-2.5 bg-gray-50 border border-gray-300 rounded-lg focus:ring-green-500 focus:border-green-500 guru-select @error('guru_pengampu') border-red-500 @enderror">
                     <option value="">Pilih Guru</option>
                     @foreach($teachers as $teacher)
-                    <option value="{{ $teacher->id }}" 
-                        data-jabatan="{{ $teacher->jabatan }}" 
+                    @php
+                        $activeWaliClassIds = $teacherWaliClassIds[$teacher->id] ?? [];
+                    @endphp
+                    <option value="{{ $teacher->id }}"
+                        data-jabatan="{{ $teacher->jabatan }}"
+                        data-is-active-wali="{{ count($activeWaliClassIds) > 0 ? 'true' : 'false' }}"
+                        data-wali-kelas-ids="{{ implode(',', $activeWaliClassIds) }}"
                         {{ old('guru_pengampu', $subject->guru_id) == $teacher->id ? 'selected' : '' }}>
                         {{ $teacher->nama }} ({{ $teacher->jabatan == 'guru_wali' ? 'Wali Kelas' : 'Guru' }})
                     </option>

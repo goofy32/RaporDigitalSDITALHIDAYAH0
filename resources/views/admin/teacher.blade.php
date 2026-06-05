@@ -72,7 +72,7 @@
                     <th class="px-6 py-3">No Handphone</th>
                     <th class="px-6 py-3">Alamat</th>
                     <th class="px-6 py-3">Jabatan</th>
-                    <th class="px-6 py-3">Kelas Mengajar</th>
+                    <th class="px-6 py-3">Tanggung Jawab</th>
                     <th class="px-6 py-3">Aksi</th>
                 </tr>
             </thead>
@@ -96,13 +96,28 @@
                     </td>
                     <td class="px-6 py-4">
                         @php
-                            // Ambil semua kelas terkait guru (baik sebagai pengajar maupun wali kelas)
-                            $kelasAll = $teacher->kelas->map(function($kelas) {
-                                $roleInfo = $kelas->pivot->is_wali_kelas ? ' (Wali Kelas)' : '';
-                                return "Kelas {$kelas->nomor_kelas} {$kelas->nama_kelas}{$roleInfo}";
-                            })->join(', ');
+                            $waliLabels = $teacher->kelas
+                                ->filter(fn ($kelas) => $kelas->pivot->is_wali_kelas || $kelas->pivot->role === 'wali_kelas')
+                                ->map(fn ($kelas) => "{$kelas->nomor_kelas}{$kelas->nama_kelas}")
+                                ->unique()
+                                ->values();
+
+                            $mengajarLabels = $teacher->mataPelajarans
+                                ->filter(fn ($subject) => $subject->kelas)
+                                ->map(fn ($subject) => "{$subject->nama_pelajaran} - {$subject->kelas->nomor_kelas}{$subject->kelas->nama_kelas}")
+                                ->unique()
+                                ->values();
                         @endphp
-                        {{ $kelasAll ?: '-' }}
+                        <div class="min-w-52 space-y-1 text-gray-700">
+                            <div>
+                                <span class="font-medium text-gray-900">Wali Kelas:</span>
+                                <span>{{ $waliLabels->isNotEmpty() ? $waliLabels->join(', ') : '-' }}</span>
+                            </div>
+                            <div>
+                                <span class="font-medium text-gray-900">Mengajar:</span>
+                                <span>{{ $mengajarLabels->isNotEmpty() ? $mengajarLabels->join(', ') : '-' }}</span>
+                            </div>
+                        </div>
                     </td>
                     <td class="px-1 py-4">
                         <div class="flex space-x-2">

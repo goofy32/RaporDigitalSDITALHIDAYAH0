@@ -61,6 +61,66 @@ class Guru extends Authenticatable
         return $this->kelasWali()->exists();
     }
 
+    public function hasWaliKelasAssignment(?int $tahunAjaranId = null): bool
+    {
+        return DB::table('guru_kelas')
+            ->join('kelas', 'guru_kelas.kelas_id', '=', 'kelas.id')
+            ->where('guru_kelas.guru_id', $this->id)
+            ->where('guru_kelas.is_wali_kelas', true)
+            ->where('guru_kelas.role', 'wali_kelas')
+            ->whereNull('kelas.deleted_at')
+            ->when($tahunAjaranId, function ($query) use ($tahunAjaranId) {
+                $query->where('kelas.tahun_ajaran_id', $tahunAjaranId);
+            })
+            ->exists();
+    }
+
+    public function hasPengajarAssignment(?int $tahunAjaranId = null, ?int $semester = null): bool
+    {
+        $hasClassAssignment = DB::table('guru_kelas')
+            ->join('kelas', 'guru_kelas.kelas_id', '=', 'kelas.id')
+            ->where('guru_kelas.guru_id', $this->id)
+            ->where('guru_kelas.role', 'pengajar')
+            ->whereNull('kelas.deleted_at')
+            ->when($tahunAjaranId, function ($query) use ($tahunAjaranId) {
+                $query->where('kelas.tahun_ajaran_id', $tahunAjaranId);
+            })
+            ->exists();
+
+        if ($hasClassAssignment) {
+            return true;
+        }
+
+        return DB::table('mata_pelajarans')
+            ->join('kelas', 'mata_pelajarans.kelas_id', '=', 'kelas.id')
+            ->where('mata_pelajarans.guru_id', $this->id)
+            ->whereNull('mata_pelajarans.deleted_at')
+            ->whereNull('kelas.deleted_at')
+            ->when($tahunAjaranId, function ($query) use ($tahunAjaranId) {
+                $query->where('mata_pelajarans.tahun_ajaran_id', $tahunAjaranId)
+                    ->where('kelas.tahun_ajaran_id', $tahunAjaranId);
+            })
+            ->when($semester, function ($query) use ($semester) {
+                $query->where('mata_pelajarans.semester', $semester);
+            })
+            ->exists();
+    }
+
+    public function availableRoles(?int $tahunAjaranId = null, ?int $semester = null): array
+    {
+        $roles = [];
+
+        if ($this->hasPengajarAssignment($tahunAjaranId, $semester)) {
+            $roles[] = 'pengajar';
+        }
+
+        if ($this->hasWaliKelasAssignment($tahunAjaranId)) {
+            $roles[] = 'wali_kelas';
+        }
+
+        return $roles;
+    }
+
     /**
      * Get kelas wali if exists
      */

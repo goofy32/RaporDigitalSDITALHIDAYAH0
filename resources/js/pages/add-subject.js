@@ -78,7 +78,7 @@ function resetEntryFields(entry, index) {
         const id = input.getAttribute('id');
         if (id) input.setAttribute('id', id.replace(/_\d+$/, `_${index}`));
 
-        if (input.tagName === 'INPUT' && input.type !== 'checkbox') input.value = '';
+        if (input.tagName === 'INPUT' && !['checkbox', 'radio'].includes(input.type)) input.value = '';
         if (input.tagName === 'SELECT') input.selectedIndex = 0;
         if (input.type === 'checkbox') input.checked = false;
     });
@@ -171,6 +171,29 @@ function handleCheckboxChange(checkbox) {
     const mode = checkbox.classList.contains('muatan-lokal-checkbox')
         ? (checkbox.checked ? 'muatan_lokal' : 'default')
         : (checkbox.checked ? 'guru_mapel' : 'default');
+    const typeSelect = entry.querySelector('.subject-type-select');
+    if (typeSelect) {
+        typeSelect.value = mode === 'muatan_lokal' ? 'muatan_lokal' : (mode === 'guru_mapel' ? 'specialist' : 'regular');
+    }
+
+    initializeSubjectEntry(entry, {
+        mode,
+        resetSelection: true,
+    });
+
+    markSubjectFormChanged();
+}
+
+function handleTeachingTypeChange(select) {
+    const entry = select.closest('.subject-entry');
+    const muatanCheckbox = entry.querySelector('.muatan-lokal-checkbox');
+    const allowNonWaliCheckbox = entry.querySelector('.allow-non-wali-checkbox');
+    const mode = select.value === 'muatan_lokal'
+        ? 'muatan_lokal'
+        : (select.value === 'specialist' ? 'guru_mapel' : 'default');
+
+    if (muatanCheckbox) muatanCheckbox.checked = select.value === 'muatan_lokal';
+    if (allowNonWaliCheckbox) allowNonWaliCheckbox.checked = select.value === 'specialist';
 
     initializeSubjectEntry(entry, {
         mode,
@@ -218,17 +241,21 @@ function populateSubjectEntry(entry, index, subjectData) {
     const guruSelect = entry.querySelector(`select[name="subjects[${index}][guru_pengampu]"]`);
     const muatanCheckbox = entry.querySelector(`input[name="subjects[${index}][is_muatan_lokal]"]`);
     const allowNonWaliCheckbox = entry.querySelector(`input[name="subjects[${index}][allow_non_wali]"]`);
+    const typeSelect = entry.querySelector(`select[name="subjects[${index}][teaching_type]"]`);
+    const teachingType = subjectData?.teaching_type
+        || (subjectData?.is_muatan_lokal ? 'muatan_lokal' : (subjectData?.allow_non_wali ? 'specialist' : 'regular'));
 
     if (mataPelajaranInput) mataPelajaranInput.value = subjectData?.mata_pelajaran || '';
     if (kelasSelect) kelasSelect.value = subjectData?.kelas || '';
     if (guruSelect) guruSelect.value = subjectData?.guru_pengampu || '';
-    if (muatanCheckbox) muatanCheckbox.checked = Boolean(subjectData?.is_muatan_lokal);
-    if (allowNonWaliCheckbox) allowNonWaliCheckbox.checked = Boolean(subjectData?.allow_non_wali);
+    if (typeSelect) typeSelect.value = teachingType;
+    if (muatanCheckbox) muatanCheckbox.checked = teachingType === 'muatan_lokal';
+    if (allowNonWaliCheckbox) allowNonWaliCheckbox.checked = teachingType === 'specialist';
 
     populateLingkupMateri(entry, index, subjectData?.lingkup_materi || []);
 
     initializeSubjectEntry(entry, {
-        mode: subjectData?.is_muatan_lokal ? 'muatan_lokal' : (subjectData?.allow_non_wali ? 'guru_mapel' : 'default'),
+        mode: teachingType === 'muatan_lokal' ? 'muatan_lokal' : (teachingType === 'specialist' ? 'guru_mapel' : 'default'),
         resetSelection: false,
     });
 }
@@ -264,6 +291,7 @@ function registerAddSubjectGlobals() {
     window.addLingkupMateri = addLingkupMateri;
     window.removeLingkupMateri = removeLingkupMateri;
     window.handleCheckboxChange = handleCheckboxChange;
+    window.handleTeachingTypeChange = handleTeachingTypeChange;
     window.updateGuruOptions = updateGuruOptions;
 }
 

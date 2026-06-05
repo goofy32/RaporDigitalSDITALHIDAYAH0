@@ -280,13 +280,14 @@ class Siswa extends Model
      * @param int $guruId
      * @return bool
      */
-    public function isInKelasWali($guruId)
+    public function isInKelasWali($guruId, ?int $tahunAjaranId = null)
     {
         // Log untuk debugging
         \Log::info('Checking isInKelasWali', [
             'siswa_id' => $this->id,
             'kelas_id' => $this->kelas_id,
-            'guru_id' => $guruId
+            'guru_id' => $guruId,
+            'tahun_ajaran_id' => $tahunAjaranId
         ]);
         
         // Cek jika siswa memiliki kelas
@@ -304,13 +305,19 @@ class Siswa extends Model
         
         // Gunakan method manual yang baru dibuat
         $kelasWaliIds = \DB::table('guru_kelas')
-            ->where('guru_id', $guruId)
-            ->where('is_wali_kelas', true)
-            ->where('role', 'wali_kelas')
-            ->pluck('kelas_id');
+            ->join('kelas', 'guru_kelas.kelas_id', '=', 'kelas.id')
+            ->where('guru_kelas.guru_id', $guruId)
+            ->where('guru_kelas.is_wali_kelas', true)
+            ->where('guru_kelas.role', 'wali_kelas')
+            ->when($tahunAjaranId, function ($query) use ($tahunAjaranId) {
+                $query->where('kelas.tahun_ajaran_id', $tahunAjaranId);
+            })
+            ->pluck('guru_kelas.kelas_id');
         
         // Periksa apakah kelas siswa termasuk dalam kelas-kelas yang diwalikan
-        $result = $kelasWaliIds->contains($this->kelas_id);
+        $studentMatchesYear = !$tahunAjaranId
+            || ($this->kelas && (int) $this->kelas->tahun_ajaran_id === (int) $tahunAjaranId);
+        $result = $studentMatchesYear && $kelasWaliIds->contains($this->kelas_id);
         
         \Log::info('isInKelasWali result', [
             'siswa_kelas_id' => $this->kelas_id,

@@ -2353,7 +2353,8 @@ class ReportController extends Controller
             'type' => $type, // Kirim ke view
             'semester' => $semester, // Kirim ke view
             'tahunAjaran' => $tahunAjaran,
-            'kelas' => $kelas
+            'kelas' => $kelas,
+            'pdfAvailable' => app(\App\Services\DocumentConversionService::class)->isLibreOfficeAvailable(),
         ]);
     }
 

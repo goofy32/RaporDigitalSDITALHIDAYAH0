@@ -13,6 +13,7 @@ use App\Models\TujuanPembelajaran;
 use App\Models\LingkupMateri;
 use App\Models\Kkm;
 use App\Models\BobotNilai;
+use App\Models\TahunAjaran;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -190,6 +191,113 @@ class ScoreController extends Controller
         event(new NotificationCreated($notification));
     }
 
+    private function currentSemesterForTahunAjaran(int $tahunAjaranId): ?int
+    {
+        return TahunAjaran::whereKey($tahunAjaranId)->value('semester');
+    }
+
+    private function isAuthorizedPengajarSubject(
+        MataPelajaran $mataPelajaran,
+        int $tahunAjaranId,
+        ?int $semester = null
+    ): bool {
+        $guru = Auth::guard('guru')->user();
+        $semester = $semester ?? $this->currentSemesterForTahunAjaran($tahunAjaranId);
+
+        if (!$guru || session('selected_role') !== 'pengajar' || !$semester) {
+            return false;
+        }
+
+        $mataPelajaran->loadMissing('kelas');
+
+        return (int) $mataPelajaran->guru_id === (int) $guru->id
+            && (int) $mataPelajaran->tahun_ajaran_id === $tahunAjaranId
+            && (int) $mataPelajaran->semester === (int) $semester
+            && $mataPelajaran->kelas
+            && (int) $mataPelajaran->kelas->tahun_ajaran_id === $tahunAjaranId;
+    }
+
+    private function authorizePengajarSubjectForSave($mataPelajaranId, int $tahunAjaranId): MataPelajaran
+    {
+        $mataPelajaran = MataPelajaran::with('kelas')->find($mataPelajaranId);
+
+        if (!$mataPelajaran || !$this->isAuthorizedPengajarSubject($mataPelajaran, $tahunAjaranId)) {
+            abort(403);
+        }
+
+        return $mataPelajaran;
+    }
+
+    private function assertScorePayloadBelongsToSubject(Request $request, MataPelajaran $mataPelajaran, int $tahunAjaranId): void
+    {
+        $scores = $request->input('scores', []);
+
+        if (!is_array($scores)) {
+            abort(403);
+        }
+
+        $studentIds = collect(array_keys($scores))
+            ->map(fn ($id) => (int) $id)
+            ->filter()
+            ->unique()
+            ->values();
+
+        if ($studentIds->isNotEmpty()) {
+            $authorizedStudentCount = Siswa::whereIn('id', $studentIds)
+                ->where('kelas_id', $mataPelajaran->kelas_id)
+                ->whereHas('kelas', function ($query) use ($tahunAjaranId) {
+                    $query->where('tahun_ajaran_id', $tahunAjaranId);
+                })
+                ->count();
+
+            if ($authorizedStudentCount !== $studentIds->count()) {
+                abort(403);
+            }
+        }
+
+        $lingkupMateriIds = collect();
+        $tujuanPembelajaranIds = collect();
+
+        foreach ($scores as $scoreData) {
+            foreach (array_keys($scoreData['lm'] ?? []) as $lingkupMateriId) {
+                $lingkupMateriIds->push((int) $lingkupMateriId);
+            }
+
+            foreach (($scoreData['tp'] ?? []) as $lingkupMateriId => $tpScores) {
+                $lingkupMateriIds->push((int) $lingkupMateriId);
+
+                foreach (array_keys($tpScores ?? []) as $tujuanPembelajaranId) {
+                    $tujuanPembelajaranIds->push((int) $tujuanPembelajaranId);
+                }
+            }
+        }
+
+        $lingkupMateriIds = $lingkupMateriIds->filter()->unique()->values();
+        $tujuanPembelajaranIds = $tujuanPembelajaranIds->filter()->unique()->values();
+
+        if ($lingkupMateriIds->isNotEmpty()) {
+            $validLingkupMateriCount = LingkupMateri::whereIn('id', $lingkupMateriIds)
+                ->where('mata_pelajaran_id', $mataPelajaran->id)
+                ->count();
+
+            if ($validLingkupMateriCount !== $lingkupMateriIds->count()) {
+                abort(403);
+            }
+        }
+
+        if ($tujuanPembelajaranIds->isNotEmpty()) {
+            $validTujuanPembelajaranCount = TujuanPembelajaran::query()
+                ->join('lingkup_materis', 'tujuan_pembelajarans.lingkup_materi_id', '=', 'lingkup_materis.id')
+                ->whereIn('tujuan_pembelajarans.id', $tujuanPembelajaranIds)
+                ->where('lingkup_materis.mata_pelajaran_id', $mataPelajaran->id)
+                ->count();
+
+            if ($validTujuanPembelajaranCount !== $tujuanPembelajaranIds->count()) {
+                abort(403);
+            }
+        }
+    }
+
     public function index()
     {
         $guru = Auth::guard('guru')->user();
@@ -248,9 +356,11 @@ class ScoreController extends Controller
             return $this->failTahunAjaranNotSet($request, true);
         }
 
+        $mataPelajaran = $this->authorizePengajarSubjectForSave($id, $tahunAjaranId);
+        $this->assertScorePayloadBelongsToSubject($request, $mataPelajaran, $tahunAjaranId);
+
         try {
             DB::beginTransaction();
-            $mataPelajaran = MataPelajaran::findOrFail($id);
             $bobotNilai = BobotNilai::getDefault();
             $savedData = [];
             $notSavedData = []; // Tracking data yang tidak tersimpan
@@ -489,9 +599,8 @@ class ScoreController extends Controller
         try {
             $mataPelajaran = MataPelajaran::findOrFail($id);
 
-            // Validasi akses guru - with improved type checking
             $guru = Auth::guard('guru')->user();
-            
+
             // Add debug logging
             Log::info('Checking guru access for mata pelajaran:', [
                 'mata_pelajaran_id' => $id,
@@ -503,9 +612,10 @@ class ScoreController extends Controller
                 'tahun_ajaran_session' => session('tahun_ajaran_id')
             ]);
             
-            // Fix the comparison with type casting
-            if ((int)$mataPelajaran->guru_id !== (int)$guru->id) {
-                return redirect()->route('pengajar.score')
+            $tahunAjaranId = $this->getValidTahunAjaranId();
+
+            if (!$tahunAjaranId || !$this->isAuthorizedPengajarSubject($mataPelajaran, $tahunAjaranId)) {
+                return redirect()->route('pengajar.score.index')
                     ->with('error', 'Anda tidak memiliki akses ke mata pelajaran ini');
             }
 
@@ -554,7 +664,6 @@ class ScoreController extends Controller
             ];
 
             // Filter siswa berdasarkan tahun ajaran yang aktif
-            $tahunAjaranId = session('tahun_ajaran_id');
             $siswas = $mataPelajaran->kelas->siswas;
             
             if ($tahunAjaranId) {
@@ -658,7 +767,7 @@ class ScoreController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Error in ScoreController@inputScore: ' . $e->getMessage());
-            return redirect()->route('pengajar.score')
+            return redirect()->route('pengajar.score.index')
                 ->with('error', 'Terjadi kesalahan saat memuat data');
         }
     }

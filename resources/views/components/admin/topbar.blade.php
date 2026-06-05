@@ -212,8 +212,16 @@
                             <!-- Menu Items -->
                             <div class="border-t border-gray-100">
                                 @if(Auth::guard('guru')->check())
-                                    @if(Auth::guard('guru')->user()->isWaliKelas())
-                                        @if(session('selected_role') === 'wali_kelas')
+                                    @php
+                                        $guru = Auth::guard('guru')->user();
+                                        $tahunAjaran = session('tahun_ajaran_id')
+                                            ? \App\Models\TahunAjaran::find(session('tahun_ajaran_id'))
+                                            : \App\Models\TahunAjaran::where('is_active', true)->first();
+                                        $availableRoles = $guru->availableRoles($tahunAjaran?->id, $tahunAjaran?->semester);
+                                    @endphp
+
+                                    @if(count($availableRoles) > 1)
+                                        @if(session('selected_role') === 'wali_kelas' && in_array('pengajar', $availableRoles, true))
                                             <a href="{{ route('auth.switch.role', ['role' => 'pengajar']) }}"
                                             class="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
                                             role="menuitem">
@@ -222,7 +230,7 @@
                                                 </svg> -->
                                                 Beralih ke Pengajar
                                             </a>
-                                        @else
+                                        @elseif(session('selected_role') !== 'wali_kelas' && in_array('wali_kelas', $availableRoles, true))
                                             <a href="{{ route('auth.switch.role', ['role' => 'wali_kelas']) }}"
                                             class="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
                                             role="menuitem">

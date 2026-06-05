@@ -64,8 +64,8 @@ export function showSubjectInfo(container, type, message) {
     `;
 }
 
-function getTeacherCategory(option) {
-    return option.getAttribute('data-jabatan') === 'guru_wali' ? 'wali' : 'guru';
+function isActiveYearWali(option) {
+    return option.getAttribute('data-is-active-wali') === 'true';
 }
 
 function getClassState(form, kelasSelect) {
@@ -132,15 +132,15 @@ export function filterGuruDropdown(entry, mode, { resetSelection = false } = {})
     if (mode === 'muatan_lokal' || mode === 'guru_mapel') {
         Array.from(guruSelect.options).forEach(option => {
             if (!option.value) return;
-            if (getTeacherCategory(option) === 'wali') {
+            if (isActiveYearWali(option)) {
                 option.disabled = true;
                 option.hidden = true;
             }
         });
         if (mode === 'muatan_lokal') {
-            showSubjectInfo(infoContainer, 'warning', 'Ini pelajaran muatan lokal, guru hanya non-wali kelas.');
+            showSubjectInfo(infoContainer, 'warning', 'Ini pelajaran muatan lokal, guru hanya non-wali kelas pada tahun ajaran aktif.');
         } else {
-            showSubjectInfo(infoContainer, 'info', 'Mode guru mapel aktif. Guru pengampu hanya guru non-wali kelas.');
+            showSubjectInfo(infoContainer, 'info', 'Mode guru mapel aktif. Guru pengampu hanya guru non-wali kelas pada tahun ajaran aktif.');
         }
     } else if (!hasWaliKelas || !waliKelasId) {
         Array.from(guruSelect.options).forEach(option => {

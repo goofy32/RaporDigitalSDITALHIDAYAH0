@@ -147,6 +147,29 @@ function handleCheckboxChange(checkbox) {
     const mode = checkbox.classList.contains('muatan-lokal-checkbox')
         ? (checkbox.checked ? 'muatan_lokal' : 'default')
         : (checkbox.checked ? 'guru_mapel' : 'default');
+    const typeSelect = form?.querySelector('.subject-type-select');
+    if (typeSelect) {
+        typeSelect.value = mode === 'muatan_lokal' ? 'muatan_lokal' : (mode === 'guru_mapel' ? 'specialist' : 'regular');
+    }
+
+    initializeSubjectEntry(form, {
+        mode,
+        resetSelection: true,
+    });
+
+    markSubjectFormChanged();
+}
+
+function handleTeachingTypeChange(select) {
+    const form = getForm();
+    const muatanCheckbox = form?.querySelector('.muatan-lokal-checkbox');
+    const allowNonWaliCheckbox = form?.querySelector('.allow-non-wali-checkbox');
+    const mode = select.value === 'muatan_lokal'
+        ? 'muatan_lokal'
+        : (select.value === 'specialist' ? 'guru_mapel' : 'default');
+
+    if (muatanCheckbox) muatanCheckbox.checked = select.value === 'muatan_lokal';
+    if (allowNonWaliCheckbox) allowNonWaliCheckbox.checked = select.value === 'specialist';
 
     initializeSubjectEntry(form, {
         mode,
@@ -173,6 +196,7 @@ function registerEditSubjectGlobals() {
     window.checkForDependentData = checkForDependentData;
     window.deleteLingkupMateri = deleteLingkupMateri;
     window.handleCheckboxChange = handleCheckboxChange;
+    window.handleTeachingTypeChange = handleTeachingTypeChange;
     window.updateFormState = updateFormState;
 }
 
@@ -247,6 +271,7 @@ function bindEditSubjectPage() {
     bindChangeListener(document.getElementById('kelas'), () => { validateMataPelajaran(); updateFormState(); });
     bindChangeListener(document.getElementById('is_muatan_lokal'), () => handleCheckboxChange(document.getElementById('is_muatan_lokal')));
     bindChangeListener(document.getElementById('allow_non_wali'), () => handleCheckboxChange(document.getElementById('allow_non_wali')));
+    bindChangeListener(document.getElementById('teaching_type'), () => handleTeachingTypeChange(document.getElementById('teaching_type')));
 
     document.querySelectorAll('#lingkupMateriContainer input[name="lingkup_materi[]"]').forEach(input => {
         const originalValue = input.getAttribute('data-original-value');
