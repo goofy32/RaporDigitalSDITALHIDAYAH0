@@ -327,6 +327,44 @@ class ScoreController extends Controller
             });
     }
 
+    private function authorizeDeleteNilaiRequest(Request $request, int $tahunAjaranId): array
+    {
+        $validated = $request->validate([
+            'siswa_id' => ['required', 'integer'],
+            'mata_pelajaran_id' => ['required', 'integer'],
+        ]);
+
+        $mataPelajaran = MataPelajaran::with('kelas')->find($validated['mata_pelajaran_id']);
+
+        if (!$mataPelajaran || !$this->isAuthorizedPengajarSubject($mataPelajaran, $tahunAjaranId)) {
+            abort(403);
+        }
+
+        $semester = (int) ($mataPelajaran->semester ?: $this->currentSemesterForTahunAjaran($tahunAjaranId));
+
+        if (!$mataPelajaran->kelas_id || !$semester) {
+            abort(403);
+        }
+
+        $isAuthorizedStudent = app(SiswaKelasSemesterResolver::class)
+            ->isEnrolledInClass(
+                (int) $validated['siswa_id'],
+                (int) $mataPelajaran->kelas_id,
+                $tahunAjaranId,
+                $semester,
+                true
+            );
+
+        if (!$isAuthorizedStudent) {
+            abort(403);
+        }
+
+        return [
+            'siswa_id' => (int) $validated['siswa_id'],
+            'mata_pelajaran' => $mataPelajaran,
+        ];
+    }
+
     public function index()
     {
         $guru = Auth::guard('guru')->user();
@@ -1038,41 +1076,47 @@ class ScoreController extends Controller
 
     public function deleteNilai(Request $request)
     {
+        $tahunAjaranId = $this->getValidTahunAjaranId();
+
+        if (!$tahunAjaranId) {
+            return $this->failTahunAjaranNotSet($request, true);
+        }
+
+        $authorizedDelete = $this->authorizeDeleteNilaiRequest($request, $tahunAjaranId);
+        $mataPelajaran = $authorizedDelete['mata_pelajaran'];
+        $siswaId = $authorizedDelete['siswa_id'];
+
         try {
-            DB::beginTransaction();
-            $tahunAjaranId = session('tahun_ajaran_id');
-            
-            // Query dasar untuk menghapus semua nilai siswa untuk mapel tertentu
-            Nilai::where([
-                'siswa_id' => $request->siswa_id,
-                'mata_pelajaran_id' => $request->mata_pelajaran_id,
-            ])
-            ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
-                return $query->where('tahun_ajaran_id', $tahunAjaranId);
-            })
-            ->delete();
+            DB::transaction(function () use ($siswaId, $mataPelajaran, $tahunAjaranId) {
+                Nilai::where([
+                    'siswa_id' => $siswaId,
+                    'mata_pelajaran_id' => $mataPelajaran->id,
+                    'tahun_ajaran_id' => $tahunAjaranId,
+                ])->delete();
+            });
 
-            DB::commit();
-
-            $mataPelajaran = MataPelajaran::find($request->mata_pelajaran_id);
             $guru = Auth::guard('guru')->user();
-            if ($mataPelajaran) {
-                DashboardController::clearProgressCacheForKelas(
-                    $mataPelajaran->kelas_id,
-                    $guru?->id
-                );
-            }
+            DashboardController::clearProgressCacheForKelas(
+                $mataPelajaran->kelas_id,
+                $guru?->id
+            );
 
             return response()->json([
                 'success' => true,
                 'message' => 'Nilai berhasil dihapus'
             ]);
         } catch (\Exception $e) {
-            DB::rollback();
+            Log::error('Gagal menghapus nilai', [
+                'siswa_id' => $siswaId,
+                'mata_pelajaran_id' => $mataPelajaran->id,
+                'tahun_ajaran_id' => $tahunAjaranId,
+                'error' => $e->getMessage(),
+            ]);
+
             return response()->json([
                 'success' => false, 
-                'message' => 'Gagal menghapus nilai: ' . $e->getMessage()
-            ]);
+                'message' => 'Gagal menghapus nilai.'
+            ], 500);
         }
     }
 }

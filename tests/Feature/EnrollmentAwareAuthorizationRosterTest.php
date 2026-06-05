@@ -292,6 +292,183 @@ class EnrollmentAwareAuthorizationRosterTest extends TestCase
         ]);
     }
 
+    public function test_pengajar_can_delete_grade_for_enrolled_student(): void
+    {
+        $gradeId = $this->insertScoreRow($this->ahmadId, $this->ganjilSubjectId, $this->ganjilYearId);
+
+        $this->actingAsPengajar($this->ganjilYearId, 1)
+            ->postJson(route('pengajar.score.nilai.delete'), [
+                'siswa_id' => $this->ahmadId,
+                'mata_pelajaran_id' => $this->ganjilSubjectId,
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $this->assertGradeSoftDeleted($gradeId);
+    }
+
+    public function test_another_pengajar_cannot_delete_grade(): void
+    {
+        $gradeId = $this->insertScoreRow($this->ahmadId, $this->ganjilSubjectId, $this->ganjilYearId);
+        $otherPengajar = Guru::findOrFail($this->insertGuru('Guru Lain', 'pengajar-lain'));
+
+        $this->assertDeleteRejectedAndGradeUnchanged(
+            $otherPengajar,
+            $this->ganjilYearId,
+            1,
+            'pengajar',
+            $this->ahmadId,
+            $this->ganjilSubjectId,
+            $gradeId
+        );
+    }
+
+    public function test_wali_selected_role_cannot_delete_grade(): void
+    {
+        $gradeId = $this->insertScoreRow($this->ahmadId, $this->ganjilSubjectId, $this->ganjilYearId);
+
+        $this->assertDeleteRejectedAndGradeUnchanged(
+            $this->pengajar,
+            $this->ganjilYearId,
+            1,
+            'wali_kelas',
+            $this->ahmadId,
+            $this->ganjilSubjectId,
+            $gradeId
+        );
+    }
+
+    public function test_student_enrolled_in_another_class_is_rejected_on_delete(): void
+    {
+        $gradeId = $this->insertScoreRow($this->otherClassStudentId, $this->ganjilSubjectId, $this->ganjilYearId);
+
+        $this->assertDeleteRejectedAndGradeUnchanged(
+            $this->pengajar,
+            $this->ganjilYearId,
+            1,
+            'pengajar',
+            $this->otherClassStudentId,
+            $this->ganjilSubjectId,
+            $gradeId
+        );
+    }
+
+    public function test_student_enrolled_only_in_another_semester_is_rejected_on_delete(): void
+    {
+        $gradeId = $this->insertScoreRow($this->genapOnlyId, $this->ganjilSubjectId, $this->ganjilYearId);
+
+        $this->assertDeleteRejectedAndGradeUnchanged(
+            $this->pengajar,
+            $this->ganjilYearId,
+            1,
+            'pengajar',
+            $this->genapOnlyId,
+            $this->ganjilSubjectId,
+            $gradeId
+        );
+    }
+
+    public function test_student_enrolled_only_in_another_academic_year_is_rejected_on_delete(): void
+    {
+        $oldYearId = $this->insertYear('2025/2026', 1, false);
+        $oldClassId = $this->insertClass(5, 'A', $oldYearId);
+        $oldYearStudentId = $this->insertStudent('2003', 'Old Year Delete Student', $this->waliGanjilClassId);
+        $this->insertEnrollment($oldYearStudentId, $oldClassId, $oldYearId, 1);
+        $gradeId = $this->insertScoreRow($oldYearStudentId, $this->ganjilSubjectId, $this->ganjilYearId);
+
+        $this->assertDeleteRejectedAndGradeUnchanged(
+            $this->pengajar,
+            $this->ganjilYearId,
+            1,
+            'pengajar',
+            $oldYearStudentId,
+            $this->ganjilSubjectId,
+            $gradeId
+        );
+    }
+
+    public function test_unrelated_legacy_class_does_not_grant_delete_access_when_enrollment_differs(): void
+    {
+        $studentId = $this->insertStudent('2004', 'Legacy Delete Mismatch Student', $this->waliGanjilClassId);
+        $this->insertEnrollment($studentId, $this->otherClassId, $this->ganjilYearId, 1);
+        $gradeId = $this->insertScoreRow($studentId, $this->ganjilSubjectId, $this->ganjilYearId);
+
+        $this->assertDeleteRejectedAndGradeUnchanged(
+            $this->pengajar,
+            $this->ganjilYearId,
+            1,
+            'pengajar',
+            $studentId,
+            $this->ganjilSubjectId,
+            $gradeId
+        );
+    }
+
+    public function test_matching_legacy_fallback_allows_delete_when_student_has_no_enrollment(): void
+    {
+        $gradeId = $this->insertScoreRow($this->legacyId, $this->ganjilSubjectId, $this->ganjilYearId);
+
+        $this->actingAsPengajar($this->ganjilYearId, 1)
+            ->postJson(route('pengajar.score.nilai.delete'), [
+                'siswa_id' => $this->legacyId,
+                'mata_pelajaran_id' => $this->ganjilSubjectId,
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $this->assertGradeSoftDeleted($gradeId);
+    }
+
+    public function test_delete_request_cannot_remove_another_subject_grade(): void
+    {
+        $otherSubjectId = $this->insertSubject('IPA Ganjil', $this->pengajar->id, $this->waliGanjilClassId, $this->ganjilYearId, 1);
+        $this->insertLearningData($otherSubjectId);
+        $otherSubjectGradeId = $this->insertScoreRow($this->ahmadId, $otherSubjectId, $this->ganjilYearId);
+
+        $this->actingAsPengajar($this->ganjilYearId, 1)
+            ->postJson(route('pengajar.score.nilai.delete'), [
+                'siswa_id' => $this->ahmadId,
+                'mata_pelajaran_id' => $this->ganjilSubjectId,
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $this->assertGradeActive($otherSubjectGradeId);
+    }
+
+    public function test_mixed_delete_payload_is_rejected_without_partial_deletion(): void
+    {
+        $authorizedGradeId = $this->insertScoreRow($this->ahmadId, $this->ganjilSubjectId, $this->ganjilYearId);
+        $unauthorizedGradeId = $this->insertScoreRow($this->otherClassStudentId, $this->ganjilSubjectId, $this->ganjilYearId);
+
+        $this->actingAsPengajar($this->ganjilYearId, 1)
+            ->postJson(route('pengajar.score.nilai.delete'), [
+                'siswa_id' => [$this->ahmadId, $this->otherClassStudentId],
+                'mata_pelajaran_id' => $this->ganjilSubjectId,
+            ])
+            ->assertUnprocessable();
+
+        $this->assertGradeActive($authorizedGradeId);
+        $this->assertGradeActive($unauthorizedGradeId);
+    }
+
+    public function test_delete_removes_all_active_rows_for_authorized_student_subject(): void
+    {
+        $scoreRowId = $this->insertScoreRow($this->sitiId, $this->ganjilSubjectId, $this->ganjilYearId);
+        $aggregateRowId = $this->insertAggregateScoreRow($this->sitiId, $this->ganjilSubjectId, $this->ganjilYearId);
+
+        $this->actingAsPengajar($this->ganjilYearId, 1)
+            ->postJson(route('pengajar.score.nilai.delete'), [
+                'siswa_id' => $this->sitiId,
+                'mata_pelajaran_id' => $this->ganjilSubjectId,
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $this->assertGradeSoftDeleted($scoreRowId);
+        $this->assertGradeSoftDeleted($aggregateRowId);
+    }
+
     private function actingAsWali(int $tahunAjaranId, int $semester): self
     {
         return $this->actingAs($this->wali, 'guru')
@@ -342,6 +519,76 @@ class EnrollmentAwareAuthorizationRosterTest extends TestCase
                 ->where('tahun_ajaran_id', $this->ganjilYearId)
                 ->value('nilai_akhir_rapor')
         );
+    }
+
+    private function assertDeleteRejectedAndGradeUnchanged(
+        Guru $guru,
+        int $tahunAjaranId,
+        int $semester,
+        string $role,
+        int $studentId,
+        int $subjectId,
+        int $gradeId
+    ): void {
+        $deletedAtBefore = DB::table('nilais')->where('id', $gradeId)->value('deleted_at');
+
+        $this->actingAs($guru, 'guru')
+            ->withSession($this->sessionFor($tahunAjaranId, $semester, $role))
+            ->postJson(route('pengajar.score.nilai.delete'), [
+                'siswa_id' => $studentId,
+                'mata_pelajaran_id' => $subjectId,
+            ])
+            ->assertForbidden();
+
+        $this->assertSame(
+            $deletedAtBefore,
+            DB::table('nilais')->where('id', $gradeId)->value('deleted_at')
+        );
+    }
+
+    private function insertScoreRow(int $studentId, int $subjectId, int $yearId, int $score = 88): int
+    {
+        $lingkupMateriId = DB::table('lingkup_materis')
+            ->where('mata_pelajaran_id', $subjectId)
+            ->value('id');
+
+        return DB::table('nilais')->insertGetId([
+            'siswa_id' => $studentId,
+            'mata_pelajaran_id' => $subjectId,
+            'lingkup_materi_id' => $lingkupMateriId,
+            'nilai_lm' => $score,
+            'nilai_akhir_rapor' => $score,
+            'is_submitted' => true,
+            'tahun_ajaran_id' => $yearId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function insertAggregateScoreRow(int $studentId, int $subjectId, int $yearId, int $score = 88): int
+    {
+        return DB::table('nilais')->insertGetId([
+            'siswa_id' => $studentId,
+            'mata_pelajaran_id' => $subjectId,
+            'nilai_tes' => $score,
+            'nilai_non_tes' => $score,
+            'nilai_akhir_semester' => $score,
+            'nilai_akhir_rapor' => $score,
+            'is_submitted' => true,
+            'tahun_ajaran_id' => $yearId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function assertGradeActive(int $gradeId): void
+    {
+        $this->assertNull(DB::table('nilais')->where('id', $gradeId)->value('deleted_at'));
+    }
+
+    private function assertGradeSoftDeleted(int $gradeId): void
+    {
+        $this->assertNotNull(DB::table('nilais')->where('id', $gradeId)->value('deleted_at'));
     }
 
     private function scorePayloadForStudent(int $studentId, int $subjectId, int $score): array
