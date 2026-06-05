@@ -6,6 +6,7 @@ use App\Models\Guru;
 use App\Models\Kelas;
 use App\Models\MataPelajaran;
 use App\Models\Siswa;
+use App\Models\SiswaKelasSemester;
 use App\Models\TahunAjaran;
 use Database\Seeders\DemoSemesterGanjilSeeder;
 use Illuminate\Database\Schema\Blueprint;
@@ -84,6 +85,7 @@ class DemoSemesterGanjilSeederTest extends TestCase
         $this->assertDatabaseHas('gurus', ['username' => 'demo_yusuf', 'nama' => 'Yusuf Hidayat']);
         $this->assertSame(2, Kelas::where('tahun_ajaran_id', $year->id)->count());
         $this->assertSame(4, Siswa::whereIn('nis', self::DEMO_NIS)->count());
+        $this->assertSame(4, SiswaKelasSemester::where('tahun_ajaran_id', $year->id)->where('semester', 1)->count());
     }
 
     public function test_budi_has_valid_pengajar_and_wali_kelas_roles(): void
@@ -394,6 +396,46 @@ class DemoSemesterGanjilSeederTest extends TestCase
         $this->assertSame(0, Kelas::where('nomor_kelas', 6)->count());
     }
 
+    public function test_demo_students_receive_only_semester_one_enrollment(): void
+    {
+        $this->seedDemo();
+
+        $year = $this->activeYear();
+        $kelas5A = $this->classByName(5, 'A');
+        $kelas5B = $this->classByName(5, 'B');
+
+        $expectedClassesByNis = [
+            '2605001' => $kelas5A->id,
+            '2605002' => $kelas5A->id,
+            '2605003' => $kelas5A->id,
+            '2605101' => $kelas5B->id,
+        ];
+
+        foreach ($expectedClassesByNis as $nis => $kelasId) {
+            $student = Siswa::where('nis', $nis)->firstOrFail();
+
+            $this->assertDatabaseHas('siswa_kelas_semester', [
+                'siswa_id' => $student->id,
+                'kelas_id' => $kelasId,
+                'tahun_ajaran_id' => $year->id,
+                'semester' => 1,
+            ]);
+        }
+
+        $this->assertSame(0, SiswaKelasSemester::where('semester', 2)->count());
+    }
+
+    public function test_rerunning_the_seeder_does_not_duplicate_enrollment_rows(): void
+    {
+        $this->seedDemo();
+        $firstCount = SiswaKelasSemester::count();
+
+        $this->seedDemo();
+
+        $this->assertSame($firstCount, SiswaKelasSemester::count());
+        $this->assertSame(4, $firstCount);
+    }
+
     public function test_seeded_ganjil_data_satisfies_transition_prerequisites(): void
     {
         $this->seedDemo();
@@ -484,6 +526,7 @@ class DemoSemesterGanjilSeederTest extends TestCase
             'catatan_siswa' => DB::table('catatan_siswa')->count(),
             'capaian_custom' => DB::table('capaian_custom')->count(),
             'report_templates' => DB::table('report_templates')->count(),
+            'siswa_kelas_semester' => DB::table('siswa_kelas_semester')->count(),
         ];
     }
 
@@ -518,6 +561,7 @@ class DemoSemesterGanjilSeederTest extends TestCase
             'bobot_nilais',
             'kkms',
             'mata_pelajarans',
+            'siswa_kelas_semester',
             'siswas',
             'guru_kelas',
             'kelas',
@@ -652,6 +696,17 @@ class DemoSemesterGanjilSeederTest extends TestCase
             $table->foreignId('kelas_tujuan_id')->nullable();
             $table->timestamps();
             $table->softDeletes();
+        });
+
+        Schema::create('siswa_kelas_semester', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('siswa_id');
+            $table->foreignId('kelas_id');
+            $table->foreignId('tahun_ajaran_id');
+            $table->tinyInteger('semester');
+            $table->timestamps();
+            $table->unique(['siswa_id', 'tahun_ajaran_id', 'semester']);
+            $table->index(['kelas_id', 'tahun_ajaran_id', 'semester']);
         });
 
         Schema::create('mata_pelajarans', function (Blueprint $table) {

@@ -18,6 +18,7 @@ use App\Models\NilaiEkstrakurikuler;
 use App\Models\ProfilSekolah;
 use App\Models\ReportTemplate;
 use App\Models\Siswa;
+use App\Models\SiswaKelasSemester;
 use App\Models\TahunAjaran;
 use App\Models\TujuanPembelajaran;
 use App\Models\User;
@@ -150,6 +151,8 @@ class DemoSemesterGanjilSeeder extends Seeder
                     'tahun_ajaran_id' => $tahunAjaran->id,
                 ]),
             ];
+
+            $this->createSemesterOneEnrollments($students, $tahunAjaran);
 
             $subjects = [
                 'matematika5A' => $this->createSubject('Matematika', $kelas5A, $budi, false, false, $tahunAjaran),
@@ -413,6 +416,25 @@ class DemoSemesterGanjilSeeder extends Seeder
             ['nis' => $attributes['nis']],
             $this->onlyExistingColumns('siswas', array_merge($defaults, $attributes))
         );
+    }
+
+    /**
+     * @param  array<string, Siswa>  $students
+     */
+    private function createSemesterOneEnrollments(array $students, TahunAjaran $tahunAjaran): void
+    {
+        foreach ($students as $student) {
+            SiswaKelasSemester::updateOrCreate(
+                [
+                    'siswa_id' => $student->id,
+                    'tahun_ajaran_id' => $tahunAjaran->id,
+                    'semester' => self::SEMESTER,
+                ],
+                [
+                    'kelas_id' => $student->kelas_id,
+                ]
+            );
+        }
     }
 
     private function createSubject(

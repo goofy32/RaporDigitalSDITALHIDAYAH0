@@ -2,11 +2,11 @@
 
 namespace App\Models;
 
+use App\Traits\HasTahunAjaran;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Facades\DB;
-use App\Traits\HasTahunAjaran;
 
 class Kelas extends Model
 {
@@ -21,9 +21,9 @@ class Kelas extends Model
     ];
 
     protected $appends = ['full_kelas'];
-    
+
     protected $casts = [
-        'nomor_kelas' => 'integer'
+        'nomor_kelas' => 'integer',
     ];
 
     protected static function booted()
@@ -38,7 +38,7 @@ class Kelas extends Model
             $siswaIds = $kelas->siswas->pluck('id')->all();
             $mataPelajaranIds = $kelas->mataPelajarans->pluck('id')->all();
             $prestasiIds = Prestasi::where('kelas_id', $kelas->id)->pluck('id')->all();
-            $absensiIds = !empty($siswaIds)
+            $absensiIds = ! empty($siswaIds)
                 ? Absensi::whereIn('siswa_id', $siswaIds)->pluck('id')->all()
                 : [];
             $guruPivots = DB::table('guru_kelas')
@@ -68,7 +68,7 @@ class Kelas extends Model
                 'user_agent' => request()->userAgent(),
             ]);
 
-            if (!empty($siswaIds)) {
+            if (! empty($siswaIds)) {
                 Absensi::whereIn('siswa_id', $siswaIds)
                     ->get()
                     ->each(fn (Absensi $absensi) => $absensi->delete());
@@ -92,13 +92,13 @@ class Kelas extends Model
             ->withPivot('is_wali_kelas', 'role')
             ->withTimestamps();
     }
-    
+
     // Relasi dengan tahun ajaran
     public function tahunAjaran()
     {
         return $this->belongsTo(TahunAjaran::class, 'tahun_ajaran_id');
     }
-    
+
     // Wali kelas
     public function waliKelas()
     {
@@ -111,14 +111,14 @@ class Kelas extends Model
     {
         $total_siswa = $this->siswas()->count();
         $completed_siswa = $this->siswas()
-            ->whereHas('nilais', function($q) {
+            ->whereHas('nilais', function ($q) {
                 $q->where('is_submitted', true);
             })->count();
-        
+
         return [
             'total' => $total_siswa,
             'completed' => $completed_siswa,
-            'percentage' => $total_siswa > 0 ? ($completed_siswa / $total_siswa) * 100 : 0
+            'percentage' => $total_siswa > 0 ? ($completed_siswa / $total_siswa) * 100 : 0,
         ];
     }
 
@@ -143,19 +143,26 @@ class Kelas extends Model
     public function getWaliKelasNameAttribute()
     {
         $waliKelas = $this->waliKelas()->first();
+
         return $waliKelas ? $waliKelas->nama : '-';
     }
 
     // Get full kelas name
     public function getFullKelasAttribute()
     {
-        $tahunAjaranText = $this->tahunAjaran ? " ({$this->tahunAjaran->tahun_ajaran})" : "";
+        $tahunAjaranText = $this->tahunAjaran ? " ({$this->tahunAjaran->tahun_ajaran})" : '';
+
         return "Kelas {$this->nomor_kelas} {$this->nama_kelas}{$tahunAjaranText}";
     }
-    
+
     public function siswas()
     {
         return $this->hasMany(Siswa::class);
+    }
+
+    public function semesterEnrollments()
+    {
+        return $this->hasMany(SiswaKelasSemester::class, 'kelas_id');
     }
 
     public function mataPelajarans()
@@ -180,27 +187,28 @@ class Kelas extends Model
     public function getWaliKelasId()
     {
         $waliKelas = $this->getWaliKelas();
+
         return $waliKelas ? $waliKelas->id : null;
     }
-    
+
     public static function getWaliKelasMap($tahunAjaranId = null)
     {
         $result = [];
         $query = self::query();
-        
+
         if ($tahunAjaranId) {
             $query->where('tahun_ajaran_id', $tahunAjaranId);
         }
-        
+
         $allKelas = $query->get();
-        
+
         foreach ($allKelas as $kelas) {
             $waliKelasId = $kelas->getWaliKelasId();
             if ($waliKelasId) {
                 $result[$kelas->id] = $waliKelasId;
             }
         }
-        
+
         return json_encode($result);
     }
 
@@ -208,6 +216,7 @@ class Kelas extends Model
     {
         $array = parent::toArray();
         $array['mata_pelajarans'] = $this->mataPelajarans;
+
         return $array;
     }
 
@@ -222,39 +231,38 @@ class Kelas extends Model
 
     /**
      * Ambil wali kelas dengan format yang mudah digunakan untuk JavaScript
-     * 
+     *
      * @return array
      */
     public static function getWaliKelasMapping()
     {
         $result = [];
         $allKelas = self::all();
-        
+
         foreach ($allKelas as $kelas) {
             $waliKelasId = $kelas->getWaliKelasId();
             if ($waliKelasId) {
                 $result[$kelas->id] = [
                     'id' => $waliKelasId,
                     'kelas' => "Kelas {$kelas->nomor_kelas} {$kelas->nama_kelas}",
-                    'nama' => optional($kelas->getWaliKelas())->nama
+                    'nama' => optional($kelas->getWaliKelas())->nama,
                 ];
             }
         }
-        
+
         return $result;
     }
-    
+
     public function reportTemplates()
     {
         return $this->hasMany(ReportTemplate::class, 'kelas_id');
     }
-    
+
     public function reportTemplateMulti()
     {
         return $this->belongsToMany(ReportTemplate::class, 'report_template_kelas');
     }
 
-    
     /**
      * Scope untuk filter berdasarkan tahun ajaran
      */
@@ -262,7 +270,7 @@ class Kelas extends Model
     {
         return $query->where('tahun_ajaran_id', $tahunAjaranId);
     }
-    
+
     /**
      * Scope untuk filter berdasarkan tahun ajaran aktif
      */
@@ -272,6 +280,7 @@ class Kelas extends Model
         if ($tahunAjaranAktif) {
             return $query->where('tahun_ajaran_id', $tahunAjaranAktif->id);
         }
+
         return $query;
     }
 
