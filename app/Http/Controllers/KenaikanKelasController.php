@@ -16,6 +16,7 @@ use RuntimeException;
 class KenaikanKelasController extends Controller
 {
     private const PROMOTION_WRITES_DISABLED_MESSAGE = 'Kenaikan kelas massal dan kelulusan berbasis enrollment belum diaktifkan. Gunakan proses siswa terpilih untuk kenaikan atau tinggal kelas.';
+    private const SEMESTER_GANJIL_PROMOTION_MESSAGE = 'Kenaikan kelas hanya dapat dilakukan dari Semester Genap. Silakan aktifkan tahun ajaran Semester Genap terlebih dahulu.';
 
     /**
      * Menampilkan halaman untuk proses kenaikan kelas
@@ -30,6 +31,11 @@ class KenaikanKelasController extends Controller
                 'error' => 'Tidak ada tahun ajaran yang aktif. Anda perlu mengaktifkan tahun ajaran terlebih dahulu.'
             ]);
         }
+
+        if ((int) $tahunAjaranAktif->semester !== 2) {
+            return redirect()->route('tahun.ajaran.index')
+                ->with('error', self::SEMESTER_GANJIL_PROMOTION_MESSAGE);
+        }
         
         // Cari tahun ajaran baru (tahun ajaran selanjutnya)
         $tahunAjaranBaru = $this->findNextSemesterOneYear($tahunAjaranAktif);
@@ -40,7 +46,7 @@ class KenaikanKelasController extends Controller
                     ->orderBy('nama_kelas')
                     ->get();
 
-        $this->attachPromotionRosterCounts($kelasAktif, $tahunAjaranAktif, $enrollmentResolver);
+        $this->attachPromotionRosterCounts($kelasAktif, $tahunAjaranAktif, $enrollmentResolver, $tahunAjaranBaru);
         $promotionWritesEnabled = false;
         $promotionWritesDisabledMessage = self::PROMOTION_WRITES_DISABLED_MESSAGE;
         
@@ -73,7 +79,7 @@ class KenaikanKelasController extends Controller
 
         if (!$tahunAjaranAktif || (int) $tahunAjaranAktif->semester !== 2) {
             return redirect()->route('admin.kenaikan-kelas.index')
-                ->with('error', 'Perencanaan kenaikan kelas hanya dapat dilakukan dari tahun ajaran aktif semester genap.');
+                ->with('error', self::SEMESTER_GANJIL_PROMOTION_MESSAGE);
         }
 
         if ((int) $kelas->tahun_ajaran_id !== (int) $tahunAjaranAktif->id) {
@@ -110,6 +116,11 @@ class KenaikanKelasController extends Controller
             'can_repeat_same_grade' => $kelasTinggal->isNotEmpty(),
             'is_final_grade' => $isKelasAkhir,
         ];
+
+        $processingSummary = $this->attachPromotionProcessingStatus($siswaList, $kelas, $tahunAjaranBaru);
+        $processedPromotionCount = $processingSummary['processed'];
+        $pendingPromotionCount = $processingSummary['pending'];
+        $promotionComplete = $processingSummary['complete'];
         
         // Check report status for each student
         $raporStatus = [];
@@ -139,7 +150,10 @@ class KenaikanKelasController extends Controller
             'raporStatus',
             'targetClassCapability',
             'promotionWritesEnabled',
-            'promotionWritesDisabledMessage'
+            'promotionWritesDisabledMessage',
+            'processedPromotionCount',
+            'pendingPromotionCount',
+            'promotionComplete'
         ));
     }
     /**
@@ -421,7 +435,9 @@ class KenaikanKelasController extends Controller
 
     private function resolveSourceTahunAjaran(Request $request): ?TahunAjaran
     {
-        $requestedTahunAjaranId = $request->query('tahun_ajaran_id');
+        $queryString = (string) $request->server('QUERY_STRING', '');
+        $hasExplicitTahunAjaran = preg_match('/(?:^|&)tahun_ajaran_id=/', $queryString) === 1;
+        $requestedTahunAjaranId = $hasExplicitTahunAjaran ? $request->query('tahun_ajaran_id') : null;
 
         if ($requestedTahunAjaranId !== null && $requestedTahunAjaranId !== '') {
             $requestedTahunAjaranId = (int) $requestedTahunAjaranId;
@@ -453,10 +469,21 @@ class KenaikanKelasController extends Controller
             ->first();
     }
 
-    private function attachPromotionRosterCounts(Collection $kelasAktif, TahunAjaran $tahunAjaran, SiswaKelasSemesterResolver $enrollmentResolver): void
+    private function attachPromotionRosterCounts(
+        Collection $kelasAktif,
+        TahunAjaran $tahunAjaran,
+        SiswaKelasSemesterResolver $enrollmentResolver,
+        ?TahunAjaran $targetTahunAjaran = null
+    ): void
     {
         foreach ($kelasAktif as $kelas) {
-            $kelas->promotion_roster_count = $this->studentsForPromotionClass($kelas, $tahunAjaran, $enrollmentResolver)->count();
+            $students = $this->studentsForPromotionClass($kelas, $tahunAjaran, $enrollmentResolver);
+            $summary = $this->promotionProcessingSummary($students, $targetTahunAjaran);
+
+            $kelas->promotion_roster_count = $summary['total'];
+            $kelas->promotion_processed_count = $summary['processed'];
+            $kelas->promotion_pending_count = $summary['pending'];
+            $kelas->promotion_complete = $summary['complete'];
         }
     }
 
@@ -477,6 +504,84 @@ class KenaikanKelasController extends Controller
             ->get()
             ->unique('id')
             ->values();
+    }
+
+    private function attachPromotionProcessingStatus(Collection $students, Kelas $sourceKelas, ?TahunAjaran $targetTahunAjaran): array
+    {
+        $targetEnrollments = $this->targetEnrollmentsForStudents($students, $targetTahunAjaran);
+        $processed = 0;
+
+        foreach ($students as $student) {
+            $targetEnrollment = $targetEnrollments->get($student->id);
+            $targetClass = $targetEnrollment?->kelas;
+            $isProcessed = $targetEnrollment !== null;
+
+            $student->promotion_processed = $isProcessed;
+            $student->promotion_target_class_label = $targetClass ? $this->formatClassLabel($targetClass) : null;
+            $student->promotion_outcome = $isProcessed ? $this->inferPromotionOutcome($sourceKelas, $targetClass) : null;
+
+            if ($isProcessed) {
+                $processed++;
+            }
+        }
+
+        $total = $students->count();
+        $pending = max($total - $processed, 0);
+
+        return [
+            'total' => $total,
+            'processed' => $processed,
+            'pending' => $pending,
+            'complete' => $total > 0 && $pending === 0,
+        ];
+    }
+
+    private function promotionProcessingSummary(Collection $students, ?TahunAjaran $targetTahunAjaran): array
+    {
+        $processed = $this->targetEnrollmentsForStudents($students, $targetTahunAjaran)->count();
+        $total = $students->count();
+        $pending = max($total - $processed, 0);
+
+        return [
+            'total' => $total,
+            'processed' => $processed,
+            'pending' => $pending,
+            'complete' => $total > 0 && $pending === 0,
+        ];
+    }
+
+    private function targetEnrollmentsForStudents(Collection $students, ?TahunAjaran $targetTahunAjaran): Collection
+    {
+        if (! $targetTahunAjaran || $students->isEmpty()) {
+            return collect();
+        }
+
+        return SiswaKelasSemester::with('kelas')
+            ->whereIn('siswa_id', $students->pluck('id')->all())
+            ->where('tahun_ajaran_id', $targetTahunAjaran->id)
+            ->where('semester', 1)
+            ->get()
+            ->keyBy('siswa_id');
+    }
+
+    private function inferPromotionOutcome(Kelas $sourceKelas, ?Kelas $targetKelas): string
+    {
+        if (! $targetKelas) {
+            return 'Sudah diproses';
+        }
+
+        $sourceGrade = (int) $sourceKelas->nomor_kelas;
+        $targetGrade = (int) $targetKelas->nomor_kelas;
+
+        if ($targetGrade === $sourceGrade + 1) {
+            return 'Naik Kelas';
+        }
+
+        if ($targetGrade === $sourceGrade) {
+            return 'Tinggal Kelas';
+        }
+
+        return 'Sudah diproses';
     }
 
     private function processEnrollmentPromotion(Request $request, SiswaKelasSemesterResolver $enrollmentResolver, string $action)

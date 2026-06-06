@@ -24,6 +24,16 @@ class StudentController extends Controller
     {
         // Ambil tahun ajaran dari session
         $tahunAjaranId = session('tahun_ajaran_id');
+        $activeTahunAjaran = $tahunAjaranId ? TahunAjaran::find($tahunAjaranId) : null;
+
+        if ($activeTahunAjaran) {
+            $students = $this->enrollmentAwareAdminStudentQuery($request, $activeTahunAjaran)
+                ->paginate(10);
+
+            $this->attachAdminStudentContextClasses($students->getCollection());
+
+            return view('admin.student', compact('students', 'activeTahunAjaran'));
+        }
         
         // Buat query dasar dengan join ke tabel kelas untuk sorting
         $query = Siswa::join('kelas', 'siswas.kelas_id', '=', 'kelas.id')
@@ -70,13 +80,88 @@ class StudentController extends Controller
         // Eager load the kelas relationship for the paginated results
         $students->load('kelas');
         
-        // Pass data tahun ajaran ke view untuk menampilkan informasi
-        $activeTahunAjaran = null;
-        if ($tahunAjaranId) {
-            $activeTahunAjaran = \App\Models\TahunAjaran::find($tahunAjaranId);
-        }
-        
         return view('admin.student', compact('students', 'activeTahunAjaran'));
+    }
+
+    private function enrollmentAwareAdminStudentQuery(Request $request, TahunAjaran $tahunAjaran)
+    {
+        $tahunAjaranId = (int) $tahunAjaran->id;
+        $semester = (int) $tahunAjaran->semester;
+
+        $query = Siswa::query()
+            ->leftJoin('siswa_kelas_semester as enrollment_context', function ($join) use ($tahunAjaranId, $semester) {
+                $join->on('enrollment_context.siswa_id', '=', 'siswas.id')
+                    ->where('enrollment_context.tahun_ajaran_id', '=', $tahunAjaranId)
+                    ->where('enrollment_context.semester', '=', $semester);
+            })
+            ->leftJoin('kelas as enrollment_kelas', 'enrollment_context.kelas_id', '=', 'enrollment_kelas.id')
+            ->leftJoin('kelas as legacy_kelas', 'siswas.kelas_id', '=', 'legacy_kelas.id')
+            ->select('siswas.*')
+            ->addSelect(DB::raw('COALESCE(enrollment_context.kelas_id, legacy_kelas.id) as context_kelas_id'))
+            ->where(function ($query) use ($tahunAjaranId) {
+                $query->whereNotNull('enrollment_context.id')
+                    ->orWhere(function ($query) use ($tahunAjaranId) {
+                        $query->whereDoesntHave('semesterEnrollments')
+                            ->where('legacy_kelas.tahun_ajaran_id', $tahunAjaranId);
+                    });
+            });
+
+        if ($request->has('search')) {
+            $search = strtolower($request->search);
+            $terms = explode(' ', trim($search));
+
+            $query->where(function ($q) use ($terms, $search) {
+                if (count($terms) > 0 && $terms[0] === 'kelas') {
+                    if (count($terms) > 1 && is_numeric($terms[1])) {
+                        $q->where('enrollment_kelas.nomor_kelas', $terms[1])
+                            ->orWhere('legacy_kelas.nomor_kelas', $terms[1]);
+                    }
+                } else {
+                    $q->where(function ($subQ) use ($search) {
+                        $subQ->where('siswas.nama', 'LIKE', "%{$search}%")
+                            ->orWhere('siswas.nis', 'LIKE', "%{$search}%")
+                            ->orWhere('siswas.nisn', 'LIKE', "%{$search}%")
+                            ->orWhere('enrollment_kelas.nama_kelas', 'LIKE', "%{$search}%")
+                            ->orWhere('enrollment_kelas.nomor_kelas', 'LIKE', "%{$search}%")
+                            ->orWhere('legacy_kelas.nama_kelas', 'LIKE', "%{$search}%")
+                            ->orWhere('legacy_kelas.nomor_kelas', 'LIKE', "%{$search}%");
+                    });
+                }
+            });
+        }
+
+        return $query
+            ->orderByRaw('COALESCE(enrollment_kelas.nomor_kelas, legacy_kelas.nomor_kelas) asc')
+            ->orderByRaw('COALESCE(enrollment_kelas.nama_kelas, legacy_kelas.nama_kelas) asc')
+            ->orderBy('siswas.nama', 'asc');
+    }
+
+    private function attachAdminStudentContextClasses($students): void
+    {
+        $classIds = $students->pluck('context_kelas_id')
+            ->filter()
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values();
+
+        if ($classIds->isEmpty()) {
+            return;
+        }
+
+        $classes = Kelas::with('tahunAjaran')
+            ->whereIn('id', $classIds)
+            ->get()
+            ->keyBy('id');
+
+        $students->each(function (Siswa $student) use ($classes) {
+            $contextClassId = (int) ($student->context_kelas_id ?? 0);
+
+            if ($contextClassId && $classes->has($contextClassId)) {
+                $contextClass = $classes->get($contextClassId);
+                $student->setRelation('kelas', $contextClass);
+                $student->setAttribute('admin_kelas_label', $contextClass->full_kelas);
+            }
+        });
     }
     public function create()
     {

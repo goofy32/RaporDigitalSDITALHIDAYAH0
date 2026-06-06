@@ -125,6 +125,99 @@ class PromotionPlanningEnrollmentRosterTest extends TestCase
         $response->assertDontSee('Kelas 6 B');
     }
 
+    public function test_semester_ganjil_promotion_index_redirects_with_friendly_message(): void
+    {
+        DB::table('tahun_ajarans')->where('id', $this->sourceYearId)->update([
+            'semester' => 1,
+        ]);
+
+        $this->actingAs($this->admin, 'web')
+            ->get(route('admin.kenaikan-kelas.index'))
+            ->assertRedirect(route('tahun.ajaran.index'))
+            ->assertSessionHas('error', 'Kenaikan kelas hanya dapat dilakukan dari Semester Genap. Silakan aktifkan tahun ajaran Semester Genap terlebih dahulu.');
+    }
+
+    public function test_target_class_creation_link_uses_next_year_context(): void
+    {
+        DB::table('kelas')->where('id', $this->targetClass6AId)->delete();
+
+        $response = $this->actingAs($this->admin, 'web')
+            ->get(route('admin.kenaikan-kelas.show-siswa', $this->sourceClass5AId));
+
+        $response->assertOk();
+        $response->assertSee('Buat Kelas Baru');
+        $response->assertSee('target_tahun_ajaran_id='.$this->targetYearId, false);
+        $response->assertSee('redirect_to=', false);
+    }
+
+    public function test_class_store_respects_requested_target_year_and_redirects_back_to_planning(): void
+    {
+        $redirectTo = route('admin.kenaikan-kelas.show-siswa', $this->sourceClass5AId);
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession(['tahun_ajaran_id' => $this->sourceYearId])
+            ->post(route('kelas.store'), [
+                'nomor_kelas' => 6,
+                'nama_kelas' => 'B',
+                'target_tahun_ajaran_id' => $this->targetYearId,
+                'redirect_to' => $redirectTo,
+            ])
+            ->assertRedirect($redirectTo)
+            ->assertSessionHas('success');
+
+        $this->assertDatabaseHas('kelas', [
+            'nomor_kelas' => 6,
+            'nama_kelas' => 'B',
+            'tahun_ajaran_id' => $this->targetYearId,
+        ]);
+        $this->assertDatabaseMissing('kelas', [
+            'nomor_kelas' => 6,
+            'nama_kelas' => 'B',
+            'tahun_ajaran_id' => $this->sourceYearId,
+        ]);
+    }
+
+    public function test_already_promoted_students_are_marked_processed_and_not_actionable(): void
+    {
+        $this->insertEnrollment($this->ahmadId, $this->targetClass6AId, $this->targetYearId, 1);
+
+        $response = $this->actingAs($this->admin, 'web')
+            ->get(route('admin.kenaikan-kelas.show-siswa', $this->sourceClass5AId));
+
+        $response->assertOk();
+        $response->assertSee('Sudah diproses');
+        $response->assertSee('Naik Kelas - Kelas 6 A');
+        $response->assertSee('1/1 sudah diproses');
+        $response->assertSee('Selesai');
+        $response->assertSee('disabled', false);
+        $response->assertDontSee('id="actionForms"', false);
+    }
+
+    public function test_unprocessed_students_remain_actionable_and_class_summary_warns(): void
+    {
+        $response = $this->actingAs($this->admin, 'web')
+            ->get(route('admin.kenaikan-kelas.show-siswa', $this->sourceClass5AId));
+
+        $response->assertOk();
+        $response->assertSee('Belum diproses');
+        $response->assertSee('0/1 sudah diproses');
+        $response->assertSee('Belum selesai');
+        $response->assertSee('value="'.$this->ahmadId.'"', false);
+        $response->assertSee('id="actionForms"', false);
+    }
+
+    public function test_class_summary_marks_complete_when_all_source_students_have_target_enrollment(): void
+    {
+        $this->insertEnrollment($this->ahmadId, $this->targetClass6AId, $this->targetYearId, 1);
+
+        $response = $this->actingAs($this->admin, 'web')
+            ->get(route('admin.kenaikan-kelas.index'));
+
+        $response->assertOk();
+        $response->assertSee('1/1 sudah diproses');
+        $response->assertSee('Selesai');
+    }
+
     public function test_opening_promotion_planning_does_not_mutate_students_or_enrollments(): void
     {
         $studentCount = DB::table('siswas')->count();

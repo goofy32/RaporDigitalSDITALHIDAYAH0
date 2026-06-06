@@ -68,7 +68,7 @@
                         <td class="px-6 py-4">{{ str_starts_with($student->nis, 'S2-') ? substr($student->nis, 3) : $student->nis }}</td>
                         <td class="px-6 py-4">{{ str_starts_with($student->nisn, 'S2-') ? substr($student->nisn, 3) : $student->nisn }}</td>
                         <td class="px-6 py-4">{{ $student->nama }}</td>
-                        <td class="px-6 py-4">{{ optional($student->kelas)->full_kelas ?? '-' }}</td>
+                        <td class="px-6 py-4">{{ $student->admin_kelas_label ?? optional($student->kelas)->full_kelas ?? '-' }}</td>
                         <td class="px-6 py-4">{{ $student->jenis_kelamin }}</td>
                 <!-- Aksi dengan icon -->
                 <td class="px-1 py-4 text-center flex space-x-2">

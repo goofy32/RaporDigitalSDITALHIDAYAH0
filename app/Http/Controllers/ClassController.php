@@ -9,8 +9,10 @@ use App\Models\Guru;
 use App\Models\MataPelajaran;
 use App\Models\Nilai;
 use App\Models\Ekstrakurikuler;
+use App\Models\TahunAjaran;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 class ClassController extends Controller
 {
@@ -74,9 +76,13 @@ class ClassController extends Controller
     }
 
     // Menampilkan form tambah data kelas
-    public function create()
+    public function create(Request $request)
     {
-        $tahunAjaranId = session('tahun_ajaran_id');
+        $tahunAjaranId = $request->integer('target_tahun_ajaran_id')
+            ?: $request->integer('tahun_ajaran_id')
+            ?: session('tahun_ajaran_id');
+        $targetTahunAjaran = $tahunAjaranId ? TahunAjaran::find($tahunAjaranId) : null;
+        $redirectTo = $request->query('redirect_to');
         
         $assignedWaliKelasIds = DB::table('guru_kelas')
             ->join('kelas', 'guru_kelas.kelas_id', '=', 'kelas.id')
@@ -92,7 +98,7 @@ class ClassController extends Controller
             ->orderBy('nama')
             ->get();
     
-        return view('data.create_class', compact('guruList'));
+        return view('data.create_class', compact('guruList', 'targetTahunAjaran', 'tahunAjaranId', 'redirectTo'));
     }
 
     public function store(Request $request)
@@ -100,6 +106,9 @@ class ClassController extends Controller
         $validated = $request->validate([
             'nomor_kelas' => 'required|integer|min:1|max:99',
             'nama_kelas' => 'required|string|max:255',
+            'target_tahun_ajaran_id' => 'nullable|exists:tahun_ajarans,id',
+            'tahun_ajaran_id' => 'nullable|exists:tahun_ajarans,id',
+            'redirect_to' => 'nullable|string|max:2048',
         ], [
             'nomor_kelas.required' => 'Nomor kelas harus diisi',
             'nomor_kelas.integer' => 'Nomor kelas harus berupa angka',
@@ -109,7 +118,13 @@ class ClassController extends Controller
             'nama_kelas.max' => 'Nama kelas maksimal 255 karakter'
         ]);
     
-        $tahunAjaranId = session('tahun_ajaran_id');
+        $tahunAjaranId = (int) (($validated['target_tahun_ajaran_id'] ?? null)
+            ?: ($validated['tahun_ajaran_id'] ?? null)
+            ?: session('tahun_ajaran_id'));
+
+        if (! $tahunAjaranId) {
+            return back()->withInput()->with('error', 'Tahun ajaran belum dipilih.');
+        }
 
         // Check for existing class with the same name
         $existingClass = Kelas::where('nomor_kelas', $request->nomor_kelas)
@@ -128,7 +143,8 @@ class ClassController extends Controller
             // Buat kelas baru
             $kelas = Kelas::create([
                 'nomor_kelas' => $request->nomor_kelas,
-                'nama_kelas' => $request->nama_kelas
+                'nama_kelas' => $request->nama_kelas,
+                'tahun_ajaran_id' => $tahunAjaranId,
             ]);
     
             // Jika ada wali kelas yang dipilih
@@ -159,7 +175,9 @@ class ClassController extends Controller
             }
     
             DB::commit();
-            return redirect()->route('kelas.index')
+            $redirectTo = $this->safeClassRedirect($validated['redirect_to'] ?? null);
+
+            return ($redirectTo ? redirect()->to($redirectTo) : redirect()->route('kelas.index'))
                 ->with('success', 'Data kelas berhasil ditambahkan');
         } catch (\Exception $e) {
             DB::rollBack();
@@ -172,6 +190,19 @@ class ClassController extends Controller
             ]);
             return back()->with('error', 'Terjadi kesalahan. Silakan coba lagi.')->withInput();
         }
+    }
+
+    private function safeClassRedirect(?string $redirectTo): ?string
+    {
+        if (! $redirectTo) {
+            return null;
+        }
+
+        if (Str::startsWith($redirectTo, [url('/'), '/'])) {
+            return $redirectTo;
+        }
+
+        return null;
     }
 
     public function edit($id)

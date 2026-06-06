@@ -39,6 +39,12 @@
         <h3 class="text-lg font-semibold text-gray-800 mb-3">Kelas {{ $kelas->nomor_kelas }} {{ $kelas->nama_kelas }}</h3>
         <p class="text-gray-600">Wali Kelas: {{ $kelas->waliKelasName }}</p>
         <p class="text-gray-600">Jumlah Siswa: {{ $siswaList->count() }}</p>
+        @if(isset($tahunAjaranBaru) && $tahunAjaranBaru)
+            <p class="text-gray-600">Status Proses: {{ $processedPromotionCount ?? 0 }}/{{ $siswaList->count() }} sudah diproses</p>
+            <span class="inline-block mt-2 px-2 py-1 text-xs {{ ($promotionComplete ?? false) ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800' }} rounded-full">
+                {{ ($promotionComplete ?? false) ? 'Selesai' : 'Belum selesai' }}
+            </span>
+        @endif
         @if(isset($tahunAjaranAktif))
             <p class="text-gray-500 text-sm mt-1">Sumber: {{ $tahunAjaranAktif->tahun_ajaran }} Semester {{ $tahunAjaranAktif->semester }}</p>
         @endif
@@ -87,12 +93,16 @@
     @if(!$isKelasAkhir && $kelasTujuan->isEmpty())
     <div class="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
         <p class="text-red-800">Tidak ada kelas tujuan yang tersedia di tahun ajaran baru. Pastikan kelas untuk tingkat berikutnya sudah dibuat.</p>
-        <a href="{{ route('kelas.create') }}" class="text-blue-600 hover:underline mt-2 inline-block">Buat Kelas Baru</a>
+        @if($tahunAjaranBaru)
+            <a href="{{ route('kelas.create', ['target_tahun_ajaran_id' => $tahunAjaranBaru->id, 'redirect_to' => route('admin.kenaikan-kelas.show-siswa', $kelas->id)]) }}" class="text-blue-600 hover:underline mt-2 inline-block">Buat Kelas Baru</a>
+        @else
+            <p class="text-red-700 text-sm mt-2">Buat tahun ajaran tujuan semester ganjil terlebih dahulu.</p>
+        @endif
     </div>
     @else
 
     <div class="mb-6">
-        @if($promotionWritesEnabled)
+        @if($promotionWritesEnabled && ($pendingPromotionCount ?? $siswaList->count()) > 0)
         <div class="flex items-center mb-4">
             <input id="select-all" type="checkbox" class="h-4 w-4 text-green-600 focus:ring-green-500">
             <label for="select-all" class="ml-2 block text-sm text-gray-900">Pilih Semua Siswa</label>
@@ -110,14 +120,16 @@
                         <th class="py-3 px-4 border-b text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Nama</th>
                         <th class="py-3 px-4 border-b text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Jenis Kelamin</th>
                         <th class="py-3 px-4 border-b text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Status Rapor</th>
+                        <th class="py-3 px-4 border-b text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Status Proses</th>
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-gray-200">
                     @foreach($siswaList as $siswa)
+                    @php($isProcessed = (bool) ($siswa->promotion_processed ?? false))
                     <tr data-siswa-id="{{ $siswa->id }}">
                         @if($promotionWritesEnabled)
                         <td class="py-3 px-4 border-b">
-                            <input type="checkbox" name="siswa_ids[]" value="{{ $siswa->id }}" class="student-checkbox h-4 w-4 text-green-600 focus:ring-green-500">
+                            <input type="checkbox" name="siswa_ids[]" value="{{ $siswa->id }}" class="student-checkbox h-4 w-4 text-green-600 focus:ring-green-500 disabled:opacity-50 disabled:cursor-not-allowed" {{ $isProcessed ? 'disabled' : '' }}>
                         </td>
                         @endif
                         <td class="py-3 px-4 border-b">{{ $siswa->nis }}</td>
@@ -136,6 +148,20 @@
                                 </span>
                             @endif
                         </td>
+                        <td class="py-3 px-4 border-b">
+                            @if($isProcessed)
+                                <span class="inline-flex items-center bg-green-100 text-green-800 text-xs font-medium px-2.5 py-0.5 rounded-full">
+                                    Sudah diproses
+                                </span>
+                                @if($siswa->promotion_target_class_label)
+                                    <div class="text-xs text-gray-500 mt-1">{{ $siswa->promotion_outcome }} - {{ $siswa->promotion_target_class_label }}</div>
+                                @endif
+                            @else
+                                <span class="inline-flex items-center bg-yellow-100 text-yellow-800 text-xs font-medium px-2.5 py-0.5 rounded-full">
+                                    Belum diproses
+                                </span>
+                            @endif
+                        </td>
                     </tr>
                     @endforeach
                 </tbody>
@@ -143,7 +169,7 @@
         </div>
     </div>
 
-    @if($promotionWritesEnabled)
+    @if($promotionWritesEnabled && ($pendingPromotionCount ?? $siswaList->count()) > 0)
     <div class="bg-gray-50 p-4 rounded-lg border border-gray-200 mb-6" id="actionForms" style="display: none;">
         <h3 class="text-lg font-semibold text-gray-800 mb-3">Proses Siswa Terpilih</h3>
         <p class="mb-3">Anda telah memilih <span id="selectedCount" class="font-semibold">0</span> siswa.</p>

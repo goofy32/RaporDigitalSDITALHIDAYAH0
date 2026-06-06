@@ -195,11 +195,19 @@
                class="block p-4 bg-white border rounded-lg hover:bg-gray-50 transition duration-150 ease-in-out">
                 <h4 class="font-medium text-lg">Kelas {{ $kelas->nomor_kelas }} {{ $kelas->nama_kelas }}</h4>
                 <p class="text-gray-600">{{ $kelas->promotion_roster_count ?? 0 }} Siswa</p>
+                @if(isset($tahunAjaranBaru))
+                    <p class="text-gray-500 text-sm">{{ $kelas->promotion_processed_count ?? 0 }}/{{ $kelas->promotion_roster_count ?? 0 }} sudah diproses</p>
+                @endif
                 <p class="text-gray-500 text-sm">Wali Kelas: {{ $kelas->waliKelasName }}</p>
                 <div class="mt-2">
                     <span class="inline-block px-2 py-1 text-xs {{ $kelas->nomor_kelas == 6 ? 'bg-green-100 text-green-800' : 'bg-green-100 text-green-800' }} rounded-full">
                         {{ $kelas->nomor_kelas == 6 ? 'Proses Kelulusan' : 'Proses Kenaikan Kelas' }}
                     </span>
+                    @if(isset($tahunAjaranBaru) && ($kelas->promotion_roster_count ?? 0) > 0)
+                        <span class="inline-block px-2 py-1 text-xs {{ ($kelas->promotion_complete ?? false) ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800' }} rounded-full">
+                            {{ ($kelas->promotion_complete ?? false) ? 'Selesai' : 'Belum selesai' }}
+                        </span>
+                    @endif
                 </div>
             </a>
             @endforeach
