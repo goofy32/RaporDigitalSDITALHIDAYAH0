@@ -85,6 +85,17 @@ class PromotionPlanningEnrollmentRosterTest extends TestCase
         $response->assertSee('Kelas 5 B');
     }
 
+    public function test_mass_promotion_confirmation_uses_consistent_button_classes(): void
+    {
+        $response = $this->actingAs($this->admin, 'web')
+            ->get(route('admin.kenaikan-kelas.index'));
+
+        $response->assertOk();
+        $response->assertSee('border border-gray-300 bg-white text-gray-700', false);
+        $response->assertSee('bg-green-600 text-white rounded-md hover:bg-green-700', false);
+        $response->assertDontSee('bg-gray-200 text-gray-800 rounded-md mr-2', false);
+    }
+
     public function test_matching_legacy_fallback_only_works_when_student_has_no_enrollments(): void
     {
         $legacyStudentId = $this->insertStudent('2605005', '9000000005', 'Rina Legacy', $this->sourceClass5AId);
@@ -125,7 +136,7 @@ class PromotionPlanningEnrollmentRosterTest extends TestCase
         $response->assertDontSee('Kelas 6 B');
     }
 
-    public function test_semester_ganjil_promotion_index_redirects_with_friendly_message(): void
+    public function test_semester_ganjil_promotion_index_shows_friendly_message_without_actions(): void
     {
         DB::table('tahun_ajarans')->where('id', $this->sourceYearId)->update([
             'semester' => 1,
@@ -133,8 +144,14 @@ class PromotionPlanningEnrollmentRosterTest extends TestCase
 
         $this->actingAs($this->admin, 'web')
             ->get(route('admin.kenaikan-kelas.index'))
-            ->assertRedirect(route('tahun.ajaran.index'))
-            ->assertSessionHas('error', 'Kenaikan kelas hanya dapat dilakukan dari Semester Genap. Silakan aktifkan tahun ajaran Semester Genap terlebih dahulu.');
+            ->assertOk()
+            ->assertSee('Kenaikan kelas belum dapat diproses pada Semester Ganjil')
+            ->assertSee('Kenaikan kelas dilakukan setelah Semester Genap selesai')
+            ->assertSee('Selesaikan input nilai dan rapor')
+            ->assertSee('Tombol proses kenaikan kelas dinonaktifkan')
+            ->assertDontSee(route('admin.kenaikan-kelas.process-kenaikan'), false)
+            ->assertDontSee(route('admin.kenaikan-kelas.process-tinggal'), false)
+            ->assertDontSee(route('admin.kenaikan-kelas.process-mass'), false);
     }
 
     public function test_target_class_creation_link_uses_next_year_context(): void

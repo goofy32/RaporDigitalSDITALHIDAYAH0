@@ -16,7 +16,7 @@ use RuntimeException;
 class KenaikanKelasController extends Controller
 {
     private const PROMOTION_WRITES_DISABLED_MESSAGE = 'Kenaikan kelas massal dan kelulusan berbasis enrollment belum diaktifkan. Gunakan proses siswa terpilih untuk kenaikan atau tinggal kelas.';
-    private const SEMESTER_GANJIL_PROMOTION_MESSAGE = 'Kenaikan kelas hanya dapat dilakukan dari Semester Genap. Silakan aktifkan tahun ajaran Semester Genap terlebih dahulu.';
+    private const SEMESTER_GANJIL_PROMOTION_MESSAGE = 'Kenaikan kelas dilakukan setelah Semester Genap selesai. Pastikan nilai dan rapor sudah selesai, lalu buat tahun ajaran berikutnya dan proses kenaikan kelas.';
 
     /**
      * Menampilkan halaman untuk proses kenaikan kelas
@@ -33,8 +33,12 @@ class KenaikanKelasController extends Controller
         }
 
         if ((int) $tahunAjaranAktif->semester !== 2) {
-            return redirect()->route('tahun.ajaran.index')
-                ->with('error', self::SEMESTER_GANJIL_PROMOTION_MESSAGE);
+            return view('admin.kenaikan_kelas.index', [
+                'tahunAjaranAktif' => $tahunAjaranAktif,
+                'promotionWritesEnabled' => false,
+                'promotionWritesDisabledMessage' => self::SEMESTER_GANJIL_PROMOTION_MESSAGE,
+                'promotionUnavailableForGanjil' => true,
+            ]);
         }
         
         // Cari tahun ajaran baru (tahun ajaran selanjutnya)

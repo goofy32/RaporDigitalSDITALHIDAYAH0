@@ -132,7 +132,7 @@ export function initKenaikanKelasShowPage() {
                 icon: 'warning',
                 showCancelButton: true,
                 confirmButtonColor: '#3F7858',
-                cancelButtonColor: '#d33',
+                cancelButtonColor: '#6b7280',
                 confirmButtonText: 'Ya, Lanjutkan',
                 cancelButtonText: 'Batal',
             }).then(result => {

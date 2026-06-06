@@ -68,7 +68,7 @@
                 <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4 flex-1">
                     <h4 class="font-medium text-yellow-800">Tahun Ajaran Tujuan</h4>
                     <p class="text-yellow-700 mb-2">Anda berada di semester ganjil</p>
-                    <p class="text-yellow-600 text-sm">Untuk membuat tahun ajaran berikutnya, lanjutkan ke semester genap terlebih dahulu.</p>
+                    <p class="text-yellow-600 text-sm">Kenaikan kelas diproses setelah Semester Genap selesai.</p>
                 </div>
             @else
                 <div class="bg-green-50 border border-green-200 rounded-lg p-4 flex-1">
@@ -84,6 +84,17 @@
             @endif
             @endif
         </div>
+    </div>
+    @endif
+
+    @if(!empty($promotionUnavailableForGanjil))
+    <div class="bg-yellow-50 border border-yellow-200 text-yellow-900 p-4 mb-6 rounded-lg">
+        <p class="font-medium">Kenaikan kelas belum dapat diproses pada Semester Ganjil</p>
+        <p class="text-sm mt-1">
+            Kenaikan kelas dilakukan setelah Semester Genap selesai. Selesaikan input nilai dan rapor terlebih dahulu,
+            lalu lanjutkan ke Semester Genap, buat tahun ajaran berikutnya, dan proses kenaikan kelas.
+        </p>
+        <p class="text-sm mt-2 font-medium text-yellow-800">Tombol proses kenaikan kelas dinonaktifkan sampai sumber Semester Genap aktif.</p>
     </div>
     @endif
 
@@ -140,14 +151,14 @@
                 </ul>
                 <p class="mb-4 text-black-600 font-medium">Apakah Anda yakin ingin melanjutkan?</p>
                 <div class="flex justify-end">
-                    <button @click="open = false" class="px-3 py-1 bg-gray-200 text-gray-800 rounded-md mr-2">Batal</button>
+                    <button @click="open = false" class="px-4 py-2 border border-gray-300 bg-white text-gray-700 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-400 mr-2">Batal</button>
                     @if($promotionWritesEnabled)
                     <form action="{{ route('admin.kenaikan-kelas.process-mass') }}" method="POST">
                         @csrf
-                        <button type="submit" class="px-3 py-1 bg-green-600 text-white rounded-md">Proses Sekarang</button>
+                        <button type="submit" class="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500">Proses Sekarang</button>
                     </form>
                     @else
-                    <button type="button" class="px-3 py-1 bg-gray-300 text-gray-600 rounded-md cursor-not-allowed" disabled>Belum Aktif</button>
+                    <button type="button" class="px-4 py-2 bg-gray-300 text-gray-600 rounded-md cursor-not-allowed" disabled>Belum Aktif</button>
                     @endif
                 </div>
             </div>

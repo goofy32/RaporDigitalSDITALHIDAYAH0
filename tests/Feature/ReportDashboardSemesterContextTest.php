@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Http\Controllers\DashboardController;
 use App\Models\Guru;
 use App\Models\User;
 use Illuminate\Database\Schema\Blueprint;
@@ -144,6 +145,55 @@ class ReportDashboardSemesterContextTest extends TestCase
             })
             ->assertViewHas('siswaCount', 1)
             ->assertViewHas('mapelCount', 1);
+    }
+
+    public function test_pengajar_overall_progress_cache_is_cleared_for_active_semester_context(): void
+    {
+        DB::table('nilais')->where('tahun_ajaran_id', $this->ganjilYearId)->delete();
+
+        $this->actingAsPengajar($this->ganjilYearId, 1)
+            ->get(route('pengajar.dashboard'))
+            ->assertOk()
+            ->assertViewHas('overallProgress', fn ($progress) => (float) $progress === 0.0);
+
+        $ganjilLmId = (int) DB::table('lingkup_materis')
+            ->where('mata_pelajaran_id', $this->ganjilSubjectId)
+            ->value('id');
+
+        $this->insertCompleteScore($this->studentId, $this->ganjilSubjectId, $ganjilLmId, $this->ganjilYearId);
+
+        DashboardController::clearProgressCacheForKelas($this->ganjilClassId, $this->pengajar->id);
+
+        $this->actingAsPengajar($this->ganjilYearId, 1)
+            ->get(route('pengajar.dashboard'))
+            ->assertOk()
+            ->assertViewHas('overallProgress', fn ($progress) => (float) $progress === 100.0);
+    }
+
+    public function test_pengajar_overall_progress_requires_tp_lm_and_final_score(): void
+    {
+        DB::table('nilais')->where('tahun_ajaran_id', $this->ganjilYearId)->delete();
+
+        $ganjilLmId = (int) DB::table('lingkup_materis')
+            ->where('mata_pelajaran_id', $this->ganjilSubjectId)
+            ->value('id');
+
+        DB::table('nilais')->insert([
+            'siswa_id' => $this->studentId,
+            'mata_pelajaran_id' => $this->ganjilSubjectId,
+            'lingkup_materi_id' => $ganjilLmId,
+            'nilai_lm' => 88,
+            'nilai_akhir_rapor' => 88,
+            'is_submitted' => false,
+            'tahun_ajaran_id' => $this->ganjilYearId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->actingAsPengajar($this->ganjilYearId, 1)
+            ->get(route('pengajar.dashboard'))
+            ->assertOk()
+            ->assertViewHas('overallProgress', fn ($progress) => (float) $progress === 0.0);
     }
 
     public function test_another_teachers_subject_does_not_affect_pengajar_overall_progress(): void
@@ -573,17 +623,7 @@ class ReportDashboardSemesterContextTest extends TestCase
         $ganjilLmId = $this->insertLearningData($this->ganjilSubjectId);
         $this->insertLearningData($this->genapSubjectId);
 
-        DB::table('nilais')->insert([
-            'siswa_id' => $this->studentId,
-            'mata_pelajaran_id' => $this->ganjilSubjectId,
-            'lingkup_materi_id' => $ganjilLmId,
-            'nilai_lm' => 88,
-            'nilai_akhir_rapor' => 88,
-            'is_submitted' => true,
-            'tahun_ajaran_id' => $this->ganjilYearId,
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
+        $this->insertCompleteScore($this->studentId, $this->ganjilSubjectId, $ganjilLmId, $this->ganjilYearId);
 
         DB::table('absensis')->insert([
             [
@@ -700,6 +740,42 @@ class ReportDashboardSemesterContextTest extends TestCase
         ]);
 
         return $lmId;
+    }
+
+    private function insertCompleteScore(int $studentId, int $subjectId, int $lmId, int $tahunAjaranId): void
+    {
+        $tpId = (int) DB::table('tujuan_pembelajarans')
+            ->where('lingkup_materi_id', $lmId)
+            ->value('id');
+
+        DB::table('nilais')->insert([
+            [
+                'siswa_id' => $studentId,
+                'mata_pelajaran_id' => $subjectId,
+                'lingkup_materi_id' => $lmId,
+                'tujuan_pembelajaran_id' => $tpId,
+                'nilai_tp' => 88,
+                'nilai_lm' => null,
+                'nilai_akhir_rapor' => null,
+                'is_submitted' => false,
+                'tahun_ajaran_id' => $tahunAjaranId,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+            [
+                'siswa_id' => $studentId,
+                'mata_pelajaran_id' => $subjectId,
+                'lingkup_materi_id' => $lmId,
+                'tujuan_pembelajaran_id' => null,
+                'nilai_tp' => null,
+                'nilai_lm' => 88,
+                'nilai_akhir_rapor' => 88,
+                'is_submitted' => false,
+                'tahun_ajaran_id' => $tahunAjaranId,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+        ]);
     }
 
     private function attachWali(int $guruId, int $kelasId): void

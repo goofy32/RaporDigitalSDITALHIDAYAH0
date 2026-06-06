@@ -174,9 +174,8 @@ class DashboardController extends Controller
             return collect();
         }
 
-        return Nilai::select('mata_pelajaran_id', DB::raw('COUNT(DISTINCT siswa_id) as total'))
+        $completedRows = Nilai::select('mata_pelajaran_id', 'siswa_id')
             ->whereIn('mata_pelajaran_id', $subjectIds)
-            ->where('is_submitted', true)
             ->whereNull('deleted_at')
             ->when($tahunAjaranId, function ($query) use ($tahunAjaranId) {
                 return $query->where('tahun_ajaran_id', $tahunAjaranId);
@@ -184,18 +183,37 @@ class DashboardController extends Controller
             ->when($studentIds !== null, function ($query) use ($studentIds) {
                 return $query->whereIn('siswa_id', $studentIds);
             })
+            ->groupBy('mata_pelajaran_id', 'siswa_id')
+            ->havingRaw('COUNT(CASE WHEN nilai_tp IS NOT NULL THEN 1 END) > 0')
+            ->havingRaw('COUNT(CASE WHEN nilai_lm IS NOT NULL THEN 1 END) > 0')
+            ->havingRaw('COUNT(CASE WHEN nilai_akhir_rapor IS NOT NULL THEN 1 END) > 0');
+
+        return DB::query()
+            ->fromSub($completedRows, 'completed_scores')
+            ->select('mata_pelajaran_id', DB::raw('COUNT(*) as total'))
             ->groupBy('mata_pelajaran_id')
             ->pluck('total', 'mata_pelajaran_id');
     }
 
-    public static function clearProgressCache(?int $guruId = null, ?int $waliKelasId = null): void
+    public static function clearProgressCache(?int $guruId = null, ?int $waliKelasId = null, ?int $tahunAjaranId = null, ?int $semester = null): void
     {
+        $tahunAjaranId = $tahunAjaranId ?: session('tahun_ajaran_id');
+        $semester = $semester ?: ($tahunAjaranId
+            ? (int) DB::table('tahun_ajarans')->where('id', $tahunAjaranId)->value('semester')
+            : (int) session('selected_semester', 0));
+
         if ($guruId) {
             Cache::forget("guru_{$guruId}_dashboard_stats");
+            if ($tahunAjaranId && $semester) {
+                Cache::forget("guru_{$guruId}_dashboard_stats_{$tahunAjaranId}_{$semester}");
+            }
         }
 
         if ($waliKelasId) {
             Cache::forget("wali_kelas_progress_{$waliKelasId}");
+            if ($tahunAjaranId && $semester) {
+                Cache::forget("wali_kelas_progress_{$waliKelasId}_{$tahunAjaranId}_{$semester}");
+            }
         }
     }
 
@@ -209,7 +227,17 @@ class DashboardController extends Controller
             ->unique();
 
         foreach ($guruIds as $id) {
-            self::clearProgressCache((int) $id, (int) $id);
+            $tahunAjaranId = DB::table('kelas')->where('id', $kelasId)->value('tahun_ajaran_id');
+            $semester = $tahunAjaranId
+                ? DB::table('tahun_ajarans')->where('id', $tahunAjaranId)->value('semester')
+                : null;
+
+            self::clearProgressCache(
+                (int) $id,
+                (int) $id,
+                $tahunAjaranId ? (int) $tahunAjaranId : null,
+                $semester ? (int) $semester : null
+            );
         }
     }
 
@@ -222,7 +250,6 @@ class DashboardController extends Controller
         }
 
         return Nilai::where('mata_pelajaran_id', $mataPelajaranId)
-            ->where('is_submitted', true)
             ->whereNull('deleted_at')
             ->when($tahunAjaranId, function ($query) use ($tahunAjaranId) {
                 return $query->where('tahun_ajaran_id', $tahunAjaranId);
@@ -230,8 +257,13 @@ class DashboardController extends Controller
             ->when($studentIds !== null, function ($query) use ($studentIds) {
                 return $query->whereIn('siswa_id', $studentIds);
             })
-            ->distinct()
-            ->count('siswa_id');
+            ->select('siswa_id')
+            ->groupBy('siswa_id')
+            ->havingRaw('COUNT(CASE WHEN nilai_tp IS NOT NULL THEN 1 END) > 0')
+            ->havingRaw('COUNT(CASE WHEN nilai_lm IS NOT NULL THEN 1 END) > 0')
+            ->havingRaw('COUNT(CASE WHEN nilai_akhir_rapor IS NOT NULL THEN 1 END) > 0')
+            ->get()
+            ->count();
     }
 
     public function pengajarDashboard()
