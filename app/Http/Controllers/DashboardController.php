@@ -11,7 +11,9 @@ use App\Models\Ekstrakurikuler;
 use App\Models\Notification;
 use App\Models\TahunAjaran;
 use App\Models\ProfilSekolah;
+use App\Services\SiswaKelasSemesterResolver;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
@@ -19,28 +21,53 @@ use Illuminate\Support\Facades\Schema;
 
 class DashboardController extends Controller
 {
+    private function semesterForTahunAjaran(?int $tahunAjaranId): ?int
+    {
+        return $tahunAjaranId
+            ? (int) TahunAjaran::whereKey($tahunAjaranId)->value('semester')
+            : null;
+    }
+
+    private function studentIdsForClass(int $kelasId, ?int $tahunAjaranId = null, ?int $semester = null): Collection
+    {
+        if ($tahunAjaranId && $semester) {
+            return app(SiswaKelasSemesterResolver::class)
+                ->studentsForClass($kelasId, $tahunAjaranId, $semester, true)
+                ->pluck('id')
+                ->unique()
+                ->values();
+        }
+
+        return Siswa::where('kelas_id', $kelasId)->pluck('id')->unique()->values();
+    }
+
+    private function studentIdsForClasses($kelasIds, ?int $tahunAjaranId = null, ?int $semester = null): Collection
+    {
+        return collect($kelasIds)
+            ->filter()
+            ->unique()
+            ->flatMap(fn ($kelasId) => $this->studentIdsForClass((int) $kelasId, $tahunAjaranId, $semester))
+            ->unique()
+            ->values();
+    }
+
     public function adminDashboard()
     {
         $tahunAjaranId = session('tahun_ajaran_id');
+        $semester = $this->semesterForTahunAjaran($tahunAjaranId);
 
-        $totalStudents = Siswa::when($tahunAjaranId, function($query) use ($tahunAjaranId) {
-            return $query->whereHas('kelas', function($q) use ($tahunAjaranId) {
-                $q->where('tahun_ajaran_id', $tahunAjaranId);
-            });
-        })->count();
+        $kelasIdsForStudents = Kelas::when($tahunAjaranId, function($query) use ($tahunAjaranId) {
+            return $query->where('tahun_ajaran_id', $tahunAjaranId);
+        })->pluck('id');
+
+        $totalStudents = $tahunAjaranId && $semester
+            ? $this->studentIdsForClasses($kelasIdsForStudents, (int) $tahunAjaranId, (int) $semester)->count()
+            : Siswa::count();
         
         $totalClasses = Kelas::when($tahunAjaranId, function($query) use ($tahunAjaranId) {
             return $query->where('tahun_ajaran_id', $tahunAjaranId);
         })->count();
         
-       $semester = null;
-        if ($tahunAjaranId) {
-            $currentTahunAjaran = TahunAjaran::find($tahunAjaranId);
-            if ($currentTahunAjaran) {
-                $semester = $currentTahunAjaran->semester;
-            }
-        }
-
         $totalSubjects = MataPelajaran::when($tahunAjaranId, function($query) use ($tahunAjaranId) {
             return $query->where('tahun_ajaran_id', $tahunAjaranId);
         })->when($semester, function($query) use ($semester) {
@@ -85,6 +112,7 @@ class DashboardController extends Controller
     {
         try {
             $tahunAjaranId = $tahunAjaranId ?: session('tahun_ajaran_id');
+            $semester = $this->semesterForTahunAjaran($tahunAjaranId);
             
             // Get all active classes for the current tahun ajaran
             $kelasIds = \App\Models\Kelas::where('tahun_ajaran_id', $tahunAjaranId)
@@ -95,23 +123,32 @@ class DashboardController extends Controller
                 return 0;
             }
             
-            // Get all students in these classes
-            $totalStudents = \App\Models\Siswa::whereIn('kelas_id', $kelasIds)->count();
-            
             // Get all mata pelajaran for these classes
             $mataPelajarans = \App\Models\MataPelajaran::whereIn('kelas_id', $kelasIds)
                 ->where('tahun_ajaran_id', $tahunAjaranId)
+                ->when($semester, function ($query) use ($semester) {
+                    return $query->where('semester', $semester);
+                })
                 ->get();
                 
-            if ($mataPelajarans->isEmpty() || $totalStudents === 0) {
-                \Log::info("No subjects or students found");
+            if ($mataPelajarans->isEmpty()) {
+                \Log::info("No subjects found");
                 return 0;
             }
             
             // Calculate the total number of scores needed
-            $totalScoresNeeded = $mataPelajarans->count() * $totalStudents;
-            $completedScoreCounts = $this->getCompletedScoreCountsBySubject($mataPelajarans->pluck('id'), $tahunAjaranId);
-            $totalScoresCompleted = $completedScoreCounts->sum();
+            $totalScoresNeeded = 0;
+            $totalScoresCompleted = 0;
+
+            foreach ($mataPelajarans as $mataPelajaran) {
+                $studentIds = $this->studentIdsForClass((int) $mataPelajaran->kelas_id, (int) $tahunAjaranId, $semester);
+                $totalScoresNeeded += $studentIds->count();
+                $totalScoresCompleted += $this->countCompletedStudentsForSubject(
+                    (int) $mataPelajaran->id,
+                    (int) $tahunAjaranId,
+                    $studentIds->all()
+                );
+            }
             
             \Log::info("Total scores needed: {$totalScoresNeeded}, completed: {$totalScoresCompleted}");
             
@@ -128,11 +165,12 @@ class DashboardController extends Controller
         }
     }
 
-    private function getCompletedScoreCountsBySubject($subjectIds, $tahunAjaranId = null)
+    private function getCompletedScoreCountsBySubject($subjectIds, $tahunAjaranId = null, ?array $studentIds = null)
     {
         $subjectIds = collect($subjectIds)->filter()->unique()->values();
+        $studentIds = is_array($studentIds) ? collect($studentIds)->filter()->unique()->values() : null;
 
-        if ($subjectIds->isEmpty()) {
+        if ($subjectIds->isEmpty() || ($studentIds !== null && $studentIds->isEmpty())) {
             return collect();
         }
 
@@ -142,6 +180,9 @@ class DashboardController extends Controller
             ->whereNull('deleted_at')
             ->when($tahunAjaranId, function ($query) use ($tahunAjaranId) {
                 return $query->where('tahun_ajaran_id', $tahunAjaranId);
+            })
+            ->when($studentIds !== null, function ($query) use ($studentIds) {
+                return $query->whereIn('siswa_id', $studentIds);
             })
             ->groupBy('mata_pelajaran_id')
             ->pluck('total', 'mata_pelajaran_id');
@@ -172,13 +213,22 @@ class DashboardController extends Controller
         }
     }
 
-    private function countCompletedStudentsForSubject(int $mataPelajaranId, ?int $tahunAjaranId = null): int
+    private function countCompletedStudentsForSubject(int $mataPelajaranId, ?int $tahunAjaranId = null, ?array $studentIds = null): int
     {
+        $studentIds = is_array($studentIds) ? collect($studentIds)->filter()->unique()->values() : null;
+
+        if ($studentIds !== null && $studentIds->isEmpty()) {
+            return 0;
+        }
+
         return Nilai::where('mata_pelajaran_id', $mataPelajaranId)
             ->where('is_submitted', true)
             ->whereNull('deleted_at')
             ->when($tahunAjaranId, function ($query) use ($tahunAjaranId) {
                 return $query->where('tahun_ajaran_id', $tahunAjaranId);
+            })
+            ->when($studentIds !== null, function ($query) use ($studentIds) {
+                return $query->whereIn('siswa_id', $studentIds);
             })
             ->distinct()
             ->count('siswa_id');
@@ -189,24 +239,31 @@ class DashboardController extends Controller
         try {
             $guru = Auth::guard('guru')->user();
             $tahunAjaranId = session('tahun_ajaran_id');
+            $semester = $this->semesterForTahunAjaran($tahunAjaranId);
             
             if (!$guru) {
                 return redirect()->route('login');
             }
             
             // Ambil daftar kelas dengan mata pelajaran yang sudah difilter untuk menghindari duplikasi
-            $kelas = Kelas::with(['mataPelajarans' => function($query) use ($guru, $tahunAjaranId) {
+            $kelas = Kelas::with(['mataPelajarans' => function($query) use ($guru, $tahunAjaranId, $semester) {
                     $query->where('guru_id', $guru->id)
                         ->when($tahunAjaranId, function($q) use ($tahunAjaranId) {
                             return $q->where('tahun_ajaran_id', $tahunAjaranId);
+                        })
+                        ->when($semester, function($q) use ($semester) {
+                            return $q->where('semester', $semester);
                         });
                 }])
-                ->whereIn('id', function($query) use ($guru, $tahunAjaranId) {
+                ->whereIn('id', function($query) use ($guru, $tahunAjaranId, $semester) {
                     $query->select('kelas_id')
                         ->from('mata_pelajarans')
                         ->where('guru_id', $guru->id)
                         ->when($tahunAjaranId, function($q) use ($tahunAjaranId) {
                             return $q->where('tahun_ajaran_id', $tahunAjaranId);
+                        })
+                        ->when($semester, function($q) use ($semester) {
+                            return $q->where('semester', $semester);
                         })
                         ->distinct();
                 })
@@ -226,13 +283,16 @@ class DashboardController extends Controller
             }
             
             // Cache data stats untuk performa
-            $cacheKey = "guru_{$guru->id}_dashboard_stats";
+            $cacheKey = "guru_{$guru->id}_dashboard_stats_{$tahunAjaranId}_{$semester}";
             $cacheDuration = now()->addMinutes(5);
             
-            $stats = Cache::remember($cacheKey, $cacheDuration, function () use ($guru, $tahunAjaranId) {
+            $stats = Cache::remember($cacheKey, $cacheDuration, function () use ($guru, $tahunAjaranId, $semester) {
                 $kelasCount = MataPelajaran::where('guru_id', $guru->id)
                     ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
                         return $query->where('tahun_ajaran_id', $tahunAjaranId);
+                    })
+                    ->when($semester, function($query) use ($semester) {
+                        return $query->where('semester', $semester);
                     })
                     ->distinct('kelas_id')
                     ->count('kelas_id');
@@ -241,17 +301,25 @@ class DashboardController extends Controller
                     ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
                         return $query->where('tahun_ajaran_id', $tahunAjaranId);
                     })
-                    ->distinct('nama_pelajaran', 'kelas_id')
+                    ->when($semester, function($query) use ($semester) {
+                        return $query->where('semester', $semester);
+                    })
+                    ->get(['nama_pelajaran', 'kelas_id'])
+                    ->unique(fn ($mataPelajaran) => $mataPelajaran->nama_pelajaran . ':' . $mataPelajaran->kelas_id)
                     ->count();
 
                 $mataPelajaranKelasIds = MataPelajaran::where('guru_id', $guru->id)
                     ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
                         return $query->where('tahun_ajaran_id', $tahunAjaranId);
                     })
+                    ->when($semester, function($query) use ($semester) {
+                        return $query->where('semester', $semester);
+                    })
                     ->distinct()
                     ->pluck('kelas_id');
 
-                $siswaCount = Siswa::whereIn('kelas_id', $mataPelajaranKelasIds)->count();
+                $studentIdsForGuruClasses = $this->studentIdsForClasses($mataPelajaranKelasIds, $tahunAjaranId, $semester);
+                $siswaCount = $studentIdsForGuruClasses->count();
 
                 $totalStudentSubjects = 0;
                 $completedStudentSubjects = 0;
@@ -260,18 +328,25 @@ class DashboardController extends Controller
                     ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
                         return $query->where('tahun_ajaran_id', $tahunAjaranId);
                     })
+                    ->when($semester, function($query) use ($semester) {
+                        return $query->where('semester', $semester);
+                    })
                     ->get();
 
-                $completedScoreCounts = $this->getCompletedScoreCountsBySubject($mataPelajarans->pluck('id'), $tahunAjaranId);
-                $studentCountsByClass = Siswa::select('kelas_id', DB::raw('COUNT(*) as total'))
-                    ->whereIn('kelas_id', $mataPelajarans->pluck('kelas_id')->filter()->unique())
-                    ->groupBy('kelas_id')
-                    ->pluck('total', 'kelas_id');
+                $studentCountsByClass = $mataPelajarans->pluck('kelas_id')->filter()->unique()
+                    ->mapWithKeys(fn ($kelasId) => [
+                        $kelasId => $this->studentIdsForClass((int) $kelasId, $tahunAjaranId, $semester)->count(),
+                    ]);
 
                 foreach ($mataPelajarans as $mataPelajaran) {
-                    $studentsInClass = (int) ($studentCountsByClass[$mataPelajaran->kelas_id] ?? 0);
+                    $classStudentIds = $this->studentIdsForClass((int) $mataPelajaran->kelas_id, $tahunAjaranId, $semester);
+                    $studentsInClass = (int) ($studentCountsByClass[$mataPelajaran->kelas_id] ?? $classStudentIds->count());
                     $totalStudentSubjects += $studentsInClass;
-                    $completedStudentSubjects += (int) ($completedScoreCounts[$mataPelajaran->id] ?? 0);
+                    $completedStudentSubjects += $this->countCompletedStudentsForSubject(
+                        (int) $mataPelajaran->id,
+                        $tahunAjaranId,
+                        $classStudentIds->all()
+                    );
                 }
 
                 $overallProgress = ($totalStudentSubjects > 0)
@@ -311,7 +386,7 @@ class DashboardController extends Controller
         try {
             $guru = auth()->guard('guru')->user();
             $tahunAjaranId = session('tahun_ajaran_id');
-            $selectedSemester = session('selected_semester', 1); // Default ke semester 1
+            $selectedSemester = $this->semesterForTahunAjaran($tahunAjaranId) ?: session('selected_semester', 1); // Default ke semester 1
             
             \Log::info("Wali Kelas Dashboard", [
                 'guru_id' => $guru->id,
@@ -349,7 +424,8 @@ class DashboardController extends Controller
             }
             
             // Get stats data
-            $totalSiswa = \App\Models\Siswa::where('kelas_id', $kelasWali->id)->count();
+            $waliStudentIds = $this->studentIdsForClass((int) $kelasWali->id, (int) $tahunAjaranId, (int) $selectedSemester);
+            $totalSiswa = $waliStudentIds->count();
             
             \Log::info("Total siswa di kelas", [
                 'kelas_id' => $kelasWali->id,
@@ -359,32 +435,32 @@ class DashboardController extends Controller
             // Get mata pelajaran count
             $totalMapel = \App\Models\MataPelajaran::where('kelas_id', $kelasWali->id)
                 ->where('tahun_ajaran_id', $tahunAjaranId)
+                ->where('semester', $selectedSemester)
                 ->count();
                 
             // Get mata pelajaran untuk dropdown (sama seperti di pengajar)
             $mataPelajarans = \App\Models\MataPelajaran::where('kelas_id', $kelasWali->id)
                 ->where('tahun_ajaran_id', $tahunAjaranId)
+                ->where('semester', $selectedSemester)
                 ->with(['guru'])
                 ->orderBy('nama_pelajaran')
                 ->get();
             
             // Get absensi count
             $totalAbsensi = DB::table('absensis')
-                ->join('siswas', 'absensis.siswa_id', '=', 'siswas.id')
-                ->where('siswas.kelas_id', $kelasWali->id)
+                ->whereIn('absensis.siswa_id', $waliStudentIds)
                 ->where('absensis.tahun_ajaran_id', $tahunAjaranId)
+                ->where('absensis.semester', $selectedSemester)
                 ->whereNull('absensis.deleted_at')
-                ->whereNull('siswas.deleted_at')
                 ->count();
                 
             // Get ekstrakurikuler count
             try {
                 $totalEkskul = DB::table('nilai_ekstrakurikuler')
-                    ->join('siswas', 'nilai_ekstrakurikuler.siswa_id', '=', 'siswas.id')
-                    ->where('siswas.kelas_id', $kelasWali->id)
+                    ->whereIn('nilai_ekstrakurikuler.siswa_id', $waliStudentIds)
                     ->where('nilai_ekstrakurikuler.tahun_ajaran_id', $tahunAjaranId)
+                    ->where('nilai_ekstrakurikuler.semester', $selectedSemester)
                     ->whereNull('nilai_ekstrakurikuler.deleted_at')
-                    ->whereNull('siswas.deleted_at')
                     ->distinct('ekstrakurikuler_id')
                     ->count('ekstrakurikuler_id');
             } catch (\Exception $e) {
@@ -393,7 +469,7 @@ class DashboardController extends Controller
             }
             
             // Calculate overall progress untuk wali kelas (seperti di pengajar)
-            $overallProgress = $this->calculateOverallProgressForWaliKelas($kelasWali->id, $tahunAjaranId);
+            $overallProgress = $this->calculateOverallProgressForWaliKelas($kelasWali->id, $tahunAjaranId, $selectedSemester);
             
             // Get kelas info
             $kelas = \App\Models\Kelas::find($kelasWali->id);
@@ -402,8 +478,9 @@ class DashboardController extends Controller
             $recentActivities = DB::table('nilais')
                 ->join('siswas', 'nilais.siswa_id', '=', 'siswas.id')
                 ->join('mata_pelajarans', 'nilais.mata_pelajaran_id', '=', 'mata_pelajarans.id')
-                ->where('siswas.kelas_id', $kelasWali->id)
+                ->whereIn('nilais.siswa_id', $waliStudentIds)
                 ->where('nilais.tahun_ajaran_id', $tahunAjaranId)
+                ->where('mata_pelajarans.semester', $selectedSemester)
                 ->whereNull('nilais.deleted_at')
                 ->whereNull('siswas.deleted_at')
                 ->whereNull('mata_pelajarans.deleted_at')
@@ -447,18 +524,23 @@ class DashboardController extends Controller
         }
     }
     
-    private function calculateOverallProgressForWaliKelas($kelasId, $tahunAjaranId = null)
+    private function calculateOverallProgressForWaliKelas($kelasId, $tahunAjaranId = null, ?int $semester = null)
     {
         try {
             $tahunAjaranId = $tahunAjaranId ?: session('tahun_ajaran_id');
+            $semester = $semester ?: $this->semesterForTahunAjaran($tahunAjaranId);
             
             // Get all students in this class
-            $totalStudents = \App\Models\Siswa::where('kelas_id', $kelasId)->count();
+            $studentIds = $this->studentIdsForClass((int) $kelasId, (int) $tahunAjaranId, $semester);
+            $totalStudents = $studentIds->count();
             
             // Get all mata pelajaran for this class
             $mataPelajarans = \App\Models\MataPelajaran::where('kelas_id', $kelasId)
                 ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
                     return $query->where('tahun_ajaran_id', $tahunAjaranId);
+                })
+                ->when($semester, function($query) use ($semester) {
+                    return $query->where('semester', $semester);
                 })
                 ->get();
                 
@@ -469,7 +551,7 @@ class DashboardController extends Controller
             
             // Calculate the total number of scores needed
             $totalScoresNeeded = $mataPelajarans->count() * $totalStudents;
-            $completedScoreCounts = $this->getCompletedScoreCountsBySubject($mataPelajarans->pluck('id'), $tahunAjaranId);
+            $completedScoreCounts = $this->getCompletedScoreCountsBySubject($mataPelajarans->pluck('id'), $tahunAjaranId, $studentIds->all());
             $totalScoresCompleted = $completedScoreCounts->sum();
             
             \Log::info("Wali Kelas - Total scores needed: {$totalScoresNeeded}, completed: {$totalScoresCompleted}");
@@ -498,6 +580,7 @@ class DashboardController extends Controller
         try {
             $guru = Auth::guard('guru')->user();
             $tahunAjaranId = session('tahun_ajaran_id');
+            $semester = $this->semesterForTahunAjaran($tahunAjaranId);
             if (!$guru) {
                 return response()->json(['error' => 'Unauthorized'], 403);
             }
@@ -517,14 +600,15 @@ class DashboardController extends Controller
             }
 
             // Get students in this class
-            $siswaCount = Siswa::where('kelas_id', $mataPelajaran->kelas_id)->count();
+            $studentIds = $this->studentIdsForClass((int) $mataPelajaran->kelas_id, (int) ($mataPelajaran->tahun_ajaran_id ?: $tahunAjaranId), (int) ($mataPelajaran->semester ?: $semester));
+            $siswaCount = $studentIds->count();
             
             if ($siswaCount === 0) {
                 return response()->json(['progress' => 0]);
             }
 
             // Count completed scores for this subject
-            $completedCount = $this->countCompletedStudentsForSubject($mataPelajaranId, $tahunAjaranId);
+            $completedCount = $this->countCompletedStudentsForSubject($mataPelajaranId, $mataPelajaran->tahun_ajaran_id ?: $tahunAjaranId, $studentIds->all());
 
             // Calculate progress percentage (handle division by zero)
             $progress = $siswaCount > 0 ? ($completedCount / $siswaCount) * 100 : 0;
@@ -547,6 +631,7 @@ class DashboardController extends Controller
         try {
             $waliKelas = auth()->guard('guru')->user();
             $tahunAjaranId = session('tahun_ajaran_id');
+            $semester = $this->semesterForTahunAjaran($tahunAjaranId);
         
             if (!$waliKelas || session('selected_role') !== 'wali_kelas') {
                 return response()->json(['error' => 'Unauthorized'], 403);
@@ -559,7 +644,8 @@ class DashboardController extends Controller
                 return response()->json(['progress' => 0]);
             }
 
-            $siswaCount = Siswa::where('kelas_id', $kelas->id)->count();
+            $studentIds = $this->studentIdsForClass((int) $kelas->id, (int) $tahunAjaranId, $semester);
+            $siswaCount = $studentIds->count();
             if ($siswaCount === 0) {
                 return response()->json(['progress' => 0]);
             }
@@ -574,6 +660,9 @@ class DashboardController extends Controller
                 
             if ($tahunAjaranId) {
                 $totalTPQuery->where('mata_pelajarans.tahun_ajaran_id', $tahunAjaranId);
+            }
+            if ($semester) {
+                $totalTPQuery->where('mata_pelajarans.semester', $semester);
             }
             
             $totalTP = $totalTPQuery->count();
@@ -599,6 +688,12 @@ class DashboardController extends Controller
             if ($tahunAjaranId) {
                 $completedTPQuery->where('mata_pelajarans.tahun_ajaran_id', $tahunAjaranId);
                 $completedTPQuery->where('nilais.tahun_ajaran_id', $tahunAjaranId);
+            }
+            if ($semester) {
+                $completedTPQuery->where('mata_pelajarans.semester', $semester);
+            }
+            if ($studentIds->isNotEmpty()) {
+                $completedTPQuery->whereIn('nilais.siswa_id', $studentIds);
             }
             
             $completedTP = $completedTPQuery
@@ -626,6 +721,7 @@ class DashboardController extends Controller
         try {
             $guru = Auth::guard('guru')->user();
             $tahunAjaranId = session('tahun_ajaran_id');
+            $semester = $this->semesterForTahunAjaran($tahunAjaranId);
             if (!$guru) {
                 return response()->json(['error' => 'Unauthorized'], 403);
             }
@@ -638,14 +734,15 @@ class DashboardController extends Controller
             }
 
             // Get students in this class
-            $siswaCount = Siswa::where('kelas_id', $mataPelajaran->kelas_id)->count();
+            $studentIds = $this->studentIdsForClass((int) $mataPelajaran->kelas_id, (int) ($mataPelajaran->tahun_ajaran_id ?: $tahunAjaranId), (int) ($mataPelajaran->semester ?: $semester));
+            $siswaCount = $studentIds->count();
             
             if ($siswaCount === 0) {
                 return response()->json(['progress' => 0]);
             }
 
             // Count completed scores for this subject
-            $completedCount = $this->countCompletedStudentsForSubject($mataPelajaranId, $tahunAjaranId);
+            $completedCount = $this->countCompletedStudentsForSubject($mataPelajaranId, $mataPelajaran->tahun_ajaran_id ?: $tahunAjaranId, $studentIds->all());
 
             // Calculate progress percentage (handle division by zero)
             $progress = $siswaCount > 0 ? ($completedCount / $siswaCount) * 100 : 0;
@@ -667,6 +764,7 @@ class DashboardController extends Controller
         try {
             $waliKelas = auth()->guard('guru')->user();
             $tahunAjaranId = session('tahun_ajaran_id');
+            $semester = $this->semesterForTahunAjaran($tahunAjaranId);
             
             // Tambahkan pengecekan role
             if (!$waliKelas || session('selected_role') !== 'wali_kelas') {
@@ -681,14 +779,18 @@ class DashboardController extends Controller
             }
             
             // Cache hasil untuk performa
-            $cacheKey = "wali_kelas_progress_{$waliKelas->id}";
+            $cacheKey = "wali_kelas_progress_{$waliKelas->id}_{$tahunAjaranId}_{$semester}";
             $cacheDuration = now()->addMinutes(5);
             
-            return Cache::remember($cacheKey, $cacheDuration, function() use ($kelas, $tahunAjaranId) {
-                $siswaCount = Siswa::where('kelas_id', $kelas->id)->count();
+            return Cache::remember($cacheKey, $cacheDuration, function() use ($kelas, $tahunAjaranId, $semester) {
+                $studentIds = $this->studentIdsForClass((int) $kelas->id, (int) $tahunAjaranId, $semester);
+                $siswaCount = $studentIds->count();
                 $mataPelajarans = MataPelajaran::where('kelas_id', $kelas->id)
                     ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
                         return $query->where('tahun_ajaran_id', $tahunAjaranId);
+                    })
+                    ->when($semester, function($query) use ($semester) {
+                        return $query->where('semester', $semester);
                     })
                     ->get();
                                             
@@ -708,13 +810,17 @@ class DashboardController extends Controller
                     if ($totalNeeded > 0) {
                         $completedTP = DB::table('lingkup_materis')
                             ->join('tujuan_pembelajarans', 'lingkup_materis.id', '=', 'tujuan_pembelajarans.lingkup_materi_id')
-                            ->join('nilais', function($join) use ($tahunAjaranId) {
+                            ->join('nilais', function($join) use ($tahunAjaranId, $studentIds) {
                                 $join->on('tujuan_pembelajarans.id', '=', 'nilais.tujuan_pembelajaran_id')
                                     ->whereNull('nilais.deleted_at')
                                     ->whereNotNull('nilais.nilai_tp');
                                     
                                 if ($tahunAjaranId) {
                                     $join->where('nilais.tahun_ajaran_id', $tahunAjaranId);
+                                }
+
+                                if ($studentIds->isNotEmpty()) {
+                                    $join->whereIn('nilais.siswa_id', $studentIds);
                                 }
                             })
                             ->where('lingkup_materis.mata_pelajaran_id', $mapel->id)
@@ -777,9 +883,11 @@ class DashboardController extends Controller
         try {
             // Get the current tahun ajaran ID from session
             $tahunAjaranId = session('tahun_ajaran_id');
+            $semester = $this->semesterForTahunAjaran($tahunAjaranId);
             
             // Get all students in this class
-            $studentsInClass = \App\Models\Siswa::where('kelas_id', $kelasId)->count();
+            $studentIds = $this->studentIdsForClass((int) $kelasId, (int) $tahunAjaranId, $semester);
+            $studentsInClass = $studentIds->count();
             
             if ($studentsInClass === 0) {
                 return response()->json(['success' => true, 'progress' => 0]);
@@ -790,6 +898,9 @@ class DashboardController extends Controller
                 ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
                     return $query->where('tahun_ajaran_id', $tahunAjaranId);
                 })
+                ->when($semester, function($query) use ($semester) {
+                    return $query->where('semester', $semester);
+                })
                 ->get();
                 
             if ($mataPelajarans->isEmpty()) {
@@ -798,7 +909,7 @@ class DashboardController extends Controller
             
             // For each mata pelajaran, check if all students have completed scores
             $totalScoreNeeded = $mataPelajarans->count() * $studentsInClass;
-            $completedScoreCounts = $this->getCompletedScoreCountsBySubject($mataPelajarans->pluck('id'), $tahunAjaranId);
+            $completedScoreCounts = $this->getCompletedScoreCountsBySubject($mataPelajarans->pluck('id'), $tahunAjaranId, $studentIds->all());
             $totalScoreCompleted = $completedScoreCounts->sum();
             
             // Log the calculation for debugging
@@ -838,9 +949,13 @@ class DashboardController extends Controller
     private function calculateOverallProgress($guruId, $tahunAjaranId = null)
     {
         try {
+            $semester = $this->semesterForTahunAjaran($tahunAjaranId);
             $kelasIds = MataPelajaran::where('guru_id', $guruId)
                 ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
                     return $query->where('tahun_ajaran_id', $tahunAjaranId);
+                })
+                ->when($semester, function($query) use ($semester) {
+                    return $query->where('semester', $semester);
                 })
                 ->distinct()
                 ->pluck('kelas_id');
@@ -851,7 +966,7 @@ class DashboardController extends Controller
     
             $totalProgress = 0;
             foreach ($kelasIds as $kelasId) {
-                $totalProgress += $this->calculateProgressByClass($guruId, $kelasId, $tahunAjaranId);
+                $totalProgress += $this->calculateProgressByClass($guruId, $kelasId, $tahunAjaranId, $semester);
             }
     
             return $totalProgress / $kelasIds->count();
@@ -868,10 +983,12 @@ class DashboardController extends Controller
     }
     
     // Legacy helper retained for backward compatibility with older pengajar progress routes.
-    private function calculateProgressByClass($guruId, $kelasId, $tahunAjaranId = null)
+    private function calculateProgressByClass($guruId, $kelasId, $tahunAjaranId = null, ?int $semester = null)
     {
         try {
-            $siswaCount = Siswa::where('kelas_id', $kelasId)->count();
+            $semester = $semester ?: $this->semesterForTahunAjaran($tahunAjaranId);
+            $studentIds = $this->studentIdsForClass((int) $kelasId, (int) $tahunAjaranId, $semester);
+            $siswaCount = $studentIds->count();
 
             // Hitung total TP
             $tpQuery = DB::table('mata_pelajarans')
@@ -885,6 +1002,9 @@ class DashboardController extends Controller
                 
             if ($tahunAjaranId) {
                 $tpQuery->where('mata_pelajarans.tahun_ajaran_id', $tahunAjaranId);
+            }
+            if ($semester) {
+                $tpQuery->where('mata_pelajarans.semester', $semester);
             }
             
             $totalTP = $tpQuery->count();
@@ -913,6 +1033,12 @@ class DashboardController extends Controller
                 $completedTPQuery->where('mata_pelajarans.tahun_ajaran_id', $tahunAjaranId);
                 $completedTPQuery->where('nilais.tahun_ajaran_id', $tahunAjaranId);
             }
+            if ($semester) {
+                $completedTPQuery->where('mata_pelajarans.semester', $semester);
+            }
+            if ($studentIds->isNotEmpty()) {
+                $completedTPQuery->whereIn('nilais.siswa_id', $studentIds);
+            }
             
             $completedTP = $completedTPQuery
                 ->select(DB::raw('COUNT(DISTINCT CONCAT(nilais.siswa_id, "-", nilais.mata_pelajaran_id, "-", nilais.tujuan_pembelajaran_id)) as total'))
@@ -933,11 +1059,13 @@ class DashboardController extends Controller
         try {
             $guru = Auth::guard('guru')->user();
             $tahunAjaranId = session('tahun_ajaran_id');
+            $semester = $this->semesterForTahunAjaran($tahunAjaranId);
             if (!$guru) {
                 return response()->json(['error' => 'Unauthorized'], 403);
             }
 
-            $siswaCount = Siswa::where('kelas_id', $kelasId)->count();
+            $studentIds = $this->studentIdsForClass((int) $kelasId, (int) $tahunAjaranId, $semester);
+            $siswaCount = $studentIds->count();
 
             $totalTP = DB::table('mata_pelajarans')
                 ->join('lingkup_materis', 'mata_pelajarans.id', '=', 'lingkup_materis.mata_pelajaran_id')
@@ -949,6 +1077,9 @@ class DashboardController extends Controller
                 ->whereNull('tujuan_pembelajarans.deleted_at')
                 ->when($tahunAjaranId, function ($query) use ($tahunAjaranId) {
                     return $query->where('mata_pelajarans.tahun_ajaran_id', $tahunAjaranId);
+                })
+                ->when($semester, function ($query) use ($semester) {
+                    return $query->where('mata_pelajarans.semester', $semester);
                 })
                 ->count();
 
@@ -974,6 +1105,12 @@ class DashboardController extends Controller
                 ->when($tahunAjaranId, function ($query) use ($tahunAjaranId) {
                     return $query->where('mata_pelajarans.tahun_ajaran_id', $tahunAjaranId)
                         ->where('nilais.tahun_ajaran_id', $tahunAjaranId);
+                })
+                ->when($semester, function ($query) use ($semester) {
+                    return $query->where('mata_pelajarans.semester', $semester);
+                })
+                ->when($studentIds->isNotEmpty(), function ($query) use ($studentIds) {
+                    return $query->whereIn('nilais.siswa_id', $studentIds);
                 })
                 ->select(DB::raw('COUNT(DISTINCT CONCAT(nilais.siswa_id, "-", nilais.mata_pelajaran_id, "-", nilais.tujuan_pembelajaran_id)) as total'))
                 ->value('total');

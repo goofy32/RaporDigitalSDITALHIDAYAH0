@@ -2,34 +2,41 @@
 
 namespace App\Jobs;
 
-use App\Models\Siswa;
 use App\Models\ReportTemplate;
-use App\Services\RaporTemplateProcessor;
+use App\Models\Siswa;
+use App\Models\TahunAjaran;
 use App\Services\DocumentConversionService;
 use App\Services\PdfCacheService;
+use App\Services\RaporTemplateProcessor;
+use App\Services\SiswaKelasSemesterResolver;
+use Exception;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\URL;
-use Exception;
 
 class GeneratePdfReportJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
     public $timeout = 300; // 5 minutes
+
     public $tries = 3;
+
     public $maxExceptions = 3;
 
     protected $siswa;
+
     protected $type;
+
     protected $tahunAjaranId;
+
     protected $requestId;
+
     protected $userId;
 
     public function __construct(Siswa $siswa, $type, $tahunAjaranId, $requestId, $userId = null)
@@ -39,7 +46,7 @@ class GeneratePdfReportJob implements ShouldQueue
         $this->tahunAjaranId = $tahunAjaranId;
         $this->requestId = $requestId;
         $this->userId = $userId;
-        
+
         // Set queue name untuk PDF processing
         $this->onQueue('pdf');
     }
@@ -48,12 +55,12 @@ class GeneratePdfReportJob implements ShouldQueue
     {
         $startTime = microtime(true);
         $memoryStart = memory_get_usage(true);
-        
-        Log::info("=== PDF JOB STARTED ===", [
+
+        Log::info('=== PDF JOB STARTED ===', [
             'request_id' => $this->requestId,
             'siswa_id' => $this->siswa->id,
             'type' => $this->type,
-            'queue_attempts' => $this->attempts()
+            'queue_attempts' => $this->attempts(),
         ]);
 
         try {
@@ -69,12 +76,12 @@ class GeneratePdfReportJob implements ShouldQueue
             );
 
             if ($cachedPdf) {
-                Log::info("PDF found in cache", [
+                Log::info('PDF found in cache', [
                     'request_id' => $this->requestId,
                     'cache_key' => $cacheKey,
-                    'cached_path' => $cachedPdf['path']
+                    'cached_path' => $cachedPdf['path'],
                 ]);
-                
+
                 $this->updateProgress(100, 'PDF siap diunduh', [
                     'download_url' => $this->createSecureDownloadUrl(
                         $cachedPdf['path'],
@@ -82,9 +89,9 @@ class GeneratePdfReportJob implements ShouldQueue
                     ),
                     'filename' => $cachedPdf['filename'],
                     'file_size' => $cachedPdf['file_size'],
-                    'cached' => true
+                    'cached' => true,
                 ]);
-                
+
                 return;
             }
 
@@ -93,8 +100,8 @@ class GeneratePdfReportJob implements ShouldQueue
 
             // Step 2: Get template
             $template = $this->getTemplateForSiswa();
-            if (!$template) {
-                throw new Exception('Template rapor tidak ditemukan untuk tipe ' . $this->type);
+            if (! $template) {
+                throw new Exception('Template rapor tidak ditemukan untuk tipe '.$this->type);
             }
 
             // Update progress: DOCX generation
@@ -103,15 +110,15 @@ class GeneratePdfReportJob implements ShouldQueue
             // Step 3: Generate DOCX
             $processor = new RaporTemplateProcessor($template, $this->siswa, $this->type, $this->tahunAjaranId);
             $result = $processor->generate(true);
-            
-            if (!$result['success'] || !isset($result['path'])) {
-                throw new Exception('Gagal generate file DOCX: ' . ($result['message'] ?? 'Unknown error'));
+
+            if (! $result['success'] || ! isset($result['path'])) {
+                throw new Exception('Gagal generate file DOCX: '.($result['message'] ?? 'Unknown error'));
             }
 
             $docxPath = $result['path'];
-            $fullDocxPath = storage_path('app/public/' . $docxPath);
-            
-            if (!file_exists($fullDocxPath)) {
+            $fullDocxPath = storage_path('app/public/'.$docxPath);
+
+            if (! file_exists($fullDocxPath)) {
                 throw new Exception("DOCX file tidak ditemukan: $fullDocxPath");
             }
 
@@ -119,11 +126,11 @@ class GeneratePdfReportJob implements ShouldQueue
             $this->updateProgress(60, 'Konversi ke PDF...');
 
             // Step 4: Convert to PDF
-            $conversionService = new DocumentConversionService();
+            $conversionService = new DocumentConversionService;
             $pdfResult = $conversionService->convertStorageDocxToPdf($docxPath, 'pdf_reports');
-            
-            if (!$pdfResult['success']) {
-                throw new Exception('Konversi ke PDF gagal: ' . $pdfResult['message']);
+
+            if (! $pdfResult['success']) {
+                throw new Exception('Konversi ke PDF gagal: '.$pdfResult['message']);
             }
 
             // Update progress: Finalizing
@@ -131,9 +138,9 @@ class GeneratePdfReportJob implements ShouldQueue
 
             // Step 5: Store in cache and prepare response
             $pdfPath = $pdfResult['storage_path'];
-            $fullPdfPath = storage_path('app/public/' . $pdfPath);
-            
-            if (!file_exists($fullPdfPath)) {
+            $fullPdfPath = storage_path('app/public/'.$pdfPath);
+
+            if (! file_exists($fullPdfPath)) {
                 throw new Exception("PDF file tidak ditemukan: $fullPdfPath");
             }
 
@@ -157,7 +164,7 @@ class GeneratePdfReportJob implements ShouldQueue
                 'download_url' => $this->createSecureDownloadUrl($pdfPath, $filename),
                 'filename' => $filename,
                 'file_size' => $fileSize,
-                'cached' => false
+                'cached' => false,
             ]);
 
             // Log success metrics
@@ -165,26 +172,26 @@ class GeneratePdfReportJob implements ShouldQueue
             $duration = ($endTime - $startTime) * 1000;
             $memoryUsed = memory_get_usage(true) - $memoryStart;
 
-            Log::info("=== PDF JOB COMPLETED ===", [
+            Log::info('=== PDF JOB COMPLETED ===', [
                 'request_id' => $this->requestId,
                 'duration_ms' => round($duration, 2),
                 'memory_used_mb' => round($memoryUsed / 1024 / 1024, 2),
                 'file_size_mb' => round($fileSize / 1024 / 1024, 2),
-                'cache_key' => $cacheKey
+                'cache_key' => $cacheKey,
             ]);
 
         } catch (Exception $e) {
-            Log::error("=== PDF JOB FAILED ===", [
+            Log::error('=== PDF JOB FAILED ===', [
                 'request_id' => $this->requestId,
                 'error' => $e->getMessage(),
                 'attempts' => $this->attempts(),
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
             ]);
 
-            $this->updateProgress(-1, 'Gagal generate PDF: ' . $e->getMessage(), [
+            $this->updateProgress(-1, 'Gagal generate PDF: '.$e->getMessage(), [
                 'error' => true,
                 'attempts' => $this->attempts(),
-                'max_attempts' => $this->tries
+                'max_attempts' => $this->tries,
             ]);
 
             throw $e; // Re-throw untuk retry mechanism
@@ -193,30 +200,32 @@ class GeneratePdfReportJob implements ShouldQueue
 
     public function failed(Exception $exception)
     {
-        Log::error("=== PDF JOB PERMANENTLY FAILED ===", [
+        Log::error('=== PDF JOB PERMANENTLY FAILED ===', [
             'request_id' => $this->requestId,
             'siswa_id' => $this->siswa->id,
             'error' => $exception->getMessage(),
-            'attempts' => $this->attempts()
+            'attempts' => $this->attempts(),
         ]);
 
-        $this->updateProgress(-1, 'PDF generation gagal setelah ' . $this->tries . ' percobaan', [
+        $this->updateProgress(-1, 'PDF generation gagal setelah '.$this->tries.' percobaan', [
             'error' => true,
             'final_failure' => true,
-            'error_message' => $exception->getMessage()
+            'error_message' => $exception->getMessage(),
         ]);
     }
 
     private function getTemplateForSiswa()
     {
+        $kelasId = $this->resolveReportClassId() ?: $this->siswa->kelas_id;
+
         // First look for class-specific template using many-to-many relationship
         $template = ReportTemplate::where('type', $this->type)
             ->where('is_active', true)
-            ->when($this->tahunAjaranId, function($query) {
+            ->when($this->tahunAjaranId, function ($query) {
                 return $query->where('tahun_ajaran_id', $this->tahunAjaranId);
             })
-            ->whereHas('kelasList', function($query) {
-                $query->where('kelas_id', $this->siswa->kelas_id);
+            ->whereHas('kelasList', function ($query) use ($kelasId) {
+                $query->where('kelas_id', $kelasId);
             })
             ->first();
 
@@ -226,9 +235,9 @@ class GeneratePdfReportJob implements ShouldQueue
 
         // Try old relationship
         $template = ReportTemplate::where('type', $this->type)
-            ->where('kelas_id', $this->siswa->kelas_id)
+            ->where('kelas_id', $kelasId)
             ->where('is_active', true)
-            ->when($this->tahunAjaranId, function($query) {
+            ->when($this->tahunAjaranId, function ($query) {
                 return $query->where('tahun_ajaran_id', $this->tahunAjaranId);
             })
             ->first();
@@ -241,16 +250,44 @@ class GeneratePdfReportJob implements ShouldQueue
         return ReportTemplate::where('type', $this->type)
             ->whereNull('kelas_id')
             ->where('is_active', true)
-            ->when($this->tahunAjaranId, function($query) {
+            ->when($this->tahunAjaranId, function ($query) {
                 return $query->where('tahun_ajaran_id', $this->tahunAjaranId);
             })
             ->first();
     }
 
+    private function resolveReportClassId(): ?int
+    {
+        if (! $this->tahunAjaranId) {
+            return null;
+        }
+
+        $tahunAjaran = TahunAjaran::find($this->tahunAjaranId);
+
+        if (! $tahunAjaran) {
+            return null;
+        }
+
+        try {
+            return app(SiswaKelasSemesterResolver::class)
+                ->resolveClass($this->siswa, (int) $this->tahunAjaranId, (int) $tahunAjaran->semester, true)?->id;
+        } catch (\RuntimeException $exception) {
+            Log::warning('Unable to resolve PDF report class context', [
+                'siswa_id' => $this->siswa->id,
+                'tahun_ajaran_id' => $this->tahunAjaranId,
+                'semester' => $tahunAjaran->semester,
+                'request_id' => $this->requestId,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return null;
+        }
+    }
+
     private function updateProgress($percentage, $message, $data = [])
     {
         $progressKey = "pdf_progress_{$this->requestId}";
-        
+
         $progressData = [
             'percentage' => $percentage,
             'message' => $message,
@@ -258,29 +295,29 @@ class GeneratePdfReportJob implements ShouldQueue
             'error' => $percentage < 0,
             'timestamp' => now()->toISOString(),
             'request_id' => $this->requestId,
-            'updated_at' => time() // Add timestamp for debugging
+            'updated_at' => time(), // Add timestamp for debugging
         ];
 
-        if (!empty($data)) {
+        if (! empty($data)) {
             $progressData = array_merge($progressData, $data);
         }
 
         // Store for 30 minutes
         Cache::put($progressKey, $progressData, now()->addMinutes(30));
-        
+
         // TAMBAHAN: Track semua progress keys untuk debugging
         $allKeys = Cache::get('all_progress_keys', []);
-        if (!in_array($this->requestId, $allKeys)) {
+        if (! in_array($this->requestId, $allKeys)) {
             $allKeys[] = $this->requestId;
             Cache::put('all_progress_keys', $allKeys, now()->addHours(1));
         }
-        
-        Log::info("Progress updated", [
+
+        Log::info('Progress updated', [
             'request_id' => $this->requestId,
             'percentage' => $percentage,
             'message' => $message,
             'progress_key' => $progressKey,
-            'cache_stored' => Cache::has($progressKey)
+            'cache_stored' => Cache::has($progressKey),
         ]);
     }
 

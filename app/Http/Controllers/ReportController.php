@@ -193,9 +193,10 @@ class ReportController extends Controller
         $guru = auth()->guard('guru')->user();
         $tahunAjaran = TahunAjaran::find($tahunAjaranId);
         $semester = $tahunAjaran ? $tahunAjaran->semester : 1;
+        $kelas = $this->applyRaporClassContext($siswa, $tahunAjaranId);
+        abort_unless($kelas, 403);
         
         $siswa->load([
-            'kelas',
             'nilais' => function($query) use ($tahunAjaranId, $semester) {
                 $query->where('tahun_ajaran_id', $tahunAjaranId)
                     ->whereHas('mataPelajaran', function($q) use ($semester) {
@@ -204,8 +205,9 @@ class ReportController extends Controller
                     ->where('is_submitted', true);
             },
             'nilais.mataPelajaran',
-            'nilaiEkstrakurikuler' => function($query) use ($tahunAjaranId) {
-                $query->where('tahun_ajaran_id', $tahunAjaranId);
+            'nilaiEkstrakurikuler' => function($query) use ($tahunAjaranId, $semester) {
+                $query->where('tahun_ajaran_id', $tahunAjaranId)
+                    ->where('semester', $semester);
             },
             'nilaiEkstrakurikuler.ekstrakurikuler',
             'absensi' => function($query) use ($tahunAjaranId, $semester) {
@@ -232,7 +234,9 @@ class ReportController extends Controller
             'tahunAjaran', 
             'profilSekolah',
             'waliKelas',
-            'semester'
+            'semester',
+            'kelas',
+            'tahunAjaranId'
         ));
     }
 
@@ -1234,6 +1238,39 @@ class ReportController extends Controller
         );
     }
 
+    private function getRaporSemester(int $tahunAjaranId): int
+    {
+        return (int) (TahunAjaran::whereKey($tahunAjaranId)->value('semester') ?: 1);
+    }
+
+    private function resolveRaporClass(Siswa $siswa, int $tahunAjaranId): ?Kelas
+    {
+        try {
+            return app(SiswaKelasSemesterResolver::class)
+                ->resolveClass($siswa, $tahunAjaranId, $this->getRaporSemester($tahunAjaranId), true);
+        } catch (\RuntimeException $exception) {
+            Log::warning('Unable to resolve report class context', [
+                'siswa_id' => $siswa->id,
+                'tahun_ajaran_id' => $tahunAjaranId,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return null;
+        }
+    }
+
+    private function applyRaporClassContext(Siswa $siswa, int $tahunAjaranId): ?Kelas
+    {
+        $kelas = $this->resolveRaporClass($siswa, $tahunAjaranId);
+
+        if ($kelas) {
+            $kelas->loadMissing('tahunAjaran');
+            $siswa->setRelation('kelas', $kelas);
+        }
+
+        return $kelas;
+    }
+
     public function previewRapor(Request $request, $siswa_id) {
         try {
             // Ambil tipe rapor dari query param
@@ -1248,6 +1285,8 @@ class ReportController extends Controller
             // Ambil semester dari tahun ajaran
             $tahunAjaran = \App\Models\TahunAjaran::find($tahunAjaranId);
             $semester = $tahunAjaran ? $tahunAjaran->semester : 1;
+            $kelas = $this->applyRaporClassContext($siswa, $tahunAjaranId);
+            abort_unless($kelas, 403);
             
             \Log::info('Preview rapor', [
                 'siswa_id' => $siswa_id,
@@ -1258,7 +1297,6 @@ class ReportController extends Controller
             
             // Cari siswa dengan relasi yang dibutuhkan
             $siswa->load([
-                'kelas',
                 'nilais' => function($query) use ($tahunAjaranId, $semester) {
                     // Filter nilai berdasarkan semester dan tahun ajaran
                     $query->where('tahun_ajaran_id', $tahunAjaranId);
@@ -1268,8 +1306,9 @@ class ReportController extends Controller
                     $query->where('is_submitted', true);
                 },
                 'nilais.mataPelajaran',
-                'nilaiEkstrakurikuler' => function($query) use ($tahunAjaranId) {
-                    $query->where('tahun_ajaran_id', $tahunAjaranId);
+                'nilaiEkstrakurikuler' => function($query) use ($tahunAjaranId, $semester) {
+                    $query->where('tahun_ajaran_id', $tahunAjaranId)
+                        ->where('semester', $semester);
                 },
                 'nilaiEkstrakurikuler.ekstrakurikuler',
                 'absensi' => function($query) use ($tahunAjaranId, $semester) {
@@ -1290,7 +1329,10 @@ class ReportController extends Controller
             $html = view('wali_kelas.rapor.preview', [
                 'siswa' => $siswa,
                 'type' => $type,
-                'semester' => $semester
+                'semester' => $semester,
+                'kelas' => $kelas,
+                'tahunAjaran' => $tahunAjaran,
+                'tahunAjaranId' => $tahunAjaranId
             ])->render();
             
             // Kembalikan sebagai JSON response
@@ -2087,15 +2129,19 @@ class ReportController extends Controller
     protected function saveGenerationHistory(Siswa $siswa, ReportTemplate $template, $type, $tahunAjaranId = null, $filePath = null)
     {
         try {
+            $tahunAjaranId = $tahunAjaranId ?: session('tahun_ajaran_id');
+            $tahunAjaran = $tahunAjaranId ? TahunAjaran::find($tahunAjaranId) : null;
+            $kelas = $tahunAjaranId ? $this->resolveRaporClass($siswa, (int) $tahunAjaranId) : null;
+
             \App\Models\ReportGeneration::create([
                 'siswa_id' => $siswa->id,
-                'kelas_id' => $siswa->kelas_id,
+                'kelas_id' => $kelas?->id ?: $siswa->kelas_id,
                 'report_template_id' => $template->id,
                 'generated_file' => $filePath, // Gunakan path file yang diberikan
                 'type' => $type,
-                'tahun_ajaran' => $template->tahun_ajaran,
-                'semester' => $template->semester,
-                'tahun_ajaran_id' => $tahunAjaranId ?: session('tahun_ajaran_id'),
+                'tahun_ajaran' => $tahunAjaran?->tahun_ajaran ?: $template->tahun_ajaran,
+                'semester' => $tahunAjaran?->semester ?: $template->semester,
+                'tahun_ajaran_id' => $tahunAjaranId,
                 'generated_at' => now(),
                 'generated_by' => auth()->id() ?? auth()->guard('guru')->id()
             ]);
@@ -2184,14 +2230,15 @@ class ReportController extends Controller
     public function previewHistoryRapor(ReportGeneration $report)
     {
         try {
+            $report->loadMissing(['kelas.tahunAjaran']);
+            $reportSemester = (int) ($report->semester ?: ($report->type === 'UTS' ? 1 : 2));
+
             // Ambil data siswa dengan relasi yang diperlukan
             $siswa = $report->siswa()->with([
-                'kelas',
-                'nilais' => function($query) use ($report) {
+                'nilais' => function($query) use ($report, $reportSemester) {
                     // Filter nilai sesuai dengan semester dan tahun ajaran rapor
-                    $semester = $report->type === 'UTS' ? 1 : 2;
-                    $query->whereHas('mataPelajaran', function($q) use ($semester) {
-                        $q->where('semester', $semester);
+                    $query->whereHas('mataPelajaran', function($q) use ($reportSemester) {
+                        $q->where('semester', $reportSemester);
                     })
                     ->when($report->tahun_ajaran_id, function($q) use ($report) {
                         $q->where('tahun_ajaran_id', $report->tahun_ajaran_id);
@@ -2199,15 +2246,14 @@ class ReportController extends Controller
                     ->where('is_submitted', true);
                 },
                 'nilais.mataPelajaran',
-                'nilaiEkstrakurikuler' => function($query) use ($report) {
+                'nilaiEkstrakurikuler' => function($query) use ($report, $reportSemester) {
                     $query->when($report->tahun_ajaran_id, function($q) use ($report) {
                         $q->where('tahun_ajaran_id', $report->tahun_ajaran_id);
-                    });
+                    })->where('semester', $reportSemester);
                 },
                 'nilaiEkstrakurikuler.ekstrakurikuler',
-                'absensi' => function($query) use ($report) {
-                    $semester = $report->type === 'UTS' ? 1 : 2;
-                    $query->where('semester', $semester)
+                'absensi' => function($query) use ($report, $reportSemester) {
+                    $query->where('semester', $reportSemester)
                         ->when($report->tahun_ajaran_id, function($q) use ($report) {
                             $q->where('tahun_ajaran_id', $report->tahun_ajaran_id);
                         });
@@ -2217,11 +2263,22 @@ class ReportController extends Controller
             if (!$siswa) {
                 return redirect()->back()->with('error', 'Data siswa tidak ditemukan.');
             }
+
+            if ($report->kelas) {
+                $siswa->setRelation('kelas', $report->kelas);
+            } elseif ($report->tahun_ajaran_id) {
+                $this->applyRaporClassContext($siswa, (int) $report->tahun_ajaran_id);
+            } else {
+                $siswa->loadMissing('kelas');
+            }
             
             // Render view ke HTML
             $html = view('admin.report.preview_history', [
                 'siswa' => $siswa,
-                'report' => $report
+                'report' => $report,
+                'kelas' => $siswa->kelas,
+                'semester' => $reportSemester,
+                'tahunAjaranId' => $report->tahun_ajaran_id
             ])->render();
             
             return response()->json([
@@ -2641,11 +2698,11 @@ class ReportController extends Controller
                         // Simpan history generate
                         \App\Models\ReportGeneration::create([
                             'siswa_id' => $siswa->id,
-                            'kelas_id' => $siswa->kelas_id,
+                            'kelas_id' => $kelas->id,
                             'report_template_id' => $template->id,
                             'generated_file' => $result['path'],
                             'type' => $type,
-                            'tahun_ajaran' => $template->tahun_ajaran,
+                            'tahun_ajaran' => $tahunAjaran?->tahun_ajaran ?: $template->tahun_ajaran,
                             'semester' => $currentSemester, // Use current semester
                             'tahun_ajaran_id' => $tahunAjaranId,
                             'generated_at' => now(),
@@ -2795,10 +2852,13 @@ class ReportController extends Controller
     protected function getTemplateForSiswa(Siswa $siswa, $type, $tahunAjaranId = null)
     {
         $tahunAjaranId = $tahunAjaranId ?: session('tahun_ajaran_id');
+        $kelas = $tahunAjaranId ? $this->resolveRaporClass($siswa, (int) $tahunAjaranId) : null;
+        $kelasId = $kelas?->id ?: $siswa->kelas_id;
         
         \Log::info('Looking for template', [
             'siswa_id' => $siswa->id,
             'siswa_kelas_id' => $siswa->kelas_id,
+            'report_kelas_id' => $kelasId,
             'type' => $type, // UTS atau UAS
             'tahun_ajaran_id' => $tahunAjaranId
         ]);
@@ -2809,8 +2869,8 @@ class ReportController extends Controller
             ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
                 return $query->where('tahun_ajaran_id', $tahunAjaranId);
             })
-            ->whereHas('kelasList', function($query) use ($siswa) {
-                $query->where('kelas_id', $siswa->kelas_id);
+            ->whereHas('kelasList', function($query) use ($kelasId) {
+                $query->where('kelas_id', $kelasId);
             })
             ->first();
         
@@ -2824,7 +2884,7 @@ class ReportController extends Controller
         
         // If not found, try the old relationship
         $template = ReportTemplate::where('type', $type)
-            ->where('kelas_id', $siswa->kelas_id)
+            ->where('kelas_id', $kelasId)
             ->where('is_active', true)
             ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
                 return $query->where('tahun_ajaran_id', $tahunAjaranId);
@@ -2856,7 +2916,7 @@ class ReportController extends Controller
         } else {
             \Log::warning('No template found for', [
                 'type' => $type,
-                'kelas_id' => $siswa->kelas_id,
+                'kelas_id' => $kelasId,
                 'tahun_ajaran_id' => $tahunAjaranId
             ]);
         }

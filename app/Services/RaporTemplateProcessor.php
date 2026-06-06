@@ -6,12 +6,15 @@ use App\Models\ReportTemplate;
 use App\Models\Siswa;
 use App\Models\ReportPlaceholder;
 use App\Models\ProfilSekolah;
+use App\Models\Kelas;
+use App\Models\TahunAjaran;
 use PhpOffice\PhpWord\TemplateProcessor;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
 use App\Exceptions\RaporException;
 use Exception;
 use App\Helpers\FileNameHelper;
+use App\Services\SiswaKelasSemesterResolver;
 
 class RaporTemplateProcessor 
 {
@@ -29,6 +32,8 @@ class RaporTemplateProcessor
     protected $placeholders;
     protected $schoolProfile;
     protected $tahunAjaranId; // Tambahkan property untuk menyimpan tahun ajaran ID
+    protected ?Kelas $reportKelas = null;
+    protected ?TahunAjaran $reportTahunAjaran = null;
 
     public function __construct(ReportTemplate $template, Siswa $siswa, $type = 'UTS', $tahunAjaranId = null)
     {
@@ -38,12 +43,19 @@ class RaporTemplateProcessor
         $this->schoolProfile = ProfilSekolah::first();
         // Ambil tahun ajaran dari parameter, session, atau dari kelas siswa
         $this->tahunAjaranId = $tahunAjaranId ?: session('tahun_ajaran_id') ?: ($siswa->kelas->tahun_ajaran_id ?? null);
+        $this->reportTahunAjaran = $this->tahunAjaranId ? TahunAjaran::find($this->tahunAjaranId) : null;
+        $this->reportKelas = $this->resolveReportClass();
+
+        if ($this->reportKelas) {
+            $this->reportKelas->loadMissing('tahunAjaran');
+            $this->siswa->setRelation('kelas', $this->reportKelas);
+        }
         
         // Log untuk debugging
         Log::info('RaporTemplateProcessor initialized:', [
             'siswa_id' => $siswa->id, 
             'siswa_name' => $siswa->nama,
-            'kelas' => $siswa->kelas->nama_kelas ?? 'Unknown',
+            'kelas' => $this->reportKelas->nama_kelas ?? $siswa->kelas->nama_kelas ?? 'Unknown',
             'template_id' => $template->id,
             'type' => $type,
             'tahun_ajaran_id' => $this->tahunAjaranId
@@ -106,13 +118,35 @@ class RaporTemplateProcessor
         $this->placeholders = ReportPlaceholder::all()->groupBy('category');
     }
 
+    protected function resolveReportClass(): ?Kelas
+    {
+        if (! $this->tahunAjaranId || ! $this->reportTahunAjaran) {
+            return $this->siswa->kelas;
+        }
+
+        try {
+            return app(SiswaKelasSemesterResolver::class)
+                ->resolveClass($this->siswa, (int) $this->tahunAjaranId, (int) $this->reportTahunAjaran->semester, true);
+        } catch (\RuntimeException $exception) {
+            Log::warning('Unable to resolve template report class context', [
+                'siswa_id' => $this->siswa->id,
+                'tahun_ajaran_id' => $this->tahunAjaranId,
+                'semester' => $this->reportTahunAjaran->semester,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return null;
+        }
+    }
+
     protected function getTemplateForSiswa(Siswa $siswa, $type, $tahunAjaranId = null)
     {
         $tahunAjaranId = $tahunAjaranId ?: session('tahun_ajaran_id');
+        $kelasId = $this->reportKelas?->id ?: $siswa->kelas_id;
         
         // First look for class-specific template
         $template = ReportTemplate::where('type', $type)
-            ->where('kelas_id', $siswa->kelas_id)
+            ->where('kelas_id', $kelasId)
             ->where('is_active', true)
             ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
                 return $query->where('tahun_ajaran_id', $tahunAjaranId);
@@ -133,7 +167,7 @@ class RaporTemplateProcessor
         // Log untuk debugging
         Log::info('Template selection for siswa:', [
             'siswa_id' => $siswa->id,
-            'kelas_id' => $siswa->kelas_id,
+            'kelas_id' => $kelasId,
             'type' => $type,
             'tahun_ajaran_id' => $tahunAjaranId,
             'template_found' => $template ? 'Yes' : 'No',
@@ -222,14 +256,16 @@ class RaporTemplateProcessor
     {
         $semester = $this->getReportDataSemester();
         $tahunAjaranId = $this->tahunAjaranId;
+        $kelas = $this->reportKelas ?: $this->siswa->kelas;
+        $tahunAjaran = $this->reportTahunAjaran ?: $kelas?->tahunAjaran;
         
         // Data Siswa
         $data = [
             'nama_siswa' => $this->siswa->nama,
             'nisn' => $this->siswa->nisn ?: '-',
             'nis' => $this->siswa->nis ?: '-',
-            'kelas' => $this->siswa->kelas->nomor_kelas . ' ' . $this->siswa->kelas->nama_kelas,
-            'tahun_ajaran' => $this->siswa->kelas->tahunAjaran ? $this->siswa->kelas->tahunAjaran->tahun_ajaran : ($this->schoolProfile->tahun_pelajaran ?? '-'),
+            'kelas' => $kelas ? $kelas->nomor_kelas . ' ' . $kelas->nama_kelas : '-',
+            'tahun_ajaran' => $tahunAjaran ? $tahunAjaran->tahun_ajaran : ($this->schoolProfile->tahun_pelajaran ?? '-'),
             'tempat_lahir' => $this->siswa->tempat_lahir ?? '-',
             'jenis_kelamin' => $this->siswa->jenis_kelamin ?? '-',
             'agama' => $this->siswa->agama ?? '-',
@@ -242,8 +278,8 @@ class RaporTemplateProcessor
             'wali_siswa' => $this->siswa->wali_siswa ?? '-',
             'pekerjaan_wali' => $this->siswa->pekerjaan_wali ?? '-',
             'alamat_wali' => $this->siswa->alamat_wali ?? '-',
-            'fase' => $this->determineFase($this->siswa->kelas->nomor_kelas),
-            'semester' => $this->schoolProfile->semester == 1 ? 'Ganjil' : 'Genap',
+            'fase' => $kelas ? $this->determineFase($kelas->nomor_kelas) : '-',
+            'semester' => (int) $semester === 1 ? 'Ganjil' : 'Genap',
         ];
 
         $data['foto_siswa'] = $this->prepareFotoSiswa();
@@ -595,6 +631,7 @@ class RaporTemplateProcessor
             ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
                 return $query->where('tahun_ajaran_id', $tahunAjaranId);
             })
+            ->where('semester', $semester)
             ->get();
             
         for ($i = 1; $i <= 6; $i++) {
@@ -630,11 +667,11 @@ class RaporTemplateProcessor
         if ($this->schoolProfile) {
             $data['nomor_telepon'] = $this->schoolProfile->telepon ?: '-';
             $data['kepala_sekolah'] = $this->schoolProfile->kepala_sekolah ?: '-';
-            $data['wali_kelas'] = $this->siswa->kelas->waliKelasName ?: '-';
+            $data['wali_kelas'] = $kelas ? ($kelas->waliKelasName ?: '-') : '-';
             $data['nip_kepala_sekolah'] = $this->schoolProfile->nip_kepala_sekolah ?? '-';
             
             // PERBAIKAN: Ambil NUPTK wali kelas dari database
-            $waliKelas = $this->siswa->kelas->getWaliKelas();
+            $waliKelas = $kelas ? $kelas->getWaliKelas() : null;
             $data['nip_wali_kelas'] = $waliKelas ? $waliKelas->nuptk : '-';
             $data['nuptk_wali_kelas'] = $waliKelas ? $waliKelas->nuptk : '-'; // Alias untuk NUPTK
             
@@ -1466,7 +1503,7 @@ protected function prepareFotoSiswa()
         // Instead, use the current semester from the tahun ajaran
 
         if ($this->tahunAjaranId) {
-            $tahunAjaran = \App\Models\TahunAjaran::find($this->tahunAjaranId);
+            $tahunAjaran = $this->reportTahunAjaran ?: TahunAjaran::find($this->tahunAjaranId);
             if ($tahunAjaran) {
                 return $tahunAjaran->semester;
             }
@@ -1546,17 +1583,18 @@ protected function prepareFotoSiswa()
         // Get tahun ajaran info
         $tahunAjaranText = null;
         if ($this->tahunAjaranId) {
-            $tahunAjaran = \App\Models\TahunAjaran::find($this->tahunAjaranId);
+            $tahunAjaran = $this->reportTahunAjaran ?: TahunAjaran::find($this->tahunAjaranId);
             if ($tahunAjaran) {
                 $tahunAjaranText = $tahunAjaran->tahun_ajaran;
             }
         }
+        $kelas = $this->reportKelas ?: $this->siswa->kelas;
         
         // Call the helper to generate a consistent filename
         return FileNameHelper::generateReportFilename(
             $this->type,
             $this->siswa->nama,
-            $this->siswa->kelas->nomor_kelas . $this->siswa->kelas->nama_kelas,
+            $kelas ? $kelas->nomor_kelas . $kelas->nama_kelas : 'Kelas',
             $tahunAjaranText
         );
     }

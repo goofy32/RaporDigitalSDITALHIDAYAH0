@@ -463,6 +463,11 @@
     </style>
 </head>
 <body>
+    @php
+        $reportKelas = $kelas ?? $siswa->kelas;
+        $reportTahunAjaranId = $tahunAjaranId ?? session('tahun_ajaran_id');
+        $reportSemester = $semester ?? optional($tahunAjaran ?? null)->semester ?? session('selected_semester', 1);
+    @endphp
     <!-- Print Button (hidden when printing) -->
     <button class="print-button no-print" onclick="window.print()">
         🖨️ Cetak Rapor
@@ -511,7 +516,7 @@
                     <td class="value">{{ strtoupper($siswa->nama) }}</td>
                     <td class="label">Kelas</td>
                     <td class="colon">:</td>
-                    <td class="value">{{ $siswa->kelas->nomor_kelas }}{{ $siswa->kelas->nama_kelas }}</td>
+                    <td class="value">{{ $reportKelas?->nomor_kelas }}{{ $reportKelas?->nama_kelas }}</td>
                 </tr>
                 <tr>
                     <td class="label">NISN/NIS</td>
@@ -641,7 +646,7 @@
             </thead>
             <tbody>
                 @php $no = 1; @endphp
-                @foreach($siswa->nilaiEkstrakurikuler->where('tahun_ajaran_id', $tahunAjaranId ?? session('tahun_ajaran_id')) as $nilaiEkskul)
+                @foreach($siswa->nilaiEkstrakurikuler->where('tahun_ajaran_id', $reportTahunAjaranId)->where('semester', $reportSemester) as $nilaiEkskul)
                 <tr>
                     <td class="col-no">{{ $no++ }}</td>
                     <td class="col-activity">{{ $nilaiEkskul->ekstrakurikuler->nama_ekstrakurikuler }}</td>
@@ -672,7 +677,11 @@
                     <tr>
                         <td>
                             @php
-                                $catatanGuru = $siswa->getCatatanForCurrentSemester('umum');
+                                $catatanGuru = $siswa->catatanSiswa()
+                                    ->where('tahun_ajaran_id', $reportTahunAjaranId)
+                                    ->where('semester', $reportSemester)
+                                    ->where('type', 'umum')
+                                    ->first();
                                 if ($catatanGuru && $catatanGuru->catatan) {
                                     echo $catatanGuru->catatan;
                                 } else {
@@ -696,8 +705,8 @@
                 <tbody>
                     @php
                         $absensi = $siswa->absensi()
-                            ->where('semester', $semester ?? 1)
-                            ->where('tahun_ajaran_id', $tahunAjaranId ?? session('tahun_ajaran_id'))
+                            ->where('semester', $reportSemester)
+                            ->where('tahun_ajaran_id', $reportTahunAjaranId)
                             ->first();
                     @endphp
                     <tr>

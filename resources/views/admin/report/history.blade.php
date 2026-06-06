@@ -142,7 +142,7 @@
                 <td class="px-6 py-4 font-medium text-gray-900">
                     {{ $report->siswa->nis }} - {{ $report->siswa->nama }}
                 </td>
-                <td class="px-6 py-4">{{ $report->kelas->full_kelas }}</td>
+                <td class="px-6 py-4">{{ $report->kelas?->full_kelas ?? '-' }}</td>
                 <td class="px-6 py-4">
                     <span class="px-2 py-1 text-xs font-medium {{ $report->type === 'UTS' ? 'bg-green-100 text-green-800' : 'bg-purple-100 text-purple-800' }} rounded-full">
                         {{ $report->type }}
