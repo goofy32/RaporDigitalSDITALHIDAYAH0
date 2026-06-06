@@ -111,13 +111,13 @@
                                             ->values();
 
                                         $teachingLabels = $subjectsWithClasses
-                                            ->map(fn ($subject) => "{$subject->nama_pelajaran} - {$subject->kelas->nomor_kelas}{$subject->kelas->nama_kelas}")
+                                            ->map(fn ($subject) => "{$subject->nama_pelajaran} - {$subject->kelas->label_kelas}")
                                             ->toBase()
                                             ->merge(
                                                 $teacher->kelas
                                                     ->filter(fn ($kelas) => $kelas->pivot->role === 'pengajar' && ! $kelas->pivot->is_wali_kelas)
                                                     ->reject(fn ($kelas) => $subjectClassIds->contains((int) $kelas->id))
-                                                    ->map(fn ($kelas) => "Kelas {$kelas->nomor_kelas}{$kelas->nama_kelas}")
+                                                    ->map(fn ($kelas) => $kelas->label_kelas)
                                             )
                                             ->unique()
                                             ->values();
@@ -145,7 +145,7 @@
                                     @endphp
 
                                     @if($kelasWali)
-                                        Kelas {{ $kelasWali->nomor_kelas }} {{ $kelasWali->nama_kelas }}
+                                        {{ $kelasWali->label_kelas }}
                                     @else
                                         <span>Bukan Wali Kelas</span>
                                     @endif

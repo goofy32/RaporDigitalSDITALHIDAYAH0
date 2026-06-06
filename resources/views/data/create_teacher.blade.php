@@ -143,7 +143,7 @@
                                 class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500 min-h-[120px]">
                                 @foreach($kelasForMengajar as $kelas)
                                     <option value="{{ $kelas->id }}" {{ (is_array(old('kelas_ids')) && in_array($kelas->id, old('kelas_ids'))) ? 'selected' : '' }}>
-                                        Kelas {{ $kelas->nomor_kelas }} {{ $kelas->nama_kelas }}
+                                        {{ $kelas->label_kelas }}
                                     </option>
                                 @endforeach
                             </select>
@@ -168,7 +168,7 @@
                                 <option value="">Pilih Kelas</option>
                                 @foreach($kelasForWali as $kelas)
                                     <option value="{{ $kelas->id }}" {{ old('wali_kelas_id') == $kelas->id ? 'selected' : '' }}>
-                                        Kelas {{ $kelas->nomor_kelas }} {{ $kelas->nama_kelas }}
+                                        {{ $kelas->label_kelas }}
                                     </option>
                                 @endforeach
                             </select>

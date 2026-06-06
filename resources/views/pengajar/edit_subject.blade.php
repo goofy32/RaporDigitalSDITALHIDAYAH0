@@ -196,7 +196,7 @@
                         <!-- Jika wali kelas dan mengajar di kelas wali, tampilkan sebagai readonly -->
                         <div class="relative">
                             <input type="text" 
-                                value="Kelas {{ $subject->kelas->nomor_kelas }} {{ $subject->kelas->nama_kelas }} (Kelas Wali)"
+                                value="{{ $subject->kelas->label_kelas }} (Kelas Wali)"
                                 class="block w-full p-2.5 bg-gray-100 border border-gray-300 rounded-lg text-gray-700 cursor-not-allowed"
                                 readonly>
                             <input type="hidden" name="kelas" value="{{ $subject->kelas_id }}">
@@ -212,7 +212,7 @@
                                     <option value="{{ $class->id }}" 
                                         {{ old('kelas', $subject->kelas_id) == $class->id ? 'selected' : '' }}
                                         data-is-wali-kelas="{{ auth()->guard('guru')->user()->getWaliKelasId() == $class->id ? 'true' : 'false' }}">
-                                        Kelas {{ $class->nomor_kelas }} {{ $class->nama_kelas }}
+                                        {{ $class->label_kelas }}
                                         {{ auth()->guard('guru')->user()->getWaliKelasId() == $class->id ? '(Wali Kelas)' : '' }}
                                     </option>
                                 @endforeach

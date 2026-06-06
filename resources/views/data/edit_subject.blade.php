@@ -114,7 +114,7 @@
                         data-has-wali="{{ $class->hasWaliKelas() ? 'true' : 'false' }}" 
                         data-wali-id="{{ $class->getWaliKelasId() }}"
                         {{ old('kelas', $subject->kelas_id) == $class->id ? 'selected' : '' }}>
-                        {{ $class->nomor_kelas }} - {{ $class->nama_kelas }}
+                        {{ $class->label_kelas }}
                         {{ $class->hasWaliKelas() ? '(Ada Wali Kelas)' : '(Belum Ada Wali Kelas)' }}
                     </option>
                     @endforeach

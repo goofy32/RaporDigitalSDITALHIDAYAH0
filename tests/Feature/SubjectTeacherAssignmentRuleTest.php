@@ -222,6 +222,10 @@ class SubjectTeacherAssignmentRuleTest extends TestCase
             ->get(route('subject.create'));
 
         $response->assertOk();
+        $response->assertSee('Kelas 5A');
+        $response->assertSee('Kelas 5B');
+        $response->assertDontSee('5 - a');
+        $response->assertDontSee('Kelas 5 a');
         $this->assertTeacherOptionState($response, $this->budi, true, [$this->kelas5AId]);
         $this->assertTeacherOptionState($response, $this->ani, true, [$this->kelas5BId]);
         $this->assertTeacherOptionState($response, $this->yusuf, false, [], [$this->kelas5AId, $this->kelas5BId]);
@@ -255,6 +259,10 @@ class SubjectTeacherAssignmentRuleTest extends TestCase
             ->get(route('subject.edit', $subjectId));
 
         $response->assertOk();
+        $response->assertSee('Kelas 5A');
+        $response->assertSee('Kelas 5B');
+        $response->assertDontSee('5 - a');
+        $response->assertDontSee('Kelas 5 a');
         $this->assertTeacherOptionState($response, $this->budi, true, [$this->kelas5AId]);
         $this->assertTeacherOptionState($response, $this->ani, true, [$this->kelas5BId]);
         $this->assertTeacherOptionState($response, $this->yusuf, false, [], [$this->kelas5AId, $this->kelas5BId]);
@@ -539,9 +547,9 @@ class SubjectTeacherAssignmentRuleTest extends TestCase
 
         $this->yearId = $this->insertYear('2026/2027', true);
         $this->oldYearId = $this->insertYear('2025/2026', false);
-        $this->kelas5AId = $this->insertClass(5, 'A', $this->yearId);
-        $this->kelas5BId = $this->insertClass(5, 'B', $this->yearId);
-        $this->oldKelas5AId = $this->insertClass(5, 'A', $this->oldYearId);
+        $this->kelas5AId = $this->insertClass(5, 'a', $this->yearId);
+        $this->kelas5BId = $this->insertClass(5, 'b', $this->yearId);
+        $this->oldKelas5AId = $this->insertClass(5, 'a', $this->oldYearId);
 
         $this->budi = Guru::findOrFail($this->insertGuru('Budi Santoso', 'budi', 'guru_wali'));
         $this->ani = Guru::findOrFail($this->insertGuru('Ani Rahmawati', 'ani', 'guru_wali'));

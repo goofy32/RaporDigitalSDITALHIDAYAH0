@@ -160,11 +160,11 @@
                                 @foreach($classes as $class)
                                     @if($isGuruWali && $kelasWaliId == $class->id)
                                         <option value="{{ $class->id }}" data-is-wali-kelas="true">
-                                            Kelas {{ $class->nomor_kelas }} {{ $class->nama_kelas }} (Wali Kelas)
+                                            {{ $class->label_kelas }} (Wali Kelas)
                                         </option>
                                     @else
                                         <option value="{{ $class->id }}">
-                                            Kelas {{ $class->nomor_kelas }} {{ $class->nama_kelas }}
+                                            {{ $class->label_kelas }}
                                         </option>
                                     @endif
                                 @endforeach

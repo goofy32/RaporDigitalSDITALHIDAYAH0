@@ -179,7 +179,7 @@
                                     @foreach($kelasList as $kelas)
                                         <option value="{{ $kelas->id }}" 
                                             {{ in_array($kelas->id, $kelasAjar) ? 'selected' : '' }}>
-                                            Kelas {{ $kelas->nomor_kelas }} {{ $kelas->nama_kelas }}
+                                            {{ $kelas->label_kelas }}
                                         </option>
                                     @endforeach
                                 </select>
@@ -199,7 +199,7 @@
                             @if($kelasWali)
                                 <div class="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded-md">
                                     <p class="text-sm text-yellow-800">
-                                        <span class="font-medium">Catatan:</span> Guru ini menjadi wali kelas untuk Kelas {{ $kelasWali->nomor_kelas }} {{ $kelasWali->nama_kelas }}. 
+                                        <span class="font-medium">Catatan:</span> Guru ini menjadi wali kelas untuk {{ $kelasWali->label_kelas }}.
                                         Kelas wali tidak perlu dipilih di daftar kelas mengajar, karena akan otomatis ditambahkan.
                                     </p>
                                 </div>
@@ -217,14 +217,14 @@
                                     @foreach($availableKelas as $kelas)
                                         <option value="{{ $kelas->id }}" 
                                             {{ ($kelasWali && $kelasWali->id === $kelas->id) ? 'selected' : '' }}>
-                                            Kelas {{ $kelas->nomor_kelas }} {{ $kelas->nama_kelas }}
+                                            {{ $kelas->label_kelas }}
                                         </option>
                                     @endforeach
                                 </select>
                                 @if($kelasWali)
                                     <p class="mt-1 text-sm text-gray-600">
                                         Saat ini menjadi wali kelas: 
-                                        Kelas {{ $kelasWali->nomor_kelas }} {{ $kelasWali->nama_kelas }}
+                                        {{ $kelasWali->label_kelas }}
                                     </p>
                                 @endif
                             @else

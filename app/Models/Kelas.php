@@ -155,6 +155,11 @@ class Kelas extends Model
         return "Kelas {$this->nomor_kelas} {$this->nama_kelas}{$tahunAjaranText}";
     }
 
+    public function getLabelKelasAttribute(): string
+    {
+        return 'Kelas '.$this->nomor_kelas.strtoupper((string) $this->nama_kelas);
+    }
+
     public function siswas()
     {
         return $this->hasMany(Siswa::class);

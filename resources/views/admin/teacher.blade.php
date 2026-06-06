@@ -98,7 +98,7 @@
                         @php
                             $waliLabels = $teacher->kelas
                                 ->filter(fn ($kelas) => $kelas->pivot->is_wali_kelas || $kelas->pivot->role === 'wali_kelas')
-                                ->map(fn ($kelas) => "{$kelas->nomor_kelas}{$kelas->nama_kelas}")
+                                ->map(fn ($kelas) => $kelas->label_kelas)
                                 ->unique()
                                 ->values();
 
@@ -113,7 +113,7 @@
                                 ->values();
 
                             $subjectLabels = $subjectsWithClasses
-                                ->map(fn ($subject) => "{$subject->nama_pelajaran} - {$subject->kelas->nomor_kelas}{$subject->kelas->nama_kelas}")
+                                ->map(fn ($subject) => "{$subject->nama_pelajaran} - {$subject->kelas->label_kelas}")
                                 ->toBase()
                                 ->unique()
                                 ->values();
@@ -121,7 +121,7 @@
                             $classAssignmentLabels = $teacher->kelas
                                 ->filter(fn ($kelas) => $kelas->pivot->role === 'pengajar' && ! $kelas->pivot->is_wali_kelas)
                                 ->reject(fn ($kelas) => $subjectClassIds->contains((int) $kelas->id))
-                                ->map(fn ($kelas) => "Kelas {$kelas->nomor_kelas}{$kelas->nama_kelas}")
+                                ->map(fn ($kelas) => $kelas->label_kelas)
                                 ->unique()
                                 ->values();
 

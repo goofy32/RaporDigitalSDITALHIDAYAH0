@@ -43,16 +43,19 @@ class TeacherListDisplayTest extends TestCase
             ->assertOk()
             ->assertSee('Wali Kelas:')
             ->assertSee('Mengajar:')
-            ->assertSee('Matematika - 5A')
+            ->assertSee('Kelas 5A')
+            ->assertSee('Matematika - Kelas 5A')
             ->assertDontSee('Kelas 5A, Kelas 5A')
-            ->assertDontSee('Kelas 5A, Kelas 5A (Wali Kelas)');
+            ->assertDontSee('Kelas 5A, Kelas 5A (Wali Kelas)')
+            ->assertDontSee('Matematika - 5a')
+            ->assertDontSee('Kelas 5 a');
     }
 
     public function test_teacher_list_shows_pengajar_class_assignment_before_subject_exists(): void
     {
         $kelas5BId = DB::table('kelas')->insertGetId([
             'nomor_kelas' => 5,
-            'nama_kelas' => 'B',
+            'nama_kelas' => 'b',
             'tahun_ajaran_id' => $this->yearId,
             'created_at' => now(),
             'updated_at' => now(),
@@ -87,7 +90,22 @@ class TeacherListDisplayTest extends TestCase
             ->assertOk()
             ->assertSee('Yusuf Hidayat')
             ->assertSee('Mengajar:')
-            ->assertSee('Kelas 5B');
+            ->assertSee('Kelas 5B')
+            ->assertDontSee('Kelas 5 b');
+    }
+
+    public function test_teacher_detail_uses_consistent_class_labels(): void
+    {
+        $guruId = (int) DB::table('gurus')->where('username', 'budi')->value('id');
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession(['tahun_ajaran_id' => $this->yearId, 'selected_semester' => 1])
+            ->get(route('teacher.show', $guruId))
+            ->assertOk()
+            ->assertSee('Matematika - Kelas 5A')
+            ->assertSee('Kelas 5A')
+            ->assertDontSee('Matematika - 5a')
+            ->assertDontSee('Kelas 5 a');
     }
 
     private function createSchema(): void
@@ -213,7 +231,7 @@ class TeacherListDisplayTest extends TestCase
 
         $kelasId = DB::table('kelas')->insertGetId([
             'nomor_kelas' => 5,
-            'nama_kelas' => 'A',
+            'nama_kelas' => 'a',
             'tahun_ajaran_id' => $this->yearId,
             'created_at' => now(),
             'updated_at' => now(),
