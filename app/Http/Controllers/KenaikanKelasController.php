@@ -5,18 +5,23 @@ namespace App\Http\Controllers;
 use App\Models\Kelas;
 use App\Models\Siswa;
 use App\Models\TahunAjaran;
+use App\Services\SiswaKelasSemesterResolver;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class KenaikanKelasController extends Controller
 {
+    private const PROMOTION_WRITES_DISABLED_MESSAGE = 'Kenaikan kelas berbasis enrollment belum diaktifkan. Gunakan setelah Phase 2E-B3.';
+
     /**
      * Menampilkan halaman untuk proses kenaikan kelas
      */
-    public function index()
+    public function index(Request $request, SiswaKelasSemesterResolver $enrollmentResolver)
     {
         // Ambil tahun ajaran aktif
-        $tahunAjaranAktif = TahunAjaran::where('is_active', true)->first();
+        $tahunAjaranAktif = $this->resolveSourceTahunAjaran($request);
         
         if (!$tahunAjaranAktif) {
             return view('admin.kenaikan_kelas.index', [
@@ -25,31 +30,21 @@ class KenaikanKelasController extends Controller
         }
         
         // Cari tahun ajaran baru (tahun ajaran selanjutnya)
-        // Mencari berdasarkan angka tahun yang lebih besar dari tahun ajaran aktif
-        $tahunAjaranBaru = null;
-        
-        if ($tahunAjaranAktif) {
-            // Ekstrak tahun dari format "2023/2024"
-            $tahunParts = explode('/', $tahunAjaranAktif->tahun_ajaran);
-            $tahunAwal = (int)$tahunParts[0];
-            
-            // Cari tahun ajaran dengan tahun awal yang lebih besar dari tahun ajaran aktif
-            $tahunAjaranBaru = TahunAjaran::where(function($query) use ($tahunAwal) {
-                    $query->whereRaw("SUBSTRING_INDEX(tahun_ajaran, '/', 1) > ?", [$tahunAwal]);
-                })
-                ->orderBy('tahun_ajaran')
-                ->first();
-        }
+        $tahunAjaranBaru = $this->findNextSemesterOneYear($tahunAjaranAktif);
         
         // Ambil kelas dari tahun ajaran aktif untuk ditampilkan
         $kelasAktif = Kelas::where('tahun_ajaran_id', $tahunAjaranAktif->id)
                     ->orderBy('nomor_kelas')
                     ->orderBy('nama_kelas')
                     ->get();
+
+        $this->attachPromotionRosterCounts($kelasAktif, $tahunAjaranAktif, $enrollmentResolver);
+        $promotionWritesEnabled = false;
+        $promotionWritesDisabledMessage = self::PROMOTION_WRITES_DISABLED_MESSAGE;
         
         // Jika tidak ada tahun ajaran berikutnya, berikan peringatan
         if (!$tahunAjaranBaru) {
-            return view('admin.kenaikan_kelas.index', compact('kelasAktif', 'tahunAjaranAktif'))
+            return view('admin.kenaikan_kelas.index', compact('kelasAktif', 'tahunAjaranAktif', 'promotionWritesEnabled', 'promotionWritesDisabledMessage'))
                 ->with('warning', 'Belum ada tahun ajaran selanjutnya. Silakan buat tahun ajaran baru dengan tahun yang lebih tinggi dari ' . $tahunAjaranAktif->tahun_ajaran . '. Anda bisa membuat tahun ajaran baru dengan menyalin data dari tahun ajaran yang sudah ada.');
         }
         
@@ -61,36 +56,38 @@ class KenaikanKelasController extends Controller
         
         // Jika tidak ada kelas di tahun ajaran baru, berikan peringatan
         if ($kelasBaru->isEmpty()) {
-            return view('admin.kenaikan_kelas.index', compact('kelasAktif', 'tahunAjaranAktif', 'tahunAjaranBaru'))
+            return view('admin.kenaikan_kelas.index', compact('kelasAktif', 'tahunAjaranAktif', 'tahunAjaranBaru', 'promotionWritesEnabled', 'promotionWritesDisabledMessage'))
                 ->with('warning', 'Tahun ajaran ' . $tahunAjaranBaru->tahun_ajaran . ' belum memiliki kelas. Untuk melakukan kenaikan kelas, Anda perlu membuat kelas-kelas di tahun ajaran tersebut terlebih dahulu.');
         }
         
-        return view('admin.kenaikan_kelas.index', compact('kelasAktif', 'kelasBaru', 'tahunAjaranAktif', 'tahunAjaranBaru'));
+        return view('admin.kenaikan_kelas.index', compact('kelasAktif', 'kelasBaru', 'tahunAjaranAktif', 'tahunAjaranBaru', 'promotionWritesEnabled', 'promotionWritesDisabledMessage'));
     }
     
-    public function showKelasSiswa($kelasId)
+    public function showKelasSiswa(Request $request, SiswaKelasSemesterResolver $enrollmentResolver, $kelasId)
     {
         $kelas = Kelas::findOrFail($kelasId);
-        $siswaList = Siswa::where('kelas_id', $kelasId)
-                    ->where('status', 'aktif')
-                    ->orderBy('nama')
-                    ->get();
+
+        $tahunAjaranAktif = $this->resolveSourceTahunAjaran($request);
+
+        if (!$tahunAjaranAktif || (int) $tahunAjaranAktif->semester !== 2) {
+            return redirect()->route('admin.kenaikan-kelas.index')
+                ->with('error', 'Perencanaan kenaikan kelas hanya dapat dilakukan dari tahun ajaran aktif semester genap.');
+        }
+
+        if ((int) $kelas->tahun_ajaran_id !== (int) $tahunAjaranAktif->id) {
+            abort(404);
+        }
+
+        $siswaList = $this->studentsForPromotionClass($kelas, $tahunAjaranAktif, $enrollmentResolver);
         
         // Check if this is the final grade (for graduation)
         $isKelasAkhir = $kelas->nomor_kelas == 6; // For SD, grade 6 is the final grade
         
-        // Get the active tahun ajaran
-        $tahunAjaranAktif = TahunAjaran::where('is_active', true)->first();
-        $tahunAjaranBaru = TahunAjaran::where(function($query) use ($tahunAjaranAktif) {
-            $tahunParts = explode('/', $tahunAjaranAktif->tahun_ajaran);
-            $tahunAwal = (int)$tahunParts[0];
-            $query->whereRaw("SUBSTRING_INDEX(tahun_ajaran, '/', 1) > ?", [$tahunAwal]);
-        })
-        ->orderBy('tahun_ajaran')
-        ->first();
+        $tahunAjaranBaru = $this->findNextSemesterOneYear($tahunAjaranAktif);
         
         // Get classes that can be promotion targets
-        $kelasTujuan = [];
+        $kelasTujuan = collect();
+        $kelasTinggal = collect();
         if ($tahunAjaranBaru) {
             // If not the final grade, only show classes with nomor +1
             if (!$isKelasAkhir) {
@@ -99,7 +96,18 @@ class KenaikanKelasController extends Controller
                              ->orderBy('nama_kelas')
                              ->get();
             }
+
+            $kelasTinggal = Kelas::where('tahun_ajaran_id', $tahunAjaranBaru->id)
+                         ->where('nomor_kelas', $kelas->nomor_kelas)
+                         ->orderBy('nama_kelas')
+                         ->get();
         }
+
+        $targetClassCapability = [
+            'can_promote_to_next_grade' => !$isKelasAkhir && $kelasTujuan->isNotEmpty(),
+            'can_repeat_same_grade' => $kelasTinggal->isNotEmpty(),
+            'is_final_grade' => $isKelasAkhir,
+        ];
         
         // Check report status for each student
         $raporStatus = [];
@@ -107,13 +115,27 @@ class KenaikanKelasController extends Controller
             // Check if reports have been generated for this student
             $hasReport = \App\Models\ReportGeneration::where('siswa_id', $siswa->id)
                 ->where('tahun_ajaran_id', $tahunAjaranAktif->id)
+                ->where('semester', 2)
                 ->exists();
             
             $raporStatus[$siswa->id] = $hasReport;
         }
+
+        $promotionWritesEnabled = false;
+        $promotionWritesDisabledMessage = self::PROMOTION_WRITES_DISABLED_MESSAGE;
         
         return view('admin.kenaikan_kelas.show_siswa', compact(
-            'kelas', 'siswaList', 'isKelasAkhir', 'kelasTujuan', 'tahunAjaranBaru', 'raporStatus'
+            'kelas',
+            'siswaList',
+            'isKelasAkhir',
+            'kelasTujuan',
+            'kelasTinggal',
+            'tahunAjaranAktif',
+            'tahunAjaranBaru',
+            'raporStatus',
+            'targetClassCapability',
+            'promotionWritesEnabled',
+            'promotionWritesDisabledMessage'
         ));
     }
     /**
@@ -121,6 +143,10 @@ class KenaikanKelasController extends Controller
      */
     public function processKenaikanKelas(Request $request)
     {
+        if (! $this->promotionWritesEnabled()) {
+            return $this->legacyPromotionActionDisabledResponse();
+        }
+
         $request->validate([
             'siswa_ids' => 'required|array',
             'siswa_ids.*' => 'exists:siswas,id',
@@ -169,6 +195,10 @@ class KenaikanKelasController extends Controller
      */
     public function processTinggalKelas(Request $request)
     {
+        if (! $this->promotionWritesEnabled()) {
+            return $this->legacyPromotionActionDisabledResponse();
+        }
+
         $request->validate([
             'siswa_ids' => 'required|array',
             'siswa_ids.*' => 'exists:siswas,id',
@@ -216,6 +246,10 @@ class KenaikanKelasController extends Controller
      */
     public function processMassPromotion()
     {
+        if (! $this->promotionWritesEnabled()) {
+            return $this->legacyPromotionActionDisabledResponse();
+        }
+
         // Cek tahun ajaran aktif dan tahun ajaran baru
         $tahunAjaranAktif = TahunAjaran::where('is_active', true)->first();
         
@@ -392,6 +426,10 @@ class KenaikanKelasController extends Controller
      */
     public function processKelulusan(Request $request)
     {
+        if (! $this->promotionWritesEnabled()) {
+            return $this->legacyPromotionActionDisabledResponse();
+        }
+
         $request->validate([
             'siswa_ids' => 'required|array',
             'siswa_ids.*' => 'exists:siswas,id',
@@ -454,5 +492,76 @@ class KenaikanKelasController extends Controller
             DB::rollBack();
             return redirect()->back()->with('error', 'Gagal memproses: ' . $e->getMessage());
         }
+    }
+
+    private function resolveSourceTahunAjaran(Request $request): ?TahunAjaran
+    {
+        $requestedTahunAjaranId = $request->query('tahun_ajaran_id');
+
+        if ($requestedTahunAjaranId !== null && $requestedTahunAjaranId !== '') {
+            $requestedTahunAjaranId = (int) $requestedTahunAjaranId;
+            $semester = DB::table('tahun_ajarans')
+                ->where('id', $requestedTahunAjaranId)
+                ->value('semester');
+
+            if ((int) $semester !== 2) {
+                abort(422, 'Perencanaan kenaikan kelas hanya mendukung sumber semester genap.');
+            }
+
+            return TahunAjaran::findOrFail($requestedTahunAjaranId);
+        }
+
+        return TahunAjaran::where('is_active', true)->first();
+    }
+
+    private function findNextSemesterOneYear(TahunAjaran $sourceTahunAjaran): ?TahunAjaran
+    {
+        if (! preg_match('/^(\d{4})\/(\d{4})$/', (string) $sourceTahunAjaran->tahun_ajaran, $matches)) {
+            return null;
+        }
+
+        $nextLabel = ((int) $matches[1] + 1) . '/' . ((int) $matches[2] + 1);
+
+        return TahunAjaran::where('tahun_ajaran', $nextLabel)
+            ->where('semester', 1)
+            ->orderBy('tanggal_mulai')
+            ->first();
+    }
+
+    private function attachPromotionRosterCounts(Collection $kelasAktif, TahunAjaran $tahunAjaran, SiswaKelasSemesterResolver $enrollmentResolver): void
+    {
+        foreach ($kelasAktif as $kelas) {
+            $kelas->promotion_roster_count = $this->studentsForPromotionClass($kelas, $tahunAjaran, $enrollmentResolver)->count();
+        }
+    }
+
+    private function studentsForPromotionClass(Kelas $kelas, TahunAjaran $tahunAjaran, SiswaKelasSemesterResolver $enrollmentResolver): Collection
+    {
+        if ((int) $tahunAjaran->semester !== 2) {
+            return collect();
+        }
+
+        $query = $enrollmentResolver
+            ->studentQueryForClass($kelas->id, $tahunAjaran->id, 2, true);
+
+        if (Schema::hasColumn('siswas', 'status')) {
+            $query->where('status', 'aktif');
+        }
+
+        return $query->orderBy('nama')
+            ->get()
+            ->unique('id')
+            ->values();
+    }
+
+    private function promotionWritesEnabled(): bool
+    {
+        return false;
+    }
+
+    private function legacyPromotionActionDisabledResponse()
+    {
+        return redirect()->route('admin.kenaikan-kelas.index')
+            ->with('error', self::PROMOTION_WRITES_DISABLED_MESSAGE);
     }
 }

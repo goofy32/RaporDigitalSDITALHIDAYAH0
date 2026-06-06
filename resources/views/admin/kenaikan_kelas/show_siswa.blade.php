@@ -28,11 +28,55 @@
     </div>
     @endif
 
+    @if(isset($promotionWritesEnabled) && !$promotionWritesEnabled)
+    <div class="bg-yellow-50 border border-yellow-200 text-yellow-800 p-4 mb-6 rounded-lg">
+        <p class="font-medium">Mode perencanaan kenaikan kelas</p>
+        <p class="text-sm mt-1">{{ $promotionWritesDisabledMessage ?? 'Kenaikan kelas berbasis enrollment belum diaktifkan.' }}</p>
+    </div>
+    @endif
+
     <div class="mb-6">
         <h3 class="text-lg font-semibold text-gray-800 mb-3">Kelas {{ $kelas->nomor_kelas }} {{ $kelas->nama_kelas }}</h3>
         <p class="text-gray-600">Wali Kelas: {{ $kelas->waliKelasName }}</p>
         <p class="text-gray-600">Jumlah Siswa: {{ $siswaList->count() }}</p>
+        @if(isset($tahunAjaranAktif))
+            <p class="text-gray-500 text-sm mt-1">Sumber: {{ $tahunAjaranAktif->tahun_ajaran }} Semester {{ $tahunAjaranAktif->semester }}</p>
+        @endif
+        @if(isset($tahunAjaranBaru) && $tahunAjaranBaru)
+            <p class="text-gray-500 text-sm">Tujuan: {{ $tahunAjaranBaru->tahun_ajaran }} Semester {{ $tahunAjaranBaru->semester }}</p>
+        @endif
     </div>
+
+    @if(isset($tahunAjaranBaru) && $tahunAjaranBaru)
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+        <div class="bg-green-50 border border-green-200 rounded-lg p-4">
+            <h4 class="font-medium text-green-800 mb-2">Kandidat Naik Kelas</h4>
+            @if(!$isKelasAkhir && $kelasTujuan->isNotEmpty())
+                <ul class="text-sm text-green-700 space-y-1">
+                    @foreach($kelasTujuan as $target)
+                        <li>Kelas {{ $target->nomor_kelas }} {{ $target->nama_kelas }}</li>
+                    @endforeach
+                </ul>
+            @elseif($isKelasAkhir)
+                <p class="text-sm text-green-700">Kelas akhir diproses sebagai kelulusan pada phase berikutnya.</p>
+            @else
+                <p class="text-sm text-red-700">Belum ada kelas tujuan tingkat berikutnya.</p>
+            @endif
+        </div>
+        <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+            <h4 class="font-medium text-yellow-800 mb-2">Kandidat Tinggal Kelas</h4>
+            @if(isset($kelasTinggal) && $kelasTinggal->isNotEmpty())
+                <ul class="text-sm text-yellow-700 space-y-1">
+                    @foreach($kelasTinggal as $target)
+                        <li>Kelas {{ $target->nomor_kelas }} {{ $target->nama_kelas }}</li>
+                    @endforeach
+                </ul>
+            @else
+                <p class="text-sm text-red-700">Belum ada kelas tujuan tingkat yang sama.</p>
+            @endif
+        </div>
+    </div>
+    @endif
 
     @if($siswaList->isEmpty())
     <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
@@ -48,16 +92,20 @@
     @else
 
     <div class="mb-6">
+        @if($promotionWritesEnabled)
         <div class="flex items-center mb-4">
             <input id="select-all" type="checkbox" class="h-4 w-4 text-green-600 focus:ring-green-500">
             <label for="select-all" class="ml-2 block text-sm text-gray-900">Pilih Semua Siswa</label>
         </div>
+        @endif
 
         <div class="overflow-x-auto">
             <table class="min-w-full bg-white border border-gray-200">
                 <thead class="bg-gray-100">
                     <tr>
+                        @if($promotionWritesEnabled)
                         <th class="py-3 px-4 border-b text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Pilih</th>
+                        @endif
                         <th class="py-3 px-4 border-b text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">NIS</th>
                         <th class="py-3 px-4 border-b text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Nama</th>
                         <th class="py-3 px-4 border-b text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Jenis Kelamin</th>
@@ -67,9 +115,11 @@
                 <tbody class="divide-y divide-gray-200">
                     @foreach($siswaList as $siswa)
                     <tr data-siswa-id="{{ $siswa->id }}">
+                        @if($promotionWritesEnabled)
                         <td class="py-3 px-4 border-b">
                             <input type="checkbox" name="siswa_ids[]" value="{{ $siswa->id }}" class="student-checkbox h-4 w-4 text-green-600 focus:ring-green-500">
                         </td>
+                        @endif
                         <td class="py-3 px-4 border-b">{{ $siswa->nis }}</td>
                         <td class="py-3 px-4 border-b">{{ $siswa->nama }}</td>
                         <td class="py-3 px-4 border-b">{{ $siswa->jenis_kelamin }}</td>
@@ -93,6 +143,7 @@
         </div>
     </div>
 
+    @if($promotionWritesEnabled)
     <div class="bg-gray-50 p-4 rounded-lg border border-gray-200 mb-6" id="actionForms" style="display: none;">
         <h3 class="text-lg font-semibold text-gray-800 mb-3">Proses Siswa Terpilih</h3>
         <p class="mb-3">Anda telah memilih <span id="selectedCount" class="font-semibold">0</span> siswa.</p>
@@ -126,12 +177,6 @@
 
                     <select name="kelas_tinggal_id" x-bind:required="selectedStatus === 'pindah'" class="w-full rounded-md border-yellow-300 shadow-sm focus:border-yellow-500 focus:ring-yellow-500">
                         <option value="">-- Pilih Kelas --</option>
-                        @php
-                            $kelasTinggal = \App\Models\Kelas::where('tahun_ajaran_id', $tahunAjaranBaru->id)
-                                    ->where('nomor_kelas', $kelas->nomor_kelas)
-                                    ->orderBy('nama_kelas')
-                                    ->get();
-                        @endphp
                         @foreach($kelasTinggal as $kelasOption)
                         <option value="{{ $kelasOption->id }}">Kelas {{ $kelasOption->nomor_kelas }} {{ $kelasOption->nama_kelas }}</option>
                         @endforeach
@@ -186,15 +231,6 @@
                         <label for="kelas_tinggal_id" class="block text-sm font-medium text-gray-700">Kelas Tujuan (Tingkat yang Sama)</label>
                         <select name="kelas_tujuan_id" id="kelas_tinggal_id" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-red-500 focus:ring-yellow-500">
                             <option value="">-- Pilih Kelas Tinggal --</option>
-                            @php
-                                $kelasTinggal = \App\Models\Kelas::where('tahun_ajaran_id', $tahunAjaranBaru->id)
-                                        ->where('nomor_kelas', $kelas->nomor_kelas)
-                                        ->orderBy('nama_kelas')
-                                        ->get()
-                                        ->unique(function($item) {
-                                            return $item->nomor_kelas . $item->nama_kelas;
-                                        });
-                            @endphp
                             @foreach($kelasTinggal as $target)
                             <option value="{{ $target->id }}">Kelas {{ $target->nomor_kelas }} {{ $target->nama_kelas }}</option>
                             @endforeach
@@ -211,6 +247,7 @@
         </div>
         @endif
     </div>
+    @endif
     @endif
     @endif
 </div>

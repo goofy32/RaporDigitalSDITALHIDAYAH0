@@ -87,6 +87,13 @@
     </div>
     @endif
 
+    @if(isset($promotionWritesEnabled) && !$promotionWritesEnabled)
+    <div class="bg-yellow-50 border border-yellow-200 text-yellow-800 p-4 mb-6 rounded-lg">
+        <p class="font-medium">Mode perencanaan kenaikan kelas</p>
+        <p class="text-sm mt-1">{{ $promotionWritesDisabledMessage ?? 'Kenaikan kelas berbasis enrollment belum diaktifkan.' }}</p>
+    </div>
+    @endif
+
     @if(isset($tahunAjaranBaru) && isset($kelasBaru) && !$kelasBaru->isEmpty())
     <div class="mt-6 bg-green-50 p-4 rounded-lg border border-green-200">
         <h3 class="text-lg font-semibold text-green-800 mb-2">Proses Kenaikan Kelas Massal</h3>
@@ -95,7 +102,7 @@
         @php
             $hasActiveStudents = false;
             foreach($kelasAktif as $kelas) {
-                if ($kelas->siswas->where('status', 'aktif')->count() > 0) {
+                if (($kelas->promotion_roster_count ?? 0) > 0) {
                     $hasActiveStudents = true;
                     break;
                 }
@@ -105,12 +112,14 @@
         <div class="flex items-center">
             <button type="button"
                     @click="$dispatch('open-confirm-modal')"
-                    class="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 {{ !$hasActiveStudents ? 'opacity-50 cursor-not-allowed' : '' }}"
-                    {{ !$hasActiveStudents ? 'disabled' : '' }}>
+                    class="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 {{ (!$hasActiveStudents || !$promotionWritesEnabled) ? 'opacity-50 cursor-not-allowed' : '' }}"
+                    {{ (!$hasActiveStudents || !$promotionWritesEnabled) ? 'disabled' : '' }}>
                 Proses Kenaikan Kelas Otomatis
             </button>
             @if(!$hasActiveStudents)
                 <span class="ml-2 text-sm text-red-600">* Tidak ada siswa aktif untuk diproses</span>
+            @elseif(!$promotionWritesEnabled)
+                <span class="ml-2 text-sm text-yellow-700">* {{ $promotionWritesDisabledMessage }}</span>
             @else
                 <span class="ml-2 text-sm text-green-600">* Siswa kelas akhir (Kelas 6) akan ditandai lulus</span>
             @endif
@@ -132,10 +141,14 @@
                 <p class="mb-4 text-black-600 font-medium">Apakah Anda yakin ingin melanjutkan?</p>
                 <div class="flex justify-end">
                     <button @click="open = false" class="px-3 py-1 bg-gray-200 text-gray-800 rounded-md mr-2">Batal</button>
+                    @if($promotionWritesEnabled)
                     <form action="{{ route('admin.kenaikan-kelas.process-mass') }}" method="POST">
                         @csrf
                         <button type="submit" class="px-3 py-1 bg-green-600 text-white rounded-md">Proses Sekarang</button>
                     </form>
+                    @else
+                    <button type="button" class="px-3 py-1 bg-gray-300 text-gray-600 rounded-md cursor-not-allowed" disabled>Belum Aktif</button>
+                    @endif
                 </div>
             </div>
         </div>
@@ -181,7 +194,7 @@
             <a href="{{ route('admin.kenaikan-kelas.show-siswa', $kelas->id) }}"
                class="block p-4 bg-white border rounded-lg hover:bg-gray-50 transition duration-150 ease-in-out">
                 <h4 class="font-medium text-lg">Kelas {{ $kelas->nomor_kelas }} {{ $kelas->nama_kelas }}</h4>
-                <p class="text-gray-600">{{ $kelas->siswas->where('status', 'aktif')->count() }} Siswa</p>
+                <p class="text-gray-600">{{ $kelas->promotion_roster_count ?? 0 }} Siswa</p>
                 <p class="text-gray-500 text-sm">Wali Kelas: {{ $kelas->waliKelasName }}</p>
                 <div class="mt-2">
                     <span class="inline-block px-2 py-1 text-xs {{ $kelas->nomor_kelas == 6 ? 'bg-green-100 text-green-800' : 'bg-green-100 text-green-800' }} rounded-full">
@@ -199,8 +212,8 @@
         <ol class="list-decimal pl-5 space-y-2">
             <li>Pastikan tahun ajaran baru sudah dibuat dan ada kelas tujuan di tahun ajaran baru.</li>
             <li>Pilih kelas yang akan diproses dari daftar kelas di atas.</li>
-            <li>Pada halaman detail kelas, Anda dapat memilih siswa dan menentukan kenaikan kelas atau kelulusan.</li>
-            <li>Siswa yang sudah dipindahkan ke kelas di tahun ajaran baru tidak akan muncul lagi dalam daftar.</li>
+            <li>Pada halaman detail kelas, Anda dapat meninjau siswa dari enrollment semester genap dan kandidat kelas tujuan.</li>
+            <li>Proses final kenaikan kelas berbasis enrollment akan diaktifkan pada Phase 2E-B3.</li>
         </ol>
     </div>
 </div>
