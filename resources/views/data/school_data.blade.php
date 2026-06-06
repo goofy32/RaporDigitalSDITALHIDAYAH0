@@ -106,7 +106,13 @@
                         </tr>
                         <tr>
                             <td class="border border-gray-300 p-2 font-semibold">Semester</td>
-                            <td class="border border-gray-300 p-2">{{ $profil->semester == 1 ? 'Ganjil' : 'Genap' }}</td>
+                            <td class="border border-gray-300 p-2">
+                                @if(is_null($profil->getRawOriginal('semester')))
+                                    -
+                                @else
+                                    {{ $profil->semester == 1 ? 'Ganjil' : 'Genap' }}
+                                @endif
+                            </td>
                         </tr>
                         <tr>
                             <td class="border border-gray-300 p-2 font-semibold">Kepala Sekolah</td>

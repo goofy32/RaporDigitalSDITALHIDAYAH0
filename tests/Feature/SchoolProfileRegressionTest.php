@@ -37,6 +37,54 @@ class SchoolProfileRegressionTest extends TestCase
         $this->seedFixture();
     }
 
+    public function test_clean_database_admin_can_create_school_profile_without_academic_year(): void
+    {
+        DB::table('profil_sekolah')->delete();
+        DB::table('tahun_ajarans')->delete();
+
+        $response = $this->actingAs($this->admin, 'web')
+            ->followingRedirects()
+            ->post(route('profile.submit'), $this->validProfilePayload([
+                'tahun_pelajaran' => '',
+                'semester' => '',
+            ]));
+
+        $response->assertOk()
+            ->assertSee('Profil sekolah berhasil disimpan.')
+            ->assertSee('SDIT Al Hidayah');
+
+        $this->assertDatabaseHas('profil_sekolah', [
+            'nama_sekolah' => 'SDIT Al Hidayah',
+            'tahun_pelajaran' => null,
+            'semester' => null,
+        ]);
+        $this->assertSame(1, DB::table('profil_sekolah')->count());
+        $this->assertSame(0, DB::table('tahun_ajarans')->count());
+    }
+
+    public function test_clean_database_profile_validation_failure_is_visible_and_creates_no_row(): void
+    {
+        DB::table('profil_sekolah')->delete();
+        DB::table('tahun_ajarans')->delete();
+
+        $this->actingAs($this->admin, 'web')
+            ->from(route('profile.edit'))
+            ->post(route('profile.submit'), $this->validProfilePayload([
+                'nama_sekolah' => '',
+                'tahun_pelajaran' => '',
+                'semester' => '',
+            ]))
+            ->assertRedirect(route('profile.edit'))
+            ->assertSessionHasErrors('nama_sekolah');
+
+        $this->get(route('profile.edit'))
+            ->assertOk()
+            ->assertSee('Profil sekolah belum dapat disimpan.');
+
+        $this->assertSame(0, DB::table('profil_sekolah')->count());
+        $this->assertSame(0, DB::table('tahun_ajarans')->count());
+    }
+
     public function test_profile_update_persists_and_redirect_shows_new_value_without_changing_active_year(): void
     {
         $response = $this->actingAs($this->admin, 'web')

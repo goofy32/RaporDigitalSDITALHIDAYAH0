@@ -17,22 +17,23 @@
 
 <body data-page="admin-profile"
       data-current-tahun-pelajaran="{{ old('tahun_pelajaran', $profil->tahun_pelajaran ?? '') }}"
-      data-current-semester="{{ old('semester', $profil->semester ?? '') }}">
+      data-current-semester="{{ old('semester', $profil?->getRawOriginal('semester') ?? '') }}">
     <x-admin.topbar></x-admin.topbar>
     <x-admin.sidebar></x-admin.sidebar>
 
-    @if ($errors->any())
-    <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
-        <ul class="list-disc pl-5">
-            @foreach ($errors->all() as $error)
-                <li>{{ $error }}</li>
-            @endforeach
-        </ul>
-    </div>
-    @endif
-
     <div class="p-4 sm:ml-64">
         <div class="p-4 bg-white mt-14">
+            @if ($errors->any())
+                <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
+                    <p class="font-semibold mb-1">Profil sekolah belum dapat disimpan.</p>
+                    <ul class="list-disc pl-5">
+                        @foreach ($errors->all() as $error)
+                            <li>{{ $error }}</li>
+                        @endforeach
+                    </ul>
+                </div>
+            @endif
+
             <div class="flex items-center justify-between gap-4 mb-6">
                 <div>
                     <h1 class="text-2xl font-semibold text-gray-900">Profile Sekolah</h1>
@@ -185,7 +186,7 @@
                         @enderror
                     </div>
 
-                    <input type="hidden" id="semester" name="semester" value="{{ old('semester', $profil->semester ?? '') }}">
+                    <input type="hidden" id="semester" name="semester" value="{{ old('semester', $profil?->getRawOriginal('semester') ?? '') }}">
 
                     <div>
                         <label for="kepala_sekolah" class="block mb-2 text-sm font-medium text-gray-900">Kepala Sekolah</label>
