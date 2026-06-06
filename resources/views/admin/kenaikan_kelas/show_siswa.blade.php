@@ -195,6 +195,9 @@
             <div class="flex flex-col md:flex-row gap-4">
                 <form action="{{ route('admin.kenaikan-kelas.process-kenaikan') }}" method="POST" class="flex-1 bg-white p-4 rounded-lg border border-gray-200" id="naik-kelas-form">
                     @csrf
+                    <input type="hidden" name="source_kelas_id" value="{{ $kelas->id }}">
+                    <input type="hidden" name="source_tahun_ajaran_id" value="{{ $tahunAjaranAktif->id }}">
+                    <input type="hidden" name="target_tahun_ajaran_id" value="{{ $tahunAjaranBaru->id }}">
                     <div id="selectedNaikIds"></div>
 
                     <h4 class="text-md font-semibold text-green-700 mb-3">Naik Kelas</h4>
@@ -223,6 +226,9 @@
 
                 <form action="{{ route('admin.kenaikan-kelas.process-tinggal') }}" method="POST" class="flex-1 bg-white p-4 rounded-lg border border-gray-200" id="tinggal-kelas-form">
                     @csrf
+                    <input type="hidden" name="source_kelas_id" value="{{ $kelas->id }}">
+                    <input type="hidden" name="source_tahun_ajaran_id" value="{{ $tahunAjaranAktif->id }}">
+                    <input type="hidden" name="target_tahun_ajaran_id" value="{{ $tahunAjaranBaru->id }}">
                     <div id="selectedTinggalIds"></div>
 
                     <h4 class="text-md font-semibold text-red-700 mb-3">Tinggal Kelas</h4>

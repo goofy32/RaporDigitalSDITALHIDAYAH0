@@ -213,7 +213,7 @@
             <li>Pastikan tahun ajaran baru sudah dibuat dan ada kelas tujuan di tahun ajaran baru.</li>
             <li>Pilih kelas yang akan diproses dari daftar kelas di atas.</li>
             <li>Pada halaman detail kelas, Anda dapat meninjau siswa dari enrollment semester genap dan kandidat kelas tujuan.</li>
-            <li>Proses final kenaikan kelas berbasis enrollment akan diaktifkan pada Phase 2E-B3.</li>
+            <li>Gunakan proses siswa terpilih untuk membuat enrollment tahun ajaran baru. Kenaikan massal dan kelulusan akan ditangani pada phase lanjutan.</li>
         </ol>
     </div>
 </div>

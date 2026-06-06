@@ -4,16 +4,18 @@ namespace App\Http\Controllers;
 
 use App\Models\Kelas;
 use App\Models\Siswa;
+use App\Models\SiswaKelasSemester;
 use App\Models\TahunAjaran;
 use App\Services\SiswaKelasSemesterResolver;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use RuntimeException;
 
 class KenaikanKelasController extends Controller
 {
-    private const PROMOTION_WRITES_DISABLED_MESSAGE = 'Kenaikan kelas berbasis enrollment belum diaktifkan. Gunakan setelah Phase 2E-B3.';
+    private const PROMOTION_WRITES_DISABLED_MESSAGE = 'Kenaikan kelas massal dan kelulusan berbasis enrollment belum diaktifkan. Gunakan proses siswa terpilih untuk kenaikan atau tinggal kelas.';
 
     /**
      * Menampilkan halaman untuk proses kenaikan kelas
@@ -121,8 +123,10 @@ class KenaikanKelasController extends Controller
             $raporStatus[$siswa->id] = $hasReport;
         }
 
-        $promotionWritesEnabled = false;
-        $promotionWritesDisabledMessage = self::PROMOTION_WRITES_DISABLED_MESSAGE;
+        $promotionWritesEnabled = ! $isKelasAkhir && $tahunAjaranBaru !== null;
+        $promotionWritesDisabledMessage = $isKelasAkhir
+            ? 'Kelulusan berbasis enrollment belum diaktifkan. Gunakan setelah phase kelulusan khusus.'
+            : 'Kenaikan kelas membutuhkan tahun ajaran tujuan semester 1 yang valid.';
         
         return view('admin.kenaikan_kelas.show_siswa', compact(
             'kelas',
@@ -141,104 +145,18 @@ class KenaikanKelasController extends Controller
     /**
      * Proses kenaikan kelas untuk sekelompok siswa
      */
-    public function processKenaikanKelas(Request $request)
+    public function processKenaikanKelas(Request $request, SiswaKelasSemesterResolver $enrollmentResolver)
     {
-        if (! $this->promotionWritesEnabled()) {
-            return $this->legacyPromotionActionDisabledResponse();
-        }
-
-        $request->validate([
-            'siswa_ids' => 'required|array',
-            'siswa_ids.*' => 'exists:siswas,id',
-            'kelas_tujuan_id' => 'required|exists:kelas,id',
-        ]);
-    
-        DB::beginTransaction();
-        try {
-            $kelasTujuan = Kelas::findOrFail($request->kelas_tujuan_id);
-            $siswaDetails = [];
-    
-            foreach ($request->siswa_ids as $siswaId) {
-                $siswa = Siswa::findOrFail($siswaId);
-                $kelasAsal = $siswa->kelas;
-                
-                $siswa->kelas_id = $request->kelas_tujuan_id;
-                $siswa->is_naik_kelas = true;
-                $siswa->save();
-                
-                // Simpan detail untuk feedback
-                $siswaDetails[] = [
-                    'id' => $siswa->id,
-                    'nama' => $siswa->nama,
-                    'kelas_asal' => "Kelas {$kelasAsal->nomor_kelas} {$kelasAsal->nama_kelas}",
-                    'kelas_tujuan' => "Kelas {$kelasTujuan->nomor_kelas} {$kelasTujuan->nama_kelas}"
-                ];
-            }
-            
-            DB::commit();
-            
-            // Kirim data detail untuk SweetAlert
-            return redirect()->back()->with([
-                'success' => 'Berhasil memproses kenaikan kelas untuk ' . count($request->siswa_ids) . ' siswa',
-                'siswa_details' => $siswaDetails,
-                'action_type' => 'kenaikan'
-            ]);
-        } catch (\Exception $e) {
-            DB::rollBack();
-            return redirect()->back()->with('error', 'Gagal memproses kenaikan kelas: ' . $e->getMessage());
-        }
+        return $this->processEnrollmentPromotion($request, $enrollmentResolver, 'kenaikan');
     }
     
 
     /**
      * Proses tinggal kelas untuk sekelompok siswa
      */
-    public function processTinggalKelas(Request $request)
+    public function processTinggalKelas(Request $request, SiswaKelasSemesterResolver $enrollmentResolver)
     {
-        if (! $this->promotionWritesEnabled()) {
-            return $this->legacyPromotionActionDisabledResponse();
-        }
-
-        $request->validate([
-            'siswa_ids' => 'required|array',
-            'siswa_ids.*' => 'exists:siswas,id',
-            'kelas_tujuan_id' => 'required|exists:kelas,id',
-        ]);
-
-        DB::beginTransaction();
-        try {
-            $kelasTujuan = Kelas::findOrFail($request->kelas_tujuan_id);
-            $siswaDetails = [];
-
-            foreach ($request->siswa_ids as $siswaId) {
-                $siswa = Siswa::findOrFail($siswaId);
-                $kelasAsal = $siswa->kelas;
-                
-                $siswa->kelas_id = $request->kelas_tujuan_id;
-                $siswa->is_naik_kelas = false;
-                $siswa->save();
-                
-                // Simpan detail untuk feedback
-                $siswaDetails[] = [
-                    'id' => $siswa->id,
-                    'nama' => $siswa->nama,
-                    'kelas_asal' => "Kelas {$kelasAsal->nomor_kelas} {$kelasAsal->nama_kelas}",
-                    'kelas_tujuan' => "Kelas {$kelasTujuan->nomor_kelas} {$kelasTujuan->nama_kelas}"
-                ];
-            }
-            
-            DB::commit();
-            
-            // Kirim data detail untuk SweetAlert
-            return redirect()->back()->with([
-                'success' => 'Berhasil memproses siswa tinggal kelas untuk ' . count($request->siswa_ids) . ' siswa',
-                'siswa_details' => $siswaDetails,
-                'action_type' => 'tinggal'
-            ]);
-        } catch (\Exception $e) {
-            DB::rollBack();
-            return redirect()->back()->with('error', 'Gagal memproses tinggal kelas: ' . $e->getMessage());
-        }
+        return $this->processEnrollmentPromotion($request, $enrollmentResolver, 'tinggal');
     }
 
     /**
@@ -552,6 +470,141 @@ class KenaikanKelasController extends Controller
             ->get()
             ->unique('id')
             ->values();
+    }
+
+    private function processEnrollmentPromotion(Request $request, SiswaKelasSemesterResolver $enrollmentResolver, string $action)
+    {
+        $validated = $request->validate([
+            'source_kelas_id' => 'required|exists:kelas,id',
+            'source_tahun_ajaran_id' => 'required|exists:tahun_ajarans,id',
+            'target_tahun_ajaran_id' => 'required|exists:tahun_ajarans,id',
+            'siswa_ids' => 'required|array|min:1',
+            'siswa_ids.*' => 'exists:siswas,id',
+            'kelas_tujuan_id' => 'required|exists:kelas,id',
+        ]);
+
+        $sourceTahunAjaran = TahunAjaran::findOrFail($validated['source_tahun_ajaran_id']);
+        $targetTahunAjaran = TahunAjaran::findOrFail($validated['target_tahun_ajaran_id']);
+        $sourceKelas = Kelas::findOrFail($validated['source_kelas_id']);
+        $targetKelas = Kelas::findOrFail($validated['kelas_tujuan_id']);
+        $siswaIds = collect($validated['siswa_ids'])
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values();
+
+        if ($siswaIds->isEmpty()) {
+            return redirect()->back()->with('error', 'Tidak ada siswa yang dipilih.');
+        }
+
+        if ($error = $this->validatePromotionContext($sourceTahunAjaran, $targetTahunAjaran, $sourceKelas, $targetKelas, $action)) {
+            return redirect()->back()->with('error', $error);
+        }
+
+        try {
+            foreach ($siswaIds as $siswaId) {
+                if (! $enrollmentResolver->isEnrolledInClass($siswaId, $sourceKelas->id, $sourceTahunAjaran->id, 2, true)) {
+                    return redirect()->back()->with('error', 'Sebagian siswa tidak valid untuk konteks kelas sumber.');
+                }
+            }
+        } catch (RuntimeException) {
+            return redirect()->back()->with('error', 'Konteks enrollment siswa tidak valid.');
+        }
+
+        $existingTargetEnrollment = SiswaKelasSemester::whereIn('siswa_id', $siswaIds)
+            ->where('tahun_ajaran_id', $targetTahunAjaran->id)
+            ->where('semester', 1)
+            ->exists();
+
+        if ($existingTargetEnrollment) {
+            return redirect()->back()->with('error', 'Sebagian siswa sudah memiliki enrollment di tahun ajaran tujuan.');
+        }
+
+        $students = Siswa::whereIn('id', $siswaIds)->get()->keyBy('id');
+
+        try {
+            DB::transaction(function () use ($siswaIds, $targetKelas, $targetTahunAjaran) {
+                foreach ($siswaIds as $siswaId) {
+                    SiswaKelasSemester::create([
+                        'siswa_id' => $siswaId,
+                        'kelas_id' => $targetKelas->id,
+                        'tahun_ajaran_id' => $targetTahunAjaran->id,
+                        'semester' => 1,
+                    ]);
+                }
+            });
+        } catch (\Throwable $e) {
+            return redirect()->back()->with('error', 'Gagal memproses enrollment kenaikan kelas.');
+        }
+
+        $siswaDetails = $siswaIds->map(function (int $siswaId) use ($students, $sourceKelas, $targetKelas) {
+            $siswa = $students->get($siswaId);
+
+            return [
+                'id' => $siswaId,
+                'nama' => $siswa?->nama ?? 'Siswa',
+                'kelas_asal' => $this->formatClassLabel($sourceKelas),
+                'kelas_tujuan' => $this->formatClassLabel($targetKelas),
+            ];
+        })->all();
+
+        $actionLabel = $action === 'kenaikan' ? 'kenaikan kelas' : 'tinggal kelas';
+
+        return redirect()->back()->with([
+            'success' => 'Berhasil memproses ' . $actionLabel . ' untuk ' . $siswaIds->count() . ' siswa',
+            'siswa_details' => $siswaDetails,
+            'action_type' => $action,
+        ]);
+    }
+
+    private function validatePromotionContext(
+        TahunAjaran $sourceTahunAjaran,
+        TahunAjaran $targetTahunAjaran,
+        Kelas $sourceKelas,
+        Kelas $targetKelas,
+        string $action
+    ): ?string {
+        if ((int) $sourceTahunAjaran->semester !== 2) {
+            return 'Kenaikan kelas hanya dapat diproses dari tahun ajaran semester genap.';
+        }
+
+        if ((int) $sourceKelas->tahun_ajaran_id !== (int) $sourceTahunAjaran->id) {
+            return 'Kelas sumber tidak sesuai dengan tahun ajaran sumber.';
+        }
+
+        if ((int) $targetTahunAjaran->semester !== 1) {
+            return 'Tahun ajaran tujuan harus semester ganjil.';
+        }
+
+        $expectedTargetYear = $this->findNextSemesterOneYear($sourceTahunAjaran);
+        if (! $expectedTargetYear || (int) $expectedTargetYear->id !== (int) $targetTahunAjaran->id) {
+            return 'Tahun ajaran tujuan tidak sesuai dengan tahun ajaran berikutnya.';
+        }
+
+        if ((int) $targetKelas->tahun_ajaran_id !== (int) $targetTahunAjaran->id) {
+            return 'Kelas tujuan tidak sesuai dengan tahun ajaran tujuan.';
+        }
+
+        $sourceGrade = (int) $sourceKelas->nomor_kelas;
+        $targetGrade = (int) $targetKelas->nomor_kelas;
+
+        if ($sourceGrade >= 6) {
+            return 'Kelulusan kelas akhir belum diproses melalui jalur kenaikan kelas ini.';
+        }
+
+        if ($action === 'kenaikan' && $targetGrade !== $sourceGrade + 1) {
+            return 'Kelas tujuan kenaikan harus satu tingkat di atas kelas sumber.';
+        }
+
+        if ($action === 'tinggal' && $targetGrade !== $sourceGrade) {
+            return 'Kelas tujuan tinggal kelas harus berada pada tingkat yang sama.';
+        }
+
+        return null;
+    }
+
+    private function formatClassLabel(Kelas $kelas): string
+    {
+        return "Kelas {$kelas->nomor_kelas} {$kelas->nama_kelas}";
     }
 
     private function promotionWritesEnabled(): bool

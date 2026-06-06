@@ -151,17 +151,17 @@ class PromotionPlanningEnrollmentRosterTest extends TestCase
         $beforeEnrollmentCount = DB::table('siswa_kelas_semester')->count();
 
         $this->actingAs($this->admin, 'web')
-            ->post(route('admin.kenaikan-kelas.process-kenaikan'), [
-                'siswa_ids' => [$this->ahmadId],
-                'kelas_tujuan_id' => $this->targetClass6AId,
-            ])
-            ->assertRedirect(route('admin.kenaikan-kelas.index'))
-            ->assertSessionHas('error', 'Kenaikan kelas berbasis enrollment belum diaktifkan. Gunakan setelah Phase 2E-B3.');
-
-        $this->actingAs($this->admin, 'web')
             ->post(route('admin.kenaikan-kelas.process-mass'))
             ->assertRedirect(route('admin.kenaikan-kelas.index'))
-            ->assertSessionHas('error', 'Kenaikan kelas berbasis enrollment belum diaktifkan. Gunakan setelah Phase 2E-B3.');
+            ->assertSessionHas('error', 'Kenaikan kelas massal dan kelulusan berbasis enrollment belum diaktifkan. Gunakan proses siswa terpilih untuk kenaikan atau tinggal kelas.');
+
+        $this->actingAs($this->admin, 'web')
+            ->post(route('admin.kenaikan-kelas.process-kelulusan'), [
+                'siswa_ids' => [$this->ahmadId],
+                'status' => 'lulus',
+            ])
+            ->assertRedirect(route('admin.kenaikan-kelas.index'))
+            ->assertSessionHas('error', 'Kenaikan kelas massal dan kelulusan berbasis enrollment belum diaktifkan. Gunakan proses siswa terpilih untuk kenaikan atau tinggal kelas.');
 
         $this->assertSame($beforeClassId, DB::table('siswas')->where('id', $this->ahmadId)->value('kelas_id'));
         $this->assertSame($beforeEnrollmentCount, DB::table('siswa_kelas_semester')->count());
@@ -191,15 +191,17 @@ class PromotionPlanningEnrollmentRosterTest extends TestCase
         }
     }
 
-    public function test_planning_ui_does_not_render_legacy_submit_forms(): void
+    public function test_non_final_planning_ui_renders_enrollment_promotion_forms(): void
     {
         $response = $this->actingAs($this->admin, 'web')
             ->get(route('admin.kenaikan-kelas.show-siswa', $this->sourceClass5AId));
 
         $response->assertOk();
-        $response->assertSee('Mode perencanaan kenaikan kelas');
-        $response->assertDontSee(route('admin.kenaikan-kelas.process-kenaikan'), false);
-        $response->assertDontSee(route('admin.kenaikan-kelas.process-tinggal'), false);
+        $response->assertSee(route('admin.kenaikan-kelas.process-kenaikan'), false);
+        $response->assertSee(route('admin.kenaikan-kelas.process-tinggal'), false);
+        $response->assertSee('name="source_kelas_id"', false);
+        $response->assertSee('name="source_tahun_ajaran_id"', false);
+        $response->assertSee('name="target_tahun_ajaran_id"', false);
         $response->assertDontSee(route('admin.kenaikan-kelas.process-kelulusan'), false);
     }
 
