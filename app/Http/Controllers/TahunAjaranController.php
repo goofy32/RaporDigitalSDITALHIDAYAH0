@@ -24,6 +24,8 @@ use Throwable;
 
 class TahunAjaranController extends Controller
 {
+    private const PERMANENT_DELETE_BLOCKED_MESSAGE = 'Tahun ajaran ini tidak dapat dihapus permanen karena masih memiliki data siswa/enrollment atau riwayat terkait. Arsipkan/nonaktifkan saja, atau lakukan pembersihan data melalui prosedur khusus.';
+
     /**
      * Display a listing of tahun ajaran.
      */
@@ -1007,6 +1009,27 @@ class TahunAjaranController extends Controller
                 return redirect()->back()
                     ->with('error', 'Hanya tahun ajaran yang sudah diarsipkan yang dapat dihapus permanen.');
             }
+
+            $blockingDependencies = $this->permanentDeleteBlockingDependencies((int) $tahunAjaran->id);
+
+            if (! empty($blockingDependencies)) {
+                Log::info('[TahunAjaranController] Permanent delete blocked because academic year has dependencies', [
+                    'tahun_ajaran_id' => $tahunAjaran->id,
+                    'dependencies' => $blockingDependencies,
+                    'user_id' => auth()->id(),
+                ]);
+
+                $message = self::PERMANENT_DELETE_BLOCKED_MESSAGE . ' Data terkait: ' . implode(', ', $blockingDependencies) . '.';
+
+                if (request()->expectsJson()) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => $message,
+                    ], 422);
+                }
+
+                return redirect()->back()->with('error', $message);
+            }
             
             // Pastikan tidak sedang digunakan di session
             if (session('tahun_ajaran_id') == $id) {
@@ -1056,8 +1079,51 @@ class TahunAjaranController extends Controller
             }
             
             return redirect()->back()
-                ->with('error', 'Terjadi kesalahan saat menghapus permanen tahun ajaran: ' . $e->getMessage());
+                ->with('error', 'Terjadi kesalahan saat menghapus permanen tahun ajaran. Silakan coba lagi.');
         }
+    }
+
+    private function permanentDeleteBlockingDependencies(int $tahunAjaranId): array
+    {
+        $dependencies = [
+            'siswa_kelas_semester' => ['column' => 'tahun_ajaran_id', 'label' => 'enrollment siswa'],
+            'kelas' => ['column' => 'tahun_ajaran_id', 'label' => 'kelas'],
+            'mata_pelajarans' => ['column' => 'tahun_ajaran_id', 'label' => 'mata pelajaran'],
+            'nilais' => ['column' => 'tahun_ajaran_id', 'label' => 'nilai'],
+            'absensis' => ['column' => 'tahun_ajaran_id', 'label' => 'absensi'],
+            'catatan_siswa' => ['column' => 'tahun_ajaran_id', 'label' => 'catatan siswa'],
+            'catatan_mata_pelajaran' => ['column' => 'tahun_ajaran_id', 'label' => 'catatan mata pelajaran'],
+            'capaian_custom' => ['column' => 'tahun_ajaran_id', 'label' => 'capaian kompetensi'],
+            'nilai_ekstrakurikuler' => ['column' => 'tahun_ajaran_id', 'label' => 'nilai ekstrakurikuler'],
+            'report_generations' => ['column' => 'tahun_ajaran_id', 'label' => 'riwayat rapor'],
+            'report_templates' => ['column' => 'tahun_ajaran_id', 'label' => 'template rapor'],
+            'kkms' => ['column' => 'tahun_ajaran_id', 'label' => 'KKM'],
+            'bobot_nilais' => ['column' => 'tahun_ajaran_id', 'label' => 'bobot nilai'],
+            'ekstrakurikulers' => ['column' => 'tahun_ajaran_id', 'label' => 'ekstrakurikuler'],
+            'prestasis' => ['column' => 'tahun_ajaran_id', 'label' => 'prestasi'],
+            'semester_snapshots' => ['column' => 'tahun_ajaran_id', 'label' => 'snapshot semester'],
+            'siswas' => ['column' => 'tahun_ajaran_id', 'label' => 'siswa legacy'],
+            'capaian_templates' => ['column' => 'tahun_ajaran_id', 'label' => 'template capaian'],
+            'capaian_range' => ['column' => 'tahun_ajaran_id', 'label' => 'range capaian'],
+        ];
+
+        $blocking = [];
+
+        foreach ($dependencies as $table => $dependency) {
+            if (! Schema::hasTable($table) || ! Schema::hasColumn($table, $dependency['column'])) {
+                continue;
+            }
+
+            $count = DB::table($table)
+                ->where($dependency['column'], $tahunAjaranId)
+                ->count();
+
+            if ($count > 0) {
+                $blocking[] = "{$dependency['label']} ({$count})";
+            }
+        }
+
+        return $blocking;
     }
     
     /**

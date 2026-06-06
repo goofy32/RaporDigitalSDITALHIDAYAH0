@@ -209,7 +209,7 @@
                                             @csrf
                                             @method('DELETE')
                                             <button type="submit" class="border-0 bg-transparent p-0" title="Hapus Permanen" 
-                                                    onclick="return confirm('PERHATIAN: Tindakan ini tidak dapat dibatalkan. Semua data terkait tahun ajaran ini akan dihapus permanen.\n\nApakah Anda benar-benar yakin?')">
+                                                    onclick="return confirm('PERHATIAN: Tindakan ini tidak dapat dibatalkan. Tahun ajaran hanya dapat dihapus permanen jika tidak memiliki data siswa/enrollment atau riwayat terkait.\n\nApakah Anda benar-benar yakin?')">
                                                 <img src="{{ asset('images/icons/delete.png') }}" alt="Hapus Permanen" class="w-5 h-5">
                                             </button>
                                         </form>
