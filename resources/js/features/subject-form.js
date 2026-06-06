@@ -82,6 +82,12 @@ function isAssignedToTeachClass(option, selectedKelasId) {
     return optionClassIds(option, 'data-teaching-class-ids').includes(kelasId);
 }
 
+function setTeacherOptionAvailable(option, available) {
+    option.disabled = !available;
+    option.hidden = !available;
+    option.style.display = available ? '' : 'none';
+}
+
 function getClassState(form, kelasSelect) {
     const selectedOption = kelasSelect?.options?.[kelasSelect.selectedIndex];
     const selectedKelasId = kelasSelect?.value;
@@ -133,8 +139,7 @@ export function filterGuruDropdown(entry, mode, { resetSelection = false } = {})
     const { selectedKelasId, hasWaliKelas, waliKelasId } = getClassState(form, kelasSelect);
 
     Array.from(guruSelect.options).forEach(option => {
-        option.disabled = false;
-        option.hidden = false;
+        setTeacherOptionAvailable(option, true);
         if (!option.value) return;
     });
 
@@ -146,10 +151,7 @@ export function filterGuruDropdown(entry, mode, { resetSelection = false } = {})
     if (mode === 'muatan_lokal' || mode === 'guru_mapel') {
         Array.from(guruSelect.options).forEach(option => {
             if (!option.value) return;
-            if (isActiveYearWali(option) || !isAssignedToTeachClass(option, selectedKelasId)) {
-                option.disabled = true;
-                option.hidden = true;
-            }
+            setTeacherOptionAvailable(option, !isActiveYearWali(option) && isAssignedToTeachClass(option, selectedKelasId));
         });
         if (mode === 'muatan_lokal') {
             showSubjectInfo(infoContainer, 'warning', 'Ini pelajaran muatan lokal, guru hanya non-wali kelas yang ditugaskan mengajar di kelas ini.');
@@ -159,8 +161,7 @@ export function filterGuruDropdown(entry, mode, { resetSelection = false } = {})
     } else if (!hasWaliKelas || !waliKelasId) {
         Array.from(guruSelect.options).forEach(option => {
             if (!option.value) return;
-            option.disabled = true;
-            option.hidden = true;
+            setTeacherOptionAvailable(option, false);
         });
         showSubjectInfo(infoContainer, 'warning', 'Pelajaran wajib membutuhkan wali kelas. Kelas ini belum memiliki wali kelas.');
     } else {
@@ -168,8 +169,7 @@ export function filterGuruDropdown(entry, mode, { resetSelection = false } = {})
             if (!option.value) return;
             const optionId = parseInt(option.value);
             const isTargetWali = optionId === waliKelasId;
-            option.disabled = !isTargetWali;
-            option.hidden = !isTargetWali;
+            setTeacherOptionAvailable(option, isTargetWali);
         });
         guruSelect.value = waliKelasId.toString();
         showSubjectInfo(infoContainer, 'info', 'Pelajaran wajib otomatis menggunakan guru wali kelas dari kelas ini.');

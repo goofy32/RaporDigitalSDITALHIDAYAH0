@@ -119,6 +119,64 @@ class SubjectTeacherAssignmentRuleTest extends TestCase
         ]);
     }
 
+    public function test_non_wali_teacher_assigned_to_one_class_is_not_eligible_for_another_class(): void
+    {
+        $classOnlyGuru = Guru::findOrFail($this->insertGuru('Guru Kelas A Saja', 'kelas_a_saja', 'guru'));
+        DB::table('guru_kelas')->insert($this->pivot($classOnlyGuru->id, $this->kelas5AId, false, 'pengajar'));
+
+        $this->postSubject('Bahasa Sunda Kelas A', $this->kelas5AId, $classOnlyGuru->id, 'muatan_lokal')
+            ->assertRedirect(route('subject.index'));
+
+        $this->postSubject('Bahasa Sunda Kelas B', $this->kelas5BId, $classOnlyGuru->id, 'muatan_lokal')
+            ->assertRedirect()
+            ->assertSessionHasErrors('subjects.0.guru_pengampu');
+
+        $this->assertDatabaseHas('mata_pelajarans', [
+            'nama_pelajaran' => 'Bahasa Sunda Kelas A',
+            'kelas_id' => $this->kelas5AId,
+            'guru_id' => $classOnlyGuru->id,
+        ]);
+        $this->assertDatabaseMissing('mata_pelajarans', ['nama_pelajaran' => 'Bahasa Sunda Kelas B']);
+    }
+
+    public function test_create_and_edit_teacher_metadata_uses_exact_teaching_class_ids(): void
+    {
+        $classOnlyGuru = Guru::findOrFail($this->insertGuru('Guru Metadata Kelas A', 'metadata_a', 'guru'));
+        DB::table('guru_kelas')->insert($this->pivot($classOnlyGuru->id, $this->kelas5AId, false, 'pengajar'));
+
+        $createResponse = $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->get(route('subject.create'));
+
+        $createResponse->assertOk();
+        $this->assertTeacherOptionState($createResponse, $classOnlyGuru, false, [], [$this->kelas5AId]);
+
+        $subjectId = DB::table('mata_pelajarans')->insertGetId([
+            'nama_pelajaran' => 'Bahasa Sunda Metadata',
+            'kelas_id' => $this->kelas5AId,
+            'guru_id' => $classOnlyGuru->id,
+            'semester' => 1,
+            'is_muatan_lokal' => true,
+            'allow_non_wali' => false,
+            'tahun_ajaran_id' => $this->yearId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('lingkup_materis')->insert([
+            'mata_pelajaran_id' => $subjectId,
+            'judul_lingkup_materi' => 'Materi awal',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $editResponse = $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->get(route('subject.edit', $subjectId));
+
+        $editResponse->assertOk();
+        $this->assertTeacherOptionState($editResponse, $classOnlyGuru, false, [], [$this->kelas5AId]);
+    }
+
     public function test_both_subject_type_flags_are_rejected_on_direct_post(): void
     {
         $this->actingAs($this->admin, 'web')
@@ -244,6 +302,49 @@ class SubjectTeacherAssignmentRuleTest extends TestCase
                 'guru_pengampu' => $unassignedGuru->id,
                 'semester' => 1,
                 'teaching_type' => 'muatan_lokal',
+                'lingkup_materi' => ['Materi awal'],
+            ])
+            ->assertRedirect()
+            ->assertSessionHasErrors('guru_pengampu');
+
+        $this->assertDatabaseHas('mata_pelajarans', [
+            'id' => $subjectId,
+            'guru_id' => $this->yusuf->id,
+        ]);
+    }
+
+    public function test_edit_rejects_non_wali_teacher_assigned_only_to_another_class(): void
+    {
+        $classOnlyGuru = Guru::findOrFail($this->insertGuru('Guru Edit Kelas A', 'edit_a_only', 'guru'));
+        DB::table('guru_kelas')->insert($this->pivot($classOnlyGuru->id, $this->kelas5AId, false, 'pengajar'));
+
+        $subjectId = DB::table('mata_pelajarans')->insertGetId([
+            'nama_pelajaran' => 'PAI Kelas B',
+            'kelas_id' => $this->kelas5BId,
+            'guru_id' => $this->yusuf->id,
+            'semester' => 1,
+            'is_muatan_lokal' => false,
+            'allow_non_wali' => true,
+            'tahun_ajaran_id' => $this->yearId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('lingkup_materis')->insert([
+            'mata_pelajaran_id' => $subjectId,
+            'judul_lingkup_materi' => 'Materi awal',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->from(route('subject.edit', $subjectId))
+            ->put(route('subject.update', $subjectId), [
+                'mata_pelajaran' => 'PAI Kelas B',
+                'kelas' => $this->kelas5BId,
+                'guru_pengampu' => $classOnlyGuru->id,
+                'semester' => 1,
+                'teaching_type' => 'specialist',
                 'lingkup_materi' => ['Materi awal'],
             ])
             ->assertRedirect()

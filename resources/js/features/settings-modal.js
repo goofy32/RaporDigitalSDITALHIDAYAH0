@@ -335,8 +335,8 @@ export function registerSettingsModalFeatures() {
                 html: confirmMessage,
                 icon: 'warning',
                 showCancelButton: true,
-                confirmButtonColor: '#3085d6',
-                cancelButtonColor: '#d33',
+                confirmButtonColor: '#16a34a',
+                cancelButtonColor: '#6b7280',
                 confirmButtonText: 'Ya, Simpan',
                 cancelButtonText: 'Batal'
             }).then((result) => {
