@@ -3,6 +3,12 @@ export const raporManagerCore = {
         this.activeTab = this.$el.dataset.activeTab || 'UTS';
         this.tahunAjaranId = this.$el.dataset.tahunAjaranId || '';
         this.semester = parseInt(this.$el.dataset.semester || '0', 10);
+        try {
+            this.pdfTemplateAvailability = JSON.parse(this.$el.dataset.pdfTemplateAvailability || '{}');
+        } catch (error) {
+            console.error('Error parsing PDF template availability:', error);
+            this.pdfTemplateAvailability = {};
+        }
         this.initializeTemplates();
     },
 
@@ -35,7 +41,8 @@ export const raporManagerCore = {
 
     async checkActiveTemplates() {
         try {
-            const response = await fetch('/wali-kelas/rapor/check-templates', {
+            const query = this.tahunAjaranId ? `?tahun_ajaran_id=${encodeURIComponent(this.tahunAjaranId)}` : '';
+            const response = await fetch(`/wali-kelas/rapor/check-templates${query}`, {
                 method: 'GET',
                 headers: {
                     Accept: 'application/json',
@@ -97,6 +104,32 @@ export const raporManagerCore = {
             return false;
         }
         return true;
+    },
+
+    hasPdfTemplate(siswaId) {
+        return Boolean(this.pdfTemplateAvailability?.[siswaId]?.[this.activeTab]);
+    },
+
+    pdfActionTitle(siswaId, availableTitle) {
+        if (this.hasPdfTemplate(siswaId)) {
+            return availableTitle;
+        }
+
+        return 'Template PDF belum tersedia untuk kelas, tipe rapor, dan tahun ajaran ini';
+    },
+
+    validatePdfTemplate(siswaId) {
+        if (this.hasPdfTemplate(siswaId)) {
+            return true;
+        }
+
+        Swal.fire({
+            icon: 'info',
+            title: 'Template PDF Belum Tersedia',
+            text: 'Template rapor PDF belum tersedia untuk kelas, tipe rapor, dan tahun ajaran yang dipilih.',
+            confirmButtonText: 'Mengerti'
+        });
+        return false;
     },
 
     async handlePreview(siswaId, nilaiCount, hasAbsensi) {

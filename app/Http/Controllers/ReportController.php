@@ -20,6 +20,7 @@ use Barryvdh\DomPDF\Facade\PDF;
 use App\Models\ReportGeneration;
 use App\Models\TahunAjaran;
 use App\Jobs\GeneratePdfReportJob;
+use App\Services\DocumentConversionService;
 use App\Services\PdfCacheService;
 use App\Services\SiswaKelasSemesterResolver;
 use Illuminate\Support\Str;
@@ -325,8 +326,20 @@ class ReportController extends Controller
 
     public function checkActiveTemplates(Request $request)
     {
-        $guru = auth()->user();
-        $kelasId = $guru->kelasWali->id ?? null;
+        $guru = auth()->guard('guru')->user();
+        $tahunAjaranId = $this->getValidTahunAjaranId(
+            $request->query('tahun_ajaran_id') ? (int) $request->query('tahun_ajaran_id') : null
+        );
+
+        $kelasId = $guru && $tahunAjaranId
+            ? DB::table('guru_kelas')
+                ->join('kelas', 'guru_kelas.kelas_id', '=', 'kelas.id')
+                ->where('guru_kelas.guru_id', $guru->id)
+                ->where('guru_kelas.is_wali_kelas', true)
+                ->where('guru_kelas.role', 'wali_kelas')
+                ->where('kelas.tahun_ajaran_id', $tahunAjaranId)
+                ->value('kelas.id')
+            : null;
         
         if (!$kelasId) {
             return response()->json([
@@ -337,10 +350,10 @@ class ReportController extends Controller
         }
         
         // Cek template aktif untuk UTS
-        $utsTemplate = $this->getTemplateStatus('UTS', $kelasId);
+        $utsTemplate = $this->getTemplateStatus('UTS', $kelasId, $tahunAjaranId);
             
         // Cek template aktif untuk UAS
-        $uasTemplate = $this->getTemplateStatus('UAS', $kelasId);
+        $uasTemplate = $this->getTemplateStatus('UAS', $kelasId, $tahunAjaranId);
         
         return response()->json([
             'UTS_active' => $utsTemplate,
@@ -348,37 +361,9 @@ class ReportController extends Controller
         ]);
     }
 
-    protected function getTemplateStatus($type, $kelasId)
+    protected function getTemplateStatus($type, $kelasId, $tahunAjaranId = null)
     {
-        // Cek template yang langsung terkait dengan kelas
-        $templateByKelas = ReportTemplate::where('type', $type)
-            ->where('kelas_id', $kelasId)
-            ->where('is_active', true)
-            ->exists();
-            
-        if ($templateByKelas) {
-            return true;
-        }
-        
-        // Cek template melalui many-to-many relationship
-        $templateByMany = ReportTemplate::where('type', $type)
-            ->where('is_active', true)
-            ->whereHas('kelasList', function($query) use ($kelasId) {
-                $query->where('kelas_id', $kelasId);
-            })
-            ->exists();
-            
-        if ($templateByMany) {
-            return true;
-        }
-        
-        // Cek template global
-        $templateGlobal = ReportTemplate::where('type', $type)
-            ->whereNull('kelas_id')
-            ->where('is_active', true)
-            ->exists();
-            
-        return $templateGlobal;
+        return (bool) $this->findActiveReportTemplateForContext($type, $kelasId, $tahunAjaranId);
     }
     /**
      * Menampilkan history rapor
@@ -930,7 +915,7 @@ class ReportController extends Controller
             // ===== OPTIMIZATION 3: LibreOffice Check with Performance =====
             $libreOfficeCheckStart = microtime(true);
             
-            $conversionService = new \App\Services\DocumentConversionService();
+            $conversionService = app(DocumentConversionService::class);
             if (!$conversionService->isLibreOfficeAvailable()) {
                 $this->logPerformanceMetrics($requestId, 'libreoffice_check_failed', $startTime, $memoryStart);
                 
@@ -954,13 +939,15 @@ class ReportController extends Controller
             $tahunAjaranId = $this->resolveRaporTahunAjaranId($request);
             abort_unless($tahunAjaranId, 403);
             $this->authorizeWaliRaporAccess($siswa, $tahunAjaranId);
+            $kelas = $this->resolveRaporClass($siswa, $tahunAjaranId);
             
             Log::info("PDF generation process started", [
                 'request_id' => $requestId,
                 'siswa_id' => $siswa->id,
                 'siswa_name' => $siswa->nama,
                 'type' => $type,
-                'tahun_ajaran_id' => $tahunAjaranId
+                'tahun_ajaran_id' => $tahunAjaranId,
+                'kelas_id' => $kelas?->id,
             ]);
             
             $validationTime = (microtime(true) - $validationStart) * 1000;
@@ -973,12 +960,8 @@ class ReportController extends Controller
             
             if (!$template) {
                 $this->logPerformanceMetrics($requestId, 'template_not_found', $startTime, $memoryStart);
-                
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Template rapor tidak ditemukan untuk tipe ' . $type,
-                    'request_id' => $requestId
-                ], 404);
+
+                return $this->pdfTemplateUnavailableResponse($request, $siswa, $type, $tahunAjaranId, $kelas?->id);
             }
             
             $templateTime = (microtime(true) - $templateStart) * 1000;
@@ -1099,13 +1082,8 @@ class ReportController extends Controller
             
             return response()->json([
                 'success' => false,
-                'message' => 'Gagal menghasilkan PDF: ' . $e->getMessage(),
-                'request_id' => $requestId,
-                'debug_info' => env('APP_DEBUG') ? [
-                    'libreoffice_available' => app(\App\Services\DocumentConversionService::class)->isLibreOfficeAvailable(),
-                    'php_os' => PHP_OS,
-                    'storage_path' => storage_path('app/public/'),
-                ] : null
+                'message' => 'Gagal menghasilkan PDF. Silakan coba lagi atau hubungi administrator.',
+                'request_id' => $requestId
             ], 500);
             
         } finally {
@@ -1269,6 +1247,74 @@ class ReportController extends Controller
         }
 
         return $kelas;
+    }
+
+    private function reportTemplateSemester(?int $tahunAjaranId): ?int
+    {
+        return $tahunAjaranId ? $this->getRaporSemester($tahunAjaranId) : null;
+    }
+
+    private function baseActiveReportTemplateQuery(string $type, ?int $tahunAjaranId = null)
+    {
+        $semester = $this->reportTemplateSemester($tahunAjaranId);
+
+        return ReportTemplate::where('type', $type)
+            ->where('is_active', true)
+            ->when($tahunAjaranId, function ($query) use ($tahunAjaranId) {
+                return $query->where('tahun_ajaran_id', $tahunAjaranId);
+            })
+            ->when($semester, function ($query) use ($semester) {
+                return $query->where(function ($query) use ($semester) {
+                    $query->whereNull('semester')
+                        ->orWhere('semester', $semester);
+                });
+            });
+    }
+
+    private function findActiveReportTemplateForContext(string $type, ?int $kelasId, ?int $tahunAjaranId = null): ?ReportTemplate
+    {
+        if ($kelasId) {
+            $template = $this->baseActiveReportTemplateQuery($type, $tahunAjaranId)
+                ->whereHas('kelasList', function ($query) use ($kelasId) {
+                    $query->where('kelas_id', $kelasId);
+                })
+                ->first();
+
+            if ($template) {
+                return $template;
+            }
+
+            $template = $this->baseActiveReportTemplateQuery($type, $tahunAjaranId)
+                ->where('kelas_id', $kelasId)
+                ->first();
+
+            if ($template) {
+                return $template;
+            }
+        }
+
+        return $this->baseActiveReportTemplateQuery($type, $tahunAjaranId)
+            ->whereNull('kelas_id')
+            ->whereDoesntHave('kelasList')
+            ->first();
+    }
+
+    private function pdfTemplateUnavailableResponse(Request $request, Siswa $siswa, string $type, int $tahunAjaranId, ?int $kelasId = null)
+    {
+        Log::warning('PDF report template unavailable for requested context', [
+            'siswa_id' => $siswa->id,
+            'kelas_id' => $kelasId,
+            'tahun_ajaran_id' => $tahunAjaranId,
+            'semester' => $this->getRaporSemester($tahunAjaranId),
+            'type' => $type,
+            'route' => $request->route()?->getName(),
+        ]);
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Template rapor PDF belum tersedia untuk kelas, tipe rapor, dan tahun ajaran yang dipilih. Silakan minta admin mengaktifkan template yang sesuai.',
+            'error_type' => 'template_missing',
+        ], 422);
     }
 
     public function previewRapor(Request $request, $siswa_id) {
@@ -1545,8 +1591,24 @@ class ReportController extends Controller
             }
 
             $this->authorizeWaliRaporAccess($siswa, $tahunAjaranId);
+            $kelas = $this->resolveRaporClass($siswa, $tahunAjaranId);
 
             $disposition = $request->query('disposition', 'inline') === 'attachment' ? 'attachment' : 'inline';
+
+            // Similar to downloadPdf but return for inline viewing
+            $conversionService = app(DocumentConversionService::class);
+            if (!$conversionService->isLibreOfficeAvailable()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'LibreOffice tidak tersedia untuk preview PDF.'
+                ], 500);
+            }
+
+            // Get template and generate DOCX
+            $template = $this->getTemplateForSiswa($siswa, $type, $tahunAjaranId);
+            if (!$template) {
+                return $this->pdfTemplateUnavailableResponse($request, $siswa, $type, $tahunAjaranId, $kelas?->id);
+            }
 
             $cachedPdf = PdfCacheService::getCachedPdf(
                 $siswa,
@@ -1563,21 +1625,6 @@ class ReportController extends Controller
                         60
                     )
                 );
-            }
-            
-            // Similar to downloadPdf but return for inline viewing
-            $conversionService = new \App\Services\DocumentConversionService();
-            if (!$conversionService->isLibreOfficeAvailable()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'LibreOffice tidak tersedia untuk preview PDF.'
-                ], 500);
-            }
-
-            // Get template and generate DOCX
-            $template = $this->getTemplateForSiswa($siswa, $type, $tahunAjaranId);
-            if (!$template) {
-                throw new \Exception('Template rapor tidak ditemukan.');
             }
             
             $processor = new \App\Services\RaporTemplateProcessor($template, $siswa, $type, $tahunAjaranId);
@@ -1645,6 +1692,12 @@ class ReportController extends Controller
         }
 
         $this->authorizeWaliRaporAccess($siswa, $tahunAjaranId);
+        $kelas = $this->resolveRaporClass($siswa, $tahunAjaranId);
+        $template = $this->getTemplateForSiswa($siswa, $type, $tahunAjaranId);
+
+        if (!$template) {
+            return $this->pdfTemplateUnavailableResponse($request, $siswa, $type, $tahunAjaranId, $kelas?->id);
+        }
 
         $requestId = uniqid('pdf_', true);
 
@@ -2425,12 +2478,21 @@ class ReportController extends Controller
                     : ($completedCount >= $totalMapelCount && $totalMapelCount > 0 ? 'complete' : 'partial'),
             ];
         }
+
+        $pdfTemplateAvailability = [];
+        foreach ($siswa as $student) {
+            $pdfTemplateAvailability[$student->id] = [
+                'UTS' => (bool) $this->getTemplateForSiswa($student, 'UTS', $tahunAjaranId),
+                'UAS' => (bool) $this->getTemplateForSiswa($student, 'UAS', $tahunAjaranId),
+            ];
+        }
         
         return view('wali_kelas.rapor.index', [
             'siswa' => $siswa,
             'diagnosisResults' => $diagnosisResults,
             'nilaiCounts' => $nilaiCounts,
             'completionData' => $completionData,
+            'pdfTemplateAvailability' => $pdfTemplateAvailability,
             'type' => $type, // Kirim ke view
             'semester' => $semester, // Kirim ke view
             'tahunAjaran' => $tahunAjaran,
@@ -2853,7 +2915,7 @@ class ReportController extends Controller
     {
         $tahunAjaranId = $tahunAjaranId ?: session('tahun_ajaran_id');
         $kelas = $tahunAjaranId ? $this->resolveRaporClass($siswa, (int) $tahunAjaranId) : null;
-        $kelasId = $kelas?->id ?: $siswa->kelas_id;
+        $kelasId = $kelas?->id ?: ($tahunAjaranId ? null : $siswa->kelas_id);
         
         \Log::info('Looking for template', [
             'siswa_id' => $siswa->id,
@@ -2862,66 +2924,28 @@ class ReportController extends Controller
             'type' => $type, // UTS atau UAS
             'tahun_ajaran_id' => $tahunAjaranId
         ]);
-        
-        // First look for class-specific template using the many-to-many relationship
-        $template = ReportTemplate::where('type', $type) // PENTING: ini adalah tipe UTS/UAS
-            ->where('is_active', true)
-            ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
-                return $query->where('tahun_ajaran_id', $tahunAjaranId);
-            })
-            ->whereHas('kelasList', function($query) use ($kelasId) {
-                $query->where('kelas_id', $kelasId);
-            })
-            ->first();
-        
+
+        $template = $this->findActiveReportTemplateForContext($type, $kelasId, $tahunAjaranId ? (int) $tahunAjaranId : null);
+
         if ($template) {
-            \Log::info('Found template with many-to-many relation', [
+            \Log::info('Found template for report context', [
                 'template_id' => $template->id,
-                'template_type' => $template->type
+                'template_type' => $template->type,
+                'kelas_id' => $kelasId,
+                'tahun_ajaran_id' => $tahunAjaranId,
             ]);
-            return $template;
-        }
-        
-        // If not found, try the old relationship
-        $template = ReportTemplate::where('type', $type)
-            ->where('kelas_id', $kelasId)
-            ->where('is_active', true)
-            ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
-                return $query->where('tahun_ajaran_id', $tahunAjaranId);
-            })
-            ->first();
-        
-        if ($template) {
-            \Log::info('Found template with direct kelas relation', [
-                'template_id' => $template->id,
-                'template_type' => $template->type
-            ]);
+
             return $template;
         }
 
-        // If still not found, look for global template
-        $template = ReportTemplate::where('type', $type)
-            ->whereNull('kelas_id')
-            ->where('is_active', true)
-            ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
-                return $query->where('tahun_ajaran_id', $tahunAjaranId);
-            })
-            ->first();
+        \Log::warning('No template found for', [
+            'type' => $type,
+            'kelas_id' => $kelasId,
+            'tahun_ajaran_id' => $tahunAjaranId,
+            'semester' => $tahunAjaranId ? $this->getRaporSemester((int) $tahunAjaranId) : null,
+        ]);
         
-        if ($template) {
-            \Log::info('Found global template', [
-                'template_id' => $template->id,
-                'template_type' => $template->type
-            ]);
-        } else {
-            \Log::warning('No template found for', [
-                'type' => $type,
-                'kelas_id' => $kelasId,
-                'tahun_ajaran_id' => $tahunAjaranId
-            ]);
-        }
-        
-        return $template;
+        return null;
     }
 
     public function downloadSecureFile(Request $request)

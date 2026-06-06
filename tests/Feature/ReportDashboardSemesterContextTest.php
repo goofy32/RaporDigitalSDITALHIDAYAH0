@@ -134,6 +134,48 @@ class ReportDashboardSemesterContextTest extends TestCase
             ->assertViewHas('mapelCount', 1);
     }
 
+    public function test_pengajar_ganjil_overall_progress_is_non_zero_and_complete_for_completed_subject(): void
+    {
+        $this->actingAsPengajar($this->ganjilYearId, 1)
+            ->get(route('pengajar.dashboard'))
+            ->assertOk()
+            ->assertViewHas('overallProgress', function ($progress) {
+                return (float) $progress > 0.0 && (float) $progress === 100.0;
+            })
+            ->assertViewHas('siswaCount', 1)
+            ->assertViewHas('mapelCount', 1);
+    }
+
+    public function test_another_teachers_subject_does_not_affect_pengajar_overall_progress(): void
+    {
+        $otherGuruId = DB::table('gurus')->insertGetId([
+            'nama' => 'Guru Lain',
+            'username' => 'guru-lain',
+            'password' => Hash::make('secret'),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $otherSubjectId = $this->insertSubject('IPA Guru Lain', $otherGuruId, $this->ganjilClassId, $this->ganjilYearId, 1);
+        $this->insertLearningData($otherSubjectId);
+
+        $this->actingAsPengajar($this->ganjilYearId, 1)
+            ->get(route('pengajar.dashboard'))
+            ->assertOk()
+            ->assertViewHas('overallProgress', fn ($progress) => (float) $progress === 100.0)
+            ->assertViewHas('mapelCount', 1);
+    }
+
+    public function test_pengajar_per_subject_progress_matches_completed_subject(): void
+    {
+        $this->actingAsPengajar($this->ganjilYearId, 1)
+            ->get(route('pengajar.mata_pelajaran.progress', $this->ganjilSubjectId))
+            ->assertOk()
+            ->assertJsonPath('progress', 100)
+            ->assertJsonPath('completed', 1)
+            ->assertJsonPath('total', 1);
+    }
+
     public function test_wali_genap_dashboard_supporting_progress_starts_zero_when_only_ganjil_data_exists(): void
     {
         DB::table('absensis')->where('tahun_ajaran_id', $this->genapYearId)->delete();

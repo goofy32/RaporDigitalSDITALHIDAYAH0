@@ -620,6 +620,8 @@ class EnrollmentAwareAuthorizationRosterTest extends TestCase
     {
         foreach ([
             'notifications',
+            'report_template_kelas',
+            'report_templates',
             'absensis',
             'nilais',
             'tujuan_pembelajarans',
@@ -796,6 +798,25 @@ class EnrollmentAwareAuthorizationRosterTest extends TestCase
             $table->boolean('is_read')->default(false);
             $table->timestamps();
             $table->softDeletes();
+        });
+
+        Schema::create('report_templates', function (Blueprint $table) {
+            $table->id();
+            $table->string('filename')->nullable();
+            $table->string('path')->nullable();
+            $table->string('type');
+            $table->boolean('is_active')->default(false);
+            $table->foreignId('kelas_id')->nullable();
+            $table->foreignId('tahun_ajaran_id')->nullable();
+            $table->integer('semester')->nullable();
+            $table->timestamps();
+        });
+
+        Schema::create('report_template_kelas', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('report_template_id');
+            $table->foreignId('kelas_id');
+            $table->timestamps();
         });
     }
 

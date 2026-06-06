@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Jobs\GeneratePdfReportJob;
 use App\Models\Guru;
 use App\Models\User;
+use App\Services\DocumentConversionService;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
 use Illuminate\Support\Facades\Bus;
@@ -40,6 +41,7 @@ class ReportCardAuthorizationTest extends TestCase
     {
         parent::setUp();
 
+        $this->withoutVite();
         $this->withoutMiddleware(ValidateCsrfToken::class);
 
         config()->set('database.default', 'sqlite');
@@ -189,12 +191,92 @@ class ReportCardAuthorizationTest extends TestCase
 
     public function test_wali_cannot_preview_pdf_for_student_from_another_class(): void
     {
+        $this->fakeLibreOfficeAvailability();
+
         $this->actingAsWali()
             ->get(route('wali_kelas.rapor.preview-pdf', [
                 'siswa' => $this->otherClassStudentId,
                 'tahun_ajaran_id' => $this->activeYearId,
             ]))
             ->assertForbidden();
+    }
+
+    public function test_pdf_preview_missing_template_returns_safe_response(): void
+    {
+        $this->fakeLibreOfficeAvailability();
+
+        $this->actingAsWali()
+            ->getJson(route('wali_kelas.rapor.preview-pdf', [
+                'siswa' => $this->authorizedStudentId,
+                'type' => 'UTS',
+                'tahun_ajaran_id' => $this->activeYearId,
+            ]))
+            ->assertStatus(422)
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('error_type', 'template_missing');
+    }
+
+    public function test_pdf_download_missing_template_returns_safe_response(): void
+    {
+        $this->fakeLibreOfficeAvailability();
+
+        $this->actingAsWali()
+            ->getJson(route('wali_kelas.rapor.download-pdf', [
+                'siswa' => $this->authorizedStudentId,
+                'type' => 'UTS',
+                'tahun_ajaran_id' => $this->activeYearId,
+            ]))
+            ->assertStatus(422)
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('error_type', 'template_missing');
+    }
+
+    public function test_pdf_template_lookup_uses_enrollment_context_not_unrelated_legacy_class(): void
+    {
+        $this->fakeLibreOfficeAvailability();
+
+        $studentId = $this->insertStudent('1009', 'Enrollment Template Student', $this->otherClassId);
+        $this->insertEnrollment($studentId, $this->currentClassId, $this->activeYearId, 1);
+        $this->insertReportData($studentId, $this->currentClassId, $this->activeYearId, $this->wali->id);
+        $this->insertReportTemplate($this->otherClassId);
+
+        $this->actingAsWali()
+            ->getJson(route('wali_kelas.rapor.preview-pdf', [
+                'siswa' => $studentId,
+                'type' => 'UTS',
+                'tahun_ajaran_id' => $this->activeYearId,
+            ]))
+            ->assertStatus(422)
+            ->assertJsonPath('error_type', 'template_missing');
+    }
+
+    public function test_report_index_marks_pdf_unavailable_when_template_is_missing(): void
+    {
+        $this->fakeLibreOfficeAvailability();
+
+        $this->actingAsWali()
+            ->get(route('wali_kelas.rapor.index', [
+                'type' => 'UTS',
+                'tahun_ajaran_id' => $this->activeYearId,
+            ]))
+            ->assertOk()
+            ->assertSee('Template PDF belum tersedia untuk UTS', false)
+            ->assertSee('"UTS":false', false);
+    }
+
+    public function test_report_index_keeps_pdf_actions_available_with_valid_template(): void
+    {
+        $this->fakeLibreOfficeAvailability();
+        $this->insertReportTemplate($this->currentClassId);
+
+        $this->actingAsWali()
+            ->get(route('wali_kelas.rapor.index', [
+                'type' => 'UTS',
+                'tahun_ajaran_id' => $this->activeYearId,
+            ]))
+            ->assertOk()
+            ->assertDontSee('Template PDF belum tersedia untuk UTS', false)
+            ->assertSee('"UTS":true', false);
     }
 
     public function test_wali_cannot_clear_cache_for_student_from_another_class(): void
@@ -224,6 +306,7 @@ class ReportCardAuthorizationTest extends TestCase
 
     public function test_wali_can_request_pdf_for_authorized_student(): void
     {
+        $this->insertReportTemplate($this->currentClassId);
         Bus::fake([GeneratePdfReportJob::class]);
 
         $this->actingAsWali()
@@ -658,5 +741,27 @@ class ReportCardAuthorizationTest extends TestCase
             'created_at' => now(),
             'updated_at' => now(),
         ]);
+    }
+
+    private function insertReportTemplate(int $classId, string $type = 'UTS', ?int $yearId = null, ?int $semester = 1): int
+    {
+        return DB::table('report_templates')->insertGetId([
+            'filename' => 'demo-template.docx',
+            'path' => 'templates/demo-template.docx',
+            'type' => $type,
+            'is_active' => true,
+            'kelas_id' => $classId,
+            'tahun_ajaran_id' => $yearId ?: $this->activeYearId,
+            'semester' => $semester,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function fakeLibreOfficeAvailability(bool $available = true): void
+    {
+        $this->mock(DocumentConversionService::class, function ($mock) use ($available) {
+            $mock->shouldReceive('isLibreOfficeAvailable')->andReturn($available);
+        });
     }
 }

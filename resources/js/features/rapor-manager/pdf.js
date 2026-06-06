@@ -34,6 +34,7 @@ async function resolvePdfRequest(url) {
 export const raporManagerPdf = {
     async handleDownloadPdf(siswaId, nilaiCount, hasAbsensi, namaSiswa) {
         if (!this.validateData(nilaiCount, hasAbsensi)) return;
+        if (!this.validatePdfTemplate(siswaId)) return;
         try {
             this.loadingPdf = siswaId;
             var url = `/wali-kelas/rapor/preview-pdf/${siswaId}?type=${this.activeTab}&tahun_ajaran_id=${this.tahunAjaranId}&disposition=attachment`;
@@ -152,6 +153,7 @@ export const raporManagerPdf = {
 
     async handlePreviewPdf(siswaId, nilaiCount, hasAbsensi) {
         if (!this.validateData(nilaiCount, hasAbsensi)) return;
+        if (!this.validatePdfTemplate(siswaId)) return;
         var newWindow = window.open('', '_blank');
         if (!newWindow) {
             alert('Popup diblokir browser. Izinkan popup untuk situs ini.');

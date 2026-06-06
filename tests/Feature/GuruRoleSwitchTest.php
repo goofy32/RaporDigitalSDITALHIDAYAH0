@@ -91,9 +91,59 @@ class GuruRoleSwitchTest extends TestCase
             ->assertForbidden();
     }
 
+    public function test_pengajar_sidebar_no_longer_renders_current_role_box(): void
+    {
+        $this->actingAs($this->multiRoleGuru, 'guru');
+        session([
+            'selected_role' => 'pengajar',
+            'tahun_ajaran_id' => $this->tahunAjaranId,
+            'selected_semester' => 1,
+            'no_tahun_ajaran' => false,
+        ]);
+
+        $html = view('components.pengajar.sidebar')->render();
+
+        $this->assertStringNotContainsString('PERAN SAAT INI', $html);
+        $this->assertStringNotContainsString('Beralih ke Wali Kelas', $html);
+    }
+
+    public function test_wali_sidebar_no_longer_renders_current_role_box(): void
+    {
+        $this->actingAs($this->multiRoleGuru, 'guru');
+        session([
+            'selected_role' => 'wali_kelas',
+            'tahun_ajaran_id' => $this->tahunAjaranId,
+            'selected_semester' => 1,
+            'no_tahun_ajaran' => false,
+        ]);
+
+        $html = view('components.wali-kelas.sidebar')->render();
+
+        $this->assertStringNotContainsString('PERAN SAAT INI', $html);
+        $this->assertStringNotContainsString('Beralih ke Pengajar', $html);
+    }
+
+    public function test_profile_dropdown_role_switching_remains_available(): void
+    {
+        $this->actingAs($this->multiRoleGuru, 'guru');
+        session([
+            'selected_role' => 'pengajar',
+            'tahun_ajaran_id' => $this->tahunAjaranId,
+            'selected_semester' => 1,
+            'no_tahun_ajaran' => false,
+        ]);
+
+        $html = view('components.admin.topbar')->render();
+
+        $this->assertStringContainsString('Beralih ke Wali Kelas', $html);
+        $this->assertStringContainsString(route('auth.switch.role', ['role' => 'wali_kelas']), $html);
+    }
+
     private function createSchema(): void
     {
         foreach ([
+            'nilais',
+            'kkms',
             'mata_pelajarans',
             'guru_kelas',
             'kelas',
@@ -159,6 +209,23 @@ class GuruRoleSwitchTest extends TestCase
             $table->foreignId('guru_id')->nullable();
             $table->integer('semester')->default(1);
             $table->foreignId('tahun_ajaran_id')->nullable();
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('kkms', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('mata_pelajaran_id');
+            $table->foreignId('tahun_ajaran_id')->nullable();
+            $table->integer('nilai')->default(70);
+            $table->timestamps();
+        });
+
+        Schema::create('nilais', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('mata_pelajaran_id')->nullable();
+            $table->foreignId('tahun_ajaran_id')->nullable();
+            $table->decimal('nilai_akhir_rapor', 5, 2)->nullable();
             $table->timestamps();
             $table->softDeletes();
         });
