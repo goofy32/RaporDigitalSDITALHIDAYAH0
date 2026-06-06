@@ -58,7 +58,7 @@
                     @endforeach
                 </ul>
             @elseif($isKelasAkhir)
-                <p class="text-sm text-green-700">Kelas akhir diproses sebagai kelulusan pada phase berikutnya.</p>
+                <p class="text-sm text-green-700">Kelas akhir dapat ditandai lulus, pindah/keluar, atau tidak aktif tanpa membuat enrollment baru.</p>
             @else
                 <p class="text-sm text-red-700">Belum ada kelas tujuan tingkat berikutnya.</p>
             @endif
@@ -149,44 +149,34 @@
         <p class="mb-3">Anda telah memilih <span id="selectedCount" class="font-semibold">0</span> siswa.</p>
 
         @if($isKelasAkhir)
-        <form action="{{ route('admin.kenaikan-kelas.process-kelulusan') }}" method="POST" class="space-y-4" id="kelulusanForm" x-data="{ selectedStatus: '', checkStatus() { if (this.selectedStatus === 'pindah') { this.$nextTick(() => { this.$el.querySelector('select[name=&quot;kelas_tinggal_id&quot;]')?.focus(); }); } } }">
+        <form action="{{ route('admin.kenaikan-kelas.process-kelulusan') }}" method="POST" class="space-y-4" id="kelulusanForm" x-data="{ selectedStatus: '' }">
             @csrf
+            <input type="hidden" name="source_kelas_id" value="{{ $kelas->id }}">
+            <input type="hidden" name="source_tahun_ajaran_id" value="{{ $tahunAjaranAktif->id }}">
             <div id="selectedKelulusanIds"></div>
+
+            <div class="bg-blue-50 p-4 rounded-lg border border-blue-200">
+                <h4 class="text-md font-medium text-blue-800 mb-2">Informasi Kelulusan dan Status Akhir</h4>
+                <ul class="list-disc pl-5 text-sm space-y-1 text-blue-700">
+                    <li>Siswa akan diperbarui statusnya sesuai pilihan.</li>
+                    <li>Tidak ada enrollment tahun ajaran baru yang dibuat.</li>
+                    <li>Riwayat kelas, nilai, rapor, dan data semester sebelumnya tetap tersimpan.</li>
+                </ul>
+            </div>
 
             <div>
                 <label for="status" class="block text-sm font-medium text-gray-700">Status</label>
-                <select name="status" id="status" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500" x-model="selectedStatus" @change="checkStatus()">
+                <select name="status" id="status" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500" x-model="selectedStatus">
                     <option value="">-- Pilih Status --</option>
                     <option value="lulus">Lulus</option>
-                    <option value="pindah">Tidak Lulus</option>
+                    <option value="pindah">Pindah/Keluar</option>
+                    <option value="dropout">Tidak Aktif</option>
                 </select>
             </div>
 
-            <div x-show="selectedStatus === 'pindah'" x-cloak class="bg-yellow-50 p-4 rounded-lg border border-yellow-200 mt-3 mb-3">
-                <h4 class="text-md font-medium text-yellow-800 mb-2">Informasi Siswa Tidak Lulus</h4>
-                <p class="text-yellow-700 mb-2">Siswa yang tidak lulus akan:</p>
-                <ul class="list-disc pl-5 text-sm space-y-1 text-yellow-700 mb-3">
-                    <li>Tetap berada di kelas yang sama pada tahun ajaran berikutnya</li>
-                    <li>Perlu mengulang seluruh mata pelajaran</li>
-                    <li>Mendapatkan bimbingan khusus dari wali kelas</li>
-                </ul>
-
-                <div class="bg-white p-3 rounded-md border border-gray-200">
-                    <h5 class="font-medium text-gray-800 mb-2">Pilih Kelas Tujuan</h5>
-                    <p class="text-sm text-gray-600 mb-3">Pilih kelas tempat siswa akan mengulang:</p>
-
-                    <select name="kelas_tinggal_id" x-bind:required="selectedStatus === 'pindah'" class="w-full rounded-md border-yellow-300 shadow-sm focus:border-yellow-500 focus:ring-yellow-500">
-                        <option value="">-- Pilih Kelas --</option>
-                        @foreach($kelasTinggal as $kelasOption)
-                        <option value="{{ $kelasOption->id }}">Kelas {{ $kelasOption->nomor_kelas }} {{ $kelasOption->nama_kelas }}</option>
-                        @endforeach
-                    </select>
-                </div>
-            </div>
-
             <div class="flex justify-end">
-                <button type="submit" class="check-rapor-btn px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500" data-action="proses kelulusan" x-bind:class="{'bg-yellow-600 hover:bg-yellow-700': selectedStatus === 'pindah'}">
-                    <span x-text="selectedStatus === 'pindah' ? 'Proses Siswa Tidak Lulus' : 'Proses Kelulusan'">Proses Kelulusan</span>
+                <button type="submit" class="check-rapor-btn px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500" data-action="proses status akhir">
+                    <span x-text="selectedStatus === 'pindah' ? 'Proses Pindah/Keluar' : (selectedStatus === 'dropout' ? 'Proses Tidak Aktif' : 'Proses Kelulusan')">Proses Kelulusan</span>
                 </button>
             </div>
         </form>

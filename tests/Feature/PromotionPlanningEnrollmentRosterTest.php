@@ -157,11 +157,13 @@ class PromotionPlanningEnrollmentRosterTest extends TestCase
 
         $this->actingAs($this->admin, 'web')
             ->post(route('admin.kenaikan-kelas.process-kelulusan'), [
+                'source_kelas_id' => $this->sourceClass5AId,
+                'source_tahun_ajaran_id' => $this->sourceYearId,
                 'siswa_ids' => [$this->ahmadId],
                 'status' => 'lulus',
             ])
-            ->assertRedirect(route('admin.kenaikan-kelas.index'))
-            ->assertSessionHas('error', 'Kenaikan kelas massal dan kelulusan berbasis enrollment belum diaktifkan. Gunakan proses siswa terpilih untuk kenaikan atau tinggal kelas.');
+            ->assertRedirect()
+            ->assertSessionHas('error', 'Kelulusan hanya dapat diproses untuk kelas akhir.');
 
         $this->assertSame($beforeClassId, DB::table('siswas')->where('id', $this->ahmadId)->value('kelas_id'));
         $this->assertSame($beforeEnrollmentCount, DB::table('siswa_kelas_semester')->count());

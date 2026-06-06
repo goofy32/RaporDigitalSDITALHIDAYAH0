@@ -123,7 +123,7 @@ class KenaikanKelasController extends Controller
             $raporStatus[$siswa->id] = $hasReport;
         }
 
-        $promotionWritesEnabled = ! $isKelasAkhir && $tahunAjaranBaru !== null;
+        $promotionWritesEnabled = $isKelasAkhir || $tahunAjaranBaru !== null;
         $promotionWritesDisabledMessage = $isKelasAkhir
             ? 'Kelulusan berbasis enrollment belum diaktifkan. Gunakan setelah phase kelulusan khusus.'
             : 'Kenaikan kelas membutuhkan tahun ajaran tujuan semester 1 yang valid.';
@@ -342,74 +342,81 @@ class KenaikanKelasController extends Controller
     /**
      * Proses kelulusan untuk sekelompok siswa
      */
-    public function processKelulusan(Request $request)
+    public function processKelulusan(Request $request, SiswaKelasSemesterResolver $enrollmentResolver)
     {
-        if (! $this->promotionWritesEnabled()) {
-            return $this->legacyPromotionActionDisabledResponse();
-        }
-
-        $request->validate([
-            'siswa_ids' => 'required|array',
+        $validated = $request->validate([
+            'source_kelas_id' => 'required|exists:kelas,id',
+            'source_tahun_ajaran_id' => 'required|exists:tahun_ajarans,id',
+            'siswa_ids' => 'required|array|min:1',
             'siswa_ids.*' => 'exists:siswas,id',
             'status' => 'required|in:lulus,pindah,dropout',
-            'kelas_tinggal_id' => 'required_if:status,pindah|exists:kelas,id',
         ]);
 
-        DB::beginTransaction();
-        try {
-            $siswaDetails = [];
-            
-            foreach ($request->siswa_ids as $siswaId) {
-                $siswa = Siswa::findOrFail($siswaId);
-                $kelasAsal = $siswa->kelas;
-                
-                $siswa->status = $request->status;
-                
-                // Jika status "pindah" (tidak lulus), siswa ditempatkan di kelas yang dipilih
-                if ($request->status === 'pindah' && $request->has('kelas_tinggal_id')) {
-                    $siswa->kelas_id = $request->kelas_tinggal_id;
-                    $siswa->is_naik_kelas = false; // Tandai sebagai tidak naik kelas
-                    
-                    // Ambil informasi kelas tujuan
-                    $kelasTujuan = Kelas::findOrFail($request->kelas_tinggal_id);
-                    
-                    // Simpan detail untuk feedback
-                    $siswaDetails[] = [
-                        'id' => $siswa->id,
-                        'nama' => $siswa->nama,
-                        'kelas_asal' => "Kelas {$kelasAsal->nomor_kelas} {$kelasAsal->nama_kelas}",
-                        'status' => 'Tidak Lulus',
-                        'kelas_tujuan' => "Kelas {$kelasTujuan->nomor_kelas} {$kelasTujuan->nama_kelas}"
-                    ];
-                } else {
-                    // Untuk status lulus atau lainnya, info normal
-                    $siswaDetails[] = [
-                        'id' => $siswa->id,
-                        'nama' => $siswa->nama,
-                        'kelas_asal' => "Kelas {$kelasAsal->nomor_kelas} {$kelasAsal->nama_kelas}",
-                        'status' => $request->status === 'lulus' ? 'Lulus' : ucfirst($request->status)
-                    ];
-                }
-                
-                $siswa->save();
-            }
-            
-            DB::commit();
-            
-            // Ubah pesan sukses berdasarkan status
-            $statusLabel = $request->status === 'lulus' ? 'Lulus' : 'Tidak Lulus';
-            
-            // Kirim data detail untuk SweetAlert
-            return redirect()->back()->with([
-                'success' => "Berhasil memproses {$statusLabel} untuk " . count($request->siswa_ids) . " siswa",
-                'siswa_details' => $siswaDetails,
-                'action_type' => 'kelulusan',
-                'status' => $request->status
-            ]);
-        } catch (\Exception $e) {
-            DB::rollBack();
-            return redirect()->back()->with('error', 'Gagal memproses: ' . $e->getMessage());
+        $sourceTahunAjaran = TahunAjaran::findOrFail($validated['source_tahun_ajaran_id']);
+        $sourceKelas = Kelas::findOrFail($validated['source_kelas_id']);
+        $siswaIds = collect($validated['siswa_ids'])
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values();
+
+        if ($error = $this->validateGraduationContext($sourceTahunAjaran, $sourceKelas)) {
+            return redirect()->back()->with('error', $error);
         }
+
+        try {
+            foreach ($siswaIds as $siswaId) {
+                if (! $enrollmentResolver->isEnrolledInClass($siswaId, $sourceKelas->id, $sourceTahunAjaran->id, 2, true)) {
+                    return redirect()->back()->with('error', 'Sebagian siswa tidak valid untuk konteks kelas akhir sumber.');
+                }
+            }
+        } catch (RuntimeException) {
+            return redirect()->back()->with('error', 'Konteks enrollment siswa tidak valid.');
+        }
+
+        $students = Siswa::whereIn('id', $siswaIds)->get()->keyBy('id');
+        $requestedStatus = $validated['status'];
+
+        foreach ($siswaIds as $siswaId) {
+            $student = $students->get($siswaId);
+
+            if (! $student) {
+                return redirect()->back()->with('error', 'Sebagian siswa tidak valid.');
+            }
+
+            if ($student->status !== 'aktif' && $student->status !== $requestedStatus) {
+                return redirect()->back()->with('error', 'Sebagian siswa sudah memiliki status akhir yang berbeda.');
+            }
+        }
+
+        try {
+            DB::transaction(function () use ($students, $siswaIds, $requestedStatus) {
+                foreach ($siswaIds as $siswaId) {
+                    $student = $students->get($siswaId);
+                    $student->status = $requestedStatus;
+                    $student->save();
+                }
+            });
+        } catch (\Throwable) {
+            return redirect()->back()->with('error', 'Gagal memproses status siswa kelas akhir.');
+        }
+
+        $siswaDetails = $siswaIds->map(function (int $siswaId) use ($students, $sourceKelas, $requestedStatus) {
+            $siswa = $students->get($siswaId);
+
+            return [
+                'id' => $siswaId,
+                'nama' => $siswa?->nama ?? 'Siswa',
+                'kelas_asal' => $this->formatClassLabel($sourceKelas),
+                'status' => $this->statusLabel($requestedStatus),
+            ];
+        })->all();
+
+        return redirect()->back()->with([
+            'success' => 'Berhasil memproses ' . $this->statusLabel($requestedStatus) . ' untuk ' . $siswaIds->count() . ' siswa',
+            'siswa_details' => $siswaDetails,
+            'action_type' => 'kelulusan',
+            'status' => $requestedStatus,
+        ]);
     }
 
     private function resolveSourceTahunAjaran(Request $request): ?TahunAjaran
@@ -602,9 +609,36 @@ class KenaikanKelasController extends Controller
         return null;
     }
 
+    private function validateGraduationContext(TahunAjaran $sourceTahunAjaran, Kelas $sourceKelas): ?string
+    {
+        if ((int) $sourceTahunAjaran->semester !== 2) {
+            return 'Kelulusan hanya dapat diproses dari tahun ajaran semester genap.';
+        }
+
+        if ((int) $sourceKelas->tahun_ajaran_id !== (int) $sourceTahunAjaran->id) {
+            return 'Kelas sumber tidak sesuai dengan tahun ajaran sumber.';
+        }
+
+        if ((int) $sourceKelas->nomor_kelas !== 6) {
+            return 'Kelulusan hanya dapat diproses untuk kelas akhir.';
+        }
+
+        return null;
+    }
+
     private function formatClassLabel(Kelas $kelas): string
     {
         return "Kelas {$kelas->nomor_kelas} {$kelas->nama_kelas}";
+    }
+
+    private function statusLabel(string $status): string
+    {
+        return match ($status) {
+            'lulus' => 'Lulus',
+            'pindah' => 'Pindah/Keluar',
+            'dropout' => 'Tidak Aktif',
+            default => ucfirst($status),
+        };
     }
 
     private function promotionWritesEnabled(): bool

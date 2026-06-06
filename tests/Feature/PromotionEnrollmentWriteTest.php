@@ -50,6 +50,10 @@ class PromotionEnrollmentWriteTest extends TestCase
 
     private int $finalGradeStudentId;
 
+    private int $finalTransferredStudentId;
+
+    private int $finalInactiveStudentId;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -227,21 +231,152 @@ class PromotionEnrollmentWriteTest extends TestCase
         ]);
     }
 
-    public function test_mass_promotion_and_graduation_remain_blocked_without_student_mutation(): void
+    public function test_final_grade_student_can_be_marked_graduated_without_target_enrollment_or_identity_mutation(): void
+    {
+        $beforeStudentCount = DB::table('siswas')->count();
+        $beforeWorkCounts = $this->studentSpecificCounts($this->sourceYearId);
+        $beforeStudent = DB::table('siswas')->where('id', $this->finalGradeStudentId)->first();
+
+        $this->actingAs($this->admin, 'web')
+            ->post(route('admin.kenaikan-kelas.process-kelulusan'), $this->graduationPayload([
+                'siswa_ids' => [$this->finalGradeStudentId],
+                'status' => 'lulus',
+            ]))
+            ->assertRedirect()
+            ->assertSessionHas('success');
+
+        $afterStudent = DB::table('siswas')->where('id', $this->finalGradeStudentId)->first();
+
+        $this->assertSame('lulus', $afterStudent->status);
+        $this->assertSame($beforeStudentCount, DB::table('siswas')->count());
+        $this->assertSame((int) $beforeStudent->kelas_id, (int) $afterStudent->kelas_id);
+        $this->assertSame($beforeStudent->nis, $afterStudent->nis);
+        $this->assertSame($beforeStudent->nisn, $afterStudent->nisn);
+        $this->assertDatabaseHas('siswa_kelas_semester', [
+            'siswa_id' => $this->finalGradeStudentId,
+            'kelas_id' => $this->sourceClass6AId,
+            'tahun_ajaran_id' => $this->sourceYearId,
+            'semester' => 2,
+        ]);
+        $this->assertMissingTargetEnrollment($this->finalGradeStudentId);
+        $this->assertSame($beforeWorkCounts, $this->studentSpecificCounts($this->sourceYearId));
+        $this->assertTargetYearWorkDataIsEmpty();
+        $this->assertSame(0, DB::table('siswas')->where('nis', 'like', 'S2-%')->orWhere('nisn', 'like', 'S2-%')->count());
+        $this->assertSame(0, DB::table('kelas')->where('nomor_kelas', '7')->count());
+    }
+
+    public function test_repeated_graduation_request_is_idempotent(): void
+    {
+        $payload = $this->graduationPayload([
+            'siswa_ids' => [$this->finalGradeStudentId],
+            'status' => 'lulus',
+        ]);
+
+        $this->actingAs($this->admin, 'web')
+            ->post(route('admin.kenaikan-kelas.process-kelulusan'), $payload)
+            ->assertRedirect()
+            ->assertSessionHas('success');
+
+        $this->actingAs($this->admin, 'web')
+            ->post(route('admin.kenaikan-kelas.process-kelulusan'), $payload)
+            ->assertRedirect()
+            ->assertSessionHas('success');
+
+        $this->assertSame('lulus', DB::table('siswas')->where('id', $this->finalGradeStudentId)->value('status'));
+        $this->assertMissingTargetEnrollment($this->finalGradeStudentId);
+    }
+
+    public function test_forged_graduation_request_for_another_class_student_is_rejected(): void
+    {
+        $beforeStatus = DB::table('siswas')->where('id', $this->dimasId)->value('status');
+        $beforeClassId = DB::table('siswas')->where('id', $this->dimasId)->value('kelas_id');
+
+        $this->actingAs($this->admin, 'web')
+            ->post(route('admin.kenaikan-kelas.process-kelulusan'), $this->graduationPayload([
+                'siswa_ids' => [$this->dimasId],
+                'status' => 'lulus',
+            ]))
+            ->assertRedirect()
+            ->assertSessionHas('error');
+
+        $this->assertSame($beforeStatus, DB::table('siswas')->where('id', $this->dimasId)->value('status'));
+        $this->assertSame($beforeClassId, DB::table('siswas')->where('id', $this->dimasId)->value('kelas_id'));
+        $this->assertMissingTargetEnrollment($this->dimasId);
+    }
+
+    public function test_mixed_graduation_payload_is_rejected_atomically(): void
+    {
+        $beforeFinalStatus = DB::table('siswas')->where('id', $this->finalGradeStudentId)->value('status');
+        $beforeDimasStatus = DB::table('siswas')->where('id', $this->dimasId)->value('status');
+
+        $this->actingAs($this->admin, 'web')
+            ->post(route('admin.kenaikan-kelas.process-kelulusan'), $this->graduationPayload([
+                'siswa_ids' => [$this->finalGradeStudentId, $this->dimasId],
+                'status' => 'lulus',
+            ]))
+            ->assertRedirect()
+            ->assertSessionHas('error');
+
+        $this->assertSame($beforeFinalStatus, DB::table('siswas')->where('id', $this->finalGradeStudentId)->value('status'));
+        $this->assertSame($beforeDimasStatus, DB::table('siswas')->where('id', $this->dimasId)->value('status'));
+        $this->assertMissingTargetEnrollment($this->finalGradeStudentId);
+        $this->assertMissingTargetEnrollment($this->dimasId);
+    }
+
+    public function test_non_final_student_cannot_be_graduated(): void
+    {
+        $beforeStatus = DB::table('siswas')->where('id', $this->ahmadId)->value('status');
+
+        $this->actingAs($this->admin, 'web')
+            ->post(route('admin.kenaikan-kelas.process-kelulusan'), [
+                'source_kelas_id' => $this->sourceClass5AId,
+                'source_tahun_ajaran_id' => $this->sourceYearId,
+                'siswa_ids' => [$this->ahmadId],
+                'status' => 'lulus',
+            ])
+            ->assertRedirect()
+            ->assertSessionHas('error', 'Kelulusan hanya dapat diproses untuk kelas akhir.');
+
+        $this->assertSame($beforeStatus, DB::table('siswas')->where('id', $this->ahmadId)->value('status'));
+        $this->assertMissingTargetEnrollment($this->ahmadId);
+    }
+
+    public function test_transferred_and_inactive_statuses_are_status_only(): void
+    {
+        $beforeTransferredClassId = DB::table('siswas')->where('id', $this->finalTransferredStudentId)->value('kelas_id');
+        $beforeInactiveClassId = DB::table('siswas')->where('id', $this->finalInactiveStudentId)->value('kelas_id');
+
+        $this->actingAs($this->admin, 'web')
+            ->post(route('admin.kenaikan-kelas.process-kelulusan'), $this->graduationPayload([
+                'siswa_ids' => [$this->finalTransferredStudentId],
+                'status' => 'pindah',
+            ]))
+            ->assertRedirect()
+            ->assertSessionHas('success');
+
+        $this->actingAs($this->admin, 'web')
+            ->post(route('admin.kenaikan-kelas.process-kelulusan'), $this->graduationPayload([
+                'siswa_ids' => [$this->finalInactiveStudentId],
+                'status' => 'dropout',
+            ]))
+            ->assertRedirect()
+            ->assertSessionHas('success');
+
+        $this->assertSame('pindah', DB::table('siswas')->where('id', $this->finalTransferredStudentId)->value('status'));
+        $this->assertSame('dropout', DB::table('siswas')->where('id', $this->finalInactiveStudentId)->value('status'));
+        $this->assertSame($beforeTransferredClassId, DB::table('siswas')->where('id', $this->finalTransferredStudentId)->value('kelas_id'));
+        $this->assertSame($beforeInactiveClassId, DB::table('siswas')->where('id', $this->finalInactiveStudentId)->value('kelas_id'));
+        $this->assertMissingTargetEnrollment($this->finalTransferredStudentId);
+        $this->assertMissingTargetEnrollment($this->finalInactiveStudentId);
+    }
+
+    public function test_mass_promotion_remains_blocked_without_student_mutation(): void
     {
         $beforeStatus = DB::table('siswas')->where('id', $this->finalGradeStudentId)->value('status');
         $beforeClassId = DB::table('siswas')->where('id', $this->finalGradeStudentId)->value('kelas_id');
 
         $this->actingAs($this->admin, 'web')
             ->post(route('admin.kenaikan-kelas.process-mass'))
-            ->assertRedirect(route('admin.kenaikan-kelas.index'))
-            ->assertSessionHas('error');
-
-        $this->actingAs($this->admin, 'web')
-            ->post(route('admin.kenaikan-kelas.process-kelulusan'), [
-                'siswa_ids' => [$this->finalGradeStudentId],
-                'status' => 'lulus',
-            ])
             ->assertRedirect(route('admin.kenaikan-kelas.index'))
             ->assertSessionHas('error');
 
@@ -458,6 +593,8 @@ class PromotionEnrollmentWriteTest extends TestCase
         $this->semesterOneOnlyId = $this->insertStudent('2605004', '9000000004', 'Semester One Only', $this->sourceClass5AId);
         $this->otherYearStudentId = $this->insertStudent('2605005', '9000000005', 'Other Year Student', $this->otherYearSourceClass5AId);
         $this->finalGradeStudentId = $this->insertStudent('2606001', '9000000006', 'Final Grade Student', $this->sourceClass6AId);
+        $this->finalTransferredStudentId = $this->insertStudent('2606002', '9000000007', 'Final Transfer Student', $this->sourceClass6AId);
+        $this->finalInactiveStudentId = $this->insertStudent('2606003', '9000000008', 'Final Inactive Student', $this->sourceClass6AId);
 
         $this->insertEnrollment($this->ahmadId, $this->sourceClass5AId, $this->sourceYearId, 2);
         $this->insertEnrollment($this->sitiId, $this->sourceClass5AId, $this->sourceYearId, 2);
@@ -465,8 +602,11 @@ class PromotionEnrollmentWriteTest extends TestCase
         $this->insertEnrollment($this->semesterOneOnlyId, $this->sourceClass5AId, $this->sourceYearId, 1);
         $this->insertEnrollment($this->otherYearStudentId, $this->otherYearSourceClass5AId, $this->otherSourceYearId, 2);
         $this->insertEnrollment($this->finalGradeStudentId, $this->sourceClass6AId, $this->sourceYearId, 2);
+        $this->insertEnrollment($this->finalTransferredStudentId, $this->sourceClass6AId, $this->sourceYearId, 2);
+        $this->insertEnrollment($this->finalInactiveStudentId, $this->sourceClass6AId, $this->sourceYearId, 2);
 
         $this->insertStudentSpecificSourceData($this->ahmadId);
+        $this->insertStudentSpecificSourceData($this->finalGradeStudentId);
     }
 
     private function promotionPayload(array $overrides = []): array
@@ -475,6 +615,14 @@ class PromotionEnrollmentWriteTest extends TestCase
             'source_kelas_id' => $this->sourceClass5AId,
             'source_tahun_ajaran_id' => $this->sourceYearId,
             'target_tahun_ajaran_id' => $this->targetYearId,
+        ], $overrides);
+    }
+
+    private function graduationPayload(array $overrides = []): array
+    {
+        return array_merge([
+            'source_kelas_id' => $this->sourceClass6AId,
+            'source_tahun_ajaran_id' => $this->sourceYearId,
         ], $overrides);
     }
 
