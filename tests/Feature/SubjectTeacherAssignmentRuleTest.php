@@ -166,7 +166,7 @@ class SubjectTeacherAssignmentRuleTest extends TestCase
         $response->assertOk();
         $this->assertTeacherOptionState($response, $this->budi, true, [$this->kelas5AId]);
         $this->assertTeacherOptionState($response, $this->ani, true, [$this->kelas5BId]);
-        $this->assertTeacherOptionState($response, $this->yusuf, false, []);
+        $this->assertTeacherOptionState($response, $this->yusuf, false, [], [$this->kelas5AId, $this->kelas5BId]);
         $this->assertTeacherOptionState($response, $historicalWali, false, []);
         $this->assertTeacherOptionState($response, $activeWaliWithGuruLabel, true, [$activeClassId]);
     }
@@ -199,7 +199,60 @@ class SubjectTeacherAssignmentRuleTest extends TestCase
         $response->assertOk();
         $this->assertTeacherOptionState($response, $this->budi, true, [$this->kelas5AId]);
         $this->assertTeacherOptionState($response, $this->ani, true, [$this->kelas5BId]);
-        $this->assertTeacherOptionState($response, $this->yusuf, false, []);
+        $this->assertTeacherOptionState($response, $this->yusuf, false, [], [$this->kelas5AId, $this->kelas5BId]);
+    }
+
+    public function test_non_wali_teacher_must_be_assigned_to_selected_class_for_specialist_subject(): void
+    {
+        $unassignedGuru = Guru::findOrFail($this->insertGuru('Dewi Unassigned', 'dewi', 'guru'));
+
+        $this->postSubject('PAI Tanpa Tugas', $this->kelas5AId, $unassignedGuru->id, 'specialist')
+            ->assertRedirect()
+            ->assertSessionHasErrors('subjects.0.guru_pengampu');
+
+        $this->assertDatabaseMissing('mata_pelajarans', ['nama_pelajaran' => 'PAI Tanpa Tugas']);
+    }
+
+    public function test_edit_rejects_unassigned_non_wali_teacher_for_muatan_lokal(): void
+    {
+        $subjectId = DB::table('mata_pelajarans')->insertGetId([
+            'nama_pelajaran' => 'Bahasa Sunda',
+            'kelas_id' => $this->kelas5AId,
+            'guru_id' => $this->yusuf->id,
+            'semester' => 1,
+            'is_muatan_lokal' => true,
+            'allow_non_wali' => false,
+            'tahun_ajaran_id' => $this->yearId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('lingkup_materis')->insert([
+            'mata_pelajaran_id' => $subjectId,
+            'judul_lingkup_materi' => 'Materi awal',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $unassignedGuru = Guru::findOrFail($this->insertGuru('Dewi Unassigned', 'dewi_edit', 'guru'));
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->from(route('subject.edit', $subjectId))
+            ->put(route('subject.update', $subjectId), [
+                'mata_pelajaran' => 'Bahasa Sunda',
+                'kelas' => $this->kelas5AId,
+                'guru_pengampu' => $unassignedGuru->id,
+                'semester' => 1,
+                'teaching_type' => 'muatan_lokal',
+                'lingkup_materi' => ['Materi awal'],
+            ])
+            ->assertRedirect()
+            ->assertSessionHasErrors('guru_pengampu');
+
+        $this->assertDatabaseHas('mata_pelajarans', [
+            'id' => $subjectId,
+            'guru_id' => $this->yusuf->id,
+        ]);
     }
 
     private function postSubject(string $name, int $kelasId, int $guruId, string $teachingType)
@@ -234,14 +287,15 @@ class SubjectTeacherAssignmentRuleTest extends TestCase
     /**
      * @param  array<int, int>  $waliClassIds
      */
-    private function assertTeacherOptionState($response, Guru $teacher, bool $isActiveWali, array $waliClassIds): void
+    private function assertTeacherOptionState($response, Guru $teacher, bool $isActiveWali, array $waliClassIds, array $teachingClassIds = []): void
     {
         $html = $response->getContent();
         $expectedWaliState = $isActiveWali ? 'true' : 'false';
         $expectedClassIds = implode(',', $waliClassIds);
+        $expectedTeachingClassIds = implode(',', $teachingClassIds);
 
         $this->assertMatchesRegularExpression(
-            '/<option[^>]*value="'.preg_quote((string) $teacher->id, '/').'"[^>]*data-is-active-wali="'.$expectedWaliState.'"[^>]*data-wali-kelas-ids="'.preg_quote($expectedClassIds, '/').'"[^>]*>/',
+            '/<option[^>]*value="'.preg_quote((string) $teacher->id, '/').'"[^>]*data-is-active-wali="'.$expectedWaliState.'"[^>]*data-wali-kelas-ids="'.preg_quote($expectedClassIds, '/').'"[^>]*data-teaching-class-ids="'.preg_quote($expectedTeachingClassIds, '/').'"[^>]*>/',
             $html,
             "Teacher option metadata was not correct for {$teacher->nama}."
         );

@@ -96,8 +96,11 @@
 
                     <div>
                         <label class="block text-sm font-medium text-gray-700">Tanggal Lahir</label>
-                        <input type="date" name="tanggal_lahir" value="{{ old('tanggal_lahir') }}" required
+                        <input type="date" name="tanggal_lahir" value="{{ old('tanggal_lahir') }}" max="{{ now()->subDay()->format('Y-m-d') }}" required
                             class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500">
+                        @error('tanggal_lahir')
+                            <p class="mt-1 text-sm text-red-500">{{ $message }}</p>
+                        @enderror
                     </div>
 
                     <div>
@@ -124,17 +127,17 @@
                 <!-- Kolom Kanan -->
                 <div class="space-y-4">
                     <div>
-                        <label class="block text-sm font-medium text-gray-700">Jabatan</label>
+                        <label class="block text-sm font-medium text-gray-700">Tanggung Jawab Guru</label>
                         <select name="jabatan" id="jabatan" onchange="handleJabatanChange()" required
                             class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500">
-                            <option value="">Pilih Jabatan</option>
-                            <option value="guru" {{ old('jabatan') == 'guru' ? 'selected' : '' }}>Guru</option>
-                            <option value="guru_wali" {{ old('jabatan') == 'guru_wali' ? 'selected' : '' }}>Guru & Wali Kelas</option>
+                            <option value="">Pilih tanggung jawab</option>
+                            <option value="guru" {{ old('jabatan') == 'guru' ? 'selected' : '' }}>Pengajar Biasa</option>
+                            <option value="guru_wali" {{ old('jabatan') == 'guru_wali' ? 'selected' : '' }}>Wali Kelas</option>
                         </select>
                     </div>
 
                     <div id="kelas_mengajar_section" style="display:none;">
-                        <label class="block text-sm font-medium text-gray-700">Kelas yang Diajar</label>
+                        <label class="block text-sm font-medium text-gray-700">Kelas yang diajar sebagai pengajar khusus/muatan lokal</label>
                         @if(isset($kelasForMengajar) && $kelasForMengajar->count() > 0)
                             <select name="kelas_ids[]" multiple required
                                 class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500 min-h-[120px]">
@@ -144,7 +147,7 @@
                                     </option>
                                 @endforeach
                             </select>
-                            <p class="mt-1 text-sm text-gray-500">Tekan CTRL untuk memilih beberapa kelas yang akan diajar</p>
+                            <p class="mt-1 text-sm text-gray-500">Untuk wali kelas, mata pelajaran wajib reguler otomatis mengikuti kelas wali dan tidak perlu dipilih di sini.</p>
                         @else
                             <div class="mt-1 p-3 bg-green-50 border border-green-200 rounded-lg">
                                 <p class="text-sm text-green-800">
@@ -158,7 +161,7 @@
                         @endif
                     </div>
                     <div id="wali_kelas_section" style="display:none;">
-                        <label class="block text-sm font-medium text-gray-700">Wali Kelas Untuk</label>
+                        <label class="block text-sm font-medium text-gray-700">Pilih kelas wali</label>
                         @if(isset($kelasForWali) && $kelasForWali->count() > 0)
                             <select name="wali_kelas_id" 
                                 class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500">
@@ -169,7 +172,7 @@
                                     </option>
                                 @endforeach
                             </select>
-                            <p class="mt-1 text-sm text-gray-500">Pilih kelas yang akan diwalikan</p>
+                            <p class="mt-1 text-sm text-gray-500">Wali kelas hanya mengampu mata pelajaran wajib reguler di kelas ini.</p>
                         @else
                             <div class="mt-1 p-3 bg-green-50 border border-green-200 rounded-lg">
                                 <p class="text-sm text-green-800">

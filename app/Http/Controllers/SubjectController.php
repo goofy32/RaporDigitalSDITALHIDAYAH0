@@ -88,6 +88,7 @@ class SubjectController extends Controller
 
         $teachers = Guru::orderBy('nama')->get();
         $teacherWaliClassIds = $this->teacherWaliClassIds($tahunAjaranId);
+        $teacherTeachingClassIds = $this->teacherTeachingClassIds($tahunAjaranId);
 
         // Ambil semua mata pelajaran untuk validasi JavaScript
         $mataPelajaranList = MataPelajaran::select('id', 'nama_pelajaran', 'kelas_id', 'semester')
@@ -99,7 +100,7 @@ class SubjectController extends Controller
         // Kode ini akan dimanfaatkan oleh JavaScript
         $waliKelasMap = Kelas::getWaliKelasMap($tahunAjaranId);
 
-        return view('data.add_subject', compact('classes', 'teachers', 'teacherWaliClassIds', 'waliKelasMap', 'mataPelajaranList'));
+        return view('data.add_subject', compact('classes', 'teachers', 'teacherWaliClassIds', 'teacherTeachingClassIds', 'waliKelasMap', 'mataPelajaranList'));
     }
 
     public function show($id)
@@ -334,6 +335,7 @@ class SubjectController extends Controller
 
         $teachers = Guru::orderBy('nama')->get();
         $teacherWaliClassIds = $this->teacherWaliClassIds($tahunAjaranId);
+        $teacherTeachingClassIds = $this->teacherTeachingClassIds($tahunAjaranId);
 
         // Ambil semua mata pelajaran untuk validasi JavaScript
         $mataPelajaranList = MataPelajaran::select('id', 'nama_pelajaran', 'kelas_id', 'semester')
@@ -345,7 +347,7 @@ class SubjectController extends Controller
         // Panggil getWaliKelasMap sebagai method statis dengan parameter tahun ajaran
         $waliKelasMap = Kelas::getWaliKelasMap($tahunAjaranId);
 
-        return view('data.edit_subject', compact('subject', 'classes', 'teachers', 'teacherWaliClassIds', 'waliKelasMap', 'mataPelajaranList'));
+        return view('data.edit_subject', compact('subject', 'classes', 'teachers', 'teacherWaliClassIds', 'teacherTeachingClassIds', 'waliKelasMap', 'mataPelajaranList'));
     }
 
     public function updateLingkupMateri(Request $request, $id)
@@ -946,6 +948,26 @@ class SubjectController extends Controller
             ->join('kelas', 'guru_kelas.kelas_id', '=', 'kelas.id')
             ->where('guru_kelas.is_wali_kelas', true)
             ->where('guru_kelas.role', 'wali_kelas')
+            ->whereNull('kelas.deleted_at')
+            ->when($tahunAjaranId, function ($query) use ($tahunAjaranId) {
+                $query->where('kelas.tahun_ajaran_id', $tahunAjaranId);
+            })
+            ->select('guru_kelas.guru_id', 'guru_kelas.kelas_id')
+            ->get()
+            ->groupBy('guru_id')
+            ->map(fn ($rows) => $rows->pluck('kelas_id')->map(fn ($kelasId) => (int) $kelasId)->values()->all())
+            ->all();
+    }
+
+    /**
+     * @return array<int, array<int, int>>
+     */
+    private function teacherTeachingClassIds(?int $tahunAjaranId): array
+    {
+        return DB::table('guru_kelas')
+            ->join('kelas', 'guru_kelas.kelas_id', '=', 'kelas.id')
+            ->where('guru_kelas.is_wali_kelas', false)
+            ->where('guru_kelas.role', 'pengajar')
             ->whereNull('kelas.deleted_at')
             ->when($tahunAjaranId, function ($query) use ($tahunAjaranId) {
                 $query->where('kelas.tahun_ajaran_id', $tahunAjaranId);

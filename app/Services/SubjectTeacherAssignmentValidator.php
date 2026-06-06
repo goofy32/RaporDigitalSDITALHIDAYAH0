@@ -80,6 +80,14 @@ class SubjectTeacherAssignmentValidator
             return ['guru_pengampu' => $message];
         }
 
+        if (! $this->isPengajarForClass($guru, $kelas)) {
+            $message = $isMuatanLokal
+                ? 'Mata pelajaran muatan lokal harus diajar oleh guru non-wali yang ditugaskan mengajar di kelas ini.'
+                : 'Mata pelajaran wajib guru mapel harus diajar oleh guru non-wali yang ditugaskan mengajar di kelas ini.';
+
+            return ['guru_pengampu' => $message];
+        }
+
         return [];
     }
 
@@ -90,6 +98,16 @@ class SubjectTeacherAssignmentValidator
             ->where('kelas_id', $kelas->id)
             ->where('is_wali_kelas', true)
             ->where('role', 'wali_kelas')
+            ->exists();
+    }
+
+    private function isPengajarForClass(Guru $guru, Kelas $kelas): bool
+    {
+        return DB::table('guru_kelas')
+            ->where('guru_id', $guru->id)
+            ->where('kelas_id', $kelas->id)
+            ->where('is_wali_kelas', false)
+            ->where('role', 'pengajar')
             ->exists();
     }
 

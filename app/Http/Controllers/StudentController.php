@@ -217,6 +217,8 @@ class StudentController extends Controller
             'alamat_orangtua' => 'nullable|string|max:500',
             'wali_siswa' => 'nullable|string|max:255',
             'pekerjaan_wali' => 'nullable|string|max:100',
+        ], [
+            'tanggal_lahir.before' => 'Tanggal lahir harus sebelum hari ini.',
         ]);
     
         // Set default empty string untuk field nullable
@@ -294,6 +296,8 @@ class StudentController extends Controller
             'alamat_orangtua' => 'nullable|string|max:500',
             'wali_siswa' => 'nullable|string|max:255',
             'pekerjaan_wali' => 'nullable|string|max:100',
+        ], [
+            'tanggal_lahir.before' => 'Tanggal lahir harus sebelum hari ini.',
         ]);
     
         if ($request->hasFile('photo')) {
@@ -449,7 +453,7 @@ class StudentController extends Controller
                 'nis' => 'required|unique:siswas',
                 'nisn' => 'required|unique:siswas',
                 'nama' => 'required',
-                'tanggal_lahir' => 'required|date',
+                'tanggal_lahir' => 'required|date|before:today',
                 'jenis_kelamin' => 'required',
                 'agama' => 'required',
                 'alamat' => 'required',
@@ -468,6 +472,7 @@ class StudentController extends Controller
                 'nisn.unique' => 'NISN sudah digunakan oleh siswa lain.',
                 'nama.required' => 'Nama siswa wajib diisi.',
                 'tanggal_lahir.required' => 'Tanggal lahir wajib diisi.',
+                'tanggal_lahir.before' => 'Tanggal lahir harus sebelum hari ini.',
                 'jenis_kelamin.required' => 'Jenis kelamin wajib dipilih.',
                 'agama.required' => 'Agama wajib dipilih.',
                 'alamat.required' => 'Alamat wajib diisi.',
@@ -550,7 +555,7 @@ class StudentController extends Controller
             'nis' => 'required|unique:siswas,nis,' . $id,
             'nisn' => 'required|unique:siswas,nisn,' . $id,
             'nama' => 'required',
-            'tanggal_lahir' => 'required|date',
+            'tanggal_lahir' => 'required|date|before:today',
             'jenis_kelamin' => 'required',
             'agama' => 'required',
             'alamat' => 'required',
@@ -560,6 +565,8 @@ class StudentController extends Controller
             'pekerjaan_ayah' => 'nullable',
             'pekerjaan_ibu' => 'nullable',
             'alamat_orangtua' => 'nullable',
+        ], [
+            'tanggal_lahir.before' => 'Tanggal lahir harus sebelum hari ini.',
         ]);
 
         if ($request->hasFile('photo')) {

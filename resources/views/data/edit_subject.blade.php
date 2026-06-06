@@ -145,11 +145,13 @@
                     @foreach($teachers as $teacher)
                     @php
                         $activeWaliClassIds = $teacherWaliClassIds[$teacher->id] ?? [];
+                        $teachingClassIds = $teacherTeachingClassIds[$teacher->id] ?? [];
                     @endphp
                     <option value="{{ $teacher->id }}"
                         data-jabatan="{{ $teacher->jabatan }}"
                         data-is-active-wali="{{ count($activeWaliClassIds) > 0 ? 'true' : 'false' }}"
                         data-wali-kelas-ids="{{ implode(',', $activeWaliClassIds) }}"
+                        data-teaching-class-ids="{{ implode(',', $teachingClassIds) }}"
                         {{ old('guru_pengampu', $subject->guru_id) == $teacher->id ? 'selected' : '' }}>
                         {{ $teacher->nama }} ({{ $teacher->jabatan == 'guru_wali' ? 'Wali Kelas' : 'Guru' }})
                     </option>

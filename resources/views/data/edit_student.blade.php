@@ -69,7 +69,7 @@
                         <!-- Tanggal Lahir -->
                         <div>
                             <label for="tanggal_lahir" class="block text-sm font-medium text-gray-700 mb-1">Tanggal Lahir <span class="text-red-500">*</span></label>
-                            <input type="date" id="tanggal_lahir" name="tanggal_lahir" 
+                            <input type="date" id="tanggal_lahir" name="tanggal_lahir" max="{{ now()->subDay()->format('Y-m-d') }}"
                                 class="w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring focus:ring-green-200 @error('tanggal_lahir') border-red-500 @enderror" 
                                 value="{{ old('tanggal_lahir', $student->tanggal_lahir) }}" required>
                             @error('tanggal_lahir')

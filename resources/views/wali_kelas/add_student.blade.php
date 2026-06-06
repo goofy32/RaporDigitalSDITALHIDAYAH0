@@ -33,7 +33,7 @@
 
                 <div>
                     <label for="tanggal_lahir" class="block font-semibold">Tanggal Lahir <span class="text-red-500">*</span></label>
-                    <input type="date" id="tanggal_lahir" name="tanggal_lahir" class="w-full p-2 border rounded" value="{{ old('tanggal_lahir') }}" required>
+                    <input type="date" id="tanggal_lahir" name="tanggal_lahir" max="{{ now()->subDay()->format('Y-m-d') }}" class="w-full p-2 border rounded" value="{{ old('tanggal_lahir') }}" required>
                 </div>
 
                 <div>

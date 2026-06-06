@@ -56,7 +56,7 @@ function handleJabatanChange() {
 
     if (jabatan === 'guru_wali') {
         waliKelasSection.style.display = 'block';
-        kelasMengajarSection.style.display = 'block';
+        kelasMengajarSection.style.display = 'none';
         setTeacherSubmitState('editTeacherForm', availableKelasCount === 0 && !hasCurrentWaliKelas, 'Tidak dapat menyimpan karena tidak ada kelas yang tersedia untuk wali kelas');
         if (waliKelasSelect) {
             waliKelasSelect.required = availableKelasCount > 0 || hasCurrentWaliKelas;
@@ -65,7 +65,7 @@ function handleJabatanChange() {
                 waliKelasSelect.dataset.syncBound = 'true';
             }
         }
-        if (kelasMengajarSelect) kelasMengajarSelect.required = kelasListCount > 0;
+        if (kelasMengajarSelect) kelasMengajarSelect.required = false;
         if (waliKelasSelect?.value) updateKelasMengajarForWali();
         return;
     }

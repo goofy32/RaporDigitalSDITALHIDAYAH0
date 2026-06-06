@@ -47,7 +47,7 @@
 
                 <div>
                     <label for="tanggal_lahir" class="block font-semibold">Tanggal Lahir</label>
-                    <input type="date" id="tanggal_lahir" name="tanggal_lahir" 
+                    <input type="date" id="tanggal_lahir" name="tanggal_lahir" max="{{ now()->subDay()->format('Y-m-d') }}"
                            class="w-full p-2 border rounded @error('tanggal_lahir') border-red-500 @enderror" 
                            value="{{ old('tanggal_lahir', $student->tanggal_lahir) }}" required>
                     @error('tanggal_lahir')

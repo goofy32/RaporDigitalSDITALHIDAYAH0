@@ -230,7 +230,7 @@ class TeacherController extends Controller
                 'nuptk' => 'nullable|numeric|digits_between:9,15|unique:gurus,nuptk',
                 'nama' => 'required|string|max:255',
                 'jenis_kelamin' => 'required|in:Laki-laki,Perempuan',
-                'tanggal_lahir' => 'required|date',
+                'tanggal_lahir' => 'required|date|before:today',
                 'no_handphone' => 'required|numeric|digits_between:10,15',
                 'email' => 'required|email|max:255|unique:gurus,email',
                 'alamat' => 'required|string|max:500',
@@ -256,6 +256,7 @@ class TeacherController extends Controller
                 'nama.required' => 'Nama wajib diisi',
                 'jenis_kelamin.required' => 'Jenis kelamin wajib diisi',
                 'tanggal_lahir.required' => 'Tanggal lahir wajib diisi',
+                'tanggal_lahir.before' => 'Tanggal lahir harus sebelum hari ini.',
                 'no_handphone.required' => 'Nomor handphone wajib diisi',
                 'no_handphone.numeric' => 'Nomor handphone harus berupa angka',
                 'no_handphone.digits_between' => 'Nomor handphone harus antara 10-15 digit',
@@ -263,10 +264,10 @@ class TeacherController extends Controller
                 'email.email' => 'Format email tidak valid',
                 'email.unique' => 'Email sudah digunakan',
                 'alamat.required' => 'Alamat wajib diisi',
-                'jabatan.required' => 'Jabatan wajib diisi',
-                'jabatan.in' => 'Jabatan harus guru atau guru dan wali kelas',
-                'kelas_ids.required' => 'Kelas yang diajar wajib diisi',
-                'wali_kelas_id.required' => 'Kelas yang diwalikan wajib diisi untuk wali kelas',
+                'jabatan.required' => 'Tanggung jawab guru wajib diisi',
+                'jabatan.in' => 'Tanggung jawab guru tidak valid',
+                'kelas_ids.required' => 'Kelas yang diajar wajib diisi untuk pengajar biasa',
+                'wali_kelas_id.required' => 'Pilih kelas wali untuk guru wali kelas',
                 'wali_kelas_id.exists' => 'Kelas yang dipilih tidak valid',
                 'username.required' => 'Username wajib diisi',
                 'username.unique' => 'Username sudah digunakan',
@@ -277,6 +278,8 @@ class TeacherController extends Controller
                 'photo.mimes' => 'Format file harus JPG, JPEG, PNG, atau WEBP',
                 'photo.max' => 'Ukuran file maksimal 2MB',
             ]);
+
+            $validated['nuptk'] = $request->filled('nuptk') ? $validated['nuptk'] : null;
 
             if (
                 $request->jabatan === 'guru_wali'
@@ -353,7 +356,23 @@ class TeacherController extends Controller
 
     public function show($id)
     {
-        $teacher = Guru::with('kelasPengajar')->findOrFail($id);
+        $tahunAjaranId = session('tahun_ajaran_id');
+
+        $teacher = Guru::with([
+            'kelas' => function ($query) use ($tahunAjaranId) {
+                $query->withPivot('is_wali_kelas', 'role');
+                if ($tahunAjaranId) {
+                    $query->where('kelas.tahun_ajaran_id', $tahunAjaranId);
+                }
+            },
+            'mataPelajarans' => function ($query) use ($tahunAjaranId) {
+                $query->with('kelas')
+                    ->when($tahunAjaranId, function ($query) use ($tahunAjaranId) {
+                        $query->where('tahun_ajaran_id', $tahunAjaranId);
+                    })
+                    ->orderBy('nama_pelajaran');
+            },
+        ])->findOrFail($id);
 
         return view('data.teacher_data', compact('teacher'));
     }
@@ -393,22 +412,24 @@ class TeacherController extends Controller
         $availableKelas = Kelas::when($tahunAjaranId, function ($query) use ($tahunAjaranId) {
             return $query->where('tahun_ajaran_id', $tahunAjaranId);
         })
-            ->whereDoesntHave('guru', function ($query) use ($id) {
-                $query->where('guru_kelas.is_wali_kelas', true)
-                    ->where('guru_kelas.role', 'wali_kelas')
-                    ->where('guru_id', '!=', $id);
-            })
-            ->orWhereHas('guru', function ($query) use ($id) {
-                $query->where('guru_id', $id)
-                    ->where('guru_kelas.is_wali_kelas', true)
-                    ->where('guru_kelas.role', 'wali_kelas');
+            ->where(function ($query) use ($id) {
+                $query->whereDoesntHave('guru', function ($query) use ($id) {
+                    $query->where('guru_kelas.is_wali_kelas', true)
+                        ->where('guru_kelas.role', 'wali_kelas')
+                        ->where('guru_id', '!=', $id);
+                })
+                    ->orWhereHas('guru', function ($query) use ($id) {
+                        $query->where('guru_id', $id)
+                            ->where('guru_kelas.is_wali_kelas', true)
+                            ->where('guru_kelas.role', 'wali_kelas');
+                    });
             })
             ->orderBy('nomor_kelas')
             ->orderBy('nama_kelas')
             ->get();
 
         // Ambil data kelas wali saat ini
-        $currentWaliKelas = $teacher->kelasWali()->first();
+        $currentWaliKelas = $teacher->kelasWali->first();
 
         return view('data.edit_teacher', compact(
             'teacher',
@@ -429,7 +450,7 @@ class TeacherController extends Controller
                 'nuptk' => 'nullable|numeric|digits_between:9,15|unique:gurus,nuptk,'.$id,
                 'nama' => 'required|string|max:255',
                 'jenis_kelamin' => 'required|in:Laki-laki,Perempuan',
-                'tanggal_lahir' => 'required|date',
+                'tanggal_lahir' => 'required|date|before:today',
                 'no_handphone' => 'required|numeric|digits_between:10,15',
                 'email' => 'required|email|max:255|unique:gurus,email,'.$id,
                 'alamat' => 'required|string|max:500',
@@ -467,7 +488,35 @@ class TeacherController extends Controller
                 }
             }
 
-            $validated = $request->validate($rules);
+            $validated = $request->validate($rules, [
+                'nuptk.numeric' => 'NUPTK harus berupa angka',
+                'nuptk.digits_between' => 'NUPTK harus antara 9-15 digit',
+                'nuptk.unique' => 'NUPTK sudah digunakan',
+                'nama.required' => 'Nama wajib diisi',
+                'jenis_kelamin.required' => 'Jenis kelamin wajib diisi',
+                'tanggal_lahir.required' => 'Tanggal lahir wajib diisi',
+                'tanggal_lahir.before' => 'Tanggal lahir harus sebelum hari ini.',
+                'no_handphone.required' => 'Nomor handphone wajib diisi',
+                'no_handphone.numeric' => 'Nomor handphone harus berupa angka',
+                'no_handphone.digits_between' => 'Nomor handphone harus antara 10-15 digit',
+                'email.required' => 'Email wajib diisi',
+                'email.email' => 'Format email tidak valid',
+                'email.unique' => 'Email sudah digunakan',
+                'alamat.required' => 'Alamat wajib diisi',
+                'jabatan.required' => 'Tanggung jawab guru wajib diisi',
+                'jabatan.in' => 'Tanggung jawab guru tidak valid',
+                'kelas_ids.required' => 'Kelas yang diajar wajib diisi untuk pengajar biasa',
+                'wali_kelas_id.required' => 'Pilih kelas wali untuk guru wali kelas',
+                'wali_kelas_id.exists' => 'Kelas yang dipilih tidak valid',
+                'username.required' => 'Username wajib diisi',
+                'username.unique' => 'Username sudah digunakan',
+                'password.min' => 'Password minimal 6 karakter',
+                'password.confirmed' => 'Konfirmasi password tidak cocok',
+                'current_password.required' => 'Password saat ini wajib diisi untuk mengubah password',
+                'photo.file' => 'File foto tidak valid',
+                'photo.mimes' => 'Format file harus JPG, JPEG, PNG, atau WEBP',
+                'photo.max' => 'Ukuran file maksimal 2MB',
+            ]);
 
             if (
                 $request->jabatan === 'guru_wali'
@@ -485,6 +534,7 @@ class TeacherController extends Controller
             $dataToUpdate = collect($validated)
                 ->except(['password', 'current_password', 'kelas_ids', 'wali_kelas_id'])
                 ->toArray();
+            $dataToUpdate['nuptk'] = $request->filled('nuptk') ? $dataToUpdate['nuptk'] : null;
 
             // Update password jika ada
             if ($request->filled('password')) {
@@ -566,6 +616,8 @@ class TeacherController extends Controller
                 ->with('success', 'Data guru berhasil diperbarui'.
                     ($request->filled('password') ? ' beserta passwordnya' : ''));
 
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            throw $e;
         } catch (\Exception $e) {
             if (DB::transactionLevel() > 0) {
                 DB::rollBack();

@@ -80,7 +80,7 @@
                 @forelse ($teachers as $teacher)
                 <tr class="bg-white border-b hover:bg-gray-50 @if(request('search') && stripos($teacher->nama, request('search')) !== false) bg-green-50 @endif">
                     <td class="px-6 py-4">{{ $loop->iteration + ($teachers->currentPage() - 1) * $teachers->perPage() }}</td>
-                    <td class="px-6 py-4">{{ $teacher->nuptk }}</td>
+                    <td class="px-6 py-4">{{ $teacher->nuptk ?: '-' }}</td>
                     <td class="px-6 py-4 font-medium @if(request('search') && stripos($teacher->nama, request('search')) !== false) text-green-700 @endif">{{ $teacher->nama }}</td>
                     <td class="px-6 py-4">{{ $teacher->username }}</td>
                     <td class="px-6 py-4">{{ $teacher->jenis_kelamin }}</td>
@@ -102,9 +102,31 @@
                                 ->unique()
                                 ->values();
 
-                            $mengajarLabels = $teacher->mataPelajarans
-                                ->filter(fn ($subject) => $subject->kelas)
+                            $subjectsWithClasses = $teacher->mataPelajarans
+                                ->filter(fn ($subject) => $subject->kelas);
+
+                            $subjectClassIds = $subjectsWithClasses
+                                ->pluck('kelas_id')
+                                ->map(fn ($kelasId) => (int) $kelasId)
+                                ->toBase()
+                                ->unique()
+                                ->values();
+
+                            $subjectLabels = $subjectsWithClasses
                                 ->map(fn ($subject) => "{$subject->nama_pelajaran} - {$subject->kelas->nomor_kelas}{$subject->kelas->nama_kelas}")
+                                ->toBase()
+                                ->unique()
+                                ->values();
+
+                            $classAssignmentLabels = $teacher->kelas
+                                ->filter(fn ($kelas) => $kelas->pivot->role === 'pengajar' && ! $kelas->pivot->is_wali_kelas)
+                                ->reject(fn ($kelas) => $subjectClassIds->contains((int) $kelas->id))
+                                ->map(fn ($kelas) => "Kelas {$kelas->nomor_kelas}{$kelas->nama_kelas}")
+                                ->unique()
+                                ->values();
+
+                            $mengajarLabels = $subjectLabels
+                                ->merge($classAssignmentLabels)
                                 ->unique()
                                 ->values();
                         @endphp

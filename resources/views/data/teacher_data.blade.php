@@ -51,8 +51,8 @@
                     <table class="w-full text-sm text-left text-gray-500">
                         <tbody>
                             <tr class="border-b">
-                                <th class="px-4 py-2 font-medium text-gray-900">NIP</th>
-                                <td class="px-4 py-2">{{ $teacher->nuptk ?? 'Belum Diisi' }}</td>
+                                <th class="px-4 py-2 font-medium text-gray-900">NUPTK</th>
+                                <td class="px-4 py-2">{{ $teacher->nuptk ?: 'Belum Diisi' }}</td>
                             </tr>
                             <tr class="border-b">
                                 <th class="px-4 py-2 font-medium text-gray-900">Nama</th>
@@ -100,25 +100,33 @@
                                 <th class="px-4 py-2 font-medium text-gray-900">Kelas Mengajar</th>
                                 <td class="px-4 py-2">
                                     @php
-                                        $teachingClasses = collect();
+                                        $subjectsWithClasses = $teacher->mataPelajarans
+                                            ->filter(fn ($subject) => $subject->kelas);
 
-                                        foreach($teacher->kelas as $kelas) {
-                                            $classKey = $kelas->nomor_kelas . $kelas->nama_kelas;
-                                            $isWaliKelas = $kelas->pivot->is_wali_kelas && $kelas->pivot->role === 'wali_kelas';
+                                        $subjectClassIds = $subjectsWithClasses
+                                            ->pluck('kelas_id')
+                                            ->map(fn ($kelasId) => (int) $kelasId)
+                                            ->toBase()
+                                            ->unique()
+                                            ->values();
 
-                                            if (!$isWaliKelas) {
-                                                $teachingClasses->put($classKey, [
-                                                    'nomor' => $kelas->nomor_kelas,
-                                                    'nama' => $kelas->nama_kelas
-                                                ]);
-                                            }
-                                        }
+                                        $teachingLabels = $subjectsWithClasses
+                                            ->map(fn ($subject) => "{$subject->nama_pelajaran} - {$subject->kelas->nomor_kelas}{$subject->kelas->nama_kelas}")
+                                            ->toBase()
+                                            ->merge(
+                                                $teacher->kelas
+                                                    ->filter(fn ($kelas) => $kelas->pivot->role === 'pengajar' && ! $kelas->pivot->is_wali_kelas)
+                                                    ->reject(fn ($kelas) => $subjectClassIds->contains((int) $kelas->id))
+                                                    ->map(fn ($kelas) => "Kelas {$kelas->nomor_kelas}{$kelas->nama_kelas}")
+                                            )
+                                            ->unique()
+                                            ->values();
                                     @endphp
 
-                                    @if($teachingClasses->count() > 0)
+                                    @if($teachingLabels->count() > 0)
                                         <ul>
-                                            @foreach($teachingClasses as $kelas)
-                                                <li>{{ $kelas['nomor'] }} {{ $kelas['nama'] }}</li>
+                                            @foreach($teachingLabels as $label)
+                                                <li>{{ $label }}</li>
                                             @endforeach
                                         </ul>
                                     @else
@@ -131,7 +139,9 @@
                                 <th class="px-4 py-2 font-medium text-gray-900">Wali Kelas</th>
                                 <td class="px-4 py-2">
                                     @php
-                                        $kelasWali = $teacher->kelasWali()->first();
+                                        $kelasWali = $teacher->kelas
+                                            ->filter(fn ($kelas) => $kelas->pivot->is_wali_kelas || $kelas->pivot->role === 'wali_kelas')
+                                            ->first();
                                     @endphp
 
                                     @if($kelasWali)

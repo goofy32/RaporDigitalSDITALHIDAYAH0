@@ -68,6 +68,20 @@ function isActiveYearWali(option) {
     return option.getAttribute('data-is-active-wali') === 'true';
 }
 
+function optionClassIds(option, attributeName) {
+    return (option.getAttribute(attributeName) || '')
+        .split(',')
+        .map(value => parseInt(value))
+        .filter(value => Number.isInteger(value));
+}
+
+function isAssignedToTeachClass(option, selectedKelasId) {
+    const kelasId = parseInt(selectedKelasId);
+    if (!Number.isInteger(kelasId)) return false;
+
+    return optionClassIds(option, 'data-teaching-class-ids').includes(kelasId);
+}
+
 function getClassState(form, kelasSelect) {
     const selectedOption = kelasSelect?.options?.[kelasSelect.selectedIndex];
     const selectedKelasId = kelasSelect?.value;
@@ -132,15 +146,15 @@ export function filterGuruDropdown(entry, mode, { resetSelection = false } = {})
     if (mode === 'muatan_lokal' || mode === 'guru_mapel') {
         Array.from(guruSelect.options).forEach(option => {
             if (!option.value) return;
-            if (isActiveYearWali(option)) {
+            if (isActiveYearWali(option) || !isAssignedToTeachClass(option, selectedKelasId)) {
                 option.disabled = true;
                 option.hidden = true;
             }
         });
         if (mode === 'muatan_lokal') {
-            showSubjectInfo(infoContainer, 'warning', 'Ini pelajaran muatan lokal, guru hanya non-wali kelas pada tahun ajaran aktif.');
+            showSubjectInfo(infoContainer, 'warning', 'Ini pelajaran muatan lokal, guru hanya non-wali kelas yang ditugaskan mengajar di kelas ini.');
         } else {
-            showSubjectInfo(infoContainer, 'info', 'Mode guru mapel aktif. Guru pengampu hanya guru non-wali kelas pada tahun ajaran aktif.');
+            showSubjectInfo(infoContainer, 'info', 'Mode guru mapel aktif. Guru pengampu hanya guru non-wali yang ditugaskan mengajar di kelas ini.');
         }
     } else if (!hasWaliKelas || !waliKelasId) {
         Array.from(guruSelect.options).forEach(option => {
@@ -159,6 +173,10 @@ export function filterGuruDropdown(entry, mode, { resetSelection = false } = {})
         });
         guruSelect.value = waliKelasId.toString();
         showSubjectInfo(infoContainer, 'info', 'Pelajaran wajib otomatis menggunakan guru wali kelas dari kelas ini.');
+    }
+
+    if (guruSelect.value && guruSelect.options[guruSelect.selectedIndex]?.disabled) {
+        guruSelect.value = '';
     }
 
     guruSelect.classList.toggle('border-yellow-500', guruSelect.value === '' || guruSelect.selectedIndex === 0);

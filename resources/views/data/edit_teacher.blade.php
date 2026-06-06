@@ -117,8 +117,11 @@
                        <!-- Tanggal Lahir -->
                        <div>
                            <label class="block text-sm font-medium text-gray-700">Tanggal Lahir</label>
-                           <input type="date" name="tanggal_lahir" value="{{ old('tanggal_lahir', $teacher->tanggal_lahir) }}" required
+                           <input type="date" name="tanggal_lahir" value="{{ old('tanggal_lahir', $teacher->tanggal_lahir) }}" max="{{ now()->subDay()->format('Y-m-d') }}" required
                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500">
+                           @error('tanggal_lahir')
+                               <p class="mt-1 text-sm text-red-500">{{ $message }}</p>
+                           @enderror
                        </div>
 
                        <!-- No. Handphone -->
@@ -149,26 +152,25 @@
                    <div class="space-y-4">
                        <!-- Jabatan -->
                        <div>
-                           <label class="block text-sm font-medium text-gray-700">Jabatan</label>
+                           <label class="block text-sm font-medium text-gray-700">Tanggung Jawab Guru</label>
                            <select name="jabatan" id="jabatan" onchange="handleJabatanChange()" required
                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500">
-                               <option value="guru" {{ $teacher->jabatan === 'guru' ? 'selected' : '' }}>Guru</option>
-                               <option value="guru_wali" {{ $teacher->jabatan === 'guru_wali' ? 'selected' : '' }}>Guru dan Wali Kelas</option>
+                               <option value="guru" {{ $teacher->jabatan === 'guru' ? 'selected' : '' }}>Pengajar Biasa</option>
+                               <option value="guru_wali" {{ $teacher->jabatan === 'guru_wali' ? 'selected' : '' }}>Wali Kelas</option>
                            </select>
                        </div>
 
                        <!-- Kelas Mengajar -->
                        <div id="kelas_mengajar_section">
-                            <label class="block text-sm font-medium text-gray-700">Kelas yang Diajar</label>
+                            <label class="block text-sm font-medium text-gray-700">Kelas yang diajar sebagai pengajar khusus/muatan lokal</label>
                             
                             @php
-                                // Ambil semua kelas yang diajar (pengajar), kecuali yang sudah diwalikan
-                                $kelasAjar = $teacher->kelas()->wherePivot('role', 'pengajar')->pluck('kelas.id')->toArray();
+                                $kelasAjar = $teacher->kelas
+                                    ->filter(fn ($kelas) => $kelas->pivot->role === 'pengajar' && ! $kelas->pivot->is_wali_kelas)
+                                    ->pluck('id')
+                                    ->toArray();
                                 
-                                // Ambil kelas yang diwalikan
-                                $kelasWali = $teacher->kelas()->wherePivot('is_wali_kelas', true)
-                                                            ->wherePivot('role', 'wali_kelas')
-                                                            ->first();
+                                $kelasWali = $currentWaliKelas;
                             @endphp
                             
                             @if(isset($kelasList) && $kelasList->count() > 0)
@@ -181,7 +183,7 @@
                                         </option>
                                     @endforeach
                                 </select>
-                                <p class="mt-1 text-sm text-gray-500">Tekan CTRL untuk memilih beberapa kelas yang akan diajar</p>
+                                <p class="mt-1 text-sm text-gray-500">Untuk wali kelas, mata pelajaran wajib reguler otomatis mengikuti kelas wali dan tidak perlu dipilih di sini.</p>
                             @else
                                 <div class="mt-1 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
                                     <p class="text-sm text-yellow-800">
@@ -206,7 +208,7 @@
 
                        <!-- Wali Kelas -->
                        <div id="wali_kelas_section" style="{{ $teacher->jabatan === 'guru_wali' ? '' : 'display:none;' }}">
-                            <label class="block text-sm font-medium text-gray-700">Wali Kelas Untuk</label>
+                            <label class="block text-sm font-medium text-gray-700">Pilih kelas wali</label>
                             
                             @if(isset($availableKelas) && $availableKelas->count() > 0)
                                 <select name="wali_kelas_id" id="wali_kelas_id"

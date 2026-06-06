@@ -74,8 +74,7 @@ function handleJabatanChange() {
 
     if (jabatan === 'guru_wali') {
         waliKelasSection.style.display = 'block';
-        kelasMengajarSection.style.display = 'block';
-        syncKelasWaliToKelasAjar();
+        kelasMengajarSection.style.display = 'none';
 
         if (waliKelasSelect && waliKelasSelect.dataset.syncBound !== 'true') {
             waliKelasSelect.addEventListener('change', syncKelasWaliToKelasAjar);
