@@ -688,6 +688,7 @@ class DemoSemesterGanjilSeeder extends Seeder
                 'siswa_id' => $students['ahmad']->id,
                 'ekstrakurikuler_id' => $pramuka->id,
                 'tahun_ajaran_id' => $tahunAjaran->id,
+                'semester' => self::SEMESTER,
             ],
             [
                 'predikat' => 'Baik',

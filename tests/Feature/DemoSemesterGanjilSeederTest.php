@@ -806,6 +806,7 @@ class DemoSemesterGanjilSeederTest extends TestCase
             $table->string('predikat')->nullable();
             $table->text('deskripsi')->nullable();
             $table->foreignId('tahun_ajaran_id')->nullable();
+            $table->tinyInteger('semester')->nullable();
             $table->timestamps();
             $table->softDeletes();
         });

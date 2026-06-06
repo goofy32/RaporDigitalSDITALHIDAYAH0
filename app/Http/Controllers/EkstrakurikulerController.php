@@ -4,7 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Models\Ekstrakurikuler;
 use App\Models\NilaiEkstrakurikuler;
-use App\Models\Siswa;
+use App\Models\TahunAjaran;
+use App\Services\SiswaKelasSemesterResolver;
 use App\Traits\RequiresTahunAjaran;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -14,6 +15,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 
 class EkstrakurikulerController extends Controller
 {
@@ -125,20 +127,15 @@ class EkstrakurikulerController extends Controller
             return $this->failTahunAjaranNotSet($request);
         }
 
-        $waliKelas = auth()->guard('guru')->user();
-        $kelasWaliId = $this->getKelasWaliId($waliKelas->id, $tahunAjaranId) ?? $waliKelas->getWaliKelasId();
+        $context = $this->resolveWaliEkstrakurikulerContext($tahunAjaranId);
 
-        if (!$kelasWaliId) {
-            return redirect()->back()->with('error', 'Anda belum ditugaskan sebagai wali kelas untuk kelas manapun.');
-        }
-
-        $siswas = $this->getWaliKelasSiswas($kelasWaliId);
+        $siswas = $this->getWaliKelasSiswas($context['kelas_id'], $tahunAjaranId, $context['semester']);
         $masterEkskul = $this->getMasterEkstrakurikuler($tahunAjaranId);
         $pramukaId = $masterEkskul->first(function ($ekskul) {
             return strcasecmp($ekskul->nama_ekstrakurikuler, 'Pramuka') === 0;
         })?->id;
 
-        $ekskulData = $this->buildEkstrakurikulerDataMap($siswas, $tahunAjaranId);
+        $ekskulData = $this->buildEkstrakurikulerDataMap($siswas, $tahunAjaranId, $context['semester']);
 
         return view('wali_kelas.ekstrakurikuler', compact(
             'siswas',
@@ -156,17 +153,9 @@ class EkstrakurikulerController extends Controller
             return $this->failTahunAjaranNotSet($request, true);
         }
 
-        $waliKelas = auth()->guard('guru')->user();
-        $kelasWaliId = $this->getKelasWaliId($waliKelas->id, $tahunAjaranId) ?? $waliKelas->getWaliKelasId();
+        $context = $this->resolveWaliEkstrakurikulerContext($tahunAjaranId);
 
-        if (!$kelasWaliId) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Anda belum ditugaskan sebagai wali kelas untuk kelas manapun.',
-            ], 422);
-        }
-
-        $siswas = $this->getWaliKelasSiswas($kelasWaliId);
+        $siswas = $this->getWaliKelasSiswas($context['kelas_id'], $tahunAjaranId, $context['semester']);
         $allowedStudentIds = $siswas->pluck('id')->map(fn ($id) => (int) $id)->all();
         $masterEkskul = $this->getMasterEkstrakurikuler($tahunAjaranId);
         $allowedEkskulIds = $masterEkskul->pluck('id')->map(fn ($id) => (int) $id)->all();
@@ -200,12 +189,13 @@ class EkstrakurikulerController extends Controller
 
         try {
             $this->validateBulkEkstrakurikulerRows($rows, $allowedStudentIds, $allowedEkskulIds);
+            $this->validateDeletedEkstrakurikulerIds($deletedIds, $allowedStudentIds, $tahunAjaranId, $context['semester']);
 
-            DB::transaction(function () use ($rows, $deletedIds, $allowedStudentIds, $tahunAjaranId) {
+            DB::transaction(function () use ($rows, $deletedIds, $allowedStudentIds, $tahunAjaranId, $context) {
                 if ($deletedIds->isNotEmpty()) {
                     NilaiEkstrakurikuler::whereIn('id', $deletedIds->all())
                         ->whereIn('siswa_id', $allowedStudentIds)
-                        ->where('tahun_ajaran_id', $tahunAjaranId)
+                        ->context($tahunAjaranId, $context['semester'])
                         ->get()
                         ->each(function (NilaiEkstrakurikuler $nilaiEkstrakurikuler) {
                             $nilaiEkstrakurikuler->delete();
@@ -215,7 +205,7 @@ class EkstrakurikulerController extends Controller
                 foreach ($rows as $index => $row) {
                     $duplicateQuery = NilaiEkstrakurikuler::where('siswa_id', $row['siswa_id'])
                         ->where('ekstrakurikuler_id', $row['ekstrakurikuler_id'])
-                        ->where('tahun_ajaran_id', $tahunAjaranId);
+                        ->context($tahunAjaranId, $context['semester']);
 
                     if (!empty($row['id'])) {
                         $duplicateQuery->where('id', '!=', $row['id']);
@@ -232,19 +222,20 @@ class EkstrakurikulerController extends Controller
                         'ekstrakurikuler_id' => $row['ekstrakurikuler_id'],
                         'deskripsi' => $row['deskripsi'] ?? '',
                         'tahun_ajaran_id' => $tahunAjaranId,
+                        'semester' => $context['semester'],
                     ];
 
                     if (!empty($row['id'])) {
                         $nilaiEkstrakurikuler = NilaiEkstrakurikuler::where('id', $row['id'])
                             ->whereIn('siswa_id', $allowedStudentIds)
-                            ->where('tahun_ajaran_id', $tahunAjaranId)
+                            ->context($tahunAjaranId, $context['semester'])
                             ->first();
 
                         if (!$nilaiEkstrakurikuler) {
-                            throw ValidationException::withMessages([
-                                "rows.{$index}.id" => ['Data ekstrakurikuler tidak ditemukan atau tidak dapat diubah.'],
-                            ]);
+                            abort(403);
                         }
+
+                        abort_unless((int) $nilaiEkstrakurikuler->siswa_id === (int) $row['siswa_id'], 403);
 
                         $nilaiEkstrakurikuler->update($payload);
                     } else {
@@ -263,30 +254,26 @@ class EkstrakurikulerController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Data ekstrakurikuler berhasil disimpan.',
-            'ekskul_data' => $this->buildEkstrakurikulerDataMap($siswas, $tahunAjaranId),
+            'ekskul_data' => $this->buildEkstrakurikulerDataMap($siswas, $tahunAjaranId, $context['semester']),
         ]);
     }
 
     public function waliKelasCreate()
     {
         $guru = auth()->guard('guru')->user();
-        $tahunAjaranId = session('tahun_ajaran_id');
+        $tahunAjaranId = $this->getValidTahunAjaranId();
+        abort_unless($tahunAjaranId, 403);
 
-        $kelasWaliId = $this->getKelasWaliId($guru->id, $tahunAjaranId);
+        $context = $this->resolveWaliEkstrakurikulerContext($tahunAjaranId);
 
         Log::info('EkstrakurikulerController::waliKelasCreate', [
             'guru_id' => $guru->id,
             'tahun_ajaran_id' => $tahunAjaranId,
-            'kelas_wali_id' => $kelasWaliId,
+            'semester' => $context['semester'],
+            'kelas_wali_id' => $context['kelas_id'],
         ]);
 
-        if (!$kelasWaliId) {
-            return redirect()->back()->with('error', 'Anda belum ditugaskan sebagai wali kelas untuk kelas manapun pada tahun ajaran ini.');
-        }
-
-        $siswa = Siswa::where('kelas_id', $kelasWaliId)
-            ->orderBy('nama')
-            ->get();
+        $siswa = $this->getWaliKelasSiswas($context['kelas_id'], $tahunAjaranId, $context['semester']);
 
         $ekstrakurikuler = $this->getMasterEkstrakurikuler($tahunAjaranId);
 
@@ -294,6 +281,8 @@ class EkstrakurikulerController extends Controller
             'siswa_count' => $siswa->count(),
             'ekstrakurikuler_count' => $ekstrakurikuler->count(),
         ]);
+
+        $kelasWaliId = $context['kelas_id'];
 
         return view('wali_kelas.add_ekstrakurikuler', compact('ekstrakurikuler', 'siswa', 'kelasWaliId'));
     }
@@ -306,36 +295,29 @@ class EkstrakurikulerController extends Controller
             return $this->failTahunAjaranNotSet($request);
         }
 
-        $waliKelas = auth()->guard('guru')->user();
-        $kelasWaliId = $this->getKelasWaliId($waliKelas->id, $tahunAjaranId) ?? $waliKelas->getWaliKelasId();
-
-        if (!$kelasWaliId) {
-            return redirect()->back()->with('error', 'Anda belum ditugaskan sebagai wali kelas untuk kelas manapun.');
-        }
+        $context = $this->resolveWaliEkstrakurikulerContext($tahunAjaranId);
 
         $validated = $request->validate([
-            'siswa_id' => [
-                'required',
-                'exists:siswas,id',
-                function ($attribute, $value, $fail) use ($kelasWaliId) {
-                    $siswa = Siswa::find($value);
-                    if (!$siswa || $siswa->kelas_id !== $kelasWaliId) {
-                        $fail('Siswa tidak terdaftar di kelas Anda.');
-                    }
-                },
-            ],
+            'siswa_id' => 'required|exists:siswas,id',
             'ekstrakurikuler_id' => 'required|exists:ekstrakurikulers,id',
             'predikat' => 'required|in:A,B,C,D',
             'deskripsi' => 'nullable|string',
         ]);
 
+        $siswas = $this->getWaliKelasSiswas($context['kelas_id'], $tahunAjaranId, $context['semester']);
+        $allowedStudentIds = $siswas->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $allowedEkskulIds = $this->getMasterEkstrakurikuler($tahunAjaranId)->pluck('id')->map(fn ($id) => (int) $id)->all();
+
+        abort_unless(in_array((int) $validated['siswa_id'], $allowedStudentIds, true), 403);
+        abort_unless(in_array((int) $validated['ekstrakurikuler_id'], $allowedEkskulIds, true), 403);
+
         $exists = NilaiEkstrakurikuler::where('siswa_id', $validated['siswa_id'])
             ->where('ekstrakurikuler_id', $validated['ekstrakurikuler_id'])
-            ->where('tahun_ajaran_id', $tahunAjaranId)
+            ->context($tahunAjaranId, $context['semester'])
             ->exists();
 
         if ($exists) {
-            return back()->with('error', 'Siswa sudah memiliki nilai untuk ekstrakurikuler ini pada tahun ajaran yang sama.');
+            return back()->with('error', 'Siswa sudah memiliki nilai untuk ekstrakurikuler ini pada semester yang sama.');
         }
 
         $nilaiEkstrakurikuler = new NilaiEkstrakurikuler([
@@ -344,6 +326,7 @@ class EkstrakurikulerController extends Controller
             'predikat' => $validated['predikat'],
             'deskripsi' => $validated['deskripsi'],
             'tahun_ajaran_id' => $tahunAjaranId,
+            'semester' => $context['semester'],
         ]);
 
         $nilaiEkstrakurikuler->save();
@@ -354,24 +337,25 @@ class EkstrakurikulerController extends Controller
 
     public function waliKelasEdit($id)
     {
-        $waliKelas = auth()->guard('guru')->user();
-        $tahunAjaranId = session('tahun_ajaran_id');
-        $kelasWaliId = $this->getKelasWaliId($waliKelas->id, $tahunAjaranId) ?? $waliKelas->getWaliKelasId();
+        $tahunAjaranId = $this->getValidTahunAjaranId();
+        abort_unless($tahunAjaranId, 403);
 
-        if (!$kelasWaliId) {
-            return redirect()->back()->with('error', 'Anda belum ditugaskan sebagai wali kelas untuk kelas manapun.');
-        }
+        $context = $this->resolveWaliEkstrakurikulerContext($tahunAjaranId);
 
         try {
-            $nilaiEkstrakurikuler = NilaiEkstrakurikuler::with(['siswa', 'ekstrakurikuler'])
-                ->where('tahun_ajaran_id', $tahunAjaranId)
-                ->whereHas('siswa', function ($query) use ($kelasWaliId) {
-                    $query->where('kelas_id', $kelasWaliId);
-                })
-                ->findOrFail($id);
+            $nilaiEkstrakurikuler = $this->findAuthorizedNilaiEkstrakurikuler(
+                (int) $id,
+                $context['kelas_id'],
+                $tahunAjaranId,
+                $context['semester']
+            );
 
             return view('wali_kelas.edit_ekstrakurikuler', compact('nilaiEkstrakurikuler'));
         } catch (\Exception $e) {
+            if ($e instanceof HttpExceptionInterface && $e->getStatusCode() === 403) {
+                throw $e;
+            }
+
             Log::error('Error editing ekstrakurikuler: ' . $e->getMessage());
 
             return redirect()->route('wali_kelas.ekstrakurikuler.index')
@@ -387,12 +371,7 @@ class EkstrakurikulerController extends Controller
             return $this->failTahunAjaranNotSet($request);
         }
 
-        $waliKelas = auth()->guard('guru')->user();
-        $kelasWaliId = $this->getKelasWaliId($waliKelas->id, $tahunAjaranId) ?? $waliKelas->getWaliKelasId();
-
-        if (!$kelasWaliId) {
-            return redirect()->back()->with('error', 'Anda belum ditugaskan sebagai wali kelas untuk kelas manapun.');
-        }
+        $context = $this->resolveWaliEkstrakurikulerContext($tahunAjaranId);
 
         $validated = $request->validate([
             'predikat' => 'required|in:A,B,C,D',
@@ -402,17 +381,23 @@ class EkstrakurikulerController extends Controller
         $validated['tahun_ajaran_id'] = $tahunAjaranId;
 
         try {
-            $nilaiEkstrakurikuler = NilaiEkstrakurikuler::where('tahun_ajaran_id', $tahunAjaranId)
-                ->whereHas('siswa', function ($query) use ($kelasWaliId) {
-                    $query->where('kelas_id', $kelasWaliId);
-                })
-                ->findOrFail($id);
+            $nilaiEkstrakurikuler = $this->findAuthorizedNilaiEkstrakurikuler(
+                (int) $id,
+                $context['kelas_id'],
+                $tahunAjaranId,
+                $context['semester']
+            );
 
+            $validated['semester'] = $context['semester'];
             $nilaiEkstrakurikuler->update($validated);
 
             return redirect()->route('wali_kelas.ekstrakurikuler.index')
                 ->with('success', 'Data ekstrakurikuler berhasil diperbarui');
         } catch (\Exception $e) {
+            if ($e instanceof HttpExceptionInterface && $e->getStatusCode() === 403) {
+                throw $e;
+            }
+
             Log::error('Error updating ekstrakurikuler: ' . $e->getMessage());
 
             return redirect()->route('wali_kelas.ekstrakurikuler.index')
@@ -422,20 +407,16 @@ class EkstrakurikulerController extends Controller
 
     public function waliKelasDestroy($id)
     {
-        $tahunAjaranId = session('tahun_ajaran_id');
-        $waliKelas = auth()->guard('guru')->user();
-        $kelasWaliId = $this->getKelasWaliId($waliKelas->id, $tahunAjaranId) ?? $waliKelas->getWaliKelasId();
+        $tahunAjaranId = $this->getValidTahunAjaranId();
+        abort_unless($tahunAjaranId, 403);
 
-        if (!$kelasWaliId) {
-            return redirect()->route('wali_kelas.ekstrakurikuler.index')
-                ->with('error', 'Anda belum ditugaskan sebagai wali kelas untuk kelas manapun.');
-        }
-
-        $nilaiEkstrakurikuler = NilaiEkstrakurikuler::where('tahun_ajaran_id', $tahunAjaranId)
-            ->whereHas('siswa', function ($query) use ($kelasWaliId) {
-                $query->where('kelas_id', $kelasWaliId);
-            })
-            ->findOrFail($id);
+        $context = $this->resolveWaliEkstrakurikulerContext($tahunAjaranId);
+        $nilaiEkstrakurikuler = $this->findAuthorizedNilaiEkstrakurikuler(
+            (int) $id,
+            $context['kelas_id'],
+            $tahunAjaranId,
+            $context['semester']
+        );
 
         $nilaiEkstrakurikuler->delete();
 
@@ -456,11 +437,40 @@ class EkstrakurikulerController extends Controller
             ->value('kelas.id');
     }
 
-    private function getWaliKelasSiswas(int $kelasWaliId): Collection
+    private function resolveWaliEkstrakurikulerContext(int $tahunAjaranId): array
     {
-        return Siswa::where('kelas_id', $kelasWaliId)
-            ->orderBy('nama')
-            ->get(['id', 'nis', 'nama']);
+        $waliKelas = auth()->guard('guru')->user();
+
+        abort_unless($waliKelas && session('selected_role') === 'wali_kelas', 403);
+
+        $semester = $this->getSemesterForTahunAjaran($tahunAjaranId);
+        $kelasWaliId = $this->getKelasWaliId($waliKelas->id, $tahunAjaranId);
+
+        abort_unless($kelasWaliId, 403);
+
+        return [
+            'guru_id' => (int) $waliKelas->id,
+            'kelas_id' => (int) $kelasWaliId,
+            'tahun_ajaran_id' => $tahunAjaranId,
+            'semester' => $semester,
+        ];
+    }
+
+    private function getSemesterForTahunAjaran(int $tahunAjaranId): int
+    {
+        $semester = TahunAjaran::whereKey($tahunAjaranId)->value('semester');
+
+        abort_unless(in_array((int) $semester, [1, 2], true), 403);
+
+        return (int) $semester;
+    }
+
+    private function getWaliKelasSiswas(int $kelasWaliId, int $tahunAjaranId, int $semester): Collection
+    {
+        return app(SiswaKelasSemesterResolver::class)
+            ->studentsForClass($kelasWaliId, $tahunAjaranId, $semester, true)
+            ->unique('id')
+            ->values();
     }
 
     private function getMasterEkstrakurikuler(?int $tahunAjaranId): Collection
@@ -473,7 +483,7 @@ class EkstrakurikulerController extends Controller
             ->get(['id', 'nama_ekstrakurikuler']);
     }
 
-    private function buildEkstrakurikulerDataMap(Collection $siswas, ?int $tahunAjaranId): array
+    private function buildEkstrakurikulerDataMap(Collection $siswas, ?int $tahunAjaranId, int $semester): array
     {
         $studentIds = $siswas->pluck('id');
 
@@ -482,6 +492,7 @@ class EkstrakurikulerController extends Controller
             ->when($tahunAjaranId, function ($query) use ($tahunAjaranId) {
                 $query->where('tahun_ajaran_id', $tahunAjaranId);
             })
+            ->where('semester', $semester)
             ->orderBy('siswa_id')
             ->orderBy('id')
             ->get()
@@ -506,6 +517,42 @@ class EkstrakurikulerController extends Controller
         })->all();
     }
 
+    private function validateDeletedEkstrakurikulerIds(Collection $deletedIds, array $allowedStudentIds, int $tahunAjaranId, int $semester): void
+    {
+        if ($deletedIds->isEmpty()) {
+            return;
+        }
+
+        $authorizedCount = NilaiEkstrakurikuler::whereIn('id', $deletedIds->all())
+            ->whereIn('siswa_id', $allowedStudentIds)
+            ->context($tahunAjaranId, $semester)
+            ->count();
+
+        abort_unless($authorizedCount === $deletedIds->count(), 403);
+    }
+
+    private function findAuthorizedNilaiEkstrakurikuler(
+        int $id,
+        int $kelasWaliId,
+        int $tahunAjaranId,
+        int $semester
+    ): NilaiEkstrakurikuler {
+        $allowedStudentIds = $this->getWaliKelasSiswas($kelasWaliId, $tahunAjaranId, $semester)
+            ->pluck('id')
+            ->map(fn ($studentId) => (int) $studentId)
+            ->all();
+
+        $nilaiEkstrakurikuler = NilaiEkstrakurikuler::with(['siswa', 'ekstrakurikuler'])
+            ->whereKey($id)
+            ->whereIn('siswa_id', $allowedStudentIds)
+            ->context($tahunAjaranId, $semester)
+            ->first();
+
+        abort_unless($nilaiEkstrakurikuler, 403);
+
+        return $nilaiEkstrakurikuler;
+    }
+
     private function validateBulkEkstrakurikulerRows(Collection $rows, array $allowedStudentIds, array $allowedEkskulIds): void
     {
         $seenPairs = [];
@@ -515,15 +562,11 @@ class EkstrakurikulerController extends Controller
             $ekstrakurikulerId = (int) $row['ekstrakurikuler_id'];
 
             if (!in_array($siswaId, $allowedStudentIds, true)) {
-                throw ValidationException::withMessages([
-                    "rows.{$index}.siswa_id" => ['Siswa tidak terdaftar di kelas Anda.'],
-                ]);
+                abort(403);
             }
 
             if (!in_array($ekstrakurikulerId, $allowedEkskulIds, true)) {
-                throw ValidationException::withMessages([
-                    "rows.{$index}.ekstrakurikuler_id" => ['Ekstrakurikuler tidak tersedia untuk tahun ajaran aktif.'],
-                ]);
+                abort(403);
             }
 
             $pairKey = $siswaId . ':' . $ekstrakurikulerId;
