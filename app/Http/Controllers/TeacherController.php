@@ -429,7 +429,7 @@ class TeacherController extends Controller
             ->get();
 
         // Ambil data kelas wali saat ini
-        $currentWaliKelas = $teacher->kelasWali->first();
+        $currentWaliKelas = $teacher->getRelation('kelasWali')->first();
 
         return view('data.edit_teacher', compact(
             'teacher',

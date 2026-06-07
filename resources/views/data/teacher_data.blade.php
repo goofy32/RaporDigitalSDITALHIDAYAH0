@@ -111,7 +111,14 @@
                                             ->values();
 
                                         $teachingLabels = $subjectsWithClasses
-                                            ->map(fn ($subject) => "{$subject->nama_pelajaran} - {$subject->kelas->label_kelas}")
+                                            ->map(function ($subject) {
+                                                $subjectName = trim((string) $subject->nama_pelajaran);
+                                                $classSuffix = trim((string) $subject->kelas->nama_kelas);
+
+                                                return $subjectName !== '' && strcasecmp($subjectName, $classSuffix) !== 0
+                                                    ? "{$subjectName} - {$subject->kelas->label_kelas}"
+                                                    : $subject->kelas->label_kelas;
+                                            })
                                             ->toBase()
                                             ->merge(
                                                 $teacher->kelas

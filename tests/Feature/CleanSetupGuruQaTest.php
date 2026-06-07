@@ -145,6 +145,56 @@ class CleanSetupGuruQaTest extends TestCase
         $this->assertDatabaseMissing('siswas', ['nis' => '12345']);
     }
 
+    public function test_duplicate_student_unique_fields_show_indonesian_messages_on_create(): void
+    {
+        $this->insertStudent('12345', '1234567890', $this->kelas5AId, 'Siswa Lama');
+
+        $response = $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->from(route('student.create'))
+            ->post(route('student.store'), $this->studentPayload([
+                'nis' => '12345',
+                'nisn' => '1234567890',
+                'nama' => 'Siswa Baru',
+            ]));
+
+        $response
+            ->assertRedirect(route('student.create'))
+            ->assertSessionHasErrors([
+                'nis' => 'NIS sudah digunakan.',
+                'nisn' => 'NISN sudah digunakan.',
+            ]);
+
+        $this->assertNotContains('validation.unique', session('errors')->getBag('default')->all());
+        $this->assertDatabaseMissing('siswas', ['nama' => 'Siswa Baru']);
+    }
+
+    public function test_duplicate_student_unique_fields_show_indonesian_messages_on_update(): void
+    {
+        $this->insertStudent('12345', '1234567890', $this->kelas5AId, 'Siswa Lama');
+        $targetId = $this->insertStudent('54321', '0987654321', $this->kelas5BId, 'Siswa Target');
+
+        $response = $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->from(route('student.edit', $targetId))
+            ->put(route('student.update', $targetId), $this->studentPayload([
+                'nis' => '12345',
+                'nisn' => '1234567890',
+                'nama' => 'Siswa Target',
+                'kelas_id' => $this->kelas5BId,
+            ]));
+
+        $response
+            ->assertRedirect(route('student.edit', $targetId))
+            ->assertSessionHasErrors([
+                'nis' => 'NIS sudah digunakan.',
+                'nisn' => 'NISN sudah digunakan.',
+            ]);
+
+        $this->assertNotContains('validation.unique', session('errors')->getBag('default')->all());
+        $this->assertSame('54321', DB::table('siswas')->where('id', $targetId)->value('nis'));
+    }
+
     public function test_teacher_create_form_uses_clear_labels_and_date_limit(): void
     {
         $this->actingAs($this->admin, 'web')
@@ -155,6 +205,49 @@ class CleanSetupGuruQaTest extends TestCase
             ->assertSee('Pilih kelas wali')
             ->assertSee('Kelas yang diajar sebagai pengajar khusus/muatan lokal')
             ->assertSee('max="'.now()->subDay()->format('Y-m-d').'"', false);
+    }
+
+    public function test_editing_regular_pengajar_without_wali_assignment_does_not_crash(): void
+    {
+        $guruId = $this->insertGuru('Guru Yusuf', 'yusuf_no_wali', null);
+
+        DB::table('guru_kelas')->insert([
+            'guru_id' => $guruId,
+            'kelas_id' => $this->kelas5BId,
+            'is_wali_kelas' => false,
+            'role' => 'pengajar',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->get(route('teacher.edit', $guruId))
+            ->assertOk()
+            ->assertSee('Pengajar Biasa')
+            ->assertSee('Kelas 5B');
+    }
+
+    public function test_editing_wali_guru_still_loads_current_wali_assignment(): void
+    {
+        $guruId = $this->insertGuru('Guru Wali', 'wali_clean', null);
+        DB::table('gurus')->where('id', $guruId)->update(['jabatan' => 'guru_wali']);
+
+        DB::table('guru_kelas')->insert([
+            'guru_id' => $guruId,
+            'kelas_id' => $this->kelas5AId,
+            'is_wali_kelas' => true,
+            'role' => 'wali_kelas',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->get(route('teacher.edit', $guruId))
+            ->assertOk()
+            ->assertSee('Saat ini menjadi wali kelas')
+            ->assertSee('Kelas 5A');
     }
 
     /**
@@ -176,6 +269,26 @@ class CleanSetupGuruQaTest extends TestCase
             'username' => 'guru_demo',
             'password' => 'password',
             'password_confirmation' => 'password',
+        ], $overrides);
+    }
+
+    /**
+     * @param  array<string, mixed>  $overrides
+     * @return array<string, mixed>
+     */
+    private function studentPayload(array $overrides = []): array
+    {
+        return array_merge([
+            'nis' => '12345',
+            'nisn' => '1234567890',
+            'nama' => 'Siswa Demo',
+            'tanggal_lahir' => '2016-01-01',
+            'jenis_kelamin' => 'Laki-laki',
+            'agama' => 'Islam',
+            'alamat' => 'Jl. Demo',
+            'kelas_id' => $this->kelas5AId,
+            'nama_ayah' => 'Ayah Demo',
+            'nama_ibu' => 'Ibu Demo',
         ], $overrides);
     }
 
@@ -365,6 +478,25 @@ class CleanSetupGuruQaTest extends TestCase
             'jabatan' => 'guru',
             'username' => $username,
             'password' => Hash::make('password'),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function insertStudent(string $nis, string $nisn, int $kelasId, string $name): int
+    {
+        return DB::table('siswas')->insertGetId([
+            'nis' => $nis,
+            'nisn' => $nisn,
+            'nama' => $name,
+            'tanggal_lahir' => '2016-01-01',
+            'jenis_kelamin' => 'Laki-laki',
+            'agama' => 'Islam',
+            'alamat' => 'Jl. Demo',
+            'kelas_id' => $kelasId,
+            'nama_ayah' => 'Ayah Demo',
+            'nama_ibu' => 'Ibu Demo',
+            'tahun_ajaran_id' => $this->yearId,
             'created_at' => now(),
             'updated_at' => now(),
         ]);

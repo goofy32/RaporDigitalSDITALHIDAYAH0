@@ -108,6 +108,68 @@ class TeacherListDisplayTest extends TestCase
             ->assertDontSee('Kelas 5 a');
     }
 
+    public function test_teacher_responsibility_display_does_not_use_class_suffix_as_subject_label(): void
+    {
+        $kelas5BId = DB::table('kelas')->insertGetId([
+            'nomor_kelas' => 5,
+            'nama_kelas' => 'b',
+            'tahun_ajaran_id' => $this->yearId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $guruId = DB::table('gurus')->insertGetId([
+            'nama' => 'Yusuf Hidayat',
+            'jenis_kelamin' => 'Laki-laki',
+            'tanggal_lahir' => '1988-04-12',
+            'no_handphone' => '081200000002',
+            'email' => 'yusuf.suffix@example.test',
+            'alamat' => 'Jl. Demo',
+            'jabatan' => 'guru',
+            'username' => 'yusuf_suffix',
+            'password' => Hash::make('password'),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        DB::table('guru_kelas')->insert([
+            'guru_id' => $guruId,
+            'kelas_id' => $kelas5BId,
+            'is_wali_kelas' => false,
+            'role' => 'pengajar',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        DB::table('mata_pelajarans')->insert([
+            'nama_pelajaran' => 'b',
+            'kelas_id' => $kelas5BId,
+            'guru_id' => $guruId,
+            'semester' => 1,
+            'is_muatan_lokal' => false,
+            'allow_non_wali' => true,
+            'tahun_ajaran_id' => $this->yearId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession(['tahun_ajaran_id' => $this->yearId, 'selected_semester' => 1])
+            ->get(route('teacher'))
+            ->assertOk()
+            ->assertSee('Yusuf Hidayat')
+            ->assertSee('Mengajar:')
+            ->assertSee('Kelas 5B')
+            ->assertDontSee('b - Kelas 5B');
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession(['tahun_ajaran_id' => $this->yearId, 'selected_semester' => 1])
+            ->get(route('teacher.show', $guruId))
+            ->assertOk()
+            ->assertSee('Kelas 5B')
+            ->assertDontSee('b - Kelas 5B');
+    }
+
     private function createSchema(): void
     {
         foreach ([

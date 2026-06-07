@@ -218,6 +218,8 @@ class StudentController extends Controller
             'wali_siswa' => 'nullable|string|max:255',
             'pekerjaan_wali' => 'nullable|string|max:100',
         ], [
+            'nis.unique' => 'NIS sudah digunakan.',
+            'nisn.unique' => 'NISN sudah digunakan.',
             'tanggal_lahir.before' => 'Tanggal lahir harus sebelum hari ini.',
         ]);
     
@@ -297,6 +299,8 @@ class StudentController extends Controller
             'wali_siswa' => 'nullable|string|max:255',
             'pekerjaan_wali' => 'nullable|string|max:100',
         ], [
+            'nis.unique' => 'NIS sudah digunakan.',
+            'nisn.unique' => 'NISN sudah digunakan.',
             'tanggal_lahir.before' => 'Tanggal lahir harus sebelum hari ini.',
         ]);
     
