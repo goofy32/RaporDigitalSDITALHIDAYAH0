@@ -90,7 +90,12 @@ return new class extends Migration
         $database = DB::connection()->getDatabaseName();
 
         return DB::table('information_schema.columns')
-            ->select('column_name', 'column_type', 'is_nullable', 'column_key')
+            ->select([
+                'COLUMN_NAME as column_name',
+                'COLUMN_TYPE as column_type',
+                'IS_NULLABLE as is_nullable',
+                'COLUMN_KEY as column_key',
+            ])
             ->where('table_schema', $database)
             ->where('table_name', self::TABLE)
             ->get()
@@ -159,7 +164,12 @@ return new class extends Migration
         $database = DB::connection()->getDatabaseName();
 
         return DB::table('information_schema.statistics')
-            ->select('index_name', 'column_name', 'seq_in_index', 'non_unique')
+            ->select([
+                'INDEX_NAME as index_name',
+                'COLUMN_NAME as column_name',
+                'SEQ_IN_INDEX as seq_in_index',
+                'NON_UNIQUE as non_unique',
+            ])
             ->where('table_schema', $database)
             ->where('table_name', self::TABLE)
             ->orderBy('index_name')
@@ -231,7 +241,11 @@ return new class extends Migration
                     ->on('kcu.constraint_name', '=', 'rc.constraint_name')
                     ->where('rc.constraint_schema', $database);
             })
-            ->select('kcu.column_name', 'kcu.referenced_table_name', 'rc.delete_rule')
+            ->select([
+                'kcu.COLUMN_NAME as column_name',
+                'kcu.REFERENCED_TABLE_NAME as referenced_table_name',
+                'rc.DELETE_RULE as delete_rule',
+            ])
             ->where('kcu.table_schema', $database)
             ->where('kcu.table_name', self::TABLE)
             ->whereNotNull('kcu.referenced_table_name')
