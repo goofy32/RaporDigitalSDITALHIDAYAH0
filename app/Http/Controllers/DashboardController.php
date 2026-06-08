@@ -53,7 +53,7 @@ class DashboardController extends Controller
 
     public function adminDashboard()
     {
-        $tahunAjaranId = session('tahun_ajaran_id');
+        $tahunAjaranId = session('tahun_ajaran_id') ?: TahunAjaran::where('is_active', true)->value('id');
         $semester = $this->semesterForTahunAjaran($tahunAjaranId);
 
         $kelasIdsForStudents = Kelas::when($tahunAjaranId, function($query) use ($tahunAjaranId) {
@@ -68,11 +68,20 @@ class DashboardController extends Controller
             return $query->where('tahun_ajaran_id', $tahunAjaranId);
         })->count();
         
-        $totalSubjects = MataPelajaran::when($tahunAjaranId, function($query) use ($tahunAjaranId) {
-            return $query->where('tahun_ajaran_id', $tahunAjaranId);
-        })->when($semester, function($query) use ($semester) {
-            return $query->where('semester', $semester);
-        })->count();
+        $subjectAssignmentQuery = MataPelajaran::query()
+            ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
+                return $query->where('tahun_ajaran_id', $tahunAjaranId);
+            })
+            ->when($semester, function($query) use ($semester) {
+                return $query->where('semester', $semester);
+            });
+
+        $totalSubjectAssignments = $tahunAjaranId && $semester
+            ? (clone $subjectAssignmentQuery)->count()
+            : 0;
+        $totalSubjects = $tahunAjaranId && $semester
+            ? (clone $subjectAssignmentQuery)->whereNotNull('nama_pelajaran')->distinct()->count('nama_pelajaran')
+            : 0;
         
         $totalTeachers = Guru::count(); // Guru tetap dihitung semua
         
@@ -100,6 +109,7 @@ class DashboardController extends Controller
             'totalStudents',
             'totalTeachers',
             'totalSubjects',
+            'totalSubjectAssignments',
             'totalClasses',
             'totalExtracurriculars',
             'overallProgress',

@@ -62,7 +62,8 @@
                     <div class="rounded-lg bg-white border border-gray-200 shadow-sm overflow-hidden cursor-pointer hover:bg-gray-50 transition-colors" onclick="navigateTo('{{ route('subject.index') }}')">
                         <div class="p-4">
                             <p class="text-2xl font-bold text-green-600">{{ $totalSubjects }}</p>
-                            <p class="text-sm text-green-600">Mata Pelajaran</p>
+                            <p class="text-sm text-green-600">Jenis Mata Pelajaran</p>
+                            <p class="mt-1 text-xs text-gray-500">{{ $totalSubjectAssignments ?? 0 }} penugasan mapel</p>
                         </div>
                     </div>
                     

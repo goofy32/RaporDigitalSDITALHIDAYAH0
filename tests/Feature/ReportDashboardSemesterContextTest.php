@@ -249,7 +249,40 @@ class ReportDashboardSemesterContextTest extends TestCase
             ->assertOk()
             ->assertViewHas('totalStudents', 1)
             ->assertViewHas('totalSubjects', 1)
+            ->assertViewHas('totalSubjectAssignments', 1)
             ->assertViewHas('overallProgress', fn ($progress) => (float) $progress === 0.0);
+    }
+
+    public function test_admin_dashboard_subject_card_counts_unique_subject_names_in_selected_context(): void
+    {
+        $this->insertSubject('Matematika Ganjil', $this->pengajar->id, $this->otherClassId, $this->ganjilYearId, 1);
+        $this->insertSubject('PAI', $this->pengajar->id, $this->otherClassId, $this->ganjilYearId, 1);
+        $this->insertSubject('IPA Semester Lain', $this->pengajar->id, $this->otherClassId, $this->ganjilYearId, 2);
+        $this->insertSubject('IPAS Genap', $this->pengajar->id, $this->genapClassId, $this->genapYearId, 2);
+
+        $this->actingAs($this->admin)
+            ->withSession($this->sessionFor($this->ganjilYearId, 1, 'admin'))
+            ->get(route('admin.dashboard'))
+            ->assertOk()
+            ->assertViewHas('totalSubjects', 2)
+            ->assertViewHas('totalSubjectAssignments', 3)
+            ->assertSee('Jenis Mata Pelajaran')
+            ->assertSee('3 penugasan mapel');
+    }
+
+    public function test_admin_dashboard_subject_card_returns_zero_without_academic_year_context(): void
+    {
+        $this->withoutMiddleware(\App\Http\Middleware\CheckBasicSetup::class);
+
+        DB::table('tahun_ajarans')->delete();
+        Cache::flush();
+
+        $this->actingAs($this->admin)
+            ->get(route('admin.dashboard'))
+            ->assertOk()
+            ->assertViewHas('totalSubjects', 0)
+            ->assertViewHas('totalSubjectAssignments', 0)
+            ->assertSee('0 penugasan mapel');
     }
 
     private function actingAsWali(int $tahunAjaranId, int $semester): self
