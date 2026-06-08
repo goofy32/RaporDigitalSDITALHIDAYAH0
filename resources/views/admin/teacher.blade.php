@@ -96,46 +96,8 @@
                     </td>
                     <td class="px-6 py-4">
                         @php
-                            $waliLabels = $teacher->kelas
-                                ->filter(fn ($kelas) => $kelas->pivot->is_wali_kelas || $kelas->pivot->role === 'wali_kelas')
-                                ->map(fn ($kelas) => $kelas->label_kelas)
-                                ->unique()
-                                ->values();
-
-                            $subjectsWithClasses = $teacher->mataPelajarans
-                                ->filter(fn ($subject) => $subject->kelas);
-
-                            $subjectClassIds = $subjectsWithClasses
-                                ->pluck('kelas_id')
-                                ->map(fn ($kelasId) => (int) $kelasId)
-                                ->toBase()
-                                ->unique()
-                                ->values();
-
-                            $subjectLabels = $subjectsWithClasses
-                                ->map(function ($subject) {
-                                    $subjectName = trim((string) $subject->nama_pelajaran);
-                                    $classSuffix = trim((string) $subject->kelas->nama_kelas);
-
-                                    return $subjectName !== '' && strcasecmp($subjectName, $classSuffix) !== 0
-                                        ? "{$subjectName} - {$subject->kelas->label_kelas}"
-                                        : $subject->kelas->label_kelas;
-                                })
-                                ->toBase()
-                                ->unique()
-                                ->values();
-
-                            $classAssignmentLabels = $teacher->kelas
-                                ->filter(fn ($kelas) => $kelas->pivot->role === 'pengajar' && ! $kelas->pivot->is_wali_kelas)
-                                ->reject(fn ($kelas) => $subjectClassIds->contains((int) $kelas->id))
-                                ->map(fn ($kelas) => $kelas->label_kelas)
-                                ->unique()
-                                ->values();
-
-                            $mengajarLabels = $subjectLabels
-                                ->merge($classAssignmentLabels)
-                                ->unique()
-                                ->values();
+                            $waliLabels = $teacher->waliClassLabels();
+                            $mengajarLabels = $teacher->teachingSummaryLabels();
                         @endphp
                         <div class="min-w-52 space-y-1 text-gray-700">
                             <div>
@@ -144,7 +106,15 @@
                             </div>
                             <div>
                                 <span class="font-medium text-gray-900">Mengajar:</span>
-                                <span>{{ $mengajarLabels->isNotEmpty() ? $mengajarLabels->join(', ') : '-' }}</span>
+                                @if($mengajarLabels->isNotEmpty())
+                                    <div class="mt-1 space-y-0.5">
+                                        @foreach($mengajarLabels as $label)
+                                            <div>{{ $label }}</div>
+                                        @endforeach
+                                    </div>
+                                @else
+                                    <span>-</span>
+                                @endif
                             </div>
                         </div>
                     </td>

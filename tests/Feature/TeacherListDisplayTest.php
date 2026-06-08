@@ -44,9 +44,10 @@ class TeacherListDisplayTest extends TestCase
             ->assertSee('Wali Kelas:')
             ->assertSee('Mengajar:')
             ->assertSee('Kelas 5A')
-            ->assertSee('Matematika - Kelas 5A')
+            ->assertSee('1 mapel di Kelas 5A')
             ->assertDontSee('Kelas 5A, Kelas 5A')
             ->assertDontSee('Kelas 5A, Kelas 5A (Wali Kelas)')
+            ->assertDontSee('Matematika - Kelas 5A')
             ->assertDontSee('Matematika - 5a')
             ->assertDontSee('Kelas 5 a');
     }
@@ -102,8 +103,9 @@ class TeacherListDisplayTest extends TestCase
             ->withSession(['tahun_ajaran_id' => $this->yearId, 'selected_semester' => 1])
             ->get(route('teacher.show', $guruId))
             ->assertOk()
-            ->assertSee('Matematika - Kelas 5A')
             ->assertSee('Kelas 5A')
+            ->assertSee('Matematika')
+            ->assertDontSee('Matematika - Kelas 5A')
             ->assertDontSee('Matematika - 5a')
             ->assertDontSee('Kelas 5 a');
     }
@@ -168,6 +170,142 @@ class TeacherListDisplayTest extends TestCase
             ->assertOk()
             ->assertSee('Kelas 5B')
             ->assertDontSee('b - Kelas 5B');
+    }
+
+    public function test_class_label_formats_single_letters_and_named_classes(): void
+    {
+        $kelas1AId = DB::table('kelas')->insertGetId([
+            'nomor_kelas' => 1,
+            'nama_kelas' => 'a',
+            'tahun_ajaran_id' => $this->yearId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $kelas2NameId = DB::table('kelas')->insertGetId([
+            'nomor_kelas' => 2,
+            'nama_kelas' => 'ABU UBAIDAH',
+            'tahun_ajaran_id' => $this->yearId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $kelas5NameId = DB::table('kelas')->insertGetId([
+            'nomor_kelas' => 5,
+            'nama_kelas' => 'ali bin abi thalib',
+            'tahun_ajaran_id' => $this->yearId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->assertSame('Kelas 1A', \App\Models\Kelas::findOrFail($kelas1AId)->label_kelas);
+        $this->assertSame('Kelas 2 Abu Ubaidah', \App\Models\Kelas::findOrFail($kelas2NameId)->label_kelas);
+        $this->assertSame('Kelas 5 Ali bin Abi Thalib', \App\Models\Kelas::findOrFail($kelas5NameId)->label_kelas);
+    }
+
+    public function test_teacher_index_groups_responsibilities_compactly_by_class(): void
+    {
+        $classId = DB::table('kelas')->insertGetId([
+            'nomor_kelas' => 2,
+            'nama_kelas' => 'ABU UBAIDAH',
+            'tahun_ajaran_id' => $this->yearId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $secondClassId = DB::table('kelas')->insertGetId([
+            'nomor_kelas' => 1,
+            'nama_kelas' => 'Ubay',
+            'tahun_ajaran_id' => $this->yearId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $guruId = $this->insertGuru('Guru Ringkas', 'guru_ringkas');
+
+        $this->attachGuruClass($guruId, $classId, true, 'wali_kelas');
+        $this->attachGuruClass($guruId, $classId, false, 'pengajar');
+        $this->attachGuruClass($guruId, $secondClassId, false, 'pengajar');
+
+        foreach (['B.Indonesia', 'Bahasa sunda', 'Mtk', 'IPAS', 'PLH', 'Seni Budaya'] as $subject) {
+            $this->insertSubject($subject, $guruId, $classId);
+        }
+        foreach (['PAI', 'PJOK'] as $subject) {
+            $this->insertSubject($subject, $guruId, $secondClassId);
+        }
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession(['tahun_ajaran_id' => $this->yearId, 'selected_semester' => 1])
+            ->get(route('teacher'))
+            ->assertOk()
+            ->assertSee('Wali Kelas:')
+            ->assertSee('Kelas 2 Abu Ubaidah')
+            ->assertSee('Kelas 1 Ubay: 2 mapel')
+            ->assertSee('Kelas 2 Abu Ubaidah: 6 mapel')
+            ->assertDontSee('B.Indonesia - Kelas 2 Abu Ubaidah, Bahasa sunda - Kelas 2 Abu Ubaidah');
+    }
+
+    public function test_teacher_detail_shows_grouped_subject_list(): void
+    {
+        $classId = DB::table('kelas')->insertGetId([
+            'nomor_kelas' => 2,
+            'nama_kelas' => 'ABU UBAIDAH',
+            'tahun_ajaran_id' => $this->yearId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $guruId = $this->insertGuru('Guru Detail', 'guru_detail');
+        $this->attachGuruClass($guruId, $classId, false, 'pengajar');
+        $this->insertSubject('B.Indonesia', $guruId, $classId);
+        $this->insertSubject('Bahasa sunda', $guruId, $classId);
+        $this->insertSubject('Mtk', $guruId, $classId);
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession(['tahun_ajaran_id' => $this->yearId, 'selected_semester' => 1])
+            ->get(route('teacher.show', $guruId))
+            ->assertOk()
+            ->assertSeeInOrder(['Kelas 2 Abu Ubaidah', 'B.Indonesia', 'Bahasa sunda', 'Mtk'])
+            ->assertDontSee('B.Indonesia - Kelas 2 Abu Ubaidah');
+    }
+
+    private function insertGuru(string $name, string $username): int
+    {
+        return DB::table('gurus')->insertGetId([
+            'nama' => $name,
+            'jenis_kelamin' => 'Laki-laki',
+            'tanggal_lahir' => '1988-04-12',
+            'no_handphone' => '081200000003',
+            'email' => "{$username}@example.test",
+            'alamat' => 'Jl. Demo',
+            'jabatan' => 'guru_wali',
+            'username' => $username,
+            'password' => Hash::make('password'),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function attachGuruClass(int $guruId, int $classId, bool $isWaliKelas, string $role): void
+    {
+        DB::table('guru_kelas')->insert([
+            'guru_id' => $guruId,
+            'kelas_id' => $classId,
+            'is_wali_kelas' => $isWaliKelas,
+            'role' => $role,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function insertSubject(string $name, int $guruId, int $classId): void
+    {
+        DB::table('mata_pelajarans')->insert([
+            'nama_pelajaran' => $name,
+            'kelas_id' => $classId,
+            'guru_id' => $guruId,
+            'semester' => 1,
+            'is_muatan_lokal' => false,
+            'allow_non_wali' => false,
+            'tahun_ajaran_id' => $this->yearId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
     }
 
     private function createSchema(): void

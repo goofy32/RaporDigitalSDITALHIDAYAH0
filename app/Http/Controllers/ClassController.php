@@ -84,21 +84,7 @@ class ClassController extends Controller
         $targetTahunAjaran = $tahunAjaranId ? TahunAjaran::find($tahunAjaranId) : null;
         $redirectTo = $request->query('redirect_to');
         
-        $assignedWaliKelasIds = DB::table('guru_kelas')
-            ->join('kelas', 'guru_kelas.kelas_id', '=', 'kelas.id')
-            ->where('guru_kelas.is_wali_kelas', true)
-            ->where('guru_kelas.role', 'wali_kelas')
-            ->when($tahunAjaranId, function ($query) use ($tahunAjaranId) {
-                $query->where('kelas.tahun_ajaran_id', $tahunAjaranId);
-            })
-            ->pluck('guru_kelas.guru_id');
-
-        $guruList = Guru::where('jabatan', 'guru_wali')
-            ->whereNotIn('id', $assignedWaliKelasIds)
-            ->orderBy('nama')
-            ->get();
-    
-        return view('data.create_class', compact('guruList', 'targetTahunAjaran', 'tahunAjaranId', 'redirectTo'));
+        return view('data.create_class', compact('targetTahunAjaran', 'tahunAjaranId', 'redirectTo'));
     }
 
     public function store(Request $request)
@@ -147,33 +133,6 @@ class ClassController extends Controller
                 'tahun_ajaran_id' => $tahunAjaranId,
             ]);
     
-            // Jika ada wali kelas yang dipilih
-            if ($request->filled('wali_kelas_id')) {
-                // Ambil data guru
-                $guru = Guru::find($request->wali_kelas_id);
-                
-                if (!$guru) {
-                    throw new \Exception('Guru tidak ditemukan');
-                }
-                
-                // Attach guru sebagai wali kelas
-                $kelas->guru()->attach($request->wali_kelas_id, [
-                    'is_wali_kelas' => true,
-                    'role' => 'wali_kelas'
-                ]);
-    
-                // Update jabatan guru menjadi guru_wali
-                $guru->jabatan = 'guru_wali';
-                $guru->save();
-                
-                // Tambahkan logging untuk debugging
-                Log::info('Mengubah jabatan guru', [
-                    'guru_id' => $guru->id,
-                    'nama' => $guru->nama,
-                    'jabatan_baru' => 'guru_wali'
-                ]);
-            }
-    
             DB::commit();
             $redirectTo = $this->safeClassRedirect($validated['redirect_to'] ?? null);
 
@@ -207,39 +166,9 @@ class ClassController extends Controller
 
     public function edit($id)
     {
-        $tahunAjaranId = session('tahun_ajaran_id');
         $kelas = Kelas::findOrFail($id);
-        
-        // Ambil data wali kelas saat ini (jika ada)
-        $waliKelas = $kelas->guru()
-                        ->wherePivot('is_wali_kelas', true)
-                        ->wherePivot('role', 'wali_kelas')
-                        ->first();
-        
-        $assignedWaliKelasIds = DB::table('guru_kelas')
-            ->join('kelas', 'guru_kelas.kelas_id', '=', 'kelas.id')
-            ->where('guru_kelas.is_wali_kelas', true)
-            ->where('guru_kelas.role', 'wali_kelas')
-            ->when($tahunAjaranId, function ($query) use ($tahunAjaranId) {
-                $query->where('kelas.tahun_ajaran_id', $tahunAjaranId);
-            })
-            ->when($waliKelas, function ($query) use ($waliKelas) {
-                $query->where('guru_kelas.guru_id', '!=', $waliKelas->id);
-            })
-            ->pluck('guru_kelas.guru_id');
 
-        $availableGuruList = Guru::where(function ($query) use ($waliKelas) {
-                $query->where('jabatan', 'guru_wali');
-
-                if ($waliKelas) {
-                    $query->orWhere('id', $waliKelas->id);
-                }
-            })
-            ->whereNotIn('id', $assignedWaliKelasIds)
-            ->orderBy('nama')
-            ->get();
-        
-        return view('data.edit_class', compact('kelas', 'waliKelas', 'availableGuruList'));
+        return view('data.edit_class', compact('kelas'));
     }
         
     public function update(Request $request, $id)

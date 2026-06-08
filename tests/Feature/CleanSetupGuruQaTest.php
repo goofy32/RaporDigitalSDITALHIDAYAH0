@@ -207,6 +207,63 @@ class CleanSetupGuruQaTest extends TestCase
             ->assertSee('max="'.now()->subDay()->format('Y-m-d').'"', false);
     }
 
+    public function test_class_forms_no_longer_render_wali_selector_but_guru_form_still_does(): void
+    {
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->get(route('kelas.create'))
+            ->assertOk()
+            ->assertSee('Nomor Kelas')
+            ->assertSee('Nama Kelas')
+            ->assertDontSee('Wali Kelas (Opsional)')
+            ->assertDontSee('Pilih Wali Kelas')
+            ->assertDontSee('name="wali_kelas_id"', false);
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->get(route('kelas.edit', $this->kelas5AId))
+            ->assertOk()
+            ->assertDontSee('Wali Kelas (Opsional)')
+            ->assertDontSee('Pilih Wali Kelas')
+            ->assertDontSee('name="wali_kelas_id"', false);
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->get(route('teacher.create'))
+            ->assertOk()
+            ->assertSee('Pilih kelas wali')
+            ->assertSee('name="wali_kelas_id"', false);
+    }
+
+    public function test_class_store_ignores_legacy_wali_field(): void
+    {
+        $guruId = $this->insertGuru('Guru Calon Wali', 'calon_wali', null);
+        DB::table('gurus')->where('id', $guruId)->update(['jabatan' => 'guru_wali']);
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->post(route('kelas.store'), [
+                'nomor_kelas' => 6,
+                'nama_kelas' => 'A',
+                'tahun_ajaran_id' => $this->yearId,
+                'target_tahun_ajaran_id' => $this->yearId,
+                'wali_kelas_id' => $guruId,
+            ])
+            ->assertRedirect(route('kelas.index'));
+
+        $newClassId = (int) DB::table('kelas')
+            ->where('nomor_kelas', 6)
+            ->where('nama_kelas', 'A')
+            ->value('id');
+
+        $this->assertGreaterThan(0, $newClassId);
+        $this->assertDatabaseMissing('guru_kelas', [
+            'guru_id' => $guruId,
+            'kelas_id' => $newClassId,
+            'role' => 'wali_kelas',
+        ]);
+    }
+
     public function test_editing_regular_pengajar_without_wali_assignment_does_not_crash(): void
     {
         $guruId = $this->insertGuru('Guru Yusuf', 'yusuf_no_wali', null);

@@ -157,7 +157,37 @@ class Kelas extends Model
 
     public function getLabelKelasAttribute(): string
     {
-        return 'Kelas '.$this->nomor_kelas.strtoupper((string) $this->nama_kelas);
+        $namaKelas = trim(preg_replace('/\s+/', ' ', (string) $this->nama_kelas));
+
+        if ($namaKelas === '') {
+            return 'Kelas '.$this->nomor_kelas;
+        }
+
+        if (preg_match('/^[[:alpha:]]$/u', $namaKelas)) {
+            return 'Kelas '.$this->nomor_kelas.mb_strtoupper($namaKelas, 'UTF-8');
+        }
+
+        return 'Kelas '.$this->nomor_kelas.' '.$this->formatClassName($namaKelas);
+    }
+
+    private function formatClassName(string $name): string
+    {
+        $particles = ['bin', 'binti', 'dan'];
+
+        return collect(explode(' ', mb_strtolower($name, 'UTF-8')))
+            ->map(function (string $word) use ($particles) {
+                return collect(explode('-', $word))
+                    ->map(function (string $part) use ($particles) {
+                        if ($part === '' || in_array($part, $particles, true)) {
+                            return $part;
+                        }
+
+                        return mb_strtoupper(mb_substr($part, 0, 1, 'UTF-8'), 'UTF-8')
+                            .mb_substr($part, 1, null, 'UTF-8');
+                    })
+                    ->join('-');
+            })
+            ->join(' ');
     }
 
     public function siswas()

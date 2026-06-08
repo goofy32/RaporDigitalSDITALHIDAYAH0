@@ -100,42 +100,26 @@
                                 <th class="px-4 py-2 font-medium text-gray-900">Kelas Mengajar</th>
                                 <td class="px-4 py-2">
                                     @php
-                                        $subjectsWithClasses = $teacher->mataPelajarans
-                                            ->filter(fn ($subject) => $subject->kelas);
-
-                                        $subjectClassIds = $subjectsWithClasses
-                                            ->pluck('kelas_id')
-                                            ->map(fn ($kelasId) => (int) $kelasId)
-                                            ->toBase()
-                                            ->unique()
-                                            ->values();
-
-                                        $teachingLabels = $subjectsWithClasses
-                                            ->map(function ($subject) {
-                                                $subjectName = trim((string) $subject->nama_pelajaran);
-                                                $classSuffix = trim((string) $subject->kelas->nama_kelas);
-
-                                                return $subjectName !== '' && strcasecmp($subjectName, $classSuffix) !== 0
-                                                    ? "{$subjectName} - {$subject->kelas->label_kelas}"
-                                                    : $subject->kelas->label_kelas;
-                                            })
-                                            ->toBase()
-                                            ->merge(
-                                                $teacher->kelas
-                                                    ->filter(fn ($kelas) => $kelas->pivot->role === 'pengajar' && ! $kelas->pivot->is_wali_kelas)
-                                                    ->reject(fn ($kelas) => $subjectClassIds->contains((int) $kelas->id))
-                                                    ->map(fn ($kelas) => $kelas->label_kelas)
-                                            )
-                                            ->unique()
-                                            ->values();
+                                        $teachingGroups = $teacher->groupedTeachingResponsibilities();
                                     @endphp
 
-                                    @if($teachingLabels->count() > 0)
-                                        <ul>
-                                            @foreach($teachingLabels as $label)
-                                                <li>{{ $label }}</li>
+                                    @if($teachingGroups->count() > 0)
+                                        <div class="space-y-3">
+                                            @foreach($teachingGroups as $classLabel => $subjects)
+                                                <div>
+                                                    <p class="font-medium text-gray-900">{{ $classLabel }}</p>
+                                                    @if($subjects->isNotEmpty())
+                                                        <ul class="mt-1 list-disc list-inside text-gray-600">
+                                                            @foreach($subjects as $subjectName)
+                                                                <li>{{ $subjectName }}</li>
+                                                            @endforeach
+                                                        </ul>
+                                                    @else
+                                                        <p class="mt-1 text-gray-500">Belum ada mata pelajaran.</p>
+                                                    @endif
+                                                </div>
                                             @endforeach
-                                        </ul>
+                                        </div>
                                     @else
                                         <span>-</span>
                                     @endif
@@ -146,13 +130,11 @@
                                 <th class="px-4 py-2 font-medium text-gray-900">Wali Kelas</th>
                                 <td class="px-4 py-2">
                                     @php
-                                        $kelasWali = $teacher->kelas
-                                            ->filter(fn ($kelas) => $kelas->pivot->is_wali_kelas || $kelas->pivot->role === 'wali_kelas')
-                                            ->first();
+                                        $waliLabels = $teacher->waliClassLabels();
                                     @endphp
 
-                                    @if($kelasWali)
-                                        {{ $kelasWali->label_kelas }}
+                                    @if($waliLabels->isNotEmpty())
+                                        {{ $waliLabels->join(', ') }}
                                     @else
                                         <span>Bukan Wali Kelas</span>
                                     @endif

@@ -188,6 +188,94 @@ class Guru extends Authenticatable
         return $this->hasMany(MataPelajaran::class, 'guru_id');
     }
 
+    public function waliClassLabels()
+    {
+        $classes = $this->relationLoaded('kelas')
+            ? $this->getRelation('kelas')
+            : $this->kelas()->get();
+
+        return $classes
+            ->filter(fn ($kelas) => $kelas->pivot->is_wali_kelas || $kelas->pivot->role === 'wali_kelas')
+            ->map(fn ($kelas) => $kelas->label_kelas)
+            ->unique()
+            ->values();
+    }
+
+    public function groupedTeachingResponsibilities()
+    {
+        $groups = collect();
+        $subjects = $this->relationLoaded('mataPelajarans')
+            ? $this->getRelation('mataPelajarans')
+            : $this->mataPelajarans()->with('kelas')->get();
+
+        foreach ($subjects->filter(fn ($subject) => $subject->kelas) as $subject) {
+            $classLabel = $subject->kelas->label_kelas;
+            $existingSubjects = $groups->get($classLabel, collect());
+            $subjectName = trim((string) $subject->nama_pelajaran);
+
+            if ($this->shouldDisplaySubjectName($subject)) {
+                $existingSubjects->push($subjectName);
+            }
+
+            $groups->put($classLabel, $existingSubjects->unique()->values());
+        }
+
+        $classes = $this->relationLoaded('kelas')
+            ? $this->getRelation('kelas')
+            : $this->kelas()->get();
+
+        $classes
+            ->filter(fn ($kelas) => $kelas->pivot->role === 'pengajar' && ! $kelas->pivot->is_wali_kelas)
+            ->each(function ($kelas) use ($groups) {
+                $groups->put($kelas->label_kelas, $groups->get($kelas->label_kelas, collect())->unique()->values());
+            });
+
+        return $groups->sortKeys();
+    }
+
+    public function teachingSummaryLabels()
+    {
+        $groups = $this->groupedTeachingResponsibilities();
+        $hasMultipleClasses = $groups->count() > 1;
+
+        return $groups
+            ->map(function ($subjects, string $classLabel) use ($hasMultipleClasses) {
+                $subjectCount = $subjects->count();
+
+                if ($subjectCount === 0) {
+                    return $classLabel;
+                }
+
+                if ($hasMultipleClasses) {
+                    return $classLabel.': '.$subjectCount.' mapel';
+                }
+
+                return $subjectCount.' mapel di '.$classLabel;
+            })
+            ->values();
+    }
+
+    private function shouldDisplaySubjectName(MataPelajaran $subject): bool
+    {
+        $subjectName = trim((string) $subject->nama_pelajaran);
+
+        if ($subjectName === '' || ! $subject->kelas) {
+            return false;
+        }
+
+        $normalizedSubject = $this->normalizeResponsibilityText($subjectName);
+
+        return ! in_array($normalizedSubject, [
+            $this->normalizeResponsibilityText((string) $subject->kelas->nama_kelas),
+            $this->normalizeResponsibilityText($subject->kelas->label_kelas),
+        ], true);
+    }
+
+    private function normalizeResponsibilityText(string $value): string
+    {
+        return mb_strtolower(preg_replace('/\s+/', '', trim($value)), 'UTF-8');
+    }
+
     /**
      * Relasi dengan nilai melalui mata pelajaran
      */

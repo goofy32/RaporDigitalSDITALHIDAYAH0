@@ -112,21 +112,6 @@
                         <p class="mt-1 text-sm text-red-500">{{ $message }}</p>
                     @enderror
                 </div>
-
-                <!-- Wali Kelas -->
-                <div class="w-full">  <!-- Tambahkan w-full -->
-                    <label class="block text-sm font-medium text-gray-700">Wali Kelas (Opsional)</label>
-                    <select name="wali_kelas_id" 
-                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500 @error('wali_kelas_id') border-red-500 @enderror">
-                        <option value="">Pilih Wali Kelas</option>
-                        @foreach($guruList as $guru)
-                            <option value="{{ $guru->id }}" {{ old('wali_kelas_id') == $guru->id ? 'selected' : '' }}>
-                                {{ $guru->nama }} ({{ $guru->nuptk }})
-                            </option>
-                        @endforeach
-                    </select>
-                    <p class="mt-1 text-sm text-gray-500">Hanya menampilkan guru dengan jabatan Wali Kelas yang belum ditugaskan</p>
-                </div>
             </div>
         </form>
     </div>
