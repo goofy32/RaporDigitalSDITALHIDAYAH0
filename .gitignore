@@ -38,3 +38,4 @@ Thumbs.db
 CLAUDE.md
 struktur.sql
 /public/build
+app/Imports/*.xlsx
