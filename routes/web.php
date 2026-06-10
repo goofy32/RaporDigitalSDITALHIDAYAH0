@@ -313,6 +313,12 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
     Route::get('profile/edit', [SchoolProfileController::class, 'edit'])->name('profile.edit');
     Route::post('profile', [SchoolProfileController::class, 'store'])->name('profile.submit');
     
+    Route::get('template/student', [StudentController::class, 'downloadTemplate'])->name('student.template');
+    Route::get('students/upload', [StudentController::class, 'uploadPage'])->name('student.upload');
+    Route::post('students/import', [StudentController::class, 'importExcel'])
+        ->middleware('throttle:5,1')
+        ->name('student.import');
+
     // Student Management
     Route::resource('students', StudentController::class)->names([
         'index' => 'student',
@@ -323,12 +329,6 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
         'update' => 'student.update',
         'destroy' => 'student.destroy',
     ]);
-    
-    Route::get('template/student', [StudentController::class, 'downloadTemplate'])->name('student.template');
-    Route::get('students/upload', [StudentController::class, 'uploadPage'])->name('student.upload');
-    Route::post('students/import', [StudentController::class, 'importExcel'])
-        ->middleware('throttle:5,1')
-        ->name('student.import');
 
     // Subject Settings Routes - harus di atas resource route untuk menghindari konflik
     Route::get('subject/bobot-nilai', [BobotNilaiController::class, 'subjectView'])->name('admin.subject.bobot-nilai');

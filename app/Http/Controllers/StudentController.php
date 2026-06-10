@@ -4,11 +4,10 @@ namespace App\Http\Controllers;
 
 use App\Traits\RequiresTahunAjaran;
 use Illuminate\Http\Request;
-use App\Imports\StudentImport;
-use Maatwebsite\Excel\Facades\Excel;
 use App\Models\Siswa;
 use App\Models\Kelas;
 use App\Models\TahunAjaran;
+use App\Services\StudentExcelImportService;
 use App\Services\SiswaKelasSemesterResolver;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -605,76 +604,51 @@ class StudentController extends Controller
         return view('data.upload_student');
     }
 
-    public function importExcel(Request $request)
+    public function importExcel(Request $request, StudentExcelImportService $studentImportService)
     {
         $request->validate([
             'file' => 'required|mimes:xlsx,xls|max:2048',
         ]);
-    
+
+        $activeTahunAjaran = TahunAjaran::where('is_active', true)->first();
+        if (! $activeTahunAjaran) {
+            return back()->with('error', 'Tidak ada tahun ajaran aktif. Buat tahun ajaran aktif terlebih dahulu.');
+        }
+
         try {
-            DB::beginTransaction();
-    
-            // 1. Log start import
-            \Log::info('Starting import process', [
-                'file' => $request->file('file')->getClientOriginalName()
-            ]);
-    
-            // 2. Baca file terlebih dahulu
-            $data = Excel::toArray(new StudentImport, $request->file('file'));
-            
-            // 3. Log data yang dibaca
-            \Log::info('Excel data read:', [
-                'sheets' => count($data),
-                'rows' => isset($data[0]) ? count($data[0]) : 0
-            ]);
-    
-            // 4. Lakukan import
-            $import = new StudentImport();
-            Excel::import($import, $request->file('file'));
-    
-            // 5. Cek jumlah row yang diproses
-            \Log::info('Rows processed:', [
-                'count' => $import->getRowCount()
-            ]);
-    
-            // 6. Cek error
-            $errors = $import->getErrors();
-            if (!empty($errors)) {
-                \Log::error('Import errors found:', $errors);
-                DB::rollBack();
-                return back()->with('error', $errors);
+            $result = $studentImportService->import($request->file('file'), $activeTahunAjaran);
+
+            if (! $result['success']) {
+                return back()
+                    ->with('error', 'Import siswa dibatalkan. Periksa daftar kesalahan pada file Excel.')
+                    ->with('import_errors', $result['errors']);
             }
-    
-            // 7. Commit jika berhasil
-            DB::commit();
-            \Log::info('Import completed and committed');
-    
+
             return redirect()->route('student')
-                ->with('success', 'Data siswa berhasil diimpor!');
-    
+                ->with('success', "Data siswa berhasil diimpor ({$result['imported_count']} siswa).");
+
         } catch (\Exception $e) {
-            DB::rollBack();
             Log::error('Student import failed', [
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
                 'user_id' => auth()->id(),
             ]);
-            return back()->with('error', 'Gagal mengimpor data. Silakan coba lagi.');
+
+            return back()->with('error', 'Gagal mengimpor data siswa. Tidak ada data yang disimpan.');
         }
     }
     
     public function downloadTemplate()
     {
         try {
-            $filePath = base_path('../public_html/templates/Student_Template_with_Data.xlsx');
+            $filePath = public_path('templates/student_import_template.xlsx');
 
-            if (!file_exists($filePath)) {
+            if (! file_exists($filePath)) {
                 Log::warning('Student import template file missing', [
                     'path' => $filePath,
                     'user_id' => auth()->id(),
                 ]);
 
-                return back()->with('error', 'File template tidak ditemukan.');
+                return back()->with('error', 'File template siswa tidak ditemukan.');
             }
 
             return response()->download($filePath, 'Template_Import_Siswa.xlsx', [
@@ -684,7 +658,6 @@ class StudentController extends Controller
         } catch (\Exception $e) {
             Log::error('Failed to download student import template', [
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
                 'user_id' => auth()->id(),
             ]);
 
