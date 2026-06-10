@@ -3,7 +3,7 @@
 @section('title', 'Recycle Bin / Sampah')
 
 @section('content')
-<div data-page="admin-recycle-bin" class="p-4 bg-white block sm:flex items-center justify-between border-b border-gray-200">
+<div data-recycle-bin-root class="p-4 bg-white block sm:flex items-center justify-between border-b border-gray-200">
     <div class="mb-1 w-full">
         <div class="mb-4">
             <h1 class="text-xl font-semibold text-gray-900 sm:text-2xl">Recycle Bin / Sampah</h1>
@@ -314,7 +314,7 @@
 
 <script>
     function initRecycleBinPage() {
-        var page = document.querySelector('[data-page="admin-recycle-bin"]');
+        var page = document.querySelector('[data-recycle-bin-root]');
         if (!page || page.dataset.recycleBinInit === 'true') {
             return;
         }

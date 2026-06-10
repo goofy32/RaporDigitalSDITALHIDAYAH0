@@ -14,7 +14,6 @@ use App\Http\Controllers\ScoreController;
 use App\Http\Controllers\TujuanPembelajaranController;
 use App\Http\Controllers\EkstrakurikulerController;
 use App\Http\Controllers\ReportController;
-use App\Http\Controllers\UserController;
 use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\TahunAjaranController;
 use App\Http\Controllers\GeminiChatController;
@@ -27,7 +26,6 @@ use App\Http\Controllers\CapaianKompetensiController;
 use App\Http\Controllers\CapaianRangeTemplateController;
 use App\Http\Controllers\RecycleBinController;
 use App\Models\Siswa;
-use App\Models\FormatRapor;
 use App\Models\Kelas;
 use Illuminate\Support\Facades\Auth;
 

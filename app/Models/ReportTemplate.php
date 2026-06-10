@@ -8,9 +8,7 @@ use App\Traits\HasTahunAjaran;
 class ReportTemplate extends Model
 {
     use HasTahunAjaran;
-    
-    use HasTahunAjaran;
-    
+
     protected $fillable = [
         'filename',
         'path',
