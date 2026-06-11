@@ -8,12 +8,14 @@ use App\Models\Siswa;
 use App\Models\Kelas;
 use App\Models\TahunAjaran;
 use App\Services\StudentExcelImportService;
+use App\Services\StudentImportTemplateService;
 use App\Services\SiswaKelasSemesterResolver;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
 class StudentController extends Controller
 {
@@ -637,21 +639,22 @@ class StudentController extends Controller
         }
     }
     
-    public function downloadTemplate()
+    public function downloadTemplate(StudentImportTemplateService $templateService)
     {
         try {
-            $filePath = public_path('templates/student_import_template.xlsx');
-
-            if (! file_exists($filePath)) {
-                Log::warning('Student import template file missing', [
-                    'path' => $filePath,
-                    'user_id' => auth()->id(),
-                ]);
-
-                return back()->with('error', 'File template siswa tidak ditemukan.');
+            $activeTahunAjaran = TahunAjaran::where('is_active', true)->first();
+            if (! $activeTahunAjaran) {
+                return back()->with('error', 'Tidak ada tahun ajaran aktif. Buat tahun ajaran aktif terlebih dahulu.');
             }
 
-            return response()->download($filePath, 'Template_Import_Siswa.xlsx', [
+            $spreadsheet = $templateService->createWorkbook($activeTahunAjaran);
+            $filename = 'Template_Import_Siswa_'.$activeTahunAjaran->tahun_ajaran.'_Semester_'.$activeTahunAjaran->semester.'.xlsx';
+            $filename = str_replace(['/', '\\'], '-', $filename);
+
+            return response()->streamDownload(function () use ($spreadsheet) {
+                (new Xlsx($spreadsheet))->save('php://output');
+                $spreadsheet->disconnectWorksheets();
+            }, $filename, [
                 'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             ]);
 

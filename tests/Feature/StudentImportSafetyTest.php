@@ -212,6 +212,23 @@ class StudentImportSafetyTest extends TestCase
         $this->assertSame(1, DB::table('siswa_kelas_semester')->count());
     }
 
+    public function test_template_gender_codes_are_imported_as_existing_gender_values(): void
+    {
+        $response = $this->postImport([
+            $this->validRow(['jenis_kelamin' => 'L']),
+            $this->validRow([
+                'nis' => '2601002',
+                'nisn' => '9900000002',
+                'nama' => 'Siswa Perempuan',
+                'jenis_kelamin' => 'P',
+            ]),
+        ]);
+
+        $response->assertRedirect(route('student'));
+        $this->assertSame('Laki-laki', DB::table('siswas')->where('nis', '2601001')->value('jenis_kelamin'));
+        $this->assertSame('Perempuan', DB::table('siswas')->where('nis', '2601002')->value('jenis_kelamin'));
+    }
+
     public function test_import_with_one_invalid_row_creates_no_students_or_enrollments(): void
     {
         $response = $this->postImport([

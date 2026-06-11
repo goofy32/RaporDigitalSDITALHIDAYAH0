@@ -247,7 +247,7 @@ class StudentExcelImportService
                     'nisn' => $nisn,
                     'nama' => trim((string) $row['nama']),
                     'tanggal_lahir' => $birthDate,
-                    'jenis_kelamin' => trim((string) $row['jenis_kelamin']),
+                    'jenis_kelamin' => $this->normalizeGender($row['jenis_kelamin']),
                     'agama' => trim((string) $row['agama']),
                     'alamat' => trim((string) $row['alamat']),
                     'kelas_id' => (int) $kelas->id,
@@ -368,6 +368,17 @@ class StudentExcelImportService
         }
 
         return trim((string) $value);
+    }
+
+    private function normalizeGender(mixed $value): string
+    {
+        $normalized = strtolower(trim((string) $value));
+
+        return match ($normalized) {
+            'l', 'laki', 'laki-laki', 'laki laki' => 'Laki-laki',
+            'p', 'perempuan' => 'Perempuan',
+            default => trim((string) $value),
+        };
     }
 
     /**
