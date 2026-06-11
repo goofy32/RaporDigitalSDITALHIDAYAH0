@@ -204,8 +204,16 @@ function getConditionalModules() {
             },
         },
         {
+            key: 'help-center',
+            shouldLoad: () => Boolean(document.querySelector('[x-data="helpCenter"]')),
+            load: async () => {
+                const module = await import('./features/help-center');
+                module.registerHelpCenter();
+            },
+        },
+        {
             key: 'gemini-chat-debug',
-            shouldLoad: () => Boolean(document.querySelector('.chatbot-container, [x-data="geminiChatDebug"]')),
+            shouldLoad: () => Boolean(document.querySelector('[x-data="geminiChatDebug"]')),
             load: async () => {
                 const module = await import('./features/gemini-chat-debug');
                 module.registerGeminiChatDebug();

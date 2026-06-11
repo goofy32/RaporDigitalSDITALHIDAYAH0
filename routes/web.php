@@ -17,6 +17,7 @@ use App\Http\Controllers\ReportController;
 use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\TahunAjaranController;
 use App\Http\Controllers\GeminiChatController;
+use App\Http\Controllers\HelpCenterController;
 use App\Http\Controllers\AuditController;
 use App\Http\Controllers\KkmController;
 use App\Http\Controllers\BobotNilaiController;
@@ -153,6 +154,7 @@ Route::middleware('auth:guru')->group(function () {
 // Admin Routes - Guard: web, Role: admin only
 Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admin')->group(function () {
 
+    Route::get('/help/faq', [HelpCenterController::class, 'adminFaq'])->name('admin.help.faq');
     
     Route::prefix('gemini')->name('gemini.')->middleware('throttle:20,1')->group(function () {
         Route::post('/send-message', [GeminiChatController::class, 'sendMessage'])->name('send');
@@ -471,6 +473,8 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
     Route::get('/mata-pelajaran-progress/{mataPelajaranId}', [DashboardController::class, 'getMataPelajaranProgress'])
         ->name('mata_pelajaran.progress');
 
+    Route::get('/help/faq', [HelpCenterController::class, 'pengajarFaq'])->name('help.faq');
+
     Route::prefix('gemini')->name('gemini.')->middleware('throttle:20,1')->group(function () {
         Route::post('/send-message', [GeminiChatController::class, 'sendMessage'])->name('send');
         Route::get('/history', [GeminiChatController::class, 'getHistory'])->name('history');
@@ -583,6 +587,8 @@ Route::get('/cetak-rapor', [ReportController::class, 'indexPrintRapor'])->name('
 Route::get('/cetak-rapor/{siswa}', [ReportController::class, 'printRaporHtml'])
     ->middleware('check.rapor.access')
     ->name('rapor.print_html');
+
+Route::get('/help/faq', [HelpCenterController::class, 'waliKelasFaq'])->name('help.faq');
 
 Route::prefix('gemini')->name('gemini.')->middleware('throttle:20,1')->group(function () {
     Route::post('/send-message', [GeminiChatController::class, 'sendMessage'])->name('send');
