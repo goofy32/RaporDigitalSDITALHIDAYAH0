@@ -82,6 +82,8 @@
             </div>
         </div>
     </div>
+
+    <x-ai-chatbot />
 @endsection
 
 @section('role-scripts')

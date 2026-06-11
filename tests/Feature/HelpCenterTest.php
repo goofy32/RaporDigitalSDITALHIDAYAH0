@@ -45,6 +45,19 @@ class HelpCenterTest extends TestCase
         $this->assertStringNotContainsString('/gemini/send-message', $html);
     }
 
+    public function test_help_widget_is_included_once_in_each_role_layout(): void
+    {
+        foreach ([
+            resource_path('views/layouts/app.blade.php'),
+            resource_path('views/layouts/pengajar/app.blade.php'),
+            resource_path('views/layouts/wali_kelas/app.blade.php'),
+        ] as $layoutPath) {
+            $layout = file_get_contents($layoutPath);
+
+            $this->assertSame(1, substr_count($layout, '<x-ai-chatbot />'), $layoutPath);
+        }
+    }
+
     public function test_admin_faq_endpoint_returns_admin_topics(): void
     {
         $this->actingAs($this->admin, 'web')
@@ -74,13 +87,91 @@ class HelpCenterTest extends TestCase
             ->assertJsonFragment(['question' => 'Cara mengisi absensi']);
     }
 
+    public function test_expanded_faq_contains_key_topics_for_each_role(): void
+    {
+        $adminQuestions = collect(config('help_faq.admin'))->pluck('question');
+        $pengajarQuestions = collect(config('help_faq.pengajar'))->pluck('question');
+        $waliQuestions = collect(config('help_faq.wali_kelas'))->pluck('question');
+
+        $this->assertCount(20, $adminQuestions);
+        $this->assertCount(14, $pengajarQuestions);
+        $this->assertCount(14, $waliQuestions);
+
+        foreach ([
+            'Kenapa NIS atau NISN duplikat saat import',
+            'Kenapa guru tidak muncul saat memilih pengajar mapel',
+            'Apa yang tidak boleh dihapus jika sudah ada data nilai',
+        ] as $question) {
+            $this->assertContains($question, $adminQuestions);
+        }
+
+        foreach ([
+            'Kenapa mata pelajaran tidak muncul',
+            'Apa arti progress nilai 0%',
+            'Kenapa akses ditolak',
+        ] as $question) {
+            $this->assertContains($question, $pengajarQuestions);
+        }
+
+        foreach ([
+            'Cara mengisi capaian kompetensi',
+            'Kenapa nilai siswa belum muncul di rapor',
+            'Apa yang harus dilakukan jika ada siswa salah kelas',
+        ] as $question) {
+            $this->assertContains($question, $waliQuestions);
+        }
+    }
+
     public function test_search_returns_deterministic_matching_faq(): void
     {
         $this->actingAs($this->admin, 'web')
             ->getJson('/admin/help/faq?q=kelas%20tidak%20ditemukan')
             ->assertOk()
             ->assertJsonPath('results.0.question', 'Kenapa import siswa gagal karena kelas tidak ditemukan')
-            ->assertJsonPath('answer', 'Import siswa tidak membuat kelas otomatis. Kolom kelas harus cocok dengan salah satu kelas pada tahun ajaran aktif. Buat kelas terlebih dahulu di menu Kelas, lalu ulangi import.');
+            ->assertJsonPath('answer', 'Biasanya terjadi karena kelas di Excel belum dibuat atau tulisannya berbeda. Cek menu Kelas, lalu samakan kolom kelas dengan kelas pada tahun ajaran aktif.');
+    }
+
+    public function test_common_search_terms_return_expected_role_faq(): void
+    {
+        $this->actingAs($this->admin, 'web')
+            ->getJson('/admin/help/faq?q=import%20siswa')
+            ->assertOk()
+            ->assertJsonPath('results.0.question', 'Cara import siswa dari Excel');
+
+        $this->actingAs($this->admin, 'web')
+            ->getJson('/admin/help/faq?q=kelas%20tidak%20ditemukan')
+            ->assertOk()
+            ->assertJsonPath('results.0.question', 'Kenapa import siswa gagal karena kelas tidak ditemukan');
+
+        $this->actingAs($this->guru, 'guru')
+            ->withSession(['selected_role' => 'pengajar'])
+            ->getJson('/pengajar/help/faq?q=input%20nilai')
+            ->assertOk()
+            ->assertJsonPath('results.0.question', 'Cara input nilai');
+
+        $this->actingAs($this->guru, 'guru')
+            ->withSession(['selected_role' => 'pengajar'])
+            ->getJson('/pengajar/help/faq?q=progress')
+            ->assertOk()
+            ->assertJsonPath('results.0.question', 'Apa arti progress nilai 0%');
+
+        $this->actingAs($this->guru, 'guru')
+            ->withSession(['selected_role' => 'wali_kelas'])
+            ->getJson('/wali-kelas/help/faq?q=rapor')
+            ->assertOk()
+            ->assertJsonPath('results.0.question', 'Cara preview rapor');
+
+        $this->actingAs($this->guru, 'guru')
+            ->withSession(['selected_role' => 'wali_kelas'])
+            ->getJson('/wali-kelas/help/faq?q=pdf')
+            ->assertOk()
+            ->assertJsonPath('results.0.question', 'Kenapa PDF atau DOCX belum bisa diunduh');
+
+        $this->actingAs($this->guru, 'guru')
+            ->withSession(['selected_role' => 'wali_kelas'])
+            ->getJson('/wali-kelas/help/faq?q=absensi')
+            ->assertOk()
+            ->assertJsonPath('results.0.question', 'Cara mengisi absensi');
     }
 
     public function test_empty_search_returns_suggested_questions(): void
