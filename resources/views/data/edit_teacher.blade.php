@@ -258,6 +258,12 @@
                        <!-- Password Section -->
                        <div class="pt-4 border-t border-gray-200">
                             <h3 class="text-lg font-medium text-gray-900 mb-4">Ubah Password</h3>
+                            <div class="p-3 mb-4 text-sm text-blue-700 border border-blue-200 rounded-lg bg-blue-50">
+                                Untuk reset password tanpa password saat ini, gunakan
+                                <a href="{{ route('teacher.reset-password.edit', $teacher->id) }}" class="font-medium text-blue-800 underline">
+                                    halaman reset password guru
+                                </a>.
+                            </div>
                             
                             <div class="space-y-4">
                                 <div>

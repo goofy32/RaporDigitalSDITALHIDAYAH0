@@ -26,6 +26,7 @@ class Guru extends Authenticatable
         'jabatan',
         'username',
         'password',
+        'must_change_password',
         'photo',
     ];
 
@@ -146,6 +147,7 @@ class Guru extends Authenticatable
     protected $casts = [
         'email_verified_at' => 'datetime',
         'password' => 'hashed',
+        'must_change_password' => 'boolean',
         'tanggal_lahir' => 'date',
         'id' => 'integer'
     ];

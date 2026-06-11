@@ -17,6 +17,7 @@ use App\Http\Controllers\ReportController;
 use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\TahunAjaranController;
 use App\Http\Controllers\GeminiChatController;
+use App\Http\Controllers\GuruPasswordController;
 use App\Http\Controllers\HelpCenterController;
 use App\Http\Controllers\AuditController;
 use App\Http\Controllers\KkmController;
@@ -129,6 +130,10 @@ Route::middleware(['web', 'guest'])->group(function () {
         }
         
         if (Auth::guard('guru')->check()) {
+            if (Auth::guard('guru')->user()?->must_change_password) {
+                return redirect()->route('guru.force-password.edit');
+            }
+
             $selectedRole = session('selected_role');
             return $selectedRole === 'wali_kelas' 
                 ? redirect()->route('wali_kelas.dashboard')
@@ -146,7 +151,14 @@ Route::middleware(['web', 'guest'])->group(function () {
 
 Route::post('logout', [LoginController::class, 'logout'])->name('logout');
 
-Route::middleware('auth:guru')->group(function () {
+Route::middleware('auth:guru')->prefix('guru')->name('guru.')->group(function () {
+    Route::get('/password/change', [GuruPasswordController::class, 'editForceChange'])
+        ->name('force-password.edit');
+    Route::put('/password/change', [GuruPasswordController::class, 'updateForceChange'])
+        ->name('force-password.update');
+});
+
+Route::middleware(['auth:guru', 'force.guru.password'])->group(function () {
     Route::get('/switch-role/{role}', [LoginController::class, 'switchRole'])
         ->name('auth.switch.role');
 });
@@ -386,6 +398,10 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
         Route::get('/{id}', [TeacherController::class, 'show'])->name('teacher.show');
         Route::get('/{id}/edit', [TeacherController::class, 'edit'])->name('teacher.edit');
         Route::put('/{id}', [TeacherController::class, 'update'])->name('teacher.update');
+        Route::get('/{guru}/reset-password', [GuruPasswordController::class, 'editReset'])
+            ->name('teacher.reset-password.edit');
+        Route::put('/{guru}/reset-password', [GuruPasswordController::class, 'updateReset'])
+            ->name('teacher.reset-password.update');
         Route::delete('/{id}', [TeacherController::class, 'destroy'])->name('teacher.destroy');
         
         Route::post('/verify-password', [TeacherController::class, 'verifyPassword'])
@@ -465,7 +481,7 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
 });
 
     // Pengajar Routes - Guard: guru, Role: guru
-    Route::middleware(['auth:guru', 'role:guru'])
+    Route::middleware(['auth:guru', 'force.guru.password', 'role:guru'])
         ->prefix('pengajar')
         ->name('pengajar.')  // Tambahkan ini untuk name prefix
         ->group(function () {
@@ -561,7 +577,7 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
 });
 
 // Wali Kelas Routes - Guard: guru, Role: wali_kelas
-Route::middleware(['auth:guru', 'role:wali_kelas'])
+Route::middleware(['auth:guru', 'force.guru.password', 'role:wali_kelas'])
 ->prefix('wali-kelas')
 ->name('wali_kelas.')
 ->group(function () {

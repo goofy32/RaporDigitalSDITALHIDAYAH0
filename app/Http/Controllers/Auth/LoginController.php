@@ -49,6 +49,10 @@ class LoginController extends Controller
 
             AuditService::logLogin('success', $identifier);
 
+            if ((bool) $guru->must_change_password) {
+                return redirect()->route('guru.force-password.edit');
+            }
+
             return redirect()->route($this->dashboardRouteForRole($selectedRole));
         }
     

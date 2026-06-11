@@ -126,6 +126,11 @@
                             <a href="{{ route('teacher.edit', $teacher->id) }}" class="text-yellow-600 hover:text-yellow-800" title="Ubah Data">
                                 <img src="{{ asset('images/icons/edit.png') }}" alt="Edit Icon" class="w-5 h-5">
                             </a>
+                            <a href="{{ route('teacher.reset-password.edit', $teacher->id) }}" class="text-green-600 hover:text-green-800" title="Reset Password">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                    <path fill-rule="evenodd" d="M10 2a4 4 0 00-4 4v2H5a2 2 0 00-2 2v6a2 2 0 002 2h10a2 2 0 002-2v-6a2 2 0 00-2-2h-1V6a4 4 0 00-4-4zm2 6V6a2 2 0 10-4 0v2h4z" clip-rule="evenodd" />
+                                </svg>
+                            </a>
                             <form action="{{ route('teacher.destroy', $teacher->id) }}" method="POST" 
                                 onsubmit="return confirm('Apakah Anda yakin ingin menghapus data ini?');" 
                                 class="inline">
