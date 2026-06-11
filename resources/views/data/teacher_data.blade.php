@@ -29,10 +29,6 @@
                         class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">
                         Edit
                     </button>
-                    <button onclick="window.location.href='{{ route('teacher.reset-password.edit', $teacher->id) }}'"
-                        class="px-4 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600">
-                        Reset Password
-                    </button>
                 </div>
             </div>
 
@@ -151,9 +147,13 @@
                             <tr class="border-b">
                                 <th class="px-4 py-2 font-medium text-gray-900">Password</th>
                                 <td class="px-4 py-2">
-                                    <span class="text-sm text-gray-600">
-                                        Password tidak dapat ditampilkan demi keamanan.
-                                    </span>
+                                    <div class="space-y-2">
+                                        <p class="text-sm text-gray-600">Password tidak dapat ditampilkan demi keamanan.</p>
+                                        <a href="{{ route('teacher.reset-password.edit', $teacher->id) }}"
+                                            class="inline-flex items-center px-3 py-1.5 text-sm font-medium text-green-700 bg-green-50 border border-green-200 rounded-lg hover:bg-green-100">
+                                            Reset password guru
+                                        </a>
+                                    </div>
                                 </td>
                             </tr>
                         </tbody>

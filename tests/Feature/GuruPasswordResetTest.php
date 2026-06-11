@@ -59,6 +59,50 @@ class GuruPasswordResetTest extends TestCase
         $this->assertFalse(Hash::check('old-password', $freshGuru->password));
     }
 
+    public function test_reset_password_link_is_only_shown_in_password_security_sections(): void
+    {
+        $resetUrl = route('teacher.reset-password.edit', $this->guru->id);
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->get(route('teacher'))
+            ->assertOk()
+            ->assertDontSee($resetUrl, false);
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->get(route('teacher.show', $this->guru->id))
+            ->assertOk()
+            ->assertSee('Password tidak dapat ditampilkan demi keamanan.')
+            ->assertSee('Reset password guru')
+            ->assertSee($resetUrl, false)
+            ->assertDontSee('Reset Password</button>', false);
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->get(route('teacher.edit', $this->guru->id))
+            ->assertOk()
+            ->assertSee('Keamanan Password')
+            ->assertSee('Password tidak dapat ditampilkan demi keamanan.')
+            ->assertSee('Reset password guru')
+            ->assertSee($resetUrl, false);
+    }
+
+    public function test_reset_password_page_has_polished_password_controls(): void
+    {
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->get(route('teacher.reset-password.edit', $this->guru->id))
+            ->assertOk()
+            ->assertSee('Keamanan Akun Guru')
+            ->assertSee('Password lama tidak dapat dilihat oleh admin.')
+            ->assertSee('Setelah reset, guru wajib mengganti password saat login berikutnya.')
+            ->assertSee('Tombol Generate akan mengisi password dan konfirmasi sekaligus.')
+            ->assertSee('data-password-toggle="password"', false)
+            ->assertSee('data-password-toggle="password_confirmation"', false)
+            ->assertSee('id="generate-password"', false);
+    }
+
     public function test_reset_does_not_log_plaintext_password(): void
     {
         $this->actingAs($this->admin, 'web')
@@ -234,13 +278,19 @@ class GuruPasswordResetTest extends TestCase
 
         Schema::create('gurus', function (Blueprint $table) {
             $table->id();
+            $table->string('nuptk')->nullable();
             $table->string('nama');
+            $table->string('jenis_kelamin')->nullable();
+            $table->date('tanggal_lahir')->nullable();
+            $table->string('no_handphone')->nullable();
             $table->string('email')->nullable();
+            $table->text('alamat')->nullable();
             $table->string('username')->nullable();
             $table->string('password');
             $table->boolean('must_change_password')->default(false);
             $table->string('password_plain')->nullable();
             $table->string('jabatan')->nullable();
+            $table->string('photo')->nullable();
             $table->timestamps();
             $table->softDeletes();
         });
