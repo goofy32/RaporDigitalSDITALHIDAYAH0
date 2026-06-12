@@ -149,10 +149,11 @@
                                 <td class="px-4 py-2">
                                     <div class="space-y-2">
                                         <p class="text-sm text-gray-600">Password tidak dapat ditampilkan demi keamanan.</p>
-                                        <a href="{{ route('teacher.reset-password.edit', $teacher->id) }}"
+                                        <button type="button"
+                                            data-guru-password-reset-open
                                             class="inline-flex items-center px-3 py-1.5 text-sm font-medium text-green-700 bg-green-50 border border-green-200 rounded-lg hover:bg-green-100">
                                             Reset password guru
-                                        </a>
+                                        </button>
                                     </div>
                                 </td>
                             </tr>
@@ -162,5 +163,7 @@
             </div>
         </div>
     </div>
+
+    <x-guru-password-reset-modal :teacher="$teacher" />
 </body>
 </html>

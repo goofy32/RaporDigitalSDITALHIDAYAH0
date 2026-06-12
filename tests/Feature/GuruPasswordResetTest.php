@@ -59,14 +59,16 @@ class GuruPasswordResetTest extends TestCase
         $this->assertFalse(Hash::check('old-password', $freshGuru->password));
     }
 
-    public function test_reset_password_link_is_only_shown_in_password_security_sections(): void
+    public function test_reset_password_modal_trigger_is_only_shown_in_password_security_sections(): void
     {
         $resetUrl = route('teacher.reset-password.edit', $this->guru->id);
+        $resetAction = route('teacher.reset-password.update', $this->guru->id);
 
         $this->actingAs($this->admin, 'web')
             ->withSession($this->adminSession())
             ->get(route('teacher'))
             ->assertOk()
+            ->assertDontSee('data-guru-password-reset-open', false)
             ->assertDontSee($resetUrl, false);
 
         $this->actingAs($this->admin, 'web')
@@ -75,7 +77,10 @@ class GuruPasswordResetTest extends TestCase
             ->assertOk()
             ->assertSee('Password tidak dapat ditampilkan demi keamanan.')
             ->assertSee('Reset password guru')
-            ->assertSee($resetUrl, false)
+            ->assertSee('data-guru-password-reset-open', false)
+            ->assertSee('data-guru-password-reset-modal', false)
+            ->assertSee('action="'.$resetAction.'"', false)
+            ->assertDontSee('href="'.$resetUrl.'"', false)
             ->assertDontSee('Reset Password</button>', false);
 
         $this->actingAs($this->admin, 'web')
@@ -85,22 +90,33 @@ class GuruPasswordResetTest extends TestCase
             ->assertSee('Keamanan Password')
             ->assertSee('Password tidak dapat ditampilkan demi keamanan.')
             ->assertSee('Reset password guru')
-            ->assertSee($resetUrl, false);
+            ->assertSee('data-guru-password-reset-open', false)
+            ->assertSee('data-guru-password-reset-modal', false)
+            ->assertSee('action="'.$resetAction.'"', false)
+            ->assertDontSee('href="'.$resetUrl.'"', false);
     }
 
     public function test_reset_password_page_has_polished_password_controls(): void
     {
-        $this->actingAs($this->admin, 'web')
+        $response = $this->actingAs($this->admin, 'web')
             ->withSession($this->adminSession())
             ->get(route('teacher.reset-password.edit', $this->guru->id))
             ->assertOk()
-            ->assertSee('Keamanan Akun Guru')
-            ->assertSee('Password lama tidak dapat dilihat oleh admin.')
+            ->assertSee('Reset Password Guru')
+            ->assertSee('Buat password sementara agar guru bisa login kembali.')
+            ->assertSee('Password lama tidak dapat ditampilkan demi keamanan.')
             ->assertSee('Setelah reset, guru wajib mengganti password saat login berikutnya.')
-            ->assertSee('Tombol Generate akan mengisi password dan konfirmasi sekaligus.')
+            ->assertSee('Username')
+            ->assertSee('budi')
+            ->assertSee('Password sementara untuk login awal')
+            ->assertSee('Buat Password')
+            ->assertSee('Tombol Buat Password akan mengisi password dan konfirmasi sekaligus.')
+            ->assertSee('reset-password-input::-ms-reveal', false)
             ->assertSee('data-password-toggle="password"', false)
             ->assertSee('data-password-toggle="password_confirmation"', false)
             ->assertSee('id="generate-password"', false);
+
+        $this->assertSame(2, substr_count($response->getContent(), 'data-password-toggle='));
     }
 
     public function test_reset_does_not_log_plaintext_password(): void
