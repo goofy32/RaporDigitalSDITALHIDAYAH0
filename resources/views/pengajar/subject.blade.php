@@ -25,7 +25,7 @@
                         <th scope="col" class="px-6 py-3">Semester</th>
                         <th scope="col" class="px-6 py-3">Guru Pengampu</th>
                         <th scope="col" class="px-6 py-3">Lingkup Materi</th>
-                        <th scope="col" class="px-6 py-3">Aksi</th>
+                        <th scope="col" class="w-24 px-1 py-3 text-center">Aksi</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -47,29 +47,36 @@
                                 Tidak ada Lingkup Materi
                             @endif
                         </td>
-                        <td class="px-4 py-4 text-center whitespace-nowrap">
-                            <div class="flex items-center gap-2">
+                        <td class="w-24 px-1 py-3 text-center whitespace-nowrap">
+                            <div class="mx-auto inline-flex w-fit items-center justify-center gap-0">
+                                <!-- Edit TP Button -->
+                                <a href="{{ route('pengajar.tujuan_pembelajaran.create', $subject->id) }}"
+                                    class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-emerald-700 transition hover:bg-emerald-50 hover:text-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                                    title="Kelola TP"
+                                    aria-label="Kelola TP">
+                                    <img src="{{ asset('images/icons/edittp.png') }}" alt="" class="h-6 w-6 object-contain">
+                                </a>
 
-                            <!-- Edit TP Button -->
-                            <a href="{{ route('pengajar.tujuan_pembelajaran.create', $subject->id) }}" class="inline-flex items-center justify-center text-blue-600 hover:text-blue-800" title="Ubah Tujuan Pembelajaran">
-                                <img src="{{ asset('images/icons/edittp.png') }}" alt="Edit TP Icon" class="w-5 h-5 object-contain">
-                            </a>
-                        
-                            <!-- Edit Subject Button -->
-                            <a href="{{ route('pengajar.subject.edit', $subject->id) }}" class="inline-flex items-center justify-center text-yellow-600 hover:text-yellow-800" title="Ubah Mata Pelajaran">
-                                <img src="{{ asset('images/icons/edit.png') }}" alt="Edit Icon" class="w-5 h-5 object-contain">
-                            </a>
-                        
-                            <!-- Delete Button -->
-                            <form action="{{ route('pengajar.subject.destroy', $subject->id) }}" method="POST" class="inline-flex items-center">
-                                @csrf
-                                @method('DELETE')
-                                <button type="submit" class="inline-flex items-center justify-center text-red-600 hover:text-red-800" 
+                                <!-- Edit Subject Button -->
+                                <a href="{{ route('pengajar.subject.edit', $subject->id) }}"
+                                    class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-green-700 transition hover:bg-green-50 hover:text-green-800 focus:outline-none focus:ring-2 focus:ring-green-300"
+                                    title="Edit"
+                                    aria-label="Edit">
+                                    <img src="{{ asset('images/icons/edit.png') }}" alt="" class="h-5 w-5 object-contain">
+                                </a>
+
+                                <!-- Delete Button -->
+                                <form action="{{ route('pengajar.subject.destroy', $subject->id) }}" method="POST" class="inline-flex items-center">
+                                    @csrf
+                                    @method('DELETE')
+                                    <button type="submit"
+                                        class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-red-700 transition hover:bg-red-50 hover:text-red-800 focus:outline-none focus:ring-2 focus:ring-red-300"
                                         onclick="return confirm('Apakah Anda yakin ingin menghapus data ini?')"
-                                        title="Hapus Mata Pelajaran">
-                                    <img src="{{ asset('images/icons/delete.png') }}" alt="Delete Icon" class="w-5 h-5 object-contain">
-                                </button>
-                            </form>
+                                        title="Hapus"
+                                        aria-label="Hapus">
+                                        <img src="{{ asset('images/icons/delete.png') }}" alt="" class="h-5 w-5 object-contain">
+                                    </button>
+                                </form>
                             </div>
                         </td>
                     </tr>
