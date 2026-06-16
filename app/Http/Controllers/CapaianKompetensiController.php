@@ -156,7 +156,25 @@ class CapaianKompetensiController extends Controller
             ->whereIn('siswa_id', $studentIds)
             ->where('tahun_ajaran_id', $tahunAjaranId)
             ->where('semester', $semester)
-            ->select('mata_pelajaran_id', DB::raw('count(*) as aggregate'))
+            ->where(function ($query) {
+                $query->whereNotNull('custom_capaian_tertinggi')
+                    ->whereRaw("TRIM(custom_capaian_tertinggi) <> ''")
+                    ->orWhere(function ($query) {
+                        $query->whereNotNull('custom_capaian_terendah')
+                            ->whereRaw("TRIM(custom_capaian_terendah) <> ''");
+                    })
+                    ->orWhere(function ($query) {
+                        $query->whereIn('tertinggi_prefix_mode', ['preset', 'custom'])
+                            ->whereNotNull('tertinggi_prefix_text')
+                            ->whereRaw("TRIM(tertinggi_prefix_text) <> ''");
+                    })
+                    ->orWhere(function ($query) {
+                        $query->whereIn('terendah_prefix_mode', ['preset', 'custom'])
+                            ->whereNotNull('terendah_prefix_text')
+                            ->whereRaw("TRIM(terendah_prefix_text) <> ''");
+                    });
+            })
+            ->select('mata_pelajaran_id', DB::raw('count(distinct siswa_id) as aggregate'))
             ->groupBy('mata_pelajaran_id')
             ->pluck('aggregate', 'mata_pelajaran_id');
 

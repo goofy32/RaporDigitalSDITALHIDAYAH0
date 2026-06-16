@@ -681,6 +681,114 @@ class CapaianPhraseCustomizationTest extends TestCase
             ->assertSee('Default');
     }
 
+    public function test_capaian_list_and_edit_pages_render_browser_titles(): void
+    {
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->get(route('wali_kelas.capaian_kompetensi.index'))
+            ->assertOk()
+            ->assertSee('<title>Capaian Kompetensi</title>', false);
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->get(route('wali_kelas.capaian_kompetensi.edit', $this->mathGanjilSubjectId))
+            ->assertOk()
+            ->assertSee('<title>Kustomisasi Capaian Kompetensi</title>', false);
+    }
+
+    public function test_base_layout_has_safe_title_fallback(): void
+    {
+        $this->assertStringContainsString(
+            "@yield('title', 'Rapor Digital')",
+            file_get_contents(resource_path('views/layouts/base.blade.php'))
+        );
+    }
+
+    public function test_capaian_list_status_shows_all_default_without_fraction(): void
+    {
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->get(route('wali_kelas.capaian_kompetensi.index'))
+            ->assertOk()
+            ->assertSee('Status Deskripsi')
+            ->assertSee('Semua menggunakan default')
+            ->assertDontSee('1/2 dikustomisasi')
+            ->assertDontSee('/2 dikustomisasi');
+    }
+
+    public function test_capaian_list_status_shows_clear_partial_default_and_custom_counts(): void
+    {
+        $this->insertPrefixOverride($this->ahmadId, $this->mathGanjilSubjectId, tertinggi: 'menunjukkan penguasaan dalam', tertinggiMode: 'preset');
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->get(route('wali_kelas.capaian_kompetensi.index'))
+            ->assertOk()
+            ->assertViewHas('customCounts', function ($counts) {
+                return (int) ($counts[$this->mathGanjilSubjectId] ?? 0) === 1;
+            })
+            ->assertSee('1 Default')
+            ->assertSee('1 Khusus')
+            ->assertDontSee('1/2 dikustomisasi');
+    }
+
+    public function test_capaian_list_status_shows_clear_all_custom_message(): void
+    {
+        $this->insertFullCustom($this->ahmadId, $this->mathGanjilSubjectId, 'Full tinggi.', null);
+        $this->insertPrefixOverride($this->sitiId, $this->mathGanjilSubjectId, terendah: 'cukup berkembang dalam', terendahMode: 'preset');
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->get(route('wali_kelas.capaian_kompetensi.index'))
+            ->assertOk()
+            ->assertViewHas('customCounts', function ($counts) {
+                return (int) ($counts[$this->mathGanjilSubjectId] ?? 0) === 2;
+            })
+            ->assertSee('2 siswa memakai deskripsi khusus')
+            ->assertDontSee('2/2 dikustomisasi');
+    }
+
+    public function test_capaian_list_status_counts_are_isolated_by_context(): void
+    {
+        $otherClassStudentId = $this->insertStudent('2010', 'Rani Kelas Lain', $this->otherClassId);
+        $this->insertEnrollment($otherClassStudentId, $this->otherClassId, $this->ganjilYearId, 1);
+
+        DB::table('capaian_custom')->insert([
+            'siswa_id' => $this->ahmadId,
+            'mata_pelajaran_id' => $this->mathGenapSubjectId,
+            'custom_capaian_tertinggi' => 'Custom semester lain.',
+            'tahun_ajaran_id' => $this->genapYearId,
+            'semester' => 2,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        DB::table('capaian_custom')->insert([
+            'siswa_id' => $otherClassStudentId,
+            'mata_pelajaran_id' => $this->mathGanjilSubjectId,
+            'custom_capaian_tertinggi' => 'Custom siswa kelas lain pada mapel ini.',
+            'tahun_ajaran_id' => $this->ganjilYearId,
+            'semester' => 1,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        DB::table('capaian_custom')->insert([
+            'siswa_id' => $this->ahmadId,
+            'mata_pelajaran_id' => $this->scienceSubjectId,
+            'tertinggi_prefix_mode' => 'preset',
+            'tertinggi_prefix_text' => 'menunjukkan penguasaan dalam',
+            'tahun_ajaran_id' => $this->ganjilYearId,
+            'semester' => 1,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->get(route('wali_kelas.capaian_kompetensi.index'))
+            ->assertOk()
+            ->assertViewHas('customCounts', function ($counts) {
+                return (int) ($counts[$this->mathGanjilSubjectId] ?? 0) === 0
+                    && (int) ($counts[$this->scienceSubjectId] ?? 0) === 1
+                    && ! isset($counts[$this->mathGenapSubjectId]);
+            });
+    }
+
     public function test_edit_page_renders_inline_textareas_and_one_unified_save_button(): void
     {
         $this->actingAsWali($this->ganjilYearId, 1)

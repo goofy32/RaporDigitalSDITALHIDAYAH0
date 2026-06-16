@@ -1,5 +1,7 @@
 @extends('layouts.wali_kelas.app')
 
+@section('title', 'Kustomisasi Capaian Kompetensi')
+
 @section('content')
 @php
     $tertinggiDefault = $phraseDefaults->get('tertinggi');
