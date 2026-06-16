@@ -1188,7 +1188,9 @@ class ReportController extends Controller
             $metrics = array_merge($metrics, $additionalData);
         }
         
-        Log::info("Performance Metrics - {$status}", $metrics);
+        if (config('logging.diagnostics.log_report_processing')) {
+            Log::debug("Performance Metrics - {$status}", $metrics);
+        }
     }
 
     private function resolveRaporTahunAjaranId(Request $request): ?int

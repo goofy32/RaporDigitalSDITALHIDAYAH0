@@ -51,11 +51,9 @@ class RaporTemplateProcessor
             $this->siswa->setRelation('kelas', $this->reportKelas);
         }
         
-        // Log untuk debugging
-        Log::info('RaporTemplateProcessor initialized:', [
+        $this->logReportProcessing('RaporTemplateProcessor initialized', [
             'siswa_id' => $siswa->id, 
-            'siswa_name' => $siswa->nama,
-            'kelas' => $this->reportKelas->nama_kelas ?? $siswa->kelas->nama_kelas ?? 'Unknown',
+            'kelas_id' => $this->reportKelas->id ?? $siswa->kelas_id ?? null,
             'template_id' => $template->id,
             'type' => $type,
             'tahun_ajaran_id' => $this->tahunAjaranId
@@ -70,21 +68,16 @@ class RaporTemplateProcessor
             );
         }
     
-        // Log untuk debugging
-        Log::info('Template Info:', [
+        $this->logReportProcessing('Template info resolved', [
             'template_id' => $template->id,
-            'filename' => $template->filename,
-            'path' => $template->path,
             'is_active' => $template->is_active,
-            'tahun_ajaran_id' => $this->tahunAjaranId // Log tahun ajaran yang digunakan
+            'tahun_ajaran_id' => $this->tahunAjaranId,
         ]);
     
         // Pastikan path template adalah file yang valid
         $templatePath = storage_path('app/public/' . $template->path);
         
-        // Log path lengkap
-        Log::info('Full template path:', [
-            'path' => $templatePath,
+        $this->logReportProcessing('Template path checked', [
             'exists' => file_exists($templatePath),
             'is_file' => is_file($templatePath)
         ]);
@@ -116,6 +109,15 @@ class RaporTemplateProcessor
         }
     
         $this->placeholders = ReportPlaceholder::all()->groupBy('category');
+    }
+
+    private function logReportProcessing(string $message, array $context = []): void
+    {
+        if (! config('logging.diagnostics.log_report_processing')) {
+            return;
+        }
+
+        Log::debug($message, $context);
     }
 
     protected function resolveReportClass(): ?Kelas
@@ -164,8 +166,7 @@ class RaporTemplateProcessor
                 ->first();
         }
         
-        // Log untuk debugging
-        Log::info('Template selection for siswa:', [
+        $this->logReportProcessing('Template selection checked', [
             'siswa_id' => $siswa->id,
             'kelas_id' => $kelasId,
             'type' => $type,
@@ -194,9 +195,8 @@ class RaporTemplateProcessor
     
     protected function debugCatatanData($tahunAjaranId, $semester, $catatanType)
     {
-        Log::info('=== DEBUG CATATAN DATA ===', [
+        $this->logReportProcessing('Debug catatan data requested', [
             'siswa_id' => $this->siswa->id,
-            'siswa_nama' => $this->siswa->nama,
             'tahun_ajaran_id' => $tahunAjaranId,
             'semester' => $semester,
             'catatan_type' => $catatanType
@@ -210,18 +210,9 @@ class RaporTemplateProcessor
             ->with('mataPelajaran')
             ->get();
 
-        Log::info('Semua catatan mata pelajaran:', [
+        $this->logReportProcessing('Catatan mata pelajaran loaded', [
             'count' => $allCatatan->count(),
-            'data' => $allCatatan->map(function($catatan) {
-                return [
-                    'id' => $catatan->id,
-                    'mata_pelajaran_id' => $catatan->mata_pelajaran_id,
-                    'mata_pelajaran_nama' => $catatan->mataPelajaran->nama_pelajaran ?? 'N/A',
-                    'catatan' => $catatan->catatan,
-                    'type' => $catatan->type,
-                    'semester' => $catatan->semester
-                ];
-            })->toArray()
+            'mata_pelajaran_ids' => $allCatatan->pluck('mata_pelajaran_id')->filter()->values()->all(),
         ]);
 
         // Cek juga semua mata pelajaran untuk siswa ini
@@ -235,12 +226,9 @@ class RaporTemplateProcessor
             ->get()
             ->groupBy('mata_pelajaran_id');
 
-        Log::info('Mata pelajaran dengan nilai:', [
+        $this->logReportProcessing('Mata pelajaran dengan nilai loaded', [
             'count' => $allMapel->count(),
             'mapel_ids' => $allMapel->keys()->toArray(),
-            'mapel_names' => $allMapel->map(function($nilai, $mapelId) {
-                return $nilai->first()->mataPelajaran->nama_pelajaran ?? 'N/A';
-            })->toArray()
         ]);
 
         return $allCatatan;
@@ -310,10 +298,9 @@ class RaporTemplateProcessor
         // Grouping by mata pelajaran
         $nilai = $nilaiCollection->groupBy('mataPelajaran.nama_pelajaran');
         
-        Log::info('Data nilai yang diambil:', [
+        $this->logReportProcessing('Report score data loaded', [
             'siswa_id' => $this->siswa->id,
             'mapel_count' => $nilai->count(),
-            'mapel_list' => $nilai->keys()->toArray(),
             'tahun_ajaran_id' => $tahunAjaranId,
             'kkm_count' => count($kkmData)
         ]);
@@ -333,11 +320,9 @@ class RaporTemplateProcessor
                     $value->first()->mataPelajaran->is_muatan_lokal == 1;
             });
             
-        Log::info('Pembagian mata pelajaran:', [
+        $this->logReportProcessing('Report subject groups prepared', [
             'reguler_count' => $mapelReguler->count(),
             'mulok_count' => $mulok->count(),
-            'reguler_list' => $mapelReguler->keys()->toArray(),
-            'mulok_list' => $mulok->keys()->toArray()
         ]);
 
         $allMapelIds = $nilaiCollection->pluck('mata_pelajaran_id')
@@ -386,7 +371,7 @@ class RaporTemplateProcessor
                     ];
                     $processedMapelNames[] = $mapelName;
                     
-                    Log::info("Mata pelajaran diidentifikasi", [
+                    $this->logReportProcessing("Mata pelajaran diidentifikasi", [
                         'nama' => $mapelName,
                         'key' => $matchedKey,
                         'mata_pelajaran_id' => $nilaiMapel->first()->mata_pelajaran_id
@@ -457,7 +442,7 @@ class RaporTemplateProcessor
                     
                     $mapelCount++;
                     
-                    Log::info("Mata pelajaran $key diproses", [
+                    $this->logReportProcessing("Mata pelajaran $key diproses", [
                         'nama' => $mapelName,
                         'nilai' => $nilaiValue,
                         'kkm' => $data["kkm_$key"],
@@ -495,7 +480,7 @@ class RaporTemplateProcessor
                 $data["capaian_kompetensi_$key"] = '';
                 $data["kkm_$key"] = '70'; // Default KKM
                 
-                Log::info("Mata pelajaran $key tidak ditemukan dalam data siswa");
+                $this->logReportProcessing("Mata pelajaran $key tidak ditemukan dalam data siswa");
             }
         }
 
@@ -530,7 +515,7 @@ class RaporTemplateProcessor
                     $processedMapelNames[] = $mapelName;
                     $mapelCount++;
                     
-                    Log::info("Mata pelajaran lainnya diproses", [
+                    $this->logReportProcessing("Mata pelajaran lainnya diproses", [
                         'nama' => $mapelName,
                         'nilai' => $nilaiValue,
                         'capaian_tertinggi' => substr($dynamicPlaceholders[$mapelCount-1]['capaian_tertinggi'], 0, 100) . '...',
@@ -723,7 +708,7 @@ class RaporTemplateProcessor
 
 
         // Log data akhir yang akan diisi ke template
-        Log::info('Data placeholder yang telah disiapkan:', [
+        $this->logReportProcessing('Data placeholder yang telah disiapkan:', [
             'mata_pelajaran_count' => count(array_filter(array_keys($data), function($key) {
                 return strpos($key, 'nama_matapelajaran') === 0;
             })),
@@ -797,7 +782,7 @@ class RaporTemplateProcessor
         
         $outputPath = $tempDir . DIRECTORY_SEPARATOR . $fileName;
         
-        Log::info('Creating processed photo', [
+        $this->logReportProcessing('Creating processed photo', [
             'source' => $sourcePath,
             'output' => $outputPath,
             'temp_dir' => $tempDir,
@@ -806,7 +791,7 @@ class RaporTemplateProcessor
         
         // Skip jika sudah diproses (cache)
         if (file_exists($outputPath)) {
-            Log::info('Using cached processed photo', [
+            $this->logReportProcessing('Using cached processed photo', [
                 'cached_path' => $outputPath
             ]);
             return $outputPath;
@@ -826,7 +811,7 @@ class RaporTemplateProcessor
         $sourceHeight = $imageInfo[1];
         $sourceType = $imageInfo[2];
         
-        Log::info('Processing photo details', [
+        $this->logReportProcessing('Processing photo details', [
             'source_size' => "{$sourceWidth}x{$sourceHeight}",
             'target_size' => "{$targetWidth}x{$targetHeight}",
             'source_type' => $sourceType,
@@ -918,7 +903,7 @@ class RaporTemplateProcessor
             throw new \Exception("Processed image file is invalid");
         }
         
-        Log::info('Photo processed successfully', [
+        $this->logReportProcessing('Photo processed successfully', [
             'source' => basename($sourcePath),
             'output' => $outputPath,
             'output_size' => filesize($outputPath) . ' bytes',
@@ -941,7 +926,7 @@ protected function prepareFotoSiswa()
         $originalPath = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $originalPath);
         
         if (file_exists($originalPath)) {
-            Log::info('Using ORIGINAL photo (no processing)', [
+            $this->logReportProcessing('Using ORIGINAL photo (no processing)', [
                 'siswa_id' => $this->siswa->id,
                 'path' => $originalPath
             ]);
@@ -954,7 +939,7 @@ protected function prepareFotoSiswa()
     $defaultPath = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $defaultPath);
     
     if (file_exists($defaultPath)) {
-        Log::info('Using default photo (no processing)', [
+        $this->logReportProcessing('Using default photo (no processing)', [
             'siswa_id' => $this->siswa->id,
             'path' => $defaultPath
         ]);
@@ -985,7 +970,7 @@ protected function prepareFotoSiswa()
             $kkmData[$kkm->mata_pelajaran_id] = $kkm->nilai;
         }
         
-        Log::info('Data KKM yang diambil:', [
+        $this->logReportProcessing('Data KKM yang diambil:', [
             'tahun_ajaran_id' => $tahunAjaranId,
             'kkm_count' => count($kkmData),
             'kkm_data' => $kkmData
@@ -1008,7 +993,7 @@ protected function prepareFotoSiswa()
         $normalizedName = strtolower(trim($mapelName));
         
         // Log untuk debugging
-        Log::info('Mencoba mencocokkan mata pelajaran:', [
+        $this->logReportProcessing('Mencoba mencocokkan mata pelajaran:', [
             'mapel_name' => $mapelName,
             'normalized' => $normalizedName
         ]);
@@ -1019,7 +1004,7 @@ protected function prepareFotoSiswa()
                 
                 // Exact match paling diutamakan
                 if ($normalizedName === $normalizedKeyword) {
-                    Log::info('Exact match ditemukan', [
+                    $this->logReportProcessing('Exact match ditemukan', [
                         'mapel' => $mapelName,
                         'matched_with' => $keyword,
                         'key' => $key
@@ -1032,7 +1017,7 @@ protected function prepareFotoSiswa()
                     // Pastikan ini bukan partial match yang ambigu
                     // Misalnya, "Pendidikan" bisa merujuk ke banyak mata pelajaran
                     if (strlen($normalizedKeyword) > 5) {
-                        Log::info('Partial match ditemukan', [
+                        $this->logReportProcessing('Partial match ditemukan', [
                             'mapel' => $mapelName,
                             'matched_with' => $keyword,
                             'key' => $key
@@ -1044,7 +1029,7 @@ protected function prepareFotoSiswa()
                 // Cek similaritas teks (terakhir dan dengan threshold yang lebih tinggi)
                 $similarity = similar_text($normalizedName, $normalizedKeyword) / max(strlen($normalizedName), strlen($normalizedKeyword));
                 if ($similarity > 0.8) { // Threshold 80% (lebih tinggi)
-                    Log::info('Similarity match ditemukan', [
+                    $this->logReportProcessing('Similarity match ditemukan', [
                         'mapel' => $mapelName,
                         'matched_with' => $keyword,
                         'similarity' => $similarity,
@@ -1055,7 +1040,7 @@ protected function prepareFotoSiswa()
             }
         }
 
-        Log::info('Tidak ada kecocokan untuk mata pelajaran', ['mapel' => $mapelName]);
+        $this->logReportProcessing('Tidak ada kecocokan untuk mata pelajaran', ['mapel' => $mapelName]);
         return null;
     }
 
@@ -1215,7 +1200,7 @@ protected function prepareFotoSiswa()
     public function generate($bypassValidation = false)
     {
         try {
-            Log::info('Starting generate() with professional photo processing', [
+            $this->logReportProcessing('Starting generate() with professional photo processing', [
                 'tahun_ajaran_id' => $this->tahunAjaranId
             ]);
             
@@ -1233,7 +1218,7 @@ protected function prepareFotoSiswa()
             // 3. Dapatkan semua variabel di template
             $variables = $this->processor->getVariables();
             
-            Log::info('Variables in template:', [
+            $this->logReportProcessing('Variables in template:', [
                 'found_variables' => $variables,
                 'template_type' => $this->type,
                 'tahun_ajaran_id' => $this->tahunAjaranId,
@@ -1247,7 +1232,7 @@ protected function prepareFotoSiswa()
                 // Update variables list setelah foto di-set
                 $variables = $this->processor->getVariables();
                 
-                Log::info('After setting foto siswa', [
+                $this->logReportProcessing('After setting foto siswa', [
                     'foto_siswa_still_exists' => in_array('foto_siswa', $variables),
                     'remaining_variables_count' => count($variables)
                 ]);
@@ -1265,7 +1250,7 @@ protected function prepareFotoSiswa()
             $remainingVariables = $this->processor->getVariables();
             $missingPlaceholders = array_diff($remainingVariables, array_keys($data));
             
-            Log::info('Filling missing placeholders', [
+            $this->logReportProcessing('Filling missing placeholders', [
                 'missing_count' => count($missingPlaceholders),
                 'missing_placeholders' => $missingPlaceholders
             ]);
@@ -1287,7 +1272,7 @@ protected function prepareFotoSiswa()
             // 7. Clean remaining placeholders (EXCLUDE foto_siswa)
             $finalRemainingPlaceholders = $this->processor->getVariables();
             
-            Log::info('Final cleanup placeholders', [
+            $this->logReportProcessing('Final cleanup placeholders', [
                 'final_remaining_count' => count($finalRemainingPlaceholders),
                 'final_remaining' => $finalRemainingPlaceholders
             ]);
@@ -1309,7 +1294,7 @@ protected function prepareFotoSiswa()
             $filename = $this->generateFilename();
             $outputPath = $this->saveFile($filename);
 
-            Log::info('Rapor generated successfully with professional photo processing', [
+            $this->logReportProcessing('Rapor generated successfully with professional photo processing', [
                 'filename' => $filename,
                 'siswa_id' => $this->siswa->id
             ]);
@@ -1365,7 +1350,7 @@ protected function prepareFotoSiswa()
                     'ratio' => false // Karena sudah di-crop perfect, tidak perlu maintain ratio
                 ]);
                 
-                Log::info('Foto successfully set to template', [
+                $this->logReportProcessing('Foto successfully set to template', [
                     'siswa_id' => $this->siswa->id,
                     'foto_path' => $fotoPath,
                     'size_cm' => '3x4',
@@ -1420,7 +1405,7 @@ protected function prepareFotoSiswa()
                     $fileAge = $now - filemtime($file);
                     if ($fileAge > $maxAge) {
                         unlink($file);
-                        Log::info('Cleaned up old processed photo', [
+                        $this->logReportProcessing('Cleaned up old processed photo', [
                             'file' => basename($file),
                             'age_minutes' => round($fileAge / 60)
                         ]);
@@ -1642,7 +1627,7 @@ protected function prepareFotoSiswa()
                 throw new \Exception("File tidak berhasil disimpan");
             }
             
-            Log::info('Rapor berhasil disimpan:', [
+            $this->logReportProcessing('Rapor berhasil disimpan:', [
                 'path' => $outputPath,
                 'size' => filesize($outputPath),
                 'tahun_ajaran_id' => $this->tahunAjaranId

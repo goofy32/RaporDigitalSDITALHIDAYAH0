@@ -11,9 +11,9 @@ trait HasTahunAjaran
     {
         // Saat membuat model baru
         static::creating(function ($model) {
-            // Log creating event
-            \Log::info("HasTahunAjaran: creating {$model->getTable()} record", [
-                'model_data' => $model->getAttributes(),
+            static::logTahunAjaranLifecycle("HasTahunAjaran: creating {$model->getTable()} record", [
+                'model' => get_class($model),
+                'table' => $model->getTable(),
                 'has_tahun_ajaran_id' => isset($model->tahun_ajaran_id),
                 'tahun_ajaran_id_value' => $model->tahun_ajaran_id ?? null,
                 'session_tahun_ajaran' => session('tahun_ajaran_id')
@@ -22,7 +22,7 @@ trait HasTahunAjaran
             // Otomatis isi tahun_ajaran_id saat create jika tidak ada
             if (!$model->tahun_ajaran_id && session('tahun_ajaran_id')) {
                 $model->tahun_ajaran_id = session('tahun_ajaran_id');
-                \Log::info("HasTahunAjaran: auto-filling tahun_ajaran_id", [
+                static::logTahunAjaranLifecycle("HasTahunAjaran: auto-filling tahun_ajaran_id", [
                     'model' => get_class($model),
                     'tahun_ajaran_id' => $model->tahun_ajaran_id
                 ]);
@@ -36,10 +36,11 @@ trait HasTahunAjaran
         
         // Tambahkan hook untuk updating
         static::updating(function ($model) {
-            // Log updating event
-            \Log::info("HasTahunAjaran: updating {$model->getTable()} record", [
+            static::logTahunAjaranLifecycle("HasTahunAjaran: updating {$model->getTable()} record", [
+                'model' => get_class($model),
+                'table' => $model->getTable(),
                 'model_id' => $model->id,
-                'dirty_attributes' => $model->getDirty(),
+                'dirty_attributes' => array_keys($model->getDirty()),
                 'has_tahun_ajaran_id' => isset($model->tahun_ajaran_id),
                 'tahun_ajaran_id_value' => $model->tahun_ajaran_id,
                 'is_dirty_tahun_ajaran' => $model->isDirty('tahun_ajaran_id'),
@@ -49,7 +50,7 @@ trait HasTahunAjaran
             // Jika tahun_ajaran_id dihapus atau diubah menjadi null, kembalikan ke nilai session
             if ($model->isDirty('tahun_ajaran_id') && $model->tahun_ajaran_id === null && session('tahun_ajaran_id')) {
                 $model->tahun_ajaran_id = session('tahun_ajaran_id');
-                \Log::info("HasTahunAjaran: restored tahun_ajaran_id during update", [
+                static::logTahunAjaranLifecycle("HasTahunAjaran: restored tahun_ajaran_id during update", [
                     'model' => get_class($model),
                     'tahun_ajaran_id' => $model->tahun_ajaran_id
                 ]);
@@ -63,8 +64,9 @@ trait HasTahunAjaran
         });
         
         static::created(function ($model) {
-            // Log after creation
-            \Log::info("HasTahunAjaran: created {$model->getTable()} record", [
+            static::logTahunAjaranLifecycle("HasTahunAjaran: created {$model->getTable()} record", [
+                'model' => get_class($model),
+                'table' => $model->getTable(),
                 'model_id' => $model->id,
                 'final_tahun_ajaran_id' => $model->tahun_ajaran_id
             ]);
@@ -83,7 +85,7 @@ trait HasTahunAjaran
         $tahunAjaran = \App\Models\TahunAjaran::find($this->tahun_ajaran_id);
         if ($tahunAjaran) {
             $this->semester = $tahunAjaran->semester;
-            \Log::info("HasTahunAjaran: auto-setting semester from tahun ajaran", [
+            static::logTahunAjaranLifecycle("HasTahunAjaran: auto-setting semester from tahun ajaran", [
                 'model' => get_class($this),
                 'tahun_ajaran_id' => $this->tahun_ajaran_id,
                 'semester' => $this->semester
@@ -133,5 +135,14 @@ trait HasTahunAjaran
     public function tahunAjaran()
     {
         return $this->belongsTo(\App\Models\TahunAjaran::class, 'tahun_ajaran_id');
+    }
+
+    private static function logTahunAjaranLifecycle(string $message, array $context = []): void
+    {
+        if (! config('logging.diagnostics.log_tahun_ajaran_model_lifecycle')) {
+            return;
+        }
+
+        \Log::debug($message, $context);
     }
 }

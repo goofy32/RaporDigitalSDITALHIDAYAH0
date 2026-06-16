@@ -648,6 +648,8 @@ class KenaikanKelasController extends Controller
                     ]);
                 }
             });
+
+            $enrollmentResolver->resetMemoization();
         } catch (\Throwable $e) {
             return redirect()->back()->with('error', 'Gagal memproses enrollment kenaikan kelas.');
         }

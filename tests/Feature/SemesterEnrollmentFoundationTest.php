@@ -11,7 +11,9 @@ use Illuminate\Database\QueryException;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
+use Mockery;
 use RuntimeException;
 use Tests\TestCase;
 
@@ -207,6 +209,243 @@ class SemesterEnrollmentFoundationTest extends TestCase
 
         $this->assertSame($kelas->id, $resolver->resolveClass($student, $ganjil->id, 1)->id);
         $this->assertNull($resolver->resolveClass($student, $genap->id, 2));
+    }
+
+    public function test_roster_resolver_memoizes_identical_class_context_with_fallback_enabled(): void
+    {
+        $this->runEnrollmentMigration();
+        [$year, $kelas, $student] = $this->seedBaseStudentContext();
+
+        SiswaKelasSemester::create([
+            'siswa_id' => $student->id,
+            'kelas_id' => $kelas->id,
+            'tahun_ajaran_id' => $year->id,
+            'semester' => 1,
+        ]);
+
+        $resolver = new SiswaKelasSemesterResolver;
+
+        $first = $resolver->studentsForClass($kelas->id, $year->id, 1, true);
+        $second = $resolver->studentsForClass($kelas->id, $year->id, 1, true);
+
+        $this->assertSame($first->pluck('id')->all(), $second->pluck('id')->all());
+        $this->assertSame([$student->id], $first->pluck('id')->all());
+        $this->assertSame(1, $resolver->diagnostics()['roster_id_queries']);
+        $this->assertSame(1, $resolver->diagnostics()['class_context_queries']);
+    }
+    public function test_container_resolver_is_scoped_within_lifecycle_and_fresh_after_scope_flush(): void
+    {
+        $first = app(SiswaKelasSemesterResolver::class);
+        $second = app(SiswaKelasSemesterResolver::class);
+
+        $this->assertSame($first, $second);
+
+        $this->app->forgetScopedInstances();
+
+        $third = app(SiswaKelasSemesterResolver::class);
+
+        $this->assertNotSame($first, $third);
+    }
+
+    public function test_direct_resolver_instances_do_not_share_memoized_state(): void
+    {
+        $this->runEnrollmentMigration();
+        [$year, $kelas, $student] = $this->seedBaseStudentContext();
+
+        $firstResolver = new SiswaKelasSemesterResolver;
+        $secondResolver = new SiswaKelasSemesterResolver;
+
+        $this->assertSame([], $firstResolver->studentsForClass($kelas->id, $year->id, 1, false)->pluck('id')->all());
+
+        SiswaKelasSemester::create([
+            'siswa_id' => $student->id,
+            'kelas_id' => $kelas->id,
+            'tahun_ajaran_id' => $year->id,
+            'semester' => 1,
+        ]);
+
+        $this->assertSame([$student->id], $secondResolver->studentsForClass($kelas->id, $year->id, 1, false)->pluck('id')->all());
+    }
+
+    public function test_roster_memoization_isolated_by_class_year_semester_and_fallback_mode(): void
+    {
+        $this->runEnrollmentMigration();
+        [$ganjil, $kelasA, $studentA] = $this->seedBaseStudentContext();
+        $kelasB = $this->createClass($ganjil, 5, 'B');
+        $studentB = $this->createStudent($kelasB, '2605002', '9000000002');
+        $genap = $this->createAcademicYear('2026/2027', 2);
+        $kelasGenap = $this->createClass($genap, 5, 'A');
+        $studentGenap = $this->createStudent($kelasGenap, '2605003', '9000000003');
+
+        foreach ([[$studentA, $kelasA, $ganjil, 1], [$studentB, $kelasB, $ganjil, 1], [$studentGenap, $kelasGenap, $genap, 2]] as [$student, $kelas, $year, $semester]) {
+            SiswaKelasSemester::create([
+                'siswa_id' => $student->id,
+                'kelas_id' => $kelas->id,
+                'tahun_ajaran_id' => $year->id,
+                'semester' => $semester,
+            ]);
+        }
+
+        $resolver = new SiswaKelasSemesterResolver;
+
+        $this->assertSame([$studentA->id], $resolver->studentsForClass($kelasA->id, $ganjil->id, 1, true)->pluck('id')->all());
+        $this->assertSame([$studentA->id], $resolver->studentsForClass($kelasA->id, $ganjil->id, 1, false)->pluck('id')->all());
+        $this->assertSame([$studentB->id], $resolver->studentsForClass($kelasB->id, $ganjil->id, 1, true)->pluck('id')->all());
+        $this->assertSame([$studentGenap->id], $resolver->studentsForClass($kelasGenap->id, $genap->id, 2, true)->pluck('id')->all());
+
+        $this->assertSame(4, $resolver->diagnostics()['roster_id_queries']);
+    }
+
+    public function test_roster_results_are_caller_safe_after_query_or_collection_mutation(): void
+    {
+        $this->runEnrollmentMigration();
+        [$year, $kelas, $student] = $this->seedBaseStudentContext();
+
+        SiswaKelasSemester::create([
+            'siswa_id' => $student->id,
+            'kelas_id' => $kelas->id,
+            'tahun_ajaran_id' => $year->id,
+            'semester' => 1,
+        ]);
+
+        $resolver = new SiswaKelasSemesterResolver;
+
+        $firstCollection = $resolver->studentsForClass($kelas->id, $year->id, 1, true);
+        $firstCollection->pop();
+
+        $this->assertSame([$student->id], $resolver->studentsForClass($kelas->id, $year->id, 1, true)->pluck('id')->all());
+
+        $mutatedQuery = $resolver->studentQueryForClass($kelas->id, $year->id, 1, true);
+        $this->assertSame(0, $mutatedQuery->where('nama', 'Tidak Ada')->count());
+        $this->assertSame(1, $resolver->studentQueryForClass($kelas->id, $year->id, 1, true)->count());
+    }
+    public function test_memoized_enrollment_model_mutation_does_not_corrupt_next_result(): void
+    {
+        $this->runEnrollmentMigration();
+        [$year, $kelas, $student] = $this->seedBaseStudentContext();
+
+        SiswaKelasSemester::create([
+            'siswa_id' => $student->id,
+            'kelas_id' => $kelas->id,
+            'tahun_ajaran_id' => $year->id,
+            'semester' => 1,
+        ]);
+
+        $resolver = new SiswaKelasSemesterResolver;
+        $first = $resolver->resolveEnrollment($student, $year->id, 1);
+
+        $first->kelas_id = 999;
+        $first->kelas->nama_kelas = 'Mutated';
+
+        $second = $resolver->resolveEnrollment($student, $year->id, 1);
+
+        $this->assertSame($kelas->id, $second->kelas_id);
+        $this->assertSame($kelas->nama_kelas, $second->kelas->nama_kelas);
+        $this->assertNotSame($first, $second);
+        $this->assertNotSame($first->kelas, $second->kelas);
+    }
+
+    public function test_legacy_fallback_false_and_true_do_not_share_memoized_rosters(): void
+    {
+        $this->runEnrollmentMigration();
+        [$year, $kelas, $student] = $this->seedBaseStudentContext();
+
+        $resolver = new SiswaKelasSemesterResolver;
+
+        $this->assertSame([], $resolver->studentsForClass($kelas->id, $year->id, 1, false)->pluck('id')->all());
+        $this->assertSame([$student->id], $resolver->studentsForClass($kelas->id, $year->id, 1, true)->pluck('id')->all());
+        $this->assertSame(2, $resolver->diagnostics()['roster_id_queries']);
+    }
+
+    public function test_roster_fallback_is_not_logged_when_only_enabled_for_enrolled_students(): void
+    {
+        $this->runEnrollmentMigration();
+        [$year, $kelas, $student] = $this->seedBaseStudentContext();
+
+        SiswaKelasSemester::create([
+            'siswa_id' => $student->id,
+            'kelas_id' => $kelas->id,
+            'tahun_ajaran_id' => $year->id,
+            'semester' => 1,
+        ]);
+
+        config()->set('logging.diagnostics.log_roster_fallback', true);
+        Log::spy();
+
+        (new SiswaKelasSemesterResolver)->studentsForClass($kelas->id, $year->id, 1, true);
+
+        Log::shouldNotHaveReceived('info', ['Student roster legacy siswa.kelas_id fallback enabled', Mockery::any()]);
+        Log::shouldNotHaveReceived('debug', ['Student roster legacy siswa.kelas_id fallback used', Mockery::any()]);
+    }
+
+    public function test_actual_legacy_fallback_logs_at_most_once_when_enabled(): void
+    {
+        $this->runEnrollmentMigration();
+        [$year, $kelas, $student] = $this->seedBaseStudentContext();
+
+        config()->set('logging.diagnostics.log_roster_fallback', true);
+        Log::spy();
+
+        $resolver = new SiswaKelasSemesterResolver;
+
+        $this->assertSame([$student->id], $resolver->studentsForClass($kelas->id, $year->id, 1, true)->pluck('id')->all());
+        $this->assertSame([$student->id], $resolver->studentsForClass($kelas->id, $year->id, 1, true)->pluck('id')->all());
+
+        Log::shouldHaveReceived('debug')
+            ->once()
+            ->with('Student roster legacy siswa.kelas_id fallback used', Mockery::on(function (array $context) use ($kelas, $year) {
+                return $context['kelas_id'] === $kelas->id
+                    && $context['tahun_ajaran_id'] === $year->id
+                    && $context['semester'] === 1
+                    && ! array_key_exists('siswa_id', $context);
+            }));
+
+        Log::shouldNotHaveReceived('info', ['Student roster legacy siswa.kelas_id fallback enabled', Mockery::any()]);
+        $this->assertSame(1, $resolver->diagnostics()['legacy_fallback_logs']);
+    }
+    public function test_legacy_class_context_diagnostic_contains_no_student_identity(): void
+    {
+        $this->runEnrollmentMigration();
+        [$year, $kelas, $student] = $this->seedBaseStudentContext();
+
+        config()->set('logging.diagnostics.log_roster_fallback', true);
+        Log::spy();
+
+        $this->assertSame($kelas->id, (new SiswaKelasSemesterResolver)->resolveClass($student, $year->id, 1, true)->id);
+
+        Log::shouldHaveReceived('debug')
+            ->once()
+            ->with('Student roster legacy siswa.kelas_id fallback used', Mockery::on(function (array $context) use ($kelas, $year) {
+                return $context === [
+                    'kelas_id' => $kelas->id,
+                    'tahun_ajaran_id' => $year->id,
+                    'semester' => 1,
+                ];
+            }));
+    }
+
+    public function test_enrollment_mutation_invalidation_produces_fresh_roster_and_class_context(): void
+    {
+        $this->runEnrollmentMigration();
+        [$year, $kelas, $student] = $this->seedBaseStudentContext();
+
+        $resolver = new SiswaKelasSemesterResolver;
+
+        $this->assertSame([], $resolver->studentsForClass($kelas->id, $year->id, 1, false)->pluck('id')->all());
+        $this->assertNull($resolver->resolveClass($student, $year->id, 1, false));
+
+        SiswaKelasSemester::create([
+            'siswa_id' => $student->id,
+            'kelas_id' => $kelas->id,
+            'tahun_ajaran_id' => $year->id,
+            'semester' => 1,
+        ]);
+
+        $resolver->invalidateClassRoster($kelas->id, $year->id, 1);
+        $resolver->invalidateEnrollment($student->id, $year->id, 1);
+
+        $this->assertSame([$student->id], $resolver->studentsForClass($kelas->id, $year->id, 1, false)->pluck('id')->all());
+        $this->assertSame($kelas->id, $resolver->resolveClass($student, $year->id, 1, false)->id);
     }
 
     public function test_backfill_dry_run_creates_no_rows(): void

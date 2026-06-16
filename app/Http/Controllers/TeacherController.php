@@ -15,14 +15,23 @@ use Illuminate\Support\Str;
 
 class TeacherController extends Controller
 {
+    private function logTeacherSearch(string $message, array $context = []): void
+    {
+        if (! config('logging.diagnostics.log_teacher_search')) {
+            return;
+        }
+
+        Log::debug($message, $context);
+    }
+
     public function index(Request $request)
     {
         // Ambil tahun ajaran dari session
         $tahunAjaranId = session('tahun_ajaran_id');
 
-        // Log incoming request data for debugging
-        Log::info('Teacher search request', [
-            'search' => $request->search,
+        $this->logTeacherSearch('Teacher index request', [
+            'has_search' => $request->filled('search'),
+            'search_length' => $request->filled('search') ? mb_strlen((string) $request->search) : 0,
             'tahun_ajaran_id' => $tahunAjaranId,
             'page' => $request->page,
         ]);
@@ -30,7 +39,9 @@ class TeacherController extends Controller
         // Jika pencarian aktif, gunakan pendekatan 2-step untuk prioritaskan hasil yang persis sama
         if ($request->has('search') && ! empty($request->search)) {
             $search = trim(strtolower($request->search));
-            Log::info('Processing advanced search', ['term' => $search]);
+            $this->logTeacherSearch('Processing teacher advanced search', [
+                'search_length' => mb_strlen($search),
+            ]);
 
             // Step 1: Query untuk exact match terlebih dahulu
             $exactMatches = Guru::select('gurus.*')
@@ -42,9 +53,8 @@ class TeacherController extends Controller
                 })
                 ->get();
 
-            Log::info('Exact matches', [
+            $this->logTeacherSearch('Teacher exact search completed', [
                 'count' => $exactMatches->count(),
-                'names' => $exactMatches->pluck('nama')->toArray(),
             ]);
 
             // Step 2: Query untuk partial match (mengandung kata pencarian)
@@ -58,9 +68,8 @@ class TeacherController extends Controller
                 ->whereNotIn('id', $exactMatches->pluck('id')->toArray()) // Exclude exact matches
                 ->get();
 
-            Log::info('Partial matches', [
+            $this->logTeacherSearch('Teacher partial search completed', [
                 'count' => $partialMatches->count(),
-                'first_5_names' => $partialMatches->take(5)->pluck('nama')->toArray(),
             ]);
 
             // Step 3: Gabungkan hasil dengan exact match di awal
@@ -107,11 +116,10 @@ class TeacherController extends Controller
                 ['path' => request()->url(), 'query' => request()->query()]
             );
 
-            Log::info('Search results (custom pagination)', [
+            $this->logTeacherSearch('Teacher search pagination prepared', [
                 'total' => $total,
                 'results_on_this_page' => $slice->count(),
                 'page' => $page,
-                'first_result_name' => $slice->first() ? $slice->first()->nama : 'no results',
             ]);
 
             return view('admin.teacher', compact('teachers'));
@@ -178,7 +186,7 @@ class TeacherController extends Controller
 
         $teachers = $query->paginate(10);
 
-        Log::info('Standard query results', [
+        $this->logTeacherSearch('Teacher standard pagination prepared', [
             'count' => $teachers->count(),
             'total' => $teachers->total(),
             'current_page' => $teachers->currentPage(),

@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\TahunAjaran;
+use App\Services\SiswaKelasSemesterResolver;
 use Carbon\Carbon;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
@@ -90,6 +91,10 @@ class StudentExcelImportService
 
             return $count;
         });
+
+        if (app()->resolved(SiswaKelasSemesterResolver::class)) {
+            app(SiswaKelasSemesterResolver::class)->resetMemoization();
+        }
 
         Log::info('Student import completed', [
             'user_id' => auth()->id(),

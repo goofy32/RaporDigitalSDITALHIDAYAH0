@@ -28,6 +28,15 @@ class DashboardController extends Controller
             : null;
     }
 
+    private function logDashboardProgress(string $message, array $context = []): void
+    {
+        if (! config('logging.diagnostics.log_dashboard_progress')) {
+            return;
+        }
+
+        \Log::debug($message, $context);
+    }
+
     private function studentIdsForClass(int $kelasId, ?int $tahunAjaranId = null, ?int $semester = null): Collection
     {
         if ($tahunAjaranId && $semester) {
@@ -129,7 +138,9 @@ class DashboardController extends Controller
                 ->pluck('id');
                 
             if ($kelasIds->isEmpty()) {
-                \Log::info("No classes found for tahun ajaran: {$tahunAjaranId}");
+                $this->logDashboardProgress('No classes found for admin progress calculation', [
+                    'tahun_ajaran_id' => $tahunAjaranId,
+                ]);
                 return 0;
             }
             
@@ -142,7 +153,7 @@ class DashboardController extends Controller
                 ->get();
                 
             if ($mataPelajarans->isEmpty()) {
-                \Log::info("No subjects found");
+                $this->logDashboardProgress('No subjects found for admin progress calculation');
                 return 0;
             }
             
@@ -160,13 +171,20 @@ class DashboardController extends Controller
                 );
             }
             
-            \Log::info("Total scores needed: {$totalScoresNeeded}, completed: {$totalScoresCompleted}");
+            $this->logDashboardProgress('Admin overall progress totals calculated', [
+                'tahun_ajaran_id' => $tahunAjaranId,
+                'semester' => $semester,
+                'total_scores_needed' => $totalScoresNeeded,
+                'total_scores_completed' => $totalScoresCompleted,
+            ]);
             
             // Calculate percentage
             $progress = $totalScoresNeeded > 0 ? 
                 min(100, ($totalScoresCompleted / $totalScoresNeeded) * 100) : 0;
                 
-            \Log::info("Calculated overall progress: {$progress}%");
+            $this->logDashboardProgress('Admin overall progress calculated', [
+                'progress_percentage' => $progress,
+            ]);
             
             return $progress;
         } catch (\Exception $e) {
@@ -395,7 +413,10 @@ class DashboardController extends Controller
                     ? min(100, ($completedStudentSubjects / $totalStudentSubjects) * 100)
                     : 0;
 
-                \Log::info("Overall progress calculation:", [
+                $this->logDashboardProgress('Pengajar overall progress calculated', [
+                    'guru_id' => $guru->id,
+                    'tahun_ajaran_id' => $tahunAjaranId,
+                    'semester' => $semester,
                     'total_student_subjects' => $totalStudentSubjects,
                     'completed_student_subjects' => $completedStudentSubjects,
                     'progress_percentage' => $overallProgress
@@ -430,7 +451,7 @@ class DashboardController extends Controller
             $tahunAjaranId = session('tahun_ajaran_id');
             $selectedSemester = $this->semesterForTahunAjaran($tahunAjaranId) ?: session('selected_semester', 1); // Default ke semester 1
             
-            \Log::info("Wali Kelas Dashboard", [
+            $this->logDashboardProgress('Wali kelas dashboard context resolved', [
                 'guru_id' => $guru->id,
                 'tahun_ajaran_id' => $tahunAjaranId,
                 'selected_semester' => $selectedSemester
@@ -447,8 +468,9 @@ class DashboardController extends Controller
                 ->select('kelas.id', 'kelas.nomor_kelas', 'kelas.nama_kelas')
                 ->first();
                 
-            \Log::info("Kelas wali yang ditemukan", [
-                'kelas_wali' => $kelasWali ?? 'Tidak ditemukan'
+            $this->logDashboardProgress('Wali kelas dashboard class lookup completed', [
+                'kelas_id' => $kelasWali?->id,
+                'found' => (bool) $kelasWali,
             ]);
             
             if (!$kelasWali) {
@@ -469,7 +491,7 @@ class DashboardController extends Controller
             $waliStudentIds = $this->studentIdsForClass((int) $kelasWali->id, (int) $tahunAjaranId, (int) $selectedSemester);
             $totalSiswa = $waliStudentIds->count();
             
-            \Log::info("Total siswa di kelas", [
+            $this->logDashboardProgress('Wali kelas dashboard student total calculated', [
                 'kelas_id' => $kelasWali->id,
                 'total_siswa' => $totalSiswa
             ]);
@@ -587,7 +609,12 @@ class DashboardController extends Controller
                 ->get();
                 
             if ($mataPelajarans->isEmpty() || $totalStudents === 0) {
-                \Log::info("No subjects or students found for wali kelas");
+                $this->logDashboardProgress('No subjects or students found for wali kelas progress calculation', [
+                    'kelas_id' => $kelasId,
+                    'tahun_ajaran_id' => $tahunAjaranId,
+                    'semester' => $semester,
+                    'total_students' => $totalStudents,
+                ]);
                 return 0;
             }
             
@@ -596,13 +623,21 @@ class DashboardController extends Controller
             $completedScoreCounts = $this->getCompletedScoreCountsBySubject($mataPelajarans->pluck('id'), $tahunAjaranId, $studentIds->all());
             $totalScoresCompleted = $completedScoreCounts->sum();
             
-            \Log::info("Wali Kelas - Total scores needed: {$totalScoresNeeded}, completed: {$totalScoresCompleted}");
+            $this->logDashboardProgress('Wali kelas overall progress totals calculated', [
+                'kelas_id' => $kelasId,
+                'tahun_ajaran_id' => $tahunAjaranId,
+                'semester' => $semester,
+                'total_scores_needed' => $totalScoresNeeded,
+                'total_scores_completed' => $totalScoresCompleted,
+            ]);
             
             // Calculate percentage
             $progress = $totalScoresNeeded > 0 ? 
                 min(100, ($totalScoresCompleted / $totalScoresNeeded) * 100) : 0;
                 
-            \Log::info("Calculated wali kelas overall progress: {$progress}%");
+            $this->logDashboardProgress('Wali kelas overall progress calculated', [
+                'progress_percentage' => $progress,
+            ]);
             
             return $progress;
         } catch (\Exception $e) {
@@ -954,8 +989,8 @@ class DashboardController extends Controller
             $completedScoreCounts = $this->getCompletedScoreCountsBySubject($mataPelajarans->pluck('id'), $tahunAjaranId, $studentIds->all());
             $totalScoreCompleted = $completedScoreCounts->sum();
             
-            // Log the calculation for debugging
-            \Log::info("Class {$kelasId} progress calculation:", [
+            $this->logDashboardProgress('Admin class progress calculation completed', [
+                'kelas_id' => $kelasId,
                 'students' => $studentsInClass,
                 'subjects' => $mataPelajarans->count(),
                 'total_needed' => $totalScoreNeeded,
@@ -1015,10 +1050,9 @@ class DashboardController extends Controller
             
         } catch (\Exception $e) {
             \Log::error('Error calculating overall progress: ' . $e->getMessage());
-            \Log::info("Overall progress calculation:", [
-                'total_student_subjects' => $totalStudentSubjects,
-                'completed_student_subjects' => $completedStudentSubjects,
-                'progress_percentage' => $overallProgress
+            $this->logDashboardProgress('Legacy pengajar overall progress calculation failed', [
+                'guru_id' => $guruId,
+                'tahun_ajaran_id' => $tahunAjaranId,
             ]);
             return 0;
         }

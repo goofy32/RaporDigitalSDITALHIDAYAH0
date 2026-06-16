@@ -251,6 +251,8 @@ class TahunAjaranController extends Controller
             }
         }
 
+        app(SiswaKelasSemesterResolver::class)->resetMemoization();
+
         \Log::info("Successfully prepared all related data for semester 2", [
             'target_id' => $newTahunAjaran->id,
             'classes_copied' => count($kelasMapping),
