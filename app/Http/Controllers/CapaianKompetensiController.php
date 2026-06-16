@@ -8,9 +8,9 @@ use App\Models\CapaianKompetensiTemplate;
 use App\Models\CapaianKompetensiCustom;
 use App\Models\Kelas;
 use App\Models\MataPelajaran;
-use App\Models\Nilai;
 use App\Models\Siswa;
 use App\Models\TahunAjaran;
+use App\Services\CapaianKompetensiTextService;
 use App\Services\SiswaKelasSemesterResolver;
 use App\Traits\RequiresTahunAjaran;
 use Illuminate\Support\Facades\DB;
@@ -353,23 +353,11 @@ class CapaianKompetensiController extends Controller
         $mataPelajaranId,
         $tahunAjaranId = null
     ): array {
-        $tahunAjaranId = $tahunAjaranId ?: session('tahun_ajaran_id');
-        $tahunAjaran = TahunAjaran::find($tahunAjaranId);
-        $semester = $tahunAjaran ? $tahunAjaran->semester : 1;
-
-        $custom = CapaianKompetensiCustom::where([
-            'siswa_id' => $siswaId,
-            'mata_pelajaran_id' => $mataPelajaranId,
-            'tahun_ajaran_id' => $tahunAjaranId,
-            'semester' => $semester,
-        ])->first();
-
-        $autoCapaian = self::generateAutoCapaianTertinggiTerendah($siswaId, $mataPelajaranId, $tahunAjaranId);
-
-        return [
-            'tertinggi' => $custom?->custom_capaian_tertinggi ?: $autoCapaian['tertinggi'],
-            'terendah' => $custom?->custom_capaian_terendah ?: $autoCapaian['terendah'],
-        ];
+        return app(CapaianKompetensiTextService::class)->resolvePair(
+            (int) $siswaId,
+            (int) $mataPelajaranId,
+            $tahunAjaranId ? (int) $tahunAjaranId : null
+        );
     }
 
     public static function preloadCapaianData(
@@ -383,70 +371,7 @@ class CapaianKompetensiController extends Controller
             return [];
         }
 
-        $tahunAjaran = TahunAjaran::find($tahunAjaranId);
-        $semester = $tahunAjaran ? $tahunAjaran->semester : 1;
-        $siswa = Siswa::find($siswaId);
-        $namaSiswa = $siswa ? $siswa->nama : '';
-
-        $customCapaians = CapaianKompetensiCustom::where('siswa_id', $siswaId)
-            ->where('tahun_ajaran_id', $tahunAjaranId)
-            ->where('semester', $semester)
-            ->whereIn('mata_pelajaran_id', $mataPelajaranIds)
-            ->get()
-            ->keyBy('mata_pelajaran_id');
-
-        $lmData = Nilai::query()
-            ->join('lingkup_materis', 'nilais.lingkup_materi_id', '=', 'lingkup_materis.id')
-            ->join('mata_pelajarans', 'nilais.mata_pelajaran_id', '=', 'mata_pelajarans.id')
-            ->where('nilais.siswa_id', $siswaId)
-            ->where('nilais.tahun_ajaran_id', $tahunAjaranId)
-            ->where('mata_pelajarans.tahun_ajaran_id', $tahunAjaranId)
-            ->where('mata_pelajarans.semester', $semester)
-            ->whereIn('nilais.mata_pelajaran_id', $mataPelajaranIds)
-            ->whereNull('nilais.deleted_at')
-            ->whereNull('lingkup_materis.deleted_at')
-            ->whereNull('mata_pelajarans.deleted_at')
-            ->whereNotNull('nilais.nilai_lm')
-            ->select([
-                'nilais.mata_pelajaran_id',
-                'lingkup_materis.judul_lingkup_materi',
-                'nilais.nilai_lm',
-            ])
-            ->get()
-            ->groupBy('mata_pelajaran_id');
-
-        $result = [];
-
-        foreach ($mataPelajaranIds as $mapelId) {
-            $custom = $customCapaians->get($mapelId);
-            $lms = $lmData->get($mapelId, collect())
-                ->groupBy('judul_lingkup_materi')
-                ->map(function ($rows, $judul) {
-                    return (object) [
-                        'judul_lingkup_materi' => $judul,
-                        'nilai_lm' => $rows->max('nilai_lm'),
-                    ];
-                })
-                ->values();
-
-            $lmTertinggi = $lms->sortByDesc('nilai_lm')->first();
-            $lmTerendah = $lms->sortBy('nilai_lm')->first();
-
-            $autoTertinggi = $lmTertinggi
-                ? "{$namaSiswa} menunjukkan pemahaman dalam {$lmTertinggi->judul_lingkup_materi}."
-                : "{$namaSiswa} menunjukkan pemahaman yang baik.";
-
-            $autoTerendah = $lmTerendah
-                ? "{$namaSiswa} berkembang dalam {$lmTerendah->judul_lingkup_materi}."
-                : "{$namaSiswa} terus berkembang dalam pembelajaran.";
-
-            $result[$mapelId] = [
-                'tertinggi' => $custom?->custom_capaian_tertinggi ?: $autoTertinggi,
-                'terendah' => $custom?->custom_capaian_terendah ?: $autoTerendah,
-            ];
-        }
-
-        return $result;
+        return app(CapaianKompetensiTextService::class)->preload($siswaId, $mataPelajaranIds, $tahunAjaranId);
     }
 
     public static function generateAutoCapaianTertinggiTerendah(
@@ -454,52 +379,12 @@ class CapaianKompetensiController extends Controller
         $mataPelajaranId,
         $tahunAjaranId = null
     ): array {
-        $tahunAjaranId = $tahunAjaranId ?: session('tahun_ajaran_id');
-        $tahunAjaran = TahunAjaran::find($tahunAjaranId);
-        $semester = $tahunAjaran ? $tahunAjaran->semester : 1;
-        $siswa = Siswa::find($siswaId);
-
-        if (!$siswa) {
-            return [
-                'tertinggi' => 'Data siswa tidak tersedia.',
-                'terendah' => 'Data siswa tidak tersedia.',
-            ];
-        }
-
-        $lmData = DB::table('nilais')
-            ->join('lingkup_materis', 'nilais.lingkup_materi_id', '=', 'lingkup_materis.id')
-            ->join('mata_pelajarans', 'nilais.mata_pelajaran_id', '=', 'mata_pelajarans.id')
-            ->where('nilais.siswa_id', $siswaId)
-            ->where('nilais.mata_pelajaran_id', $mataPelajaranId)
-            ->where('nilais.tahun_ajaran_id', $tahunAjaranId)
-            ->where('mata_pelajarans.tahun_ajaran_id', $tahunAjaranId)
-            ->where('mata_pelajarans.semester', $semester)
-            ->whereNull('nilais.deleted_at')
-            ->whereNull('lingkup_materis.deleted_at')
-            ->whereNull('mata_pelajarans.deleted_at')
-            ->whereNotNull('nilais.nilai_lm')
-            ->groupBy('lingkup_materis.id', 'lingkup_materis.judul_lingkup_materi')
-            ->select(
-                'lingkup_materis.id',
-                'lingkup_materis.judul_lingkup_materi',
-                DB::raw('MAX(nilais.nilai_lm) as nilai_lm')
-            )
-            ->get();
-
-        if ($lmData->isEmpty()) {
-            return [
-                'tertinggi' => "{$siswa->nama} menunjukkan pemahaman yang baik.",
-                'terendah' => "{$siswa->nama} terus berkembang dalam pembelajaran.",
-            ];
-        }
-
-        $lmTertinggi = $lmData->sortByDesc('nilai_lm')->first();
-        $lmTerendah = $lmData->sortBy('nilai_lm')->first();
-
-        return [
-            'tertinggi' => "{$siswa->nama} menunjukkan pemahaman dalam {$lmTertinggi->judul_lingkup_materi}.",
-            'terendah' => "{$siswa->nama} berkembang dalam {$lmTerendah->judul_lingkup_materi}.",
-        ];
+        return app(CapaianKompetensiTextService::class)->resolvePair(
+            (int) $siswaId,
+            (int) $mataPelajaranId,
+            $tahunAjaranId ? (int) $tahunAjaranId : null,
+            includeFullCustom: false
+        );
     }
 
     /**

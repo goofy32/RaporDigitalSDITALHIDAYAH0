@@ -17,6 +17,10 @@ class CapaianKompetensiCustom extends Model
         'custom_capaian',
         'custom_capaian_tertinggi',
         'custom_capaian_terendah',
+        'tertinggi_prefix_mode',
+        'tertinggi_prefix_text',
+        'terendah_prefix_mode',
+        'terendah_prefix_text',
         'tahun_ajaran_id',
         'semester',
     ];
