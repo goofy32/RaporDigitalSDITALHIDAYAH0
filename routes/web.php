@@ -624,6 +624,10 @@ Route::prefix('capaian-kompetensi')->name('capaian_kompetensi.')->group(function
     Route::post('/range-templates/reset', [CapaianRangeTemplateController::class, 'resetToDefault'])->name('range_templates.reset');
 
     Route::get('/{mataPelajaran}/edit', [CapaianKompetensiController::class, 'waliKelasEdit'])->name('edit');
+    Route::put('/{mataPelajaran}/save-all', [CapaianKompetensiController::class, 'waliKelasSaveAllCapaian'])->name('save_all');
+    Route::put('/{mataPelajaran}/phrase-defaults', [CapaianKompetensiController::class, 'waliKelasUpdatePhraseDefaults'])->name('phrase_defaults.update');
+    Route::put('/{mataPelajaran}/students/phrases/batch', [CapaianKompetensiController::class, 'waliKelasBatchUpdateStudentPhrases'])->name('students.phrases.batch_update');
+    Route::put('/{mataPelajaran}/students/{siswa}/phrases', [CapaianKompetensiController::class, 'waliKelasUpdateStudentPhrase'])->name('students.phrases.update');
     Route::put('/{mataPelajaran}', [CapaianKompetensiController::class, 'waliKelasUpdate'])->name('update');
 });
 

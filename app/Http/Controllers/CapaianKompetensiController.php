@@ -6,15 +6,20 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use App\Models\CapaianKompetensiTemplate;
 use App\Models\CapaianKompetensiCustom;
+use App\Models\CapaianPhraseDefault;
 use App\Models\Kelas;
 use App\Models\MataPelajaran;
 use App\Models\Siswa;
 use App\Models\TahunAjaran;
 use App\Services\CapaianKompetensiTextService;
+use App\Services\PdfCacheService;
 use App\Services\SiswaKelasSemesterResolver;
 use App\Traits\RequiresTahunAjaran;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 class CapaianKompetensiController extends Controller
 {
@@ -198,6 +203,7 @@ class CapaianKompetensiController extends Controller
 
         // Cek akses wali kelas
         $kelas = $this->authorizeWaliSubject($mataPelajaran, $tahunAjaranId, $semester);
+        $tahunAjaran = TahunAjaran::find($tahunAjaranId);
 
         // Ambil semua siswa di kelas
         $siswaList = $this->studentsForWaliClass((int) $kelas->id, $tahunAjaranId, $semester);
@@ -211,12 +217,34 @@ class CapaianKompetensiController extends Controller
             ->get()
             ->keyBy('siswa_id');
 
+        $phraseDefaults = Schema::hasTable('capaian_phrase_defaults')
+            ? CapaianPhraseDefault::where('tahun_ajaran_id', $tahunAjaranId)
+                ->where('semester', $semester)
+                ->where('kelas_id', $kelas->id)
+                ->where('mata_pelajaran_id', $mataPelajaranId)
+                ->get()
+                ->keyBy('type')
+            : collect();
+        $prefixPresets = $this->capaianPrefixPresets();
+        $studentCapaianRows = $this->buildStudentCapaianRows(
+            $siswaList,
+            $mataPelajaran,
+            $existingCapaian,
+            $tahunAjaranId,
+            $semester
+        );
+
         return view('wali_kelas.capaian_kompetensi.edit', compact(
             'mataPelajaran',
             'siswaList', 
             'existingCapaian',
             'tahunAjaranId',
-            'semester'
+            'semester',
+            'kelas',
+            'tahunAjaran',
+            'phraseDefaults',
+            'prefixPresets',
+            'studentCapaianRows'
         ));
     }
 
@@ -298,6 +326,755 @@ class CapaianKompetensiController extends Controller
             Log::error('Error updating capaian kompetensi: ' . $e->getMessage());
             return redirect()->back()->with('error', 'Gagal menyimpan capaian kompetensi: ' . $e->getMessage());
         }
+    }
+
+    public function waliKelasUpdatePhraseDefaults(Request $request, $mataPelajaranId)
+    {
+        $validated = $request->validate([
+            'tahun_ajaran_id' => ['required', 'integer', 'exists:tahun_ajarans,id'],
+            'semester' => ['required', 'integer', Rule::in([1, 2])],
+            'tertinggi_choice' => ['required', 'string', 'max:150'],
+            'tertinggi_custom_phrase' => ['nullable', 'string', 'max:150'],
+            'terendah_choice' => ['required', 'string', 'max:150'],
+            'terendah_custom_phrase' => ['nullable', 'string', 'max:150'],
+        ]);
+
+        $tahunAjaranId = (int) $validated['tahun_ajaran_id'];
+        $semester = (int) $validated['semester'];
+        $tahunAjaran = TahunAjaran::findOrFail($tahunAjaranId);
+        abort_unless((int) $tahunAjaran->semester === $semester, 403);
+
+        $mataPelajaran = MataPelajaran::findOrFail($mataPelajaranId);
+        $kelas = $this->authorizeWaliSubject($mataPelajaran, $tahunAjaranId, $semester);
+        $presets = $this->capaianPrefixPresets();
+
+        $tertinggi = $this->resolveDefaultPhrasePayload($request, 'tertinggi', $presets['tertinggi']);
+        $terendah = $this->resolveDefaultPhrasePayload($request, 'terendah', $presets['terendah']);
+
+        DB::transaction(function () use ($tahunAjaranId, $semester, $kelas, $mataPelajaranId, $tertinggi, $terendah) {
+            foreach ([
+                CapaianKompetensiTextService::TYPE_TERTINGGI => $tertinggi,
+                CapaianKompetensiTextService::TYPE_TERENDAH => $terendah,
+            ] as $type => $payload) {
+                CapaianPhraseDefault::updateOrCreate(
+                    [
+                        'tahun_ajaran_id' => $tahunAjaranId,
+                        'semester' => $semester,
+                        'kelas_id' => $kelas->id,
+                        'mata_pelajaran_id' => $mataPelajaranId,
+                        'type' => $type,
+                    ],
+                    [
+                        'mode' => $payload['mode'],
+                        'phrase' => $payload['phrase'],
+                    ]
+                );
+            }
+        });
+
+        $this->clearCapaianPdfCacheForStudents(
+            $this->studentsForWaliClass((int) $kelas->id, $tahunAjaranId, $semester)->pluck('id')->all(),
+            $tahunAjaranId
+        );
+
+        return redirect()
+            ->route('wali_kelas.capaian_kompetensi.edit', $mataPelajaranId)
+            ->with('success', 'Pengaturan kalimat awal capaian berhasil disimpan.');
+    }
+
+    public function waliKelasUpdateStudentPhrase(Request $request, $mataPelajaranId, $siswaId)
+    {
+        $validator = validator($request->all(), [
+            'tahun_ajaran_id' => ['required', 'integer', 'exists:tahun_ajarans,id'],
+            'semester' => ['required', 'integer', Rule::in([1, 2])],
+            'tertinggi_mode' => ['nullable', 'string', Rule::in(['default', 'preset', 'custom', 'full'])],
+            'tertinggi_prefix_choice' => ['nullable', 'string', 'max:150'],
+            'tertinggi_prefix_custom' => ['nullable', 'string', 'max:150'],
+            'tertinggi_full_text' => ['nullable', 'string', 'max:1000'],
+            'tertinggi_clear_full' => ['nullable', 'boolean'],
+            'terendah_mode' => ['nullable', 'string', Rule::in(['default', 'preset', 'custom', 'full'])],
+            'terendah_prefix_choice' => ['nullable', 'string', 'max:150'],
+            'terendah_prefix_custom' => ['nullable', 'string', 'max:150'],
+            'terendah_full_text' => ['nullable', 'string', 'max:1000'],
+            'terendah_clear_full' => ['nullable', 'boolean'],
+        ]);
+
+        if ($validator->fails()) {
+            return redirect()->back()
+                ->withErrors($validator)
+                ->withInput()
+                ->with('open_capaian_modal', (int) $siswaId);
+        }
+
+        $validated = $validator->validated();
+        $tahunAjaranId = (int) $validated['tahun_ajaran_id'];
+        $semester = (int) $validated['semester'];
+        $tahunAjaran = TahunAjaran::findOrFail($tahunAjaranId);
+        abort_unless((int) $tahunAjaran->semester === $semester, 403);
+
+        $mataPelajaran = MataPelajaran::findOrFail($mataPelajaranId);
+        $kelas = $this->authorizeWaliSubject($mataPelajaran, $tahunAjaranId, $semester);
+        $siswa = Siswa::findOrFail($siswaId);
+        $this->assertAllStudentsBelongToWaliClass([(int) $siswa->id], (int) $kelas->id, $tahunAjaranId, $semester);
+
+        $presets = $this->capaianPrefixPresets();
+        $updates = [];
+        $hasRequestedUpdate = false;
+
+        foreach ([CapaianKompetensiTextService::TYPE_TERTINGGI, CapaianKompetensiTextService::TYPE_TERENDAH] as $type) {
+            $mode = $validated[$type.'_mode'] ?? null;
+
+            if (! $mode) {
+                continue;
+            }
+
+            $hasRequestedUpdate = true;
+            $sideUpdates = $this->resolveStudentPhraseUpdates($request, $type, $mode, $presets[$type]);
+
+            if ($sideUpdates === null) {
+                return redirect()->back()
+                    ->withErrors([$type.'_mode' => 'Pilihan capaian tidak valid.'])
+                    ->withInput()
+                    ->with('open_capaian_modal', (int) $siswaId);
+            }
+
+            $updates = array_merge($updates, $sideUpdates);
+        }
+
+        if (! $hasRequestedUpdate) {
+            return redirect()->back()
+                ->withErrors(['capaian' => 'Pilih minimal satu capaian yang ingin diperbarui.'])
+                ->withInput()
+                ->with('open_capaian_modal', (int) $siswaId);
+        }
+
+        if (! empty($updates)) {
+            DB::transaction(function () use ($siswa, $mataPelajaranId, $tahunAjaranId, $semester, $updates) {
+                CapaianKompetensiCustom::updateOrCreate(
+                    [
+                        'siswa_id' => $siswa->id,
+                        'mata_pelajaran_id' => $mataPelajaranId,
+                        'tahun_ajaran_id' => $tahunAjaranId,
+                        'semester' => $semester,
+                    ],
+                    $updates
+                );
+            });
+        }
+
+        PdfCacheService::clearStudentCache($siswa, $tahunAjaranId);
+
+        return redirect()
+            ->route('wali_kelas.capaian_kompetensi.edit', $mataPelajaranId)
+            ->with('success', 'Pengaturan capaian siswa berhasil disimpan.');
+    }
+
+    public function waliKelasSaveAllCapaian(Request $request, $mataPelajaranId)
+    {
+        $validator = validator($request->all(), [
+            'context.tahun_ajaran_id' => ['required', 'integer', 'exists:tahun_ajarans,id'],
+            'context.semester' => ['required', 'integer', Rule::in([1, 2])],
+            'context.kelas_id' => ['required', 'integer', 'exists:kelas,id'],
+            'defaults' => ['nullable', 'array'],
+            'student_changes' => ['nullable', 'array'],
+            'student_changes.*.siswa_id' => ['required_with:student_changes', 'integer', 'exists:siswas,id'],
+            'student_changes.*.tertinggi' => ['nullable', 'array'],
+            'student_changes.*.terendah' => ['nullable', 'array'],
+        ]);
+
+        $validator->after(function ($validator) use ($request) {
+            $hasChange = false;
+            $presets = $this->capaianPrefixPresets();
+
+            foreach ([CapaianKompetensiTextService::TYPE_TERTINGGI, CapaianKompetensiTextService::TYPE_TERENDAH] as $type) {
+                $default = $request->input("defaults.$type");
+
+                if (! is_array($default) || ! filter_var($default['changed'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
+                    continue;
+                }
+
+                $hasChange = true;
+                $mode = $default['mode'] ?? null;
+                $phrase = trim((string) ($default['phrase'] ?? ''));
+
+                if (! in_array($mode, [CapaianPhraseDefault::MODE_PRESET, CapaianPhraseDefault::MODE_CUSTOM], true)) {
+                    $validator->errors()->add("defaults.$type.mode", 'Mode kalimat default tidak valid.');
+                }
+
+                if ($phrase === '') {
+                    $validator->errors()->add("defaults.$type.phrase", 'Kalimat default wajib diisi.');
+                }
+
+                if (mb_strlen($phrase) > 150) {
+                    $validator->errors()->add("defaults.$type.phrase", 'Kalimat default maksimal 150 karakter.');
+                }
+
+                if ($mode === CapaianPhraseDefault::MODE_PRESET && ! in_array($phrase, $presets[$type], true)) {
+                    $validator->errors()->add("defaults.$type.phrase", 'Preset kalimat default tidak valid.');
+                }
+            }
+
+            $seen = [];
+
+            foreach ((array) $request->input('student_changes', []) as $index => $change) {
+                if (! is_array($change)) {
+                    $validator->errors()->add("student_changes.$index", 'Format perubahan siswa tidak valid.');
+                    continue;
+                }
+
+                $studentId = (int) ($change['siswa_id'] ?? 0);
+                $sideCount = 0;
+
+                foreach ([CapaianKompetensiTextService::TYPE_TERTINGGI, CapaianKompetensiTextService::TYPE_TERENDAH] as $type) {
+                    $side = $change[$type] ?? null;
+
+                    if (! is_array($side)) {
+                        continue;
+                    }
+
+                    $hasChange = true;
+                    $sideCount++;
+
+                    $sideKey = $studentId.':'.$type;
+                    if (isset($seen[$sideKey])) {
+                        $validator->errors()->add("student_changes.$index.$type", 'Perubahan capaian siswa tidak boleh dikirim ganda.');
+                    }
+                    $seen[$sideKey] = true;
+
+                    $action = $side['action'] ?? null;
+                    if (! in_array($action, ['custom_full', 'reset_default'], true)) {
+                        $validator->errors()->add("student_changes.$index.$type.action", 'Aksi perubahan capaian tidak valid.');
+                        continue;
+                    }
+
+                    if ($action === 'custom_full') {
+                        $text = trim((string) ($side['text'] ?? ''));
+
+                        if ($text === '') {
+                            $validator->errors()->add("student_changes.$index.$type.text", 'Deskripsi capaian tidak boleh kosong. Gunakan tombol default bila ingin menghapus custom.');
+                        }
+
+                        if (mb_strlen($text) > 1000) {
+                            $validator->errors()->add("student_changes.$index.$type.text", 'Deskripsi capaian maksimal 1000 karakter.');
+                        }
+                    }
+                }
+
+                if ($sideCount === 0) {
+                    $validator->errors()->add("student_changes.$index", 'Pilih minimal satu perubahan capaian siswa.');
+                }
+            }
+
+            if (! $hasChange) {
+                $validator->errors()->add('changes', 'Tidak ada perubahan capaian untuk disimpan.');
+            }
+        });
+
+        if ($validator->fails()) {
+            return redirect()->back()
+                ->withErrors($validator)
+                ->withInput()
+                ->with('error', 'Perubahan capaian belum dapat disimpan. Periksa kembali isian yang ditandai.');
+        }
+
+        $context = $validator->validated()['context'];
+        $tahunAjaranId = (int) $context['tahun_ajaran_id'];
+        $semester = (int) $context['semester'];
+        $kelasId = (int) $context['kelas_id'];
+        $tahunAjaran = TahunAjaran::findOrFail($tahunAjaranId);
+        abort_unless((int) $tahunAjaran->semester === $semester, 403);
+
+        $mataPelajaran = MataPelajaran::findOrFail($mataPelajaranId);
+        $kelas = $this->authorizeWaliSubject($mataPelajaran, $tahunAjaranId, $semester);
+        abort_unless((int) $kelas->id === $kelasId, 403);
+
+        $defaultUpdates = $this->resolveSaveAllDefaultUpdates($request);
+        $studentUpdates = $this->resolveSaveAllStudentUpdates($request);
+        $studentIds = array_keys($studentUpdates);
+
+        if (! empty($studentIds)) {
+            $this->assertAllStudentsBelongToWaliClass($studentIds, $kelasId, $tahunAjaranId, $semester);
+        }
+
+        DB::transaction(function () use ($defaultUpdates, $studentUpdates, $tahunAjaranId, $semester, $kelasId, $mataPelajaranId) {
+            foreach ($defaultUpdates as $type => $payload) {
+                CapaianPhraseDefault::updateOrCreate(
+                    [
+                        'tahun_ajaran_id' => $tahunAjaranId,
+                        'semester' => $semester,
+                        'kelas_id' => $kelasId,
+                        'mata_pelajaran_id' => $mataPelajaranId,
+                        'type' => $type,
+                    ],
+                    [
+                        'mode' => $payload['mode'],
+                        'phrase' => $payload['phrase'],
+                    ]
+                );
+            }
+
+            foreach ($studentUpdates as $studentId => $updates) {
+                CapaianKompetensiCustom::updateOrCreate(
+                    [
+                        'siswa_id' => $studentId,
+                        'mata_pelajaran_id' => $mataPelajaranId,
+                        'tahun_ajaran_id' => $tahunAjaranId,
+                        'semester' => $semester,
+                    ],
+                    $updates
+                );
+            }
+        });
+
+        $cacheStudentIds = empty($defaultUpdates)
+            ? $studentIds
+            : $this->studentsForWaliClass($kelasId, $tahunAjaranId, $semester)->pluck('id')->all();
+
+        $this->clearCapaianPdfCacheForStudents(array_unique(array_map('intval', $cacheStudentIds)), $tahunAjaranId);
+
+        return redirect()
+            ->route('wali_kelas.capaian_kompetensi.edit', $mataPelajaranId)
+            ->with('success', 'Semua perubahan capaian berhasil disimpan.');
+    }
+
+    public function waliKelasBatchUpdateStudentPhrases(Request $request, $mataPelajaranId)
+    {
+        $validator = validator($request->all(), [
+            'tahun_ajaran_id' => ['required', 'integer', 'exists:tahun_ajarans,id'],
+            'semester' => ['required', 'integer', Rule::in([1, 2])],
+            'changes' => ['required', 'array', 'min:1'],
+            'changes.*.siswa_id' => ['required', 'integer', 'exists:siswas,id'],
+            'changes.*.tertinggi' => ['nullable', 'string', 'max:1000'],
+            'changes.*.terendah' => ['nullable', 'string', 'max:1000'],
+            'changes.*.tertinggi_reset' => ['nullable', 'boolean'],
+            'changes.*.terendah_reset' => ['nullable', 'boolean'],
+        ]);
+
+        $validator->after(function ($validator) use ($request) {
+            $seen = [];
+
+            foreach ((array) $request->input('changes', []) as $index => $change) {
+                if (! is_array($change)) {
+                    $validator->errors()->add("changes.$index", 'Format perubahan capaian tidak valid.');
+                    continue;
+                }
+
+                $studentId = (int) ($change['siswa_id'] ?? 0);
+                $sideCount = 0;
+
+                foreach ([CapaianKompetensiTextService::TYPE_TERTINGGI, CapaianKompetensiTextService::TYPE_TERENDAH] as $type) {
+                    $hasText = array_key_exists($type, $change);
+                    $hasReset = filter_var($change[$type.'_reset'] ?? false, FILTER_VALIDATE_BOOLEAN);
+
+                    if ($hasText && $hasReset) {
+                        $validator->errors()->add("changes.$index.$type", 'Pilih edit teks atau gunakan default, bukan keduanya.');
+                        continue;
+                    }
+
+                    if (! $hasText && ! $hasReset) {
+                        continue;
+                    }
+
+                    $sideKey = $studentId.':'.$type;
+                    if (isset($seen[$sideKey])) {
+                        $validator->errors()->add("changes.$index.$type", 'Perubahan capaian siswa tidak boleh dikirim ganda.');
+                    }
+
+                    $seen[$sideKey] = true;
+                    $sideCount++;
+
+                    if ($hasText && trim((string) $change[$type]) === '') {
+                        $validator->errors()->add("changes.$index.$type", 'Deskripsi capaian tidak boleh kosong. Gunakan tombol default bila ingin menghapus custom.');
+                    }
+                }
+
+                if ($sideCount === 0) {
+                    $validator->errors()->add("changes.$index", 'Pilih minimal satu perubahan capaian siswa.');
+                }
+            }
+        });
+
+        if ($validator->fails()) {
+            return redirect()->back()
+                ->withErrors($validator)
+                ->withInput()
+                ->with('error', 'Perubahan capaian siswa belum dapat disimpan. Periksa kembali isian yang ditandai.');
+        }
+
+        $validated = $validator->validated();
+        $tahunAjaranId = (int) $validated['tahun_ajaran_id'];
+        $semester = (int) $validated['semester'];
+        $tahunAjaran = TahunAjaran::findOrFail($tahunAjaranId);
+        abort_unless((int) $tahunAjaran->semester === $semester, 403);
+
+        $mataPelajaran = MataPelajaran::findOrFail($mataPelajaranId);
+        $kelas = $this->authorizeWaliSubject($mataPelajaran, $tahunAjaranId, $semester);
+        $changes = collect($validated['changes']);
+        $studentIds = $changes
+            ->pluck('siswa_id')
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+
+        $this->assertAllStudentsBelongToWaliClass($studentIds, (int) $kelas->id, $tahunAjaranId, $semester);
+
+        $updatesByStudent = $this->resolveBatchCapaianUpdates($changes->all());
+        abort_unless(! empty($updatesByStudent), 422);
+
+        DB::transaction(function () use ($updatesByStudent, $mataPelajaranId, $tahunAjaranId, $semester) {
+            foreach ($updatesByStudent as $studentId => $updates) {
+                CapaianKompetensiCustom::updateOrCreate(
+                    [
+                        'siswa_id' => $studentId,
+                        'mata_pelajaran_id' => $mataPelajaranId,
+                        'tahun_ajaran_id' => $tahunAjaranId,
+                        'semester' => $semester,
+                    ],
+                    $updates
+                );
+            }
+        });
+
+        $this->clearCapaianPdfCacheForStudents(array_keys($updatesByStudent), $tahunAjaranId);
+
+        return redirect()
+            ->route('wali_kelas.capaian_kompetensi.edit', $mataPelajaranId)
+            ->with('success', 'Perubahan capaian siswa berhasil disimpan.');
+    }
+
+    private function capaianPrefixPresets(): array
+    {
+        return [
+            CapaianKompetensiTextService::TYPE_TERTINGGI => [
+                'menunjukkan penguasaan dalam',
+                'menunjukkan penguasaan yang sangat baik dalam',
+                'menunjukkan pemahaman dalam',
+                'menunjukkan pemahaman yang sangat baik dalam',
+            ],
+            CapaianKompetensiTextService::TYPE_TERENDAH => [
+                'mulai berkembang dalam',
+                'cukup berkembang dalam',
+                'berkembang dalam',
+                'berkembang sangat baik dalam',
+            ],
+        ];
+    }
+
+    private function buildStudentCapaianRows($siswaList, MataPelajaran $mataPelajaran, $existingCapaian, int $tahunAjaranId, int $semester): array
+    {
+        return $siswaList->mapWithKeys(function (Siswa $siswa) use ($mataPelajaran, $existingCapaian, $tahunAjaranId, $semester) {
+            $existingRow = $existingCapaian->get($siswa->id);
+            $resolved = self::generateCapaianTertinggiTerendah($siswa->id, $mataPelajaran->id, $tahunAjaranId);
+            $lmTexts = $this->resolveCapaianLingkupMateriTitles($siswa->id, $mataPelajaran->id, $tahunAjaranId, $semester);
+            $nilai = $siswa->nilais()
+                ->where('mata_pelajaran_id', $mataPelajaran->id)
+                ->where('tahun_ajaran_id', $tahunAjaranId)
+                ->whereHas('mataPelajaran', function ($query) use ($tahunAjaranId, $semester) {
+                    $query->where('tahun_ajaran_id', $tahunAjaranId)
+                        ->where('semester', $semester);
+                })
+                ->whereNotNull('nilai_akhir_rapor')
+                ->first();
+
+            return [
+                $siswa->id => [
+                    'resolved' => $resolved,
+                    'nilai_akhir' => $nilai?->nilai_akhir_rapor,
+                    'status' => [
+                        CapaianKompetensiTextService::TYPE_TERTINGGI => $this->capaianSideStatus($existingRow, CapaianKompetensiTextService::TYPE_TERTINGGI),
+                        CapaianKompetensiTextService::TYPE_TERENDAH => $this->capaianSideStatus($existingRow, CapaianKompetensiTextService::TYPE_TERENDAH),
+                    ],
+                    'lm' => $lmTexts,
+                    'uses_default' => [
+                        CapaianKompetensiTextService::TYPE_TERTINGGI => $this->capaianSideUsesDefault($existingRow, CapaianKompetensiTextService::TYPE_TERTINGGI),
+                        CapaianKompetensiTextService::TYPE_TERENDAH => $this->capaianSideUsesDefault($existingRow, CapaianKompetensiTextService::TYPE_TERENDAH),
+                    ],
+                ],
+            ];
+        })->all();
+    }
+
+    private function resolveCapaianLingkupMateriTitles(int $studentId, int $subjectId, int $yearId, int $semester): array
+    {
+        $lmData = DB::table('nilais')
+            ->join('lingkup_materis', 'nilais.lingkup_materi_id', '=', 'lingkup_materis.id')
+            ->join('mata_pelajarans', 'nilais.mata_pelajaran_id', '=', 'mata_pelajarans.id')
+            ->where('nilais.siswa_id', $studentId)
+            ->where('nilais.mata_pelajaran_id', $subjectId)
+            ->where('nilais.tahun_ajaran_id', $yearId)
+            ->where('mata_pelajarans.tahun_ajaran_id', $yearId)
+            ->where('mata_pelajarans.semester', $semester)
+            ->whereNull('nilais.deleted_at')
+            ->whereNull('lingkup_materis.deleted_at')
+            ->whereNull('mata_pelajarans.deleted_at')
+            ->whereNotNull('nilais.nilai_lm')
+            ->groupBy('lingkup_materis.id', 'lingkup_materis.judul_lingkup_materi')
+            ->select(
+                'lingkup_materis.id',
+                'lingkup_materis.judul_lingkup_materi',
+                DB::raw('MAX(nilais.nilai_lm) as nilai_lm')
+            )
+            ->get();
+
+        return [
+            CapaianKompetensiTextService::TYPE_TERTINGGI => (string) ($lmData->sortByDesc('nilai_lm')->first()?->judul_lingkup_materi ?? ''),
+            CapaianKompetensiTextService::TYPE_TERENDAH => (string) ($lmData->sortBy('nilai_lm')->first()?->judul_lingkup_materi ?? ''),
+        ];
+    }
+
+    private function capaianSideStatus(?CapaianKompetensiCustom $custom, string $type): array
+    {
+        $fullField = $this->fullCustomField($type);
+        $modeField = $this->prefixModeField($type);
+        $textField = $this->prefixTextField($type);
+
+        if ($custom && filled($custom->{$fullField})) {
+            return [
+                'label' => 'Custom',
+                'class' => 'bg-amber-50 text-amber-700 ring-amber-200',
+            ];
+        }
+
+        if ($custom && $custom->{$modeField} === 'preset' && filled($custom->{$textField})) {
+            return [
+                'label' => 'Preset khusus',
+                'class' => 'bg-green-50 text-green-700 ring-green-200',
+            ];
+        }
+
+        if ($custom && $custom->{$modeField} === 'custom' && filled($custom->{$textField})) {
+            return [
+                'label' => 'Kalimat awal khusus',
+                'class' => 'bg-green-50 text-green-700 ring-green-200',
+            ];
+        }
+
+        return [
+            'label' => 'Default',
+            'class' => 'bg-gray-100 text-gray-700 ring-gray-200',
+        ];
+    }
+
+    private function capaianSideUsesDefault(?CapaianKompetensiCustom $custom, string $type): bool
+    {
+        $fullField = $this->fullCustomField($type);
+        $modeField = $this->prefixModeField($type);
+        $textField = $this->prefixTextField($type);
+
+        if ($custom && filled($custom->{$fullField})) {
+            return false;
+        }
+
+        if ($custom && in_array($custom->{$modeField}, ['preset', 'custom'], true) && filled($custom->{$textField})) {
+            return false;
+        }
+
+        return true;
+    }
+
+    private function resolveDefaultPhrasePayload(Request $request, string $type, array $presets): array
+    {
+        $choice = trim((string) $request->input($type.'_choice'));
+
+        if ($choice === '__custom__') {
+            $phrase = trim((string) $request->input($type.'_custom_phrase'));
+
+            if ($phrase === '') {
+                throw ValidationException::withMessages([
+                    $type.'_custom_phrase' => 'Kalimat custom wajib diisi.',
+                ]);
+            }
+
+            return [
+                'mode' => 'custom',
+                'phrase' => $phrase,
+            ];
+        }
+
+        if (! in_array($choice, $presets, true)) {
+            throw ValidationException::withMessages([
+                $type.'_choice' => 'Pilihan kalimat awal tidak valid.',
+            ]);
+        }
+
+        return [
+            'mode' => 'preset',
+            'phrase' => $choice,
+        ];
+    }
+
+    private function resolveStudentPhraseUpdates(Request $request, string $type, string $mode, array $presets): ?array
+    {
+        $updates = [];
+        $fullField = $this->fullCustomField($type);
+        $modeField = $this->prefixModeField($type);
+        $textField = $this->prefixTextField($type);
+        $clearFull = $request->boolean($type.'_clear_full');
+
+        if ($clearFull) {
+            $updates[$fullField] = null;
+        }
+
+        if ($mode === 'default') {
+            $updates[$modeField] = 'default';
+            $updates[$textField] = null;
+
+            return $updates;
+        }
+
+        if ($mode === 'preset') {
+            $choice = trim((string) $request->input($type.'_prefix_choice'));
+
+            if (! in_array($choice, $presets, true)) {
+                return null;
+            }
+
+            $updates[$modeField] = 'preset';
+            $updates[$textField] = $choice;
+
+            return $updates;
+        }
+
+        if ($mode === 'custom') {
+            $phrase = trim((string) $request->input($type.'_prefix_custom'));
+
+            if ($phrase === '') {
+                return null;
+            }
+
+            $updates[$modeField] = 'custom';
+            $updates[$textField] = $phrase;
+
+            return $updates;
+        }
+
+        if ($mode === 'full') {
+            $fullText = trim((string) $request->input($type.'_full_text'));
+
+            if ($fullText === '') {
+                return null;
+            }
+
+            $updates[$fullField] = $fullText;
+
+            return $updates;
+        }
+
+        return null;
+    }
+
+    private function resolveSaveAllDefaultUpdates(Request $request): array
+    {
+        $updates = [];
+
+        foreach ([CapaianKompetensiTextService::TYPE_TERTINGGI, CapaianKompetensiTextService::TYPE_TERENDAH] as $type) {
+            $default = $request->input("defaults.$type");
+
+            if (! is_array($default) || ! filter_var($default['changed'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
+                continue;
+            }
+
+            $updates[$type] = [
+                'mode' => (string) $default['mode'],
+                'phrase' => trim((string) $default['phrase']),
+            ];
+        }
+
+        return $updates;
+    }
+
+    private function resolveSaveAllStudentUpdates(Request $request): array
+    {
+        $updatesByStudent = [];
+
+        foreach ((array) $request->input('student_changes', []) as $change) {
+            if (! is_array($change)) {
+                continue;
+            }
+
+            $studentId = (int) ($change['siswa_id'] ?? 0);
+
+            foreach ([CapaianKompetensiTextService::TYPE_TERTINGGI, CapaianKompetensiTextService::TYPE_TERENDAH] as $type) {
+                $side = $change[$type] ?? null;
+
+                if (! is_array($side)) {
+                    continue;
+                }
+
+                $fullField = $this->fullCustomField($type);
+                $modeField = $this->prefixModeField($type);
+                $textField = $this->prefixTextField($type);
+                $action = $side['action'] ?? null;
+
+                if ($action === 'custom_full') {
+                    $updatesByStudent[$studentId][$fullField] = trim((string) ($side['text'] ?? ''));
+                }
+
+                if ($action === 'reset_default') {
+                    $updatesByStudent[$studentId][$fullField] = null;
+                    $updatesByStudent[$studentId][$modeField] = 'default';
+                    $updatesByStudent[$studentId][$textField] = null;
+                }
+            }
+        }
+
+        return $updatesByStudent;
+    }
+
+    private function resolveBatchCapaianUpdates(array $changes): array
+    {
+        $updatesByStudent = [];
+
+        foreach ($changes as $change) {
+            $studentId = (int) $change['siswa_id'];
+
+            foreach ([CapaianKompetensiTextService::TYPE_TERTINGGI, CapaianKompetensiTextService::TYPE_TERENDAH] as $type) {
+                $fullField = $this->fullCustomField($type);
+                $modeField = $this->prefixModeField($type);
+                $textField = $this->prefixTextField($type);
+
+                if (array_key_exists($type, $change)) {
+                    $updatesByStudent[$studentId][$fullField] = trim((string) $change[$type]);
+                }
+
+                if (filter_var($change[$type.'_reset'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
+                    $updatesByStudent[$studentId][$fullField] = null;
+                    $updatesByStudent[$studentId][$modeField] = 'default';
+                    $updatesByStudent[$studentId][$textField] = null;
+                }
+            }
+        }
+
+        return $updatesByStudent;
+    }
+
+    private function fullCustomField(string $type): string
+    {
+        return $type === CapaianKompetensiTextService::TYPE_TERTINGGI
+            ? 'custom_capaian_tertinggi'
+            : 'custom_capaian_terendah';
+    }
+
+    private function prefixModeField(string $type): string
+    {
+        return $type === CapaianKompetensiTextService::TYPE_TERTINGGI
+            ? 'tertinggi_prefix_mode'
+            : 'terendah_prefix_mode';
+    }
+
+    private function prefixTextField(string $type): string
+    {
+        return $type === CapaianKompetensiTextService::TYPE_TERTINGGI
+            ? 'tertinggi_prefix_text'
+            : 'terendah_prefix_text';
+    }
+
+    private function clearCapaianPdfCacheForStudents(array $studentIds, int $tahunAjaranId): void
+    {
+        Siswa::whereIn('id', $studentIds)
+            ->get()
+            ->each(fn (Siswa $siswa) => PdfCacheService::clearStudentCache($siswa, $tahunAjaranId));
     }
 
     private function getCurrentSemester(int $tahunAjaranId): int

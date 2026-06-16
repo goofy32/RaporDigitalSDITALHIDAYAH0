@@ -4,6 +4,8 @@ namespace Tests\Feature;
 
 use App\Http\Controllers\CapaianKompetensiController;
 use App\Models\Guru;
+use App\Models\Siswa;
+use App\Services\PdfCacheService;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
 use Illuminate\Support\Facades\Cache;
@@ -454,6 +456,826 @@ class CapaianPhraseCustomizationTest extends TestCase
         );
 
         $this->assertSame('Ahmad Fauzan menunjukkan default genap dalam Geometri genap.', $historical[$this->mathGenapSubjectId]['tertinggi']);
+    }
+
+    public function test_wali_can_save_contextual_tertinggi_default(): void
+    {
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->put(route('wali_kelas.capaian_kompetensi.phrase_defaults.update', $this->mathGanjilSubjectId), $this->defaultPayload([
+                'tertinggi_choice' => 'menunjukkan penguasaan dalam',
+            ]))
+            ->assertRedirect(route('wali_kelas.capaian_kompetensi.edit', $this->mathGanjilSubjectId));
+
+        $this->assertDatabaseHas('capaian_phrase_defaults', [
+            'tahun_ajaran_id' => $this->ganjilYearId,
+            'semester' => 1,
+            'kelas_id' => $this->ganjilClassId,
+            'mata_pelajaran_id' => $this->mathGanjilSubjectId,
+            'type' => 'tertinggi',
+            'mode' => 'preset',
+            'phrase' => 'menunjukkan penguasaan dalam',
+        ]);
+    }
+
+    public function test_wali_can_save_contextual_terendah_default(): void
+    {
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->put(route('wali_kelas.capaian_kompetensi.phrase_defaults.update', $this->mathGanjilSubjectId), $this->defaultPayload([
+                'terendah_choice' => '__custom__',
+                'terendah_custom_phrase' => 'membutuhkan penguatan dalam',
+            ]))
+            ->assertRedirect(route('wali_kelas.capaian_kompetensi.edit', $this->mathGanjilSubjectId));
+
+        $this->assertDatabaseHas('capaian_phrase_defaults', [
+            'type' => 'terendah',
+            'mode' => 'custom',
+            'phrase' => 'membutuhkan penguatan dalam',
+        ]);
+    }
+
+    public function test_saving_defaults_does_not_create_or_overwrite_student_custom_rows(): void
+    {
+        $this->insertFullCustom($this->ahmadId, $this->mathGanjilSubjectId, 'Full lama.', null);
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->put(route('wali_kelas.capaian_kompetensi.phrase_defaults.update', $this->mathGanjilSubjectId), $this->defaultPayload([
+                'tertinggi_choice' => 'menunjukkan penguasaan dalam',
+            ]))
+            ->assertRedirect();
+
+        $this->assertSame(1, DB::table('capaian_custom')->count());
+        $this->assertDatabaseHas('capaian_custom', [
+            'siswa_id' => $this->ahmadId,
+            'custom_capaian_tertinggi' => 'Full lama.',
+        ]);
+    }
+
+    public function test_unauthorized_wali_cannot_update_another_class_defaults(): void
+    {
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->put(route('wali_kelas.capaian_kompetensi.phrase_defaults.update', $this->otherClassSubjectId), $this->defaultPayload())
+            ->assertForbidden();
+    }
+
+    public function test_default_endpoint_keeps_context_isolated_by_semester_year_class_and_subject(): void
+    {
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->put(route('wali_kelas.capaian_kompetensi.phrase_defaults.update', $this->mathGanjilSubjectId), $this->defaultPayload([
+                'tertinggi_choice' => 'menunjukkan penguasaan dalam',
+            ]))
+            ->assertRedirect();
+
+        $ganjil = $this->resolvedCapaian($this->ahmadId, $this->mathGanjilSubjectId, $this->ganjilYearId);
+        $genap = $this->resolvedCapaian($this->ahmadId, $this->mathGenapSubjectId, $this->genapYearId);
+        $otherSubject = $this->resolvedCapaian($this->ahmadId, $this->scienceSubjectId, $this->ganjilYearId);
+
+        $this->assertSame('Ahmad Fauzan menunjukkan penguasaan dalam Bilangan kuat.', $ganjil['tertinggi']);
+        $this->assertSame('Ahmad Fauzan menunjukkan pemahaman dalam Geometri genap.', $genap['tertinggi']);
+        $this->assertSame('Ahmad Fauzan menunjukkan pemahaman yang baik.', $otherSubject['tertinggi']);
+    }
+
+    public function test_student_can_use_default_for_one_side(): void
+    {
+        $this->insertPhraseDefault('tertinggi', 'menunjukkan default dalam');
+        $this->insertPrefixOverride($this->ahmadId, $this->mathGanjilSubjectId, tertinggi: 'menunjukkan override dalam');
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->put(route('wali_kelas.capaian_kompetensi.students.phrases.update', [$this->mathGanjilSubjectId, $this->ahmadId]), $this->studentPayload([
+                'tertinggi_mode' => 'default',
+            ]))
+            ->assertRedirect();
+
+        $result = $this->resolvedCapaian($this->ahmadId, $this->mathGanjilSubjectId, $this->ganjilYearId);
+
+        $this->assertSame('Ahmad Fauzan menunjukkan default dalam Bilangan kuat.', $result['tertinggi']);
+        $this->assertDatabaseHas('capaian_custom', [
+            'siswa_id' => $this->ahmadId,
+            'tertinggi_prefix_mode' => 'default',
+            'tertinggi_prefix_text' => null,
+        ]);
+    }
+
+    public function test_student_can_select_preset_for_one_side(): void
+    {
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->put(route('wali_kelas.capaian_kompetensi.students.phrases.update', [$this->mathGanjilSubjectId, $this->ahmadId]), $this->studentPayload([
+                'tertinggi_mode' => 'preset',
+                'tertinggi_prefix_choice' => 'menunjukkan penguasaan dalam',
+            ]))
+            ->assertRedirect();
+
+        $result = $this->resolvedCapaian($this->ahmadId, $this->mathGanjilSubjectId, $this->ganjilYearId);
+
+        $this->assertSame('Ahmad Fauzan menunjukkan penguasaan dalam Bilangan kuat.', $result['tertinggi']);
+    }
+
+    public function test_student_can_enter_custom_prefix_for_one_side(): void
+    {
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->put(route('wali_kelas.capaian_kompetensi.students.phrases.update', [$this->mathGanjilSubjectId, $this->ahmadId]), $this->studentPayload([
+                'terendah_mode' => 'custom',
+                'terendah_prefix_custom' => 'membutuhkan latihan dalam',
+            ]))
+            ->assertRedirect();
+
+        $result = $this->resolvedCapaian($this->ahmadId, $this->mathGanjilSubjectId, $this->ganjilYearId);
+
+        $this->assertSame('Ahmad Fauzan membutuhkan latihan dalam Pecahan dasar.', $result['terendah']);
+    }
+
+    public function test_student_can_enter_full_custom_description(): void
+    {
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->put(route('wali_kelas.capaian_kompetensi.students.phrases.update', [$this->mathGanjilSubjectId, $this->ahmadId]), $this->studentPayload([
+                'tertinggi_mode' => 'full',
+                'tertinggi_full_text' => 'Ahmad punya deskripsi lengkap baru.',
+            ]))
+            ->assertRedirect();
+
+        $result = $this->resolvedCapaian($this->ahmadId, $this->mathGanjilSubjectId, $this->ganjilYearId);
+
+        $this->assertSame('Ahmad punya deskripsi lengkap baru.', $result['tertinggi']);
+    }
+
+    public function test_updating_tertinggi_does_not_change_terendah(): void
+    {
+        $this->insertPrefixOverride(
+            $this->ahmadId,
+            $this->mathGanjilSubjectId,
+            tertinggi: 'menunjukkan awal dalam',
+            terendah: 'membutuhkan awal dalam'
+        );
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->put(route('wali_kelas.capaian_kompetensi.students.phrases.update', [$this->mathGanjilSubjectId, $this->ahmadId]), $this->studentPayload([
+                'tertinggi_mode' => 'preset',
+                'tertinggi_prefix_choice' => 'menunjukkan penguasaan dalam',
+            ]))
+            ->assertRedirect();
+
+        $this->assertDatabaseHas('capaian_custom', [
+            'siswa_id' => $this->ahmadId,
+            'tertinggi_prefix_text' => 'menunjukkan penguasaan dalam',
+            'terendah_prefix_text' => 'membutuhkan awal dalam',
+        ]);
+    }
+
+    public function test_resetting_prefix_does_not_silently_delete_full_custom_text(): void
+    {
+        $this->insertFullCustom($this->ahmadId, $this->mathGanjilSubjectId, 'Full tetap menang.', null);
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->put(route('wali_kelas.capaian_kompetensi.students.phrases.update', [$this->mathGanjilSubjectId, $this->ahmadId]), $this->studentPayload([
+                'tertinggi_mode' => 'default',
+            ]))
+            ->assertRedirect();
+
+        $this->assertDatabaseHas('capaian_custom', [
+            'siswa_id' => $this->ahmadId,
+            'custom_capaian_tertinggi' => 'Full tetap menang.',
+            'tertinggi_prefix_mode' => 'default',
+        ]);
+    }
+
+    public function test_explicit_full_custom_removal_affects_only_requested_side(): void
+    {
+        $this->insertFullCustom($this->ahmadId, $this->mathGanjilSubjectId, 'Full tinggi.', 'Full rendah.');
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->put(route('wali_kelas.capaian_kompetensi.students.phrases.update', [$this->mathGanjilSubjectId, $this->ahmadId]), $this->studentPayload([
+                'tertinggi_mode' => 'default',
+                'tertinggi_clear_full' => '1',
+            ]))
+            ->assertRedirect();
+
+        $this->assertDatabaseHas('capaian_custom', [
+            'siswa_id' => $this->ahmadId,
+            'custom_capaian_tertinggi' => null,
+            'custom_capaian_terendah' => 'Full rendah.',
+        ]);
+    }
+
+    public function test_validation_errors_reopen_the_relevant_modal(): void
+    {
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->from(route('wali_kelas.capaian_kompetensi.edit', $this->mathGanjilSubjectId))
+            ->put(route('wali_kelas.capaian_kompetensi.students.phrases.update', [$this->mathGanjilSubjectId, $this->ahmadId]), $this->studentPayload([
+                'tertinggi_mode' => 'custom',
+                'tertinggi_prefix_custom' => '   ',
+            ]))
+            ->assertRedirect(route('wali_kelas.capaian_kompetensi.edit', $this->mathGanjilSubjectId))
+            ->assertSessionHasErrors('tertinggi_mode')
+            ->assertSessionHas('open_capaian_modal', $this->ahmadId);
+    }
+
+    public function test_edit_page_displays_correct_status_badges(): void
+    {
+        $this->insertFullCustom($this->ahmadId, $this->mathGanjilSubjectId, 'Full tinggi.', null);
+        $this->insertPrefixOverride($this->sitiId, $this->mathGanjilSubjectId, tertinggi: 'menunjukkan penguasaan dalam', tertinggiMode: 'preset');
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->get(route('wali_kelas.capaian_kompetensi.edit', $this->mathGanjilSubjectId))
+            ->assertOk()
+            ->assertSee('Custom')
+            ->assertSee('Preset khusus')
+            ->assertSee('Default');
+    }
+
+    public function test_edit_page_renders_inline_textareas_and_one_unified_save_button(): void
+    {
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->get(route('wali_kelas.capaian_kompetensi.edit', $this->mathGanjilSubjectId))
+            ->assertOk()
+            ->assertSee('Pengaturan Kalimat Awal Capaian')
+            ->assertSee('Simpan Semua Perubahan')
+            ->assertDontSee('Simpan Pengaturan Default')
+            ->assertDontSee('Simpan Perubahan Capaian Siswa')
+            ->assertSee('Kalimat yang diedit akan menjadi khusus untuk siswa tersebut')
+            ->assertSee('textarea', false)
+            ->assertSee('Capaian Tertinggi')
+            ->assertSee('Capaian Terendah')
+            ->assertDontSee('Ubah Capaian');
+    }
+
+    public function test_edit_page_contains_live_default_preview_and_unsaved_warning_hooks(): void
+    {
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->get(route('wali_kelas.capaian_kompetensi.edit', $this->mathGanjilSubjectId))
+            ->assertOk()
+            ->assertSee('capaian-default-updated')
+            ->assertSee('composeDefaultText')
+            ->assertSee('followsDefault')
+            ->assertSee('beforeunload')
+            ->assertSee('event.detail.type !== this.type || this.dirty');
+    }
+
+    public function test_initially_rendered_resolved_text_is_not_automatically_persisted_as_full_custom_text(): void
+    {
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->get(route('wali_kelas.capaian_kompetensi.edit', $this->mathGanjilSubjectId))
+            ->assertOk()
+            ->assertSee('Ahmad Fauzan menunjukkan pemahaman dalam Bilangan kuat.');
+
+        $this->assertSame(0, DB::table('capaian_custom')->count());
+    }
+
+    public function test_batch_save_updates_only_dirty_submitted_fields(): void
+    {
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->put(route('wali_kelas.capaian_kompetensi.students.phrases.batch_update', $this->mathGanjilSubjectId), $this->batchPayload([
+                [
+                    'siswa_id' => $this->ahmadId,
+                    'tertinggi' => 'Ahmad menguasai operasi hitung secara mandiri.',
+                ],
+            ]))
+            ->assertRedirect(route('wali_kelas.capaian_kompetensi.edit', $this->mathGanjilSubjectId));
+
+        $this->assertDatabaseHas('capaian_custom', [
+            'siswa_id' => $this->ahmadId,
+            'custom_capaian_tertinggi' => 'Ahmad menguasai operasi hitung secara mandiri.',
+            'custom_capaian_terendah' => null,
+        ]);
+
+        $this->assertDatabaseMissing('capaian_custom', [
+            'siswa_id' => $this->sitiId,
+        ]);
+    }
+
+    public function test_batch_updating_highest_does_not_change_lowest(): void
+    {
+        $this->insertFullCustom($this->ahmadId, $this->mathGanjilSubjectId, null, 'Full rendah tetap.');
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->put(route('wali_kelas.capaian_kompetensi.students.phrases.batch_update', $this->mathGanjilSubjectId), $this->batchPayload([
+                [
+                    'siswa_id' => $this->ahmadId,
+                    'tertinggi' => 'Full tinggi baru.',
+                ],
+            ]))
+            ->assertRedirect();
+
+        $this->assertDatabaseHas('capaian_custom', [
+            'siswa_id' => $this->ahmadId,
+            'custom_capaian_tertinggi' => 'Full tinggi baru.',
+            'custom_capaian_terendah' => 'Full rendah tetap.',
+        ]);
+    }
+
+    public function test_batch_save_updates_multiple_students_atomically(): void
+    {
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->put(route('wali_kelas.capaian_kompetensi.students.phrases.batch_update', $this->mathGanjilSubjectId), $this->batchPayload([
+                [
+                    'siswa_id' => $this->ahmadId,
+                    'tertinggi' => 'Ahmad custom tinggi.',
+                ],
+                [
+                    'siswa_id' => $this->sitiId,
+                    'terendah' => 'Siti custom rendah.',
+                ],
+            ]))
+            ->assertRedirect();
+
+        $this->assertDatabaseHas('capaian_custom', [
+            'siswa_id' => $this->ahmadId,
+            'custom_capaian_tertinggi' => 'Ahmad custom tinggi.',
+        ]);
+        $this->assertDatabaseHas('capaian_custom', [
+            'siswa_id' => $this->sitiId,
+            'custom_capaian_terendah' => 'Siti custom rendah.',
+        ]);
+    }
+
+    public function test_batch_save_rejects_mixed_unauthorized_students_atomically(): void
+    {
+        $otherStudentId = $this->insertStudent('2001', 'Dina Kelas Lain', $this->otherClassId);
+        $this->insertEnrollment($otherStudentId, $this->otherClassId, $this->ganjilYearId, 1);
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->put(route('wali_kelas.capaian_kompetensi.students.phrases.batch_update', $this->mathGanjilSubjectId), $this->batchPayload([
+                [
+                    'siswa_id' => $this->ahmadId,
+                    'tertinggi' => 'Ahmad tidak boleh tersimpan.',
+                ],
+                [
+                    'siswa_id' => $otherStudentId,
+                    'terendah' => 'Dina tidak boleh tersimpan.',
+                ],
+            ]))
+            ->assertForbidden();
+
+        $this->assertSame(0, DB::table('capaian_custom')->count());
+    }
+
+    public function test_batch_save_rejects_student_from_another_semester_year_or_subject_context(): void
+    {
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->put(route('wali_kelas.capaian_kompetensi.students.phrases.batch_update', $this->mathGenapSubjectId), $this->batchPayload([
+                [
+                    'siswa_id' => $this->ahmadId,
+                    'tertinggi' => 'Tidak boleh lintas semester.',
+                ],
+            ]))
+            ->assertForbidden();
+
+        $this->assertSame(0, DB::table('capaian_custom')->count());
+    }
+
+    public function test_inline_edit_becomes_full_custom_text_and_report_output_uses_it(): void
+    {
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->put(route('wali_kelas.capaian_kompetensi.students.phrases.batch_update', $this->mathGanjilSubjectId), $this->batchPayload([
+                [
+                    'siswa_id' => $this->ahmadId,
+                    'terendah' => 'Ahmad perlu mengulang materi pecahan dengan latihan bertahap.',
+                ],
+            ]))
+            ->assertRedirect();
+
+        $preloaded = CapaianKompetensiController::preloadCapaianData(
+            $this->ahmadId,
+            [$this->mathGanjilSubjectId],
+            $this->ganjilYearId
+        );
+
+        $this->assertSame('Ahmad perlu mengulang materi pecahan dengan latihan bertahap.', $preloaded[$this->mathGanjilSubjectId]['terendah']);
+        $this->assertDatabaseHas('capaian_custom', [
+            'siswa_id' => $this->ahmadId,
+            'custom_capaian_terendah' => 'Ahmad perlu mengulang materi pecahan dengan latihan bertahap.',
+        ]);
+    }
+
+    public function test_batch_reset_highest_affects_only_highest(): void
+    {
+        $this->insertFullCustom($this->ahmadId, $this->mathGanjilSubjectId, 'Full tinggi.', 'Full rendah.');
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->put(route('wali_kelas.capaian_kompetensi.students.phrases.batch_update', $this->mathGanjilSubjectId), $this->batchPayload([
+                [
+                    'siswa_id' => $this->ahmadId,
+                    'tertinggi_reset' => '1',
+                ],
+            ]))
+            ->assertRedirect();
+
+        $this->assertDatabaseHas('capaian_custom', [
+            'siswa_id' => $this->ahmadId,
+            'custom_capaian_tertinggi' => null,
+            'tertinggi_prefix_mode' => 'default',
+            'tertinggi_prefix_text' => null,
+            'custom_capaian_terendah' => 'Full rendah.',
+        ]);
+    }
+
+    public function test_batch_reset_lowest_affects_only_lowest(): void
+    {
+        $this->insertFullCustom($this->ahmadId, $this->mathGanjilSubjectId, 'Full tinggi.', 'Full rendah.');
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->put(route('wali_kelas.capaian_kompetensi.students.phrases.batch_update', $this->mathGanjilSubjectId), $this->batchPayload([
+                [
+                    'siswa_id' => $this->ahmadId,
+                    'terendah_reset' => '1',
+                ],
+            ]))
+            ->assertRedirect();
+
+        $this->assertDatabaseHas('capaian_custom', [
+            'siswa_id' => $this->ahmadId,
+            'custom_capaian_tertinggi' => 'Full tinggi.',
+            'custom_capaian_terendah' => null,
+            'terendah_prefix_mode' => 'default',
+            'terendah_prefix_text' => null,
+        ]);
+    }
+
+    public function test_blank_inline_text_is_rejected_and_is_not_treated_as_reset(): void
+    {
+        $this->insertFullCustom($this->ahmadId, $this->mathGanjilSubjectId, 'Full tinggi tetap.', null);
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->from(route('wali_kelas.capaian_kompetensi.edit', $this->mathGanjilSubjectId))
+            ->put(route('wali_kelas.capaian_kompetensi.students.phrases.batch_update', $this->mathGanjilSubjectId), $this->batchPayload([
+                [
+                    'siswa_id' => $this->ahmadId,
+                    'tertinggi' => '   ',
+                ],
+            ]))
+            ->assertRedirect(route('wali_kelas.capaian_kompetensi.edit', $this->mathGanjilSubjectId))
+            ->assertSessionHasErrors('changes.0.tertinggi');
+
+        $this->assertDatabaseHas('capaian_custom', [
+            'siswa_id' => $this->ahmadId,
+            'custom_capaian_tertinggi' => 'Full tinggi tetap.',
+        ]);
+    }
+
+    public function test_batch_save_invalid_payload_does_not_partially_update_other_rows(): void
+    {
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->from(route('wali_kelas.capaian_kompetensi.edit', $this->mathGanjilSubjectId))
+            ->put(route('wali_kelas.capaian_kompetensi.students.phrases.batch_update', $this->mathGanjilSubjectId), $this->batchPayload([
+                [
+                    'siswa_id' => $this->ahmadId,
+                    'tertinggi' => 'Ahmad tidak boleh tersimpan.',
+                ],
+                [
+                    'siswa_id' => $this->sitiId,
+                    'terendah' => '   ',
+                ],
+            ]))
+            ->assertRedirect(route('wali_kelas.capaian_kompetensi.edit', $this->mathGanjilSubjectId))
+            ->assertSessionHasErrors('changes.1.terendah');
+
+        $this->assertSame(0, DB::table('capaian_custom')->count());
+    }
+
+    public function test_batch_save_invalidates_relevant_student_caches(): void
+    {
+        $ahmadCacheKey = PdfCacheService::getCacheKey(Siswa::find($this->ahmadId), 'UTS', $this->ganjilYearId);
+        $sitiCacheKey = PdfCacheService::getCacheKey(Siswa::find($this->sitiId), 'UTS', $this->ganjilYearId);
+        Cache::put($ahmadCacheKey, ['path' => 'missing-ahmad.pdf', 'filename' => 'missing-ahmad.pdf'], now()->addHour());
+        Cache::put($sitiCacheKey, ['path' => 'missing-siti.pdf', 'filename' => 'missing-siti.pdf'], now()->addHour());
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->put(route('wali_kelas.capaian_kompetensi.students.phrases.batch_update', $this->mathGanjilSubjectId), $this->batchPayload([
+                [
+                    'siswa_id' => $this->ahmadId,
+                    'tertinggi' => 'Ahmad cache baru.',
+                ],
+            ]))
+            ->assertRedirect();
+
+        $this->assertFalse(Cache::has($ahmadCacheKey));
+        $this->assertTrue(Cache::has($sitiCacheKey));
+    }
+
+    public function test_unified_endpoint_saves_defaults_and_student_edits_together(): void
+    {
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->put(route('wali_kelas.capaian_kompetensi.save_all', $this->mathGanjilSubjectId), $this->saveAllPayload([
+                'defaults' => [
+                    'tertinggi' => [
+                        'changed' => '1',
+                        'mode' => 'preset',
+                        'phrase' => 'menunjukkan penguasaan dalam',
+                    ],
+                    'terendah' => [
+                        'changed' => '1',
+                        'mode' => 'custom',
+                        'phrase' => 'membutuhkan pendampingan dalam',
+                    ],
+                ],
+                'student_changes' => [
+                    [
+                        'siswa_id' => $this->ahmadId,
+                        'tertinggi' => [
+                            'action' => 'custom_full',
+                            'text' => 'Ahmad memiliki capaian custom dari workflow terpadu.',
+                        ],
+                    ],
+                ],
+            ]))
+            ->assertRedirect(route('wali_kelas.capaian_kompetensi.edit', $this->mathGanjilSubjectId));
+
+        $this->assertDatabaseHas('capaian_phrase_defaults', [
+            'type' => 'tertinggi',
+            'mode' => 'preset',
+            'phrase' => 'menunjukkan penguasaan dalam',
+        ]);
+        $this->assertDatabaseHas('capaian_phrase_defaults', [
+            'type' => 'terendah',
+            'mode' => 'custom',
+            'phrase' => 'membutuhkan pendampingan dalam',
+        ]);
+        $this->assertDatabaseHas('capaian_custom', [
+            'siswa_id' => $this->ahmadId,
+            'custom_capaian_tertinggi' => 'Ahmad memiliki capaian custom dari workflow terpadu.',
+            'custom_capaian_terendah' => null,
+        ]);
+    }
+
+    public function test_unified_endpoint_rejects_invalid_student_and_rolls_back_default_changes(): void
+    {
+        $otherStudentId = $this->insertStudent('2002', 'Raka Kelas Lain', $this->otherClassId);
+        $this->insertEnrollment($otherStudentId, $this->otherClassId, $this->ganjilYearId, 1);
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->put(route('wali_kelas.capaian_kompetensi.save_all', $this->mathGanjilSubjectId), $this->saveAllPayload([
+                'defaults' => [
+                    'tertinggi' => [
+                        'changed' => '1',
+                        'mode' => 'preset',
+                        'phrase' => 'menunjukkan penguasaan dalam',
+                    ],
+                ],
+                'student_changes' => [
+                    [
+                        'siswa_id' => $otherStudentId,
+                        'tertinggi' => [
+                            'action' => 'custom_full',
+                            'text' => 'Tidak boleh tersimpan.',
+                        ],
+                    ],
+                ],
+            ]))
+            ->assertForbidden();
+
+        $this->assertSame(0, DB::table('capaian_phrase_defaults')->count());
+        $this->assertSame(0, DB::table('capaian_custom')->count());
+    }
+
+    public function test_unified_endpoint_rejects_invalid_default_and_rolls_back_student_changes(): void
+    {
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->from(route('wali_kelas.capaian_kompetensi.edit', $this->mathGanjilSubjectId))
+            ->put(route('wali_kelas.capaian_kompetensi.save_all', $this->mathGanjilSubjectId), $this->saveAllPayload([
+                'defaults' => [
+                    'tertinggi' => [
+                        'changed' => '1',
+                        'mode' => 'custom',
+                        'phrase' => '   ',
+                    ],
+                ],
+                'student_changes' => [
+                    [
+                        'siswa_id' => $this->ahmadId,
+                        'terendah' => [
+                            'action' => 'custom_full',
+                            'text' => 'Tidak boleh ikut tersimpan.',
+                        ],
+                    ],
+                ],
+            ]))
+            ->assertRedirect(route('wali_kelas.capaian_kompetensi.edit', $this->mathGanjilSubjectId))
+            ->assertSessionHasErrors('defaults.tertinggi.phrase');
+
+        $this->assertSame(0, DB::table('capaian_phrase_defaults')->count());
+        $this->assertSame(0, DB::table('capaian_custom')->count());
+    }
+
+    public function test_unified_endpoint_keeps_untouched_fields_unpersisted(): void
+    {
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->put(route('wali_kelas.capaian_kompetensi.save_all', $this->mathGanjilSubjectId), $this->saveAllPayload([
+                'student_changes' => [
+                    [
+                        'siswa_id' => $this->ahmadId,
+                        'tertinggi' => [
+                            'action' => 'custom_full',
+                            'text' => 'Hanya tertinggi yang berubah.',
+                        ],
+                    ],
+                ],
+            ]))
+            ->assertRedirect();
+
+        $this->assertDatabaseHas('capaian_custom', [
+            'siswa_id' => $this->ahmadId,
+            'custom_capaian_tertinggi' => 'Hanya tertinggi yang berubah.',
+            'custom_capaian_terendah' => null,
+        ]);
+        $this->assertDatabaseMissing('capaian_custom', [
+            'siswa_id' => $this->sitiId,
+        ]);
+    }
+
+    public function test_unified_endpoint_reset_highest_does_not_alter_lowest(): void
+    {
+        $this->insertFullCustom($this->ahmadId, $this->mathGanjilSubjectId, 'Full tinggi.', 'Full rendah.');
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->put(route('wali_kelas.capaian_kompetensi.save_all', $this->mathGanjilSubjectId), $this->saveAllPayload([
+                'student_changes' => [
+                    [
+                        'siswa_id' => $this->ahmadId,
+                        'tertinggi' => [
+                            'action' => 'reset_default',
+                        ],
+                    ],
+                ],
+            ]))
+            ->assertRedirect();
+
+        $this->assertDatabaseHas('capaian_custom', [
+            'siswa_id' => $this->ahmadId,
+            'custom_capaian_tertinggi' => null,
+            'tertinggi_prefix_mode' => 'default',
+            'custom_capaian_terendah' => 'Full rendah.',
+        ]);
+    }
+
+    public function test_unified_default_changes_do_not_overwrite_existing_custom_students(): void
+    {
+        $this->insertFullCustom($this->ahmadId, $this->mathGanjilSubjectId, 'Full custom tetap.', null);
+        $this->insertPrefixOverride($this->sitiId, $this->mathGanjilSubjectId, tertinggi: 'menunjukkan prefix tetap dalam');
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->put(route('wali_kelas.capaian_kompetensi.save_all', $this->mathGanjilSubjectId), $this->saveAllPayload([
+                'defaults' => [
+                    'tertinggi' => [
+                        'changed' => '1',
+                        'mode' => 'preset',
+                        'phrase' => 'menunjukkan penguasaan dalam',
+                    ],
+                ],
+            ]))
+            ->assertRedirect();
+
+        $this->assertSame(2, DB::table('capaian_custom')->count());
+        $this->assertDatabaseHas('capaian_custom', [
+            'siswa_id' => $this->ahmadId,
+            'custom_capaian_tertinggi' => 'Full custom tetap.',
+        ]);
+        $this->assertDatabaseHas('capaian_custom', [
+            'siswa_id' => $this->sitiId,
+            'tertinggi_prefix_text' => 'menunjukkan prefix tetap dalam',
+        ]);
+    }
+
+    public function test_unified_save_invalidates_cache_only_after_success(): void
+    {
+        $ahmadCacheKey = PdfCacheService::getCacheKey(Siswa::find($this->ahmadId), 'UTS', $this->ganjilYearId);
+        Cache::put($ahmadCacheKey, ['path' => 'missing-ahmad.pdf', 'filename' => 'missing-ahmad.pdf'], now()->addHour());
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->from(route('wali_kelas.capaian_kompetensi.edit', $this->mathGanjilSubjectId))
+            ->put(route('wali_kelas.capaian_kompetensi.save_all', $this->mathGanjilSubjectId), $this->saveAllPayload([
+                'student_changes' => [
+                    [
+                        'siswa_id' => $this->ahmadId,
+                        'tertinggi' => [
+                            'action' => 'custom_full',
+                            'text' => '   ',
+                        ],
+                    ],
+                ],
+            ]))
+            ->assertRedirect(route('wali_kelas.capaian_kompetensi.edit', $this->mathGanjilSubjectId))
+            ->assertSessionHasErrors('student_changes.0.tertinggi.text');
+
+        $this->assertTrue(Cache::has($ahmadCacheKey));
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->put(route('wali_kelas.capaian_kompetensi.save_all', $this->mathGanjilSubjectId), $this->saveAllPayload([
+                'student_changes' => [
+                    [
+                        'siswa_id' => $this->ahmadId,
+                        'tertinggi' => [
+                            'action' => 'custom_full',
+                            'text' => 'Ahmad cache unified.',
+                        ],
+                    ],
+                ],
+            ]))
+            ->assertRedirect();
+
+        $this->assertFalse(Cache::has($ahmadCacheKey));
+    }
+
+    public function test_generated_preview_and_report_use_newly_saved_values(): void
+    {
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->put(route('wali_kelas.capaian_kompetensi.students.phrases.update', [$this->mathGanjilSubjectId, $this->ahmadId]), $this->studentPayload([
+                'tertinggi_mode' => 'custom',
+                'tertinggi_prefix_custom' => 'menunjukkan penguasaan laporan dalam',
+            ]))
+            ->assertRedirect();
+
+        $preloaded = CapaianKompetensiController::preloadCapaianData(
+            $this->ahmadId,
+            [$this->mathGanjilSubjectId],
+            $this->ganjilYearId
+        );
+
+        $this->assertSame('Ahmad Fauzan menunjukkan penguasaan laporan dalam Bilangan kuat.', $preloaded[$this->mathGanjilSubjectId]['tertinggi']);
+    }
+
+    public function test_relevant_cache_is_invalidated_after_student_override_update(): void
+    {
+        $cacheKey = PdfCacheService::getCacheKey(Siswa::find($this->ahmadId), 'UTS', $this->ganjilYearId);
+        Cache::put($cacheKey, ['path' => 'missing.pdf', 'filename' => 'missing.pdf'], now()->addHour());
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->put(route('wali_kelas.capaian_kompetensi.students.phrases.update', [$this->mathGanjilSubjectId, $this->ahmadId]), $this->studentPayload([
+                'tertinggi_mode' => 'preset',
+                'tertinggi_prefix_choice' => 'menunjukkan penguasaan dalam',
+            ]))
+            ->assertRedirect();
+
+        $this->assertFalse(Cache::has($cacheKey));
+    }
+
+    public function test_relevant_class_cache_is_invalidated_after_contextual_default_update(): void
+    {
+        $ahmadCacheKey = PdfCacheService::getCacheKey(Siswa::find($this->ahmadId), 'UTS', $this->ganjilYearId);
+        $sitiCacheKey = PdfCacheService::getCacheKey(Siswa::find($this->sitiId), 'UTS', $this->ganjilYearId);
+        Cache::put($ahmadCacheKey, ['path' => 'missing-ahmad.pdf', 'filename' => 'missing-ahmad.pdf'], now()->addHour());
+        Cache::put($sitiCacheKey, ['path' => 'missing-siti.pdf', 'filename' => 'missing-siti.pdf'], now()->addHour());
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->put(route('wali_kelas.capaian_kompetensi.phrase_defaults.update', $this->mathGanjilSubjectId), $this->defaultPayload([
+                'tertinggi_choice' => 'menunjukkan penguasaan dalam',
+            ]))
+            ->assertRedirect();
+
+        $this->assertFalse(Cache::has($ahmadCacheKey));
+        $this->assertFalse(Cache::has($sitiCacheKey));
+    }
+
+    public function test_existing_full_custom_descriptions_remain_backward_compatible_after_default_change(): void
+    {
+        $this->insertFullCustom($this->ahmadId, $this->mathGanjilSubjectId, 'Full custom lama.', null);
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->put(route('wali_kelas.capaian_kompetensi.phrase_defaults.update', $this->mathGanjilSubjectId), $this->defaultPayload([
+                'tertinggi_choice' => 'menunjukkan penguasaan dalam',
+            ]))
+            ->assertRedirect();
+
+        $result = $this->resolvedCapaian($this->ahmadId, $this->mathGanjilSubjectId, $this->ganjilYearId);
+
+        $this->assertSame('Full custom lama.', $result['tertinggi']);
+    }
+
+    private function defaultPayload(array $overrides = []): array
+    {
+        return array_merge([
+            'tahun_ajaran_id' => $this->ganjilYearId,
+            'semester' => 1,
+            'tertinggi_choice' => 'menunjukkan pemahaman dalam',
+            'tertinggi_custom_phrase' => null,
+            'terendah_choice' => 'berkembang dalam',
+            'terendah_custom_phrase' => null,
+        ], $overrides);
+    }
+
+    private function studentPayload(array $overrides = []): array
+    {
+        return array_merge([
+            'tahun_ajaran_id' => $this->ganjilYearId,
+            'semester' => 1,
+        ], $overrides);
+    }
+
+    private function batchPayload(array $changes, array $overrides = []): array
+    {
+        return array_merge([
+            'tahun_ajaran_id' => $this->ganjilYearId,
+            'semester' => 1,
+            'changes' => $changes,
+        ], $overrides);
+    }
+
+    private function saveAllPayload(array $overrides = []): array
+    {
+        return array_replace_recursive([
+            'context' => [
+                'tahun_ajaran_id' => $this->ganjilYearId,
+                'semester' => 1,
+                'kelas_id' => $this->ganjilClassId,
+            ],
+        ], $overrides);
     }
 
     private function actingAsWali(int $tahunAjaranId, int $semester): self
