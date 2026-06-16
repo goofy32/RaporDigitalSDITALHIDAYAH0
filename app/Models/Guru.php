@@ -28,6 +28,7 @@ class Guru extends Authenticatable
         'password',
         'must_change_password',
         'photo',
+        'signature_path',
     ];
 
     // Relasi dengan kelas

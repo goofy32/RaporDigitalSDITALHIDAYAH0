@@ -3,6 +3,10 @@ import Alpine from 'alpinejs';
 export const cleanupHandlers = new Set();
 export const sidebarImageCache = new Map();
 
+const sidebarAccessibilityObservers = new WeakMap();
+let sidebarAccessibilitySyncFrame = null;
+let sidebarResizeListenerBound = false;
+
 export function preloadAndCacheSidebarIcons() {
     const sidebar = document.getElementById('logo-sidebar');
     if (!sidebar) return;
@@ -38,6 +42,89 @@ export function ensureSidebarVisible() {
         sidebar.classList.remove('-translate-x-full');
         sidebar.classList.remove('hidden');
         sidebar.classList.add('sm:translate-x-0');
+        bindSidebarAccessibilityObserver();
+        scheduleSidebarAccessibilitySync();
+    }
+}
+
+function getSidebarToggle() {
+    return document.querySelector('[data-drawer-toggle="logo-sidebar"], [data-drawer-target="logo-sidebar"]');
+}
+
+function moveFocusOutOfSidebar(sidebar) {
+    if (!sidebar.contains(document.activeElement)) {
+        return;
+    }
+
+    const toggle = getSidebarToggle();
+
+    if (toggle instanceof HTMLElement && !toggle.closest('[aria-hidden="true"], [inert]')) {
+        toggle.focus({ preventScroll: true });
+        return;
+    }
+
+    if (document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur();
+    }
+}
+
+export function syncSidebarAccessibility() {
+    const sidebar = document.getElementById('logo-sidebar');
+    if (!sidebar) return;
+
+    const isDesktop = window.matchMedia('(min-width: 640px)').matches;
+    const isHiddenByTransform = sidebar.classList.contains('-translate-x-full');
+    const isHidden = !isDesktop && (isHiddenByTransform || sidebar.classList.contains('hidden'));
+
+    if (isHidden) {
+        moveFocusOutOfSidebar(sidebar);
+        if (sidebar.getAttribute('aria-hidden') !== 'true') {
+            sidebar.setAttribute('aria-hidden', 'true');
+        }
+        if (!sidebar.hasAttribute('inert')) {
+            sidebar.setAttribute('inert', '');
+        }
+        return;
+    }
+
+    if (sidebar.hasAttribute('aria-hidden')) {
+        sidebar.removeAttribute('aria-hidden');
+    }
+    if (sidebar.hasAttribute('inert')) {
+        sidebar.removeAttribute('inert');
+    }
+}
+
+export function scheduleSidebarAccessibilitySync() {
+    if (sidebarAccessibilitySyncFrame !== null) {
+        return;
+    }
+
+    const schedule = window.requestAnimationFrame || (callback => window.setTimeout(callback, 16));
+
+    sidebarAccessibilitySyncFrame = schedule(() => {
+        sidebarAccessibilitySyncFrame = null;
+        syncSidebarAccessibility();
+    });
+}
+
+function bindSidebarAccessibilityObserver() {
+    const sidebar = document.getElementById('logo-sidebar');
+    if (!sidebar || sidebarAccessibilityObservers.has(sidebar)) return;
+
+    sidebar.dataset.accessibilityObserver = 'true';
+
+    const observer = new MutationObserver(() => scheduleSidebarAccessibilitySync());
+    observer.observe(sidebar, {
+        attributes: true,
+        attributeFilter: ['class'],
+    });
+
+    sidebarAccessibilityObservers.set(sidebar, observer);
+
+    if (!sidebarResizeListenerBound) {
+        window.addEventListener('resize', scheduleSidebarAccessibilitySync, { passive: true });
+        sidebarResizeListenerBound = true;
     }
 }
 
@@ -132,6 +219,9 @@ export function registerSidebarFeatures() {
 
     Alpine.store('pageTransition');
 
+    bindSidebarAccessibilityObserver();
+    scheduleSidebarAccessibilitySync();
+
     document.addEventListener('turbo:before-visit', () => {
         Alpine.store('pageLoading').startLoading();
     });
@@ -148,10 +238,13 @@ export function registerSidebarFeatures() {
     document.addEventListener('DOMContentLoaded', preloadPermanentComponents);
     document.addEventListener('turbo:load', preloadPermanentComponents);
     document.addEventListener('turbo:load', ensureSidebarVisible);
+    document.addEventListener('turbo:load', scheduleSidebarAccessibilitySync);
     document.addEventListener('turbo:render', ensureSidebarVisible);
+    document.addEventListener('turbo:render', scheduleSidebarAccessibilitySync);
 
     document.addEventListener('turbo:before-cache', () => {
         ensureSidebarVisible();
+        scheduleSidebarAccessibilitySync();
 
         if (window.Alpine) {
             document.querySelectorAll('[x-data]').forEach(el => {

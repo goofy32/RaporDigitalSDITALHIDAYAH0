@@ -143,8 +143,10 @@
                        <!-- Alamat -->
                        <div>
                            <label class="block text-sm font-medium text-gray-700">Alamat</label>
-                           <textarea name="alamat" rows="3" required
-                               class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500">{{ old('alamat', $teacher->alamat) }}</textarea>
+                            <textarea
+                                name="alamat" rows="5" required
+                                class="mt-1 block w-full min-h-[130px] resize-y rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500"
+                            >{{ old('alamat', $teacher->alamat) }}</textarea>
                        </div>
                    </div>
 
@@ -302,6 +304,95 @@
                </div>
            </div>
        </form>
+
+       @php
+           $signatureErrors = $errors->getBag('signatureUpload');
+       @endphp
+
+       <section class="mt-6 max-w-3xl rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+           <div class="grid gap-5 md:grid-cols-[180px,1fr]">
+               <div class="flex min-h-[90px] items-center justify-center rounded-lg border border-dashed border-gray-300 bg-gray-50 p-3">
+                   @if($teacher->signature_path)
+                       <img
+                           src="{{ route('teacher.signature.show', $teacher) }}"
+                           alt="Preview tanda tangan {{ $teacher->nama }}"
+                           class="max-h-[90px] w-full object-contain"
+                       >
+                   @else
+                       <div class="text-center text-sm text-gray-500">
+                           Belum ada tanda tangan
+                       </div>
+                   @endif
+               </div>
+
+               <div>
+                   <h3 class="text-lg font-semibold text-gray-900">Tanda Tangan Digital</h3>
+                   <p class="mt-1 text-sm text-gray-600">
+                       Opsional. Digunakan pada rapor ketika guru bertugas sebagai wali kelas.
+                   </p>
+                   <p class="mt-1 text-sm text-gray-500">
+                       Format PNG, JPG, JPEG, atau WebP. Maksimal 1 MB. PNG transparan direkomendasikan.
+                   </p>
+
+                   @if(session('signatureUploadSuccess'))
+                       <p class="mt-3 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
+                           {{ session('signatureUploadSuccess') }}
+                       </p>
+                   @endif
+
+                   @if($signatureErrors->has('signature'))
+                       <div class="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                           @foreach($signatureErrors->get('signature') as $signatureError)
+                               <p>{{ $signatureError }}</p>
+                           @endforeach
+                       </div>
+                   @endif
+
+                   <div class="mt-4 flex flex-wrap items-center gap-3">
+                       <form
+                           id="signatureUploadForm"
+                           data-signature-upload-form
+                           data-turbo="false"
+                           action="{{ route('teacher.signature.store', $teacher) }}"
+                           method="POST"
+                           enctype="multipart/form-data"
+                       >
+                           @csrf
+                           <input
+                               id="signature"
+                               type="file"
+                               name="signature"
+                               accept="image/png,image/jpeg,image/webp"
+                               data-signature-upload-input
+                               class="sr-only"
+                           >
+                           <label
+                               for="signature"
+                               data-signature-upload-label
+                               class="inline-flex cursor-pointer items-center rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2">
+                               {{ $teacher->signature_path ? 'Ganti Tanda Tangan' : 'Pilih dan Unggah Tanda Tangan' }}
+                           </label>
+                       </form>
+
+                       @if($teacher->signature_path)
+                           <form action="{{ route('teacher.signature.destroy', $teacher) }}" method="POST"
+                               onsubmit="return confirm('Hapus tanda tangan guru ini? Rapor berikutnya akan dibuat tanpa gambar tanda tangan.');">
+                               @csrf
+                               @method('DELETE')
+                               <button type="submit"
+                                   class="inline-flex items-center rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-100">
+                                   Hapus
+                               </button>
+                           </form>
+                       @endif
+                   </div>
+
+                   <p class="mt-3 text-xs text-gray-500">
+                       File disimpan secara privat dan tidak ditampilkan sebagai URL publik.
+                   </p>
+               </div>
+           </div>
+       </section>
    </div>
 </div>
 

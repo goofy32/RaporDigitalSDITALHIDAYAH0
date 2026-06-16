@@ -226,6 +226,57 @@ function bindEditTeacherValidation(form) {
     form.dataset.validationBound = 'true';
 }
 
+let signatureUploadResetBound = false;
+
+function resetSignatureUploadForm() {
+    document.querySelectorAll('[data-signature-upload-form]').forEach(form => {
+        const label = form.querySelector('[data-signature-upload-label]');
+
+        form.dataset.submitting = 'false';
+
+        if (label?.dataset.originalText) {
+            label.textContent = label.dataset.originalText;
+            label.classList.remove('opacity-75', 'pointer-events-none');
+        }
+    });
+}
+
+function bindSignatureUploadForm() {
+    const form = document.querySelector('[data-signature-upload-form]');
+    const input = form?.querySelector('[data-signature-upload-input]');
+    const label = form?.querySelector('[data-signature-upload-label]');
+
+    if (!form || !input || form.dataset.signatureUploadBound === 'true') {
+        return;
+    }
+
+    if (label && !label.dataset.originalText) {
+        label.dataset.originalText = label.textContent.trim();
+    }
+
+    input.addEventListener('change', () => {
+        if (!input.files?.length || form.dataset.submitting === 'true') {
+            return;
+        }
+
+        form.dataset.submitting = 'true';
+
+        if (label) {
+            label.textContent = 'Mengunggah...';
+            label.classList.add('opacity-75', 'pointer-events-none');
+        }
+
+        form.submit();
+    });
+
+    form.dataset.signatureUploadBound = 'true';
+
+    if (!signatureUploadResetBound) {
+        document.addEventListener('turbo:before-cache', resetSignatureUploadForm);
+        signatureUploadResetBound = true;
+    }
+}
+
 export function initEditTeacherPage() {
     var pageRoot = getPageRoot();
     if (!pageRoot) return;
@@ -237,6 +288,7 @@ export function initEditTeacherPage() {
     bindNumericInputs(form);
     bindTeacherFileValidation(form);
     bindEditTeacherValidation(form);
+    bindSignatureUploadForm();
 
     document.getElementById('current_password')?.addEventListener('blur', function () {
         if (this.value && document.getElementById('new_password')?.value) {

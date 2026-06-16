@@ -19,6 +19,7 @@ import { registerFormDiagnostics } from './features/form-diagnostics';
 import { registerSidebarFeatures } from './features/sidebar';
 import { registerTopbarFeatures } from './features/topbar';
 import { registerDashboard } from './features/dashboard';
+import { registerSettingsModalFeatures } from './features/settings-modal';
 
 import { registerFormProtectionComponent } from './components/form-protection';
 
@@ -143,14 +144,6 @@ function getConditionalModules() {
             },
         },
         {
-            key: 'settings-modal',
-            shouldLoad: () => Boolean(document.getElementById('settings-modal')),
-            load: async () => {
-                const module = await import('./features/settings-modal');
-                module.registerSettingsModalFeatures();
-            },
-        },
-        {
             key: 'report-template-manager',
             shouldLoad: () => Boolean(document.querySelector('[x-data="reportTemplateManager"]')),
             load: async () => {
@@ -252,6 +245,7 @@ registerTurboCore();
 registerDashboard();
 registerFormDiagnostics();
 registerTopbarFeatures();
+registerSettingsModalFeatures();
 
 registerHelpersStore();
 registerSidebarStore();

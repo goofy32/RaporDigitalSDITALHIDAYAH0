@@ -7,6 +7,7 @@ use App\Models\Siswa;
 use App\Models\ReportPlaceholder;
 use App\Models\ProfilSekolah;
 use App\Models\Kelas;
+use App\Models\Guru;
 use App\Models\TahunAjaran;
 use PhpOffice\PhpWord\TemplateProcessor;
 use Illuminate\Support\Facades\Storage;
@@ -271,6 +272,8 @@ class RaporTemplateProcessor
         ];
 
         $data['foto_siswa'] = $this->prepareFotoSiswa();
+        $waliKelas = $kelas ? $kelas->getWaliKelas() : null;
+        $data['ttd_wali_kelas'] = $this->prepareTtdWaliKelas($waliKelas);
 
         // ========== CATATAN SISWA (CATATAN GURU) ==========
         $catatanSiswa = \App\Models\CatatanSiswa::where('siswa_id', $this->siswa->id)
@@ -656,7 +659,6 @@ class RaporTemplateProcessor
             $data['nip_kepala_sekolah'] = $this->schoolProfile->nip_kepala_sekolah ?? '-';
             
             // PERBAIKAN: Ambil NUPTK wali kelas dari database
-            $waliKelas = $kelas ? $kelas->getWaliKelas() : null;
             $data['nip_wali_kelas'] = $waliKelas ? $waliKelas->nuptk : '-';
             $data['nuptk_wali_kelas'] = $waliKelas ? $waliKelas->nuptk : '-'; // Alias untuk NUPTK
             
@@ -682,9 +684,9 @@ class RaporTemplateProcessor
         } else {
             $data['nomor_telepon'] = '-';
             $data['kepala_sekolah'] = '-';
-            $data['wali_kelas'] = '-';
-            $data['nip_wali_kelas'] = '-';
-            $data['nuptk_wali_kelas'] = '-';
+            $data['wali_kelas'] = $kelas ? ($kelas->waliKelasName ?: '-') : '-';
+            $data['nip_wali_kelas'] = $waliKelas ? $waliKelas->nuptk : '-';
+            $data['nuptk_wali_kelas'] = $waliKelas ? $waliKelas->nuptk : '-';
             
             // Default tanggal
             $data['tanggal_terbit'] = date('d-m-Y');
@@ -948,6 +950,35 @@ protected function prepareFotoSiswa()
     
     return null;
 }
+
+    protected function prepareTtdWaliKelas(?Guru $waliKelas): ?string
+    {
+        if (! $waliKelas || blank($waliKelas->signature_path)) {
+            return null;
+        }
+
+        if (! Storage::disk('local')->exists($waliKelas->signature_path)) {
+            Log::warning('File tanda tangan wali kelas tidak ditemukan; placeholder dikosongkan.', [
+                'kelas_id' => $this->reportKelas?->id,
+                'tahun_ajaran_id' => $this->tahunAjaranId,
+            ]);
+
+            return null;
+        }
+
+        $path = Storage::disk('local')->path($waliKelas->signature_path);
+
+        if (! is_file($path) || ! is_readable($path) || @getimagesize($path) === false) {
+            Log::warning('File tanda tangan wali kelas tidak dapat diproses; placeholder dikosongkan.', [
+                'kelas_id' => $this->reportKelas?->id,
+                'tahun_ajaran_id' => $this->tahunAjaranId,
+            ]);
+
+            return null;
+        }
+
+        return $path;
+    }
 
 
     /**
@@ -1222,7 +1253,8 @@ protected function prepareFotoSiswa()
                 'found_variables' => $variables,
                 'template_type' => $this->type,
                 'tahun_ajaran_id' => $this->tahunAjaranId,
-                'foto_siswa_found' => in_array('foto_siswa', $variables)
+                'foto_siswa_found' => in_array('foto_siswa', $variables),
+                'ttd_wali_kelas_found' => in_array('ttd_wali_kelas', $variables),
             ]);
             
             // 4. HANDLE FOTO SISWA TERLEBIH DAHULU (PENTING!)
@@ -1237,10 +1269,22 @@ protected function prepareFotoSiswa()
                     'remaining_variables_count' => count($variables)
                 ]);
             }
+
+            if (in_array('ttd_wali_kelas', $variables, true)) {
+                $this->setTtdWaliKelas($data['ttd_wali_kelas'] ?? null);
+
+                $variables = $this->processor->getVariables();
+
+                $this->logReportProcessing('After setting ttd wali kelas', [
+                    'ttd_wali_kelas_still_exists' => in_array('ttd_wali_kelas', $variables, true),
+                    'remaining_variables_count' => count($variables),
+                ]);
+            }
             
-            // 5. Isi placeholder text (EXCLUDE foto_siswa yang sudah di-handle)
+            // 5. Isi placeholder text (EXCLUDE image placeholders yang sudah di-handle)
+            $imagePlaceholders = ['foto_siswa', 'ttd_wali_kelas'];
             foreach ($data as $key => $value) {
-                if (in_array($key, $variables) && $key !== 'foto_siswa') {
+                if (in_array($key, $variables) && ! in_array($key, $imagePlaceholders, true)) {
                     $processedValue = $this->processPlaceholderValue($value);
                     $this->processor->setValue($key, $processedValue);
                 }
@@ -1257,7 +1301,16 @@ protected function prepareFotoSiswa()
             
             foreach ($missingPlaceholders as $placeholder) {
                 // CRITICAL: SKIP foto_siswa completely!
-                if ($placeholder !== 'foto_siswa') {
+                if ($placeholder === 'foto_siswa') {
+                    continue;
+                }
+
+                if ($placeholder === 'ttd_wali_kelas') {
+                    $this->processor->setValue('ttd_wali_kelas', '');
+                    continue;
+                }
+
+                if (! in_array($placeholder, $imagePlaceholders, true)) {
                     try {
                         $defaultValue = $this->getDefaultPlaceholderValue($placeholder);
                         $this->processor->setValue($placeholder, $defaultValue);
@@ -1279,14 +1332,22 @@ protected function prepareFotoSiswa()
             
             foreach ($finalRemainingPlaceholders as $placeholder) {
                 // CRITICAL: NEVER touch foto_siswa again!
-                if ($placeholder !== 'foto_siswa') {
+                if ($placeholder === 'foto_siswa') {
+                    Log::warning('foto_siswa placeholder still exists after setImageValue - this should not happen!');
+                    continue;
+                }
+
+                if ($placeholder === 'ttd_wali_kelas') {
+                    $this->processor->setValue('ttd_wali_kelas', '');
+                    continue;
+                }
+
+                if (! in_array($placeholder, $imagePlaceholders, true)) {
                     try {
                         $this->processor->setValue($placeholder, '');
                     } catch (\Exception $e) {
                         Log::warning("Could not clean placeholder '{$placeholder}'");
                     }
-                } else {
-                    Log::warning('foto_siswa placeholder still exists after setImageValue - this should not happen!');
                 }
             }
             
@@ -1383,6 +1444,45 @@ protected function prepareFotoSiswa()
         }
     }
 
+    protected function setTtdWaliKelas(?string $signaturePath): void
+    {
+        try {
+            if ($signaturePath && is_readable($signaturePath) && @getimagesize($signaturePath) !== false) {
+                $this->processor->setImageValue('ttd_wali_kelas', [
+                    'path' => $signaturePath,
+                    'width' => 120,
+                    'height' => 60,
+                    'ratio' => true,
+                ]);
+
+                $this->logReportProcessing('Tanda tangan wali kelas set to template', [
+                    'kelas_id' => $this->reportKelas?->id,
+                    'tahun_ajaran_id' => $this->tahunAjaranId,
+                ]);
+
+                return;
+            }
+
+            $this->processor->setValue('ttd_wali_kelas', '');
+        } catch (\Exception $e) {
+            Log::warning('Gagal memproses tanda tangan wali kelas; placeholder dikosongkan.', [
+                'kelas_id' => $this->reportKelas?->id,
+                'tahun_ajaran_id' => $this->tahunAjaranId,
+                'error' => $e->getMessage(),
+            ]);
+
+            try {
+                $this->processor->setValue('ttd_wali_kelas', '');
+            } catch (\Exception $fallbackError) {
+                Log::warning('Gagal membersihkan placeholder tanda tangan wali kelas.', [
+                    'kelas_id' => $this->reportKelas?->id,
+                    'tahun_ajaran_id' => $this->tahunAjaranId,
+                    'error' => $fallbackError->getMessage(),
+                ]);
+            }
+        }
+    }
+
         /**
      * Cleanup temporary processed photos (call ini di destructor atau setelah generate)
      */
@@ -1455,6 +1555,10 @@ protected function prepareFotoSiswa()
         // CRITICAL: Never set default for foto_siswa
         if ($placeholder === 'foto_siswa') {
             return null; // This should never be called
+        }
+
+        if ($placeholder === 'ttd_wali_kelas') {
+            return '';
         }
         
         // Special handling for specific placeholder types

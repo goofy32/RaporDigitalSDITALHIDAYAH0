@@ -18,6 +18,7 @@ use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\TahunAjaranController;
 use App\Http\Controllers\GeminiChatController;
 use App\Http\Controllers\GuruPasswordController;
+use App\Http\Controllers\GuruSignatureController;
 use App\Http\Controllers\HelpCenterController;
 use App\Http\Controllers\AuditController;
 use App\Http\Controllers\KkmController;
@@ -395,6 +396,9 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
         Route::get('/', [TeacherController::class, 'index'])->name('teacher');
         Route::get('/create', [TeacherController::class, 'create'])->name('teacher.create');
         Route::post('/store', [TeacherController::class, 'store'])->name('teacher.store');
+        Route::get('/{guru}/signature', [GuruSignatureController::class, 'show'])->name('teacher.signature.show');
+        Route::post('/{guru}/signature', [GuruSignatureController::class, 'store'])->name('teacher.signature.store');
+        Route::delete('/{guru}/signature', [GuruSignatureController::class, 'destroy'])->name('teacher.signature.destroy');
         Route::get('/{id}', [TeacherController::class, 'show'])->name('teacher.show');
         Route::get('/{id}/edit', [TeacherController::class, 'edit'])->name('teacher.edit');
         Route::put('/{id}', [TeacherController::class, 'update'])->name('teacher.update');
