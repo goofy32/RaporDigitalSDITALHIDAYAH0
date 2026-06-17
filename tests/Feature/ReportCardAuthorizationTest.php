@@ -4,8 +4,10 @@ namespace Tests\Feature;
 
 use App\Jobs\GeneratePdfReportJob;
 use App\Models\Guru;
+use App\Models\Siswa;
 use App\Models\User;
 use App\Services\DocumentConversionService;
+use App\Services\PdfCacheService;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
 use Illuminate\Support\Facades\Bus;
@@ -13,6 +15,7 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 class ReportCardAuthorizationTest extends TestCase
@@ -229,6 +232,50 @@ class ReportCardAuthorizationTest extends TestCase
             ->assertStatus(422)
             ->assertJsonPath('success', false)
             ->assertJsonPath('error_type', 'template_missing');
+    }
+
+    public function test_pdf_preview_and_legacy_download_reuse_same_cached_file(): void
+    {
+        $this->insertReportTemplate($this->currentClassId);
+        Storage::fake('public');
+        Storage::disk('public')->put('pdf_reports/cached-report.pdf', 'PDF');
+
+        Cache::put(PdfCacheService::getCacheKey(Siswa::find($this->authorizedStudentId), 'UTS', $this->activeYearId), [
+            'path' => 'pdf_reports/cached-report.pdf',
+            'filename' => 'cached-report.pdf',
+            'file_size' => 3,
+            'generated_at' => now()->toISOString(),
+        ], now()->addHour());
+
+        $this->mock(DocumentConversionService::class, function ($mock) {
+            $mock->shouldNotReceive('isLibreOfficeAvailable');
+            $mock->shouldNotReceive('convertStorageDocxToPdf');
+        });
+
+        $previewLocation = $this->actingAsWali()
+            ->get(route('wali_kelas.rapor.preview-pdf', [
+                'siswa' => $this->authorizedStudentId,
+                'type' => 'UTS',
+                'tahun_ajaran_id' => $this->activeYearId,
+            ]))
+            ->assertRedirect()
+            ->headers->get('Location');
+
+        $downloadLocation = $this->actingAsWali()
+            ->get(route('wali_kelas.rapor.download-pdf', [
+                'siswa' => $this->authorizedStudentId,
+                'type' => 'UTS',
+                'tahun_ajaran_id' => $this->activeYearId,
+            ]))
+            ->assertRedirect()
+            ->headers->get('Location');
+
+        $this->assertStringContainsString('/wali-kelas/rapor/secure-file', $previewLocation);
+        $this->assertStringContainsString('/wali-kelas/rapor/secure-file', $downloadLocation);
+        $this->assertStringContainsString('path=pdf_reports%2Fcached-report.pdf', $previewLocation);
+        $this->assertStringContainsString('path=pdf_reports%2Fcached-report.pdf', $downloadLocation);
+        $this->assertStringContainsString('disposition=inline', $previewLocation);
+        $this->assertStringContainsString('disposition=attachment', $downloadLocation);
     }
 
     public function test_pdf_template_lookup_uses_enrollment_context_not_unrelated_legacy_class(): void

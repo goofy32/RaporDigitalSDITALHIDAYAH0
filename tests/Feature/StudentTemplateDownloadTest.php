@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\User;
 use App\Services\StudentImportTemplateService;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Hash;
@@ -32,9 +33,11 @@ class StudentTemplateDownloadTest extends TestCase
 
         config()->set('database.default', 'sqlite');
         config()->set('database.connections.sqlite.database', ':memory:');
+        config()->set('cache.default', 'array');
         config()->set('session.driver', 'array');
         DB::purge('sqlite');
         DB::reconnect('sqlite');
+        Cache::flush();
 
         $this->createSchema();
         $this->seedFixture();

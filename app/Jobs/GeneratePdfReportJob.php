@@ -56,6 +56,8 @@ class GeneratePdfReportJob implements ShouldQueue
     {
         $startTime = microtime(true);
         $memoryStart = memory_get_usage(true);
+        $generationLock = null;
+        $generationLockAcquired = false;
         $performance = ReportPerformanceTracker::startFlowIfEnabled(
             'pdf_job_pending',
             $this->type,
@@ -103,6 +105,43 @@ class GeneratePdfReportJob implements ShouldQueue
                 return;
             }
 
+            $generationLock = Cache::lock(
+                PdfCacheService::getGenerationLockKey($this->siswa, $this->type, $this->tahunAjaranId),
+                180
+            );
+
+            if (! $generationLock->get()) {
+                $this->updateProgress(5, 'PDF sedang diproses oleh permintaan lain. Coba cek kembali sebentar lagi.', [
+                    'processing' => true,
+                    'cached' => false,
+                ]);
+
+                return;
+            }
+            $generationLockAcquired = true;
+
+            $cachedPdf = PdfCacheService::getCachedPdf(
+                $this->siswa,
+                $this->type,
+                $this->tahunAjaranId
+            );
+
+            if ($cachedPdf) {
+                ReportPerformanceTracker::setFlowTypeIfEnabled('pdf_job_cache_hit');
+
+                $this->updateProgress(100, 'PDF siap diunduh', [
+                    'download_url' => $this->createSecureDownloadUrl(
+                        $cachedPdf['path'],
+                        $cachedPdf['filename']
+                    ),
+                    'filename' => $cachedPdf['filename'],
+                    'file_size' => $cachedPdf['file_size'],
+                    'cached' => true,
+                ]);
+
+                return;
+            }
+
             ReportPerformanceTracker::setFlowTypeIfEnabled('pdf_job_cache_miss');
 
             // Update progress: Template processing
@@ -136,7 +175,7 @@ class GeneratePdfReportJob implements ShouldQueue
             $this->updateProgress(60, 'Konversi ke PDF...');
 
             // Step 4: Convert to PDF
-            $conversionService = new DocumentConversionService;
+            $conversionService = app(DocumentConversionService::class);
             $pdfResult = $conversionService->convertStorageDocxToPdf($docxPath, 'pdf_reports');
 
             if (! $pdfResult['success']) {
@@ -206,6 +245,10 @@ class GeneratePdfReportJob implements ShouldQueue
 
             throw $e; // Re-throw untuk retry mechanism
         } finally {
+            if ($generationLock && $generationLockAcquired) {
+                $generationLock->release();
+            }
+
             ReportPerformanceTracker::finishIfEnabled($performance);
         }
     }

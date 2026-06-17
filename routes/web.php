@@ -792,7 +792,7 @@ Route::prefix('rapor')->name('rapor.')->group(function () {
     })->name('cache-stats');
 
     // PDF Routes with middleware
-    Route::middleware(['check.rapor.access', 'check.libreoffice', 'throttle:60,1'])->group(function () {
+    Route::middleware(['check.rapor.access', 'throttle:60,1'])->group(function () {
         Route::get('/preview-pdf/{siswa}', [ReportController::class, 'previewPdf'])->name('preview-pdf');
         Route::get('/download-pdf/{siswa}', [ReportController::class, 'downloadPdf'])->name('download-pdf');
         Route::post('/generate-pdf/{siswa}', function () {

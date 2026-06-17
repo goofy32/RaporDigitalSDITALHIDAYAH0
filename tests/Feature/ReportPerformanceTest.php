@@ -2,7 +2,9 @@
 
 namespace Tests\Feature;
 
+use App\Jobs\GeneratePdfReportJob;
 use App\Models\Siswa;
+use App\Services\DocumentConversionService;
 use App\Services\PdfCacheService;
 use App\Services\ReportPerformanceTracker;
 use Illuminate\Database\Schema\Blueprint;
@@ -13,6 +15,7 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Mockery;
 use Tests\TestCase;
+use Throwable;
 
 class ReportPerformanceTest extends TestCase
 {
@@ -117,6 +120,10 @@ class ReportPerformanceTest extends TestCase
         $this->assertSame(0.0, $metrics['images_ms']);
         $this->assertSame(0.0, $metrics['docx_save_ms']);
         $this->assertSame(0.0, $metrics['libreoffice_ms']);
+        $this->assertSame(0.0, $metrics['libreoffice_lookup_ms']);
+        $this->assertSame(0.0, $metrics['libreoffice_profile_setup_ms']);
+        $this->assertSame(0.0, $metrics['libreoffice_process_ms']);
+        $this->assertSame(0.0, $metrics['libreoffice_output_validation_ms']);
     }
 
     public function test_pdf_cache_miss_metrics_distinguish_generation_segments(): void
@@ -149,6 +156,37 @@ class ReportPerformanceTest extends TestCase
         $this->assertGreaterThan(0, $metrics['images_ms']);
         $this->assertGreaterThan(0, $metrics['docx_save_ms']);
         $this->assertGreaterThan(0, $metrics['libreoffice_ms']);
+    }
+
+    public function test_libreoffice_subsegments_are_reported_separately_from_aggregate_timing(): void
+    {
+        $this->resetReportPerformance(true);
+        Log::spy();
+
+        $tracker = ReportPerformanceTracker::startFlowIfEnabled('pdf_preview_cache_miss', 'UTS', 'wali_kelas.rapor.pdf.preview');
+
+        ReportPerformanceTracker::measureSegment('libreoffice', function () {
+            foreach (['libreoffice_lookup', 'libreoffice_profile_setup', 'libreoffice_process', 'libreoffice_output_validation'] as $segment) {
+                ReportPerformanceTracker::measureSegment($segment, fn () => usleep(1000));
+            }
+        });
+
+        ReportPerformanceTracker::finishIfEnabled($tracker);
+
+        $metrics = null;
+        Log::shouldHaveReceived('info')
+            ->with('report.performance', Mockery::on(function (array $context) use (&$metrics) {
+                $metrics = $context;
+
+                return true;
+            }))
+            ->once();
+
+        $this->assertGreaterThan(0, $metrics['libreoffice_ms']);
+        $this->assertGreaterThan(0, $metrics['libreoffice_lookup_ms']);
+        $this->assertGreaterThan(0, $metrics['libreoffice_profile_setup_ms']);
+        $this->assertGreaterThan(0, $metrics['libreoffice_process_ms']);
+        $this->assertGreaterThan(0, $metrics['libreoffice_output_validation_ms']);
     }
 
     public function test_pdf_cache_hit_metrics_do_not_record_generation_segments_or_student_identity(): void
@@ -196,6 +234,10 @@ class ReportPerformanceTest extends TestCase
         $this->assertSame(0.0, $metrics['images_ms']);
         $this->assertSame(0.0, $metrics['docx_save_ms']);
         $this->assertSame(0.0, $metrics['libreoffice_ms']);
+        $this->assertSame(0.0, $metrics['libreoffice_lookup_ms']);
+        $this->assertSame(0.0, $metrics['libreoffice_profile_setup_ms']);
+        $this->assertSame(0.0, $metrics['libreoffice_process_ms']);
+        $this->assertSame(0.0, $metrics['libreoffice_output_validation_ms']);
 
         $encoded = json_encode($metrics);
 
@@ -293,11 +335,75 @@ class ReportPerformanceTest extends TestCase
         $this->assertStringNotContainsString('pdf_reports/cache-write.pdf', $encoded);
     }
 
+    public function test_pdf_job_does_not_convert_when_generation_lock_is_already_held(): void
+    {
+        $siswa = $this->createStudent('Locked Student', 'LOCK-001', 'LOCK-NISN-001');
+        $lock = Cache::lock(PdfCacheService::getGenerationLockKey($siswa, 'UTS', 1), 180);
+        $this->assertTrue($lock->get());
+
+        $this->mock(DocumentConversionService::class, function ($mock) {
+            $mock->shouldNotReceive('convertStorageDocxToPdf');
+        });
+
+        try {
+            (new GeneratePdfReportJob($siswa, 'UTS', 1, 'locked-request', 99))->handle();
+        } finally {
+            $lock->release();
+        }
+
+        $progress = Cache::get('pdf_progress_locked-request');
+
+        $this->assertSame(5, $progress['percentage']);
+        $this->assertTrue($progress['processing']);
+        $this->assertFalse($progress['cached']);
+    }
+
+    public function test_pdf_generation_lock_is_released_after_job_failure(): void
+    {
+        $siswa = $this->createStudent('Failure Student', 'FAIL-001', 'FAIL-NISN-001');
+        $key = PdfCacheService::getGenerationLockKey($siswa, 'UTS', 1);
+
+        try {
+            (new GeneratePdfReportJob($siswa, 'UTS', 1, 'failed-request', 99))->handle();
+            $this->fail('Expected the job to fail before report generation.');
+        } catch (Throwable) {
+            // The minimal test schema intentionally has no report template table.
+        }
+
+        $lock = Cache::lock($key, 1);
+
+        try {
+            $this->assertTrue($lock->get());
+        } finally {
+            $lock->release();
+        }
+    }
+
+    public function test_pdf_generation_lock_is_scoped_per_student_type_and_year(): void
+    {
+        $first = $this->createStudent('First Student', 'LOCK-101', 'LOCK-NISN-101');
+        $second = $this->createStudent('Second Student', 'LOCK-102', 'LOCK-NISN-102');
+
+        $this->assertNotSame(
+            PdfCacheService::getGenerationLockKey($first, 'UTS', 1),
+            PdfCacheService::getGenerationLockKey($second, 'UTS', 1)
+        );
+
+        $this->assertNotSame(
+            PdfCacheService::getGenerationLockKey($first, 'UTS', 1),
+            PdfCacheService::getGenerationLockKey($first, 'UAS', 1)
+        );
+
+        $this->assertNotSame(
+            PdfCacheService::getGenerationLockKey($first, 'UTS', 1),
+            PdfCacheService::getGenerationLockKey($first, 'UTS', 2)
+        );
+    }
+
     private function resetReportPerformance(bool $enabled): void
     {
         config()->set('logging.report_performance.enabled', $enabled);
         $this->app->forgetInstance(ReportPerformanceTracker::class);
-        $this->app->forgetInstance('report.performance.db_listener_registered');
     }
 
     private function createStudent(string $nama, string $nis, string $nisn): Siswa

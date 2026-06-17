@@ -24,6 +24,7 @@ use App\Services\DocumentConversionService;
 use App\Services\PdfCacheService;
 use App\Services\SiswaKelasSemesterResolver;
 use App\Services\ReportPerformanceTracker;
+use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\URL;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
@@ -919,241 +920,9 @@ class ReportController extends Controller
      */
     public function downloadPdf(Siswa $siswa, Request $request)
     {
-        // ===== OPTIMIZATION 1: Resource Limits =====
-        $originalTimeLimit = ini_get('max_execution_time');
-        $originalMemoryLimit = ini_get('memory_limit');
-        
-        set_time_limit(300); // 5 minutes
-        ini_set('memory_limit', '1024M'); // Increase to 1GB
-        
-        // ===== OPTIMIZATION 2: Request Tracking =====
-        $requestId = uniqid('pdf_', true);
-        $startTime = microtime(true);
-        $memoryStart = memory_get_usage(true);
-        $type = $request->query('type', 'UTS');
-        $performance = ReportPerformanceTracker::startFlowIfEnabled(
-            'pdf_download_cache_miss',
-            $type,
-            $request->route()?->getName()
-        );
-        ReportPerformanceTracker::setCacheHitIfEnabled(false);
-        
-        Log::info("=== PDF REQUEST STARTED ===", [
-            'request_id' => $requestId,
-            'siswa_id' => $siswa->id,
-            'siswa_name' => $siswa->nama,
-            'type' => $type,
-            'tahun_ajaran_id' => $request->query('tahun_ajaran_id', session('tahun_ajaran_id')),
-            'memory_start' => round($memoryStart / 1024 / 1024, 2) . 'MB',
-            'timestamp' => now()->toISOString(),
-            'user_agent' => $request->userAgent(),
-            'ip_address' => $request->ip()
-        ]);
+        $request->query->set('disposition', 'attachment');
 
-        try {
-            // ===== OPTIMIZATION 3: LibreOffice Check with Performance =====
-            $libreOfficeCheckStart = microtime(true);
-            
-            $conversionService = app(DocumentConversionService::class);
-            if (!$conversionService->isLibreOfficeAvailable()) {
-                $this->logPerformanceMetrics($requestId, 'libreoffice_check_failed', $startTime, $memoryStart);
-                
-                return response()->json([
-                    'success' => false,
-                    'message' => 'LibreOffice tidak tersedia. Pastikan LibreOffice sudah terinstall dan path sudah benar di .env file.',
-                    'request_id' => $requestId
-                ], 500);
-            }
-            
-            $libreOfficeCheckTime = (microtime(true) - $libreOfficeCheckStart) * 1000;
-            Log::info("LibreOffice check completed", [
-                'request_id' => $requestId,
-                'check_time_ms' => round($libreOfficeCheckTime, 2)
-            ]);
-
-            // ===== OPTIMIZATION 4: Enhanced Data Validation =====
-            $validationStart = microtime(true);
-            
-            $tahunAjaranId = ReportPerformanceTracker::measureSegment('context', function () use ($request) {
-                return $this->resolveRaporTahunAjaranId($request);
-            });
-            abort_unless($tahunAjaranId, 403);
-            ReportPerformanceTracker::measureSegment('authorization', function () use ($siswa, $tahunAjaranId) {
-                $this->authorizeWaliRaporAccess($siswa, $tahunAjaranId);
-            });
-            $kelas = ReportPerformanceTracker::measureSegment('context', function () use ($siswa, $tahunAjaranId) {
-                return $this->resolveRaporClass($siswa, $tahunAjaranId);
-            });
-            
-            Log::info("PDF generation process started", [
-                'request_id' => $requestId,
-                'siswa_id' => $siswa->id,
-                'siswa_name' => $siswa->nama,
-                'type' => $type,
-                'tahun_ajaran_id' => $tahunAjaranId,
-                'kelas_id' => $kelas?->id,
-            ]);
-            
-            $validationTime = (microtime(true) - $validationStart) * 1000;
-
-            // ===== OPTIMIZATION 5: Template Processing with Monitoring =====
-            $templateStart = microtime(true);
-            
-            // Get the template
-            $template = ReportPerformanceTracker::measureSegment('context', function () use ($siswa, $type, $tahunAjaranId) {
-                return $this->getTemplateForSiswa($siswa, $type, $tahunAjaranId);
-            });
-            
-            if (!$template) {
-                $this->logPerformanceMetrics($requestId, 'template_not_found', $startTime, $memoryStart);
-
-                return $this->pdfTemplateUnavailableResponse($request, $siswa, $type, $tahunAjaranId, $kelas?->id);
-            }
-            
-            $templateTime = (microtime(true) - $templateStart) * 1000;
-            Log::info("Template found", [
-                'request_id' => $requestId,
-                'template_id' => $template->id,
-                'template_time_ms' => round($templateTime, 2)
-            ]);
-
-            // ===== OPTIMIZATION 6: DOCX Generation with Monitoring =====
-            $docxStart = microtime(true);
-            
-            // Generate the DOCX report
-            $processor = new \App\Services\RaporTemplateProcessor($template, $siswa, $type, $tahunAjaranId);
-            $result = $processor->generate(true); // bypass validation for now
-            
-            if (!$result['success'] || !isset($result['path'])) {
-                $this->logPerformanceMetrics($requestId, 'docx_generation_failed', $startTime, $memoryStart);
-                throw new \Exception('Gagal generate file DOCX: ' . ($result['message'] ?? 'Unknown error'));
-            }
-            
-            $docxTime = (microtime(true) - $docxStart) * 1000;
-            
-            $docxPath = $result['path'];
-            $fullDocxPath = storage_path('app/public/' . $docxPath);
-            
-            // Validate DOCX file exists
-            if (!file_exists($fullDocxPath)) {
-                $this->logPerformanceMetrics($requestId, 'docx_file_missing', $startTime, $memoryStart);
-                throw new \Exception("DOCX file tidak ditemukan: $fullDocxPath");
-            }
-            
-            $docxSize = filesize($fullDocxPath);
-            Log::info('DOCX generated successfully', [
-                'request_id' => $requestId,
-                'docx_path' => $fullDocxPath,
-                'docx_size_mb' => round($docxSize / 1024 / 1024, 2),
-                'docx_time_ms' => round($docxTime, 2)
-            ]);
-
-            // ===== OPTIMIZATION 7: PDF Conversion with Monitoring =====
-            $pdfStart = microtime(true);
-            
-            $pdfResult = $conversionService->convertStorageDocxToPdf($docxPath, 'pdf_reports');
-            
-            if (!$pdfResult['success']) {
-                $this->logPerformanceMetrics($requestId, 'pdf_conversion_failed', $startTime, $memoryStart, [
-                    'conversion_error' => $pdfResult['message']
-                ]);
-                
-                Log::error('PDF conversion failed', [
-                    'request_id' => $requestId,
-                    'error' => $pdfResult['message'],
-                    'docx_path' => $fullDocxPath
-                ]);
-                
-                throw new \Exception('Konversi ke PDF gagal: ' . $pdfResult['message']);
-            }
-            
-            $pdfTime = (microtime(true) - $pdfStart) * 1000;
-
-            // ===== OPTIMIZATION 8: File Validation and Response =====
-            $responseStart = microtime(true);
-            
-            $pdfPath = storage_path('app/public/' . $pdfResult['storage_path']);
-            
-            if (!file_exists($pdfPath)) {
-                $this->logPerformanceMetrics($requestId, 'pdf_file_missing', $startTime, $memoryStart);
-                throw new \Exception("PDF file tidak ditemukan: $pdfPath");
-            }
-            
-            $pdfSize = filesize($pdfPath);
-            
-            // Generate clean filename
-            $cleanName = preg_replace('/[^\w\s-]/', '', $siswa->nama);
-            $cleanName = preg_replace('/\s+/', '_', $cleanName);
-            $filename = "Rapor_{$type}_{$cleanName}_{$siswa->nis}.pdf";
-            
-            $responseTime = (microtime(true) - $responseStart) * 1000;
-
-            // ===== OPTIMIZATION 9: Success Logging =====
-            $this->logPerformanceMetrics($requestId, 'success', $startTime, $memoryStart, [
-                'docx_size_mb' => round($docxSize / 1024 / 1024, 2),
-                'pdf_size_mb' => round($pdfSize / 1024 / 1024, 2),
-                'filename' => $filename,
-                'breakdown_ms' => [
-                    'libreoffice_check' => round($libreOfficeCheckTime, 2),
-                    'validation' => round($validationTime, 2),
-                    'template_lookup' => round($templateTime, 2),
-                    'docx_generation' => round($docxTime, 2),
-                    'pdf_conversion' => round($pdfTime, 2),
-                    'response_prep' => round($responseTime, 2)
-                ]
-            ]);
-            
-            // Return file download response
-            return ReportPerformanceTracker::measureSegment('response', function () use ($pdfPath, $filename) {
-                return response()->download($pdfPath, $filename, [
-                    'Content-Type' => 'application/pdf'
-                ]);
-            });
-            
-        } catch (\Exception $e) {
-            if ($e instanceof HttpExceptionInterface) {
-                throw $e;
-            }
-
-            $this->logPerformanceMetrics($requestId, 'error', $startTime, $memoryStart, [
-                'error_message' => $e->getMessage(),
-                'error_file' => $e->getFile(),
-                'error_line' => $e->getLine()
-            ]);
-            
-            Log::error('Error generating PDF report', [
-                'request_id' => $requestId,
-                'siswa_id' => $siswa->id,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-            
-            return response()->json([
-                'success' => false,
-                'message' => 'Gagal menghasilkan PDF. Silakan coba lagi atau hubungi administrator.',
-                'request_id' => $requestId
-            ], 500);
-            
-        } finally {
-            // ===== OPTIMIZATION 10: Cleanup =====
-            // Restore original settings
-            set_time_limit($originalTimeLimit);
-            ini_set('memory_limit', $originalMemoryLimit);
-            
-            // Final log
-            $finalTime = microtime(true);
-            $totalDuration = ($finalTime - $startTime) * 1000;
-            
-            Log::info("=== PDF REQUEST COMPLETED ===", [
-                'request_id' => $requestId,
-                'total_duration_ms' => round($totalDuration, 2),
-                'total_duration_seconds' => round($totalDuration / 1000, 2),
-                'memory_peak_mb' => round(memory_get_peak_usage(true) / 1024 / 1024, 2),
-                'timestamp' => now()->toISOString()
-            ]);
-
-            ReportPerformanceTracker::finishIfEnabled($performance);
-        }
+        return $this->previewPdf($siswa, $request);
     }
     
     /**
@@ -1679,15 +1448,6 @@ class ReportController extends Controller
                 return $this->resolveRaporClass($siswa, $tahunAjaranId);
             });
 
-            // Similar to downloadPdf but return for inline viewing
-            $conversionService = app(DocumentConversionService::class);
-            if (!$conversionService->isLibreOfficeAvailable()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'LibreOffice tidak tersedia untuk preview PDF.'
-                ], 500);
-            }
-
             // Get template and generate DOCX
             $template = ReportPerformanceTracker::measureSegment('context', function () use ($siswa, $type, $tahunAjaranId) {
                 return $this->getTemplateForSiswa($siswa, $type, $tahunAjaranId);
@@ -1696,6 +1456,7 @@ class ReportController extends Controller
                 return $this->pdfTemplateUnavailableResponse($request, $siswa, $type, $tahunAjaranId, $kelas?->id);
             }
 
+            // Cache lookup happens before LibreOffice checks so valid cached PDFs remain fast and reusable.
             $cachedPdf = PdfCacheService::getCachedPdf(
                 $siswa,
                 $type,
@@ -1718,40 +1479,15 @@ class ReportController extends Controller
             }
 
             ReportPerformanceTracker::setFlowTypeIfEnabled("{$flowPrefix}_cache_miss");
-            
-            $processor = new \App\Services\RaporTemplateProcessor($template, $siswa, $type, $tahunAjaranId);
-            $result = $processor->generate(true);
-            
-            $docxPath = $result['path'];
-            
-            // Convert to PDF
-            $pdfResult = $conversionService->convertStorageDocxToPdf($docxPath, 'pdf_reports');
-            
-            if (!$pdfResult['success']) {
-                throw new \Exception('Konversi ke PDF gagal: ' . $pdfResult['message']);
-            }
 
-            $downloadFilename = pathinfo($result['filename'], PATHINFO_FILENAME) . '.pdf';
-
-            PdfCacheService::cachePdf(
+            return $this->generatePdfWithCacheLock(
                 $siswa,
+                $template,
                 $type,
-                $tahunAjaranId,
-                $pdfResult['storage_path'],
-                $downloadFilename,
-                Storage::disk('public')->size($pdfResult['storage_path'])
+                (int) $tahunAjaranId,
+                $disposition,
+                $flowPrefix
             );
-            
-            return ReportPerformanceTracker::measureSegment('response', function () use ($pdfResult, $downloadFilename, $disposition) {
-                return redirect()->away(
-                    $this->createSecureRaporFileUrl(
-                        $pdfResult['storage_path'],
-                        $downloadFilename,
-                        $disposition,
-                        60
-                    )
-                );
-            });
             
         } catch (\Exception $e) {
             if ($e instanceof HttpExceptionInterface) {
@@ -1774,6 +1510,98 @@ class ReportController extends Controller
         } finally {
             ReportPerformanceTracker::finishIfEnabled($performance);
         }
+    }
+
+    protected function generatePdfWithCacheLock(
+        Siswa $siswa,
+        ReportTemplate $template,
+        string $type,
+        int $tahunAjaranId,
+        string $disposition,
+        string $flowPrefix
+    ) {
+        $lock = Cache::lock(PdfCacheService::getGenerationLockKey($siswa, $type, $tahunAjaranId), 180);
+
+        try {
+            return $lock->block(20, function () use ($siswa, $template, $type, $tahunAjaranId, $disposition, $flowPrefix) {
+                $cachedPdf = PdfCacheService::getCachedPdf($siswa, $type, $tahunAjaranId);
+
+                if ($cachedPdf) {
+                    ReportPerformanceTracker::setFlowTypeIfEnabled("{$flowPrefix}_cache_hit");
+
+                    return $this->redirectToSecureRaporPdf(
+                        $cachedPdf['path'],
+                        $cachedPdf['filename'],
+                        $disposition
+                    );
+                }
+
+                ReportPerformanceTracker::setFlowTypeIfEnabled("{$flowPrefix}_cache_miss");
+
+                $conversionService = app(DocumentConversionService::class);
+                $libreOfficeAvailable = ReportPerformanceTracker::measureSegment(
+                    'libreoffice',
+                    fn () => $conversionService->isLibreOfficeAvailable()
+                );
+
+                if (!$libreOfficeAvailable) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'LibreOffice tidak tersedia untuk membuat PDF.'
+                    ], 500);
+                }
+
+                $processor = new \App\Services\RaporTemplateProcessor($template, $siswa, $type, $tahunAjaranId);
+                $result = $processor->generate(true);
+
+                if (!$result['success'] || !isset($result['path'], $result['filename'])) {
+                    throw new \Exception('Gagal generate file DOCX: ' . ($result['message'] ?? 'Unknown error'));
+                }
+
+                $pdfResult = $conversionService->convertStorageDocxToPdf($result['path'], 'pdf_reports');
+
+                if (!$pdfResult['success']) {
+                    throw new \Exception('Konversi ke PDF gagal: ' . $pdfResult['message']);
+                }
+
+                $downloadFilename = pathinfo($result['filename'], PATHINFO_FILENAME) . '.pdf';
+
+                PdfCacheService::cachePdf(
+                    $siswa,
+                    $type,
+                    $tahunAjaranId,
+                    $pdfResult['storage_path'],
+                    $downloadFilename,
+                    Storage::disk('public')->size($pdfResult['storage_path'])
+                );
+
+                return $this->redirectToSecureRaporPdf(
+                    $pdfResult['storage_path'],
+                    $downloadFilename,
+                    $disposition
+                );
+            });
+        } catch (LockTimeoutException) {
+            return response()->json([
+                'success' => false,
+                'message' => 'PDF sedang disiapkan oleh permintaan lain. Silakan coba lagi sebentar.',
+                'error_type' => 'pdf_generation_locked',
+            ], 202);
+        }
+    }
+
+    protected function redirectToSecureRaporPdf(string $path, string $filename, string $disposition)
+    {
+        return ReportPerformanceTracker::measureSegment('response', function () use ($path, $filename, $disposition) {
+            return redirect()->away(
+                $this->createSecureRaporFileUrl(
+                    $path,
+                    $filename,
+                    $disposition,
+                    60
+                )
+            );
+        });
     }
 
     public function requestPdf(Siswa $siswa, Request $request)

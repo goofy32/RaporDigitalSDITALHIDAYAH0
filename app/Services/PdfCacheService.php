@@ -22,6 +22,11 @@ class PdfCacheService
         return self::CACHE_PREFIX . "{$siswa->id}_{$type}_{$tahunAjaranId}";
     }
 
+    public static function getGenerationLockKey(Siswa $siswa, $type, $tahunAjaranId): string
+    {
+        return self::CACHE_PREFIX . "generation_lock_{$siswa->id}_{$type}_{$tahunAjaranId}";
+    }
+
     /**
      * Check if PDF exists in cache
      */
