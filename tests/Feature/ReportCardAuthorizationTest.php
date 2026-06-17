@@ -278,6 +278,231 @@ class ReportCardAuthorizationTest extends TestCase
         $this->assertStringContainsString('disposition=attachment', $downloadLocation);
     }
 
+    public function test_pdf_preview_cache_hit_returns_ready_json_without_dispatching_job(): void
+    {
+        $this->insertReportTemplate($this->currentClassId);
+        Bus::fake([GeneratePdfReportJob::class]);
+        Storage::fake('public');
+        Storage::disk('public')->put('pdf_reports/cached-preview.pdf', 'PDF');
+
+        Cache::put(PdfCacheService::getCacheKey(Siswa::find($this->authorizedStudentId), 'UTS', $this->activeYearId), [
+            'path' => 'pdf_reports/cached-preview.pdf',
+            'filename' => 'cached-preview.pdf',
+            'file_size' => 3,
+            'generated_at' => now()->toISOString(),
+        ], now()->addHour());
+
+        $response = $this->actingAsWali()
+            ->getJson(route('wali_kelas.rapor.preview-pdf', [
+                'siswa' => $this->authorizedStudentId,
+                'type' => 'UTS',
+                'tahun_ajaran_id' => $this->activeYearId,
+            ]))
+            ->assertOk()
+            ->assertJsonPath('status', 'ready')
+            ->assertJsonPath('cache_hit', true)
+            ->assertJsonPath('filename', 'cached-preview.pdf');
+
+        $this->assertStringContainsString('disposition=inline', $response->json('url'));
+
+        Bus::assertNotDispatched(GeneratePdfReportJob::class);
+    }
+
+    public function test_pdf_download_cache_hit_returns_ready_json_without_dispatching_job(): void
+    {
+        $this->insertReportTemplate($this->currentClassId);
+        Bus::fake([GeneratePdfReportJob::class]);
+        Storage::fake('public');
+        Storage::disk('public')->put('pdf_reports/cached-download.pdf', 'PDF');
+
+        Cache::put(PdfCacheService::getCacheKey(Siswa::find($this->authorizedStudentId), 'UTS', $this->activeYearId), [
+            'path' => 'pdf_reports/cached-download.pdf',
+            'filename' => 'cached-download.pdf',
+            'file_size' => 3,
+            'generated_at' => now()->toISOString(),
+        ], now()->addHour());
+
+        $response = $this->actingAsWali()
+            ->getJson(route('wali_kelas.rapor.download-pdf', [
+                'siswa' => $this->authorizedStudentId,
+                'type' => 'UTS',
+                'tahun_ajaran_id' => $this->activeYearId,
+            ]))
+            ->assertOk()
+            ->assertJsonPath('status', 'ready')
+            ->assertJsonPath('cache_hit', true)
+            ->assertJsonPath('filename', 'cached-download.pdf');
+
+        $this->assertStringContainsString('disposition=attachment', $response->json('url'));
+
+        Bus::assertNotDispatched(GeneratePdfReportJob::class);
+    }
+
+    public function test_pdf_preview_cache_miss_queues_job_without_running_conversion_in_request(): void
+    {
+        $this->insertReportTemplate($this->currentClassId);
+        Bus::fake([GeneratePdfReportJob::class]);
+
+        $response = $this->actingAsWali()
+            ->getJson(route('wali_kelas.rapor.preview-pdf', [
+                'siswa' => $this->authorizedStudentId,
+                'type' => 'UTS',
+                'tahun_ajaran_id' => $this->activeYearId,
+            ]))
+            ->assertAccepted()
+            ->assertJsonPath('status', 'processing')
+            ->assertJsonPath('cache_hit', false)
+            ->assertJsonStructure(['request_id', 'poll_url']);
+
+        $requestId = $response->json('request_id');
+        $this->assertNotEmpty($requestId);
+        $this->assertSame($requestId, Cache::get(PdfCacheService::getGenerationRequestKey(Siswa::find($this->authorizedStudentId), 'UTS', $this->activeYearId)));
+        $this->assertSame($this->wali->id, Cache::get(PdfCacheService::getProgressKey($requestId))['user_id']);
+
+        Bus::assertDispatchedTimes(GeneratePdfReportJob::class, 1);
+    }
+
+    public function test_pdf_download_cache_miss_queues_job_with_attachment_poll_url(): void
+    {
+        $this->insertReportTemplate($this->currentClassId);
+        Bus::fake([GeneratePdfReportJob::class]);
+
+        $response = $this->actingAsWali()
+            ->getJson(route('wali_kelas.rapor.download-pdf', [
+                'siswa' => $this->authorizedStudentId,
+                'type' => 'UTS',
+                'tahun_ajaran_id' => $this->activeYearId,
+            ]))
+            ->assertAccepted()
+            ->assertJsonPath('status', 'processing');
+
+        $this->assertStringContainsString('disposition=attachment', $response->json('poll_url'));
+
+        Bus::assertDispatchedTimes(GeneratePdfReportJob::class, 1);
+    }
+
+    public function test_repeated_pdf_requests_reuse_existing_generation_request(): void
+    {
+        $this->insertReportTemplate($this->currentClassId);
+        Bus::fake([GeneratePdfReportJob::class]);
+
+        $first = $this->actingAsWali()
+            ->getJson(route('wali_kelas.rapor.preview-pdf', [
+                'siswa' => $this->authorizedStudentId,
+                'type' => 'UTS',
+                'tahun_ajaran_id' => $this->activeYearId,
+            ]))
+            ->assertAccepted();
+
+        $second = $this->actingAsWali()
+            ->getJson(route('wali_kelas.rapor.preview-pdf', [
+                'siswa' => $this->authorizedStudentId,
+                'type' => 'UTS',
+                'tahun_ajaran_id' => $this->activeYearId,
+            ]))
+            ->assertAccepted()
+            ->assertJsonPath('reused', true);
+
+        $this->assertSame($first->json('request_id'), $second->json('request_id'));
+        Bus::assertDispatchedTimes(GeneratePdfReportJob::class, 1);
+    }
+
+    public function test_preview_and_download_share_same_generation_request_on_cache_miss(): void
+    {
+        $this->insertReportTemplate($this->currentClassId);
+        Bus::fake([GeneratePdfReportJob::class]);
+
+        $preview = $this->actingAsWali()
+            ->getJson(route('wali_kelas.rapor.preview-pdf', [
+                'siswa' => $this->authorizedStudentId,
+                'type' => 'UTS',
+                'tahun_ajaran_id' => $this->activeYearId,
+            ]))
+            ->assertAccepted();
+
+        $download = $this->actingAsWali()
+            ->getJson(route('wali_kelas.rapor.download-pdf', [
+                'siswa' => $this->authorizedStudentId,
+                'type' => 'UTS',
+                'tahun_ajaran_id' => $this->activeYearId,
+            ]))
+            ->assertAccepted()
+            ->assertJsonPath('reused', true);
+
+        $this->assertSame($preview->json('request_id'), $download->json('request_id'));
+        $this->assertStringContainsString('disposition=attachment', $download->json('poll_url'));
+        Bus::assertDispatchedTimes(GeneratePdfReportJob::class, 1);
+    }
+
+    public function test_pdf_progress_polling_requires_request_owner(): void
+    {
+        $requestId = 'pdf_foreign_request';
+        Cache::put(PdfCacheService::getProgressKey($requestId), [
+            'status' => 'processing',
+            'message' => 'Menunggu antrean',
+            'completed' => false,
+            'error' => false,
+            'request_id' => $requestId,
+            'siswa_id' => $this->authorizedStudentId,
+            'type' => 'UTS',
+            'tahun_ajaran_id' => $this->activeYearId,
+            'user_id' => $this->wali->id + 999,
+            'updated_at' => time(),
+        ], now()->addMinutes(30));
+
+        $this->actingAsWali()
+            ->getJson(route('wali_kelas.rapor.pdf-progress', $requestId))
+            ->assertForbidden();
+    }
+
+    public function test_ready_pdf_progress_returns_fresh_secure_url_with_requested_disposition(): void
+    {
+        Storage::fake('public');
+        Storage::disk('public')->put('pdf_reports/ready.pdf', 'PDF');
+        $siswa = Siswa::find($this->authorizedStudentId);
+        Cache::put(PdfCacheService::getCacheKey($siswa, 'UTS', $this->activeYearId), [
+            'path' => 'pdf_reports/ready.pdf',
+            'filename' => 'ready.pdf',
+            'file_size' => 3,
+            'generated_at' => now()->toISOString(),
+        ], now()->addHour());
+
+        $requestId = 'pdf_ready_request';
+        Cache::put(PdfCacheService::getProgressKey($requestId), [
+            'status' => 'ready',
+            'message' => 'PDF siap dibuka',
+            'completed' => true,
+            'error' => false,
+            'request_id' => $requestId,
+            'siswa_id' => $this->authorizedStudentId,
+            'type' => 'UTS',
+            'tahun_ajaran_id' => $this->activeYearId,
+            'user_id' => $this->wali->id,
+            'cached' => false,
+            'updated_at' => time(),
+        ], now()->addMinutes(30));
+
+        $inline = $this->actingAsWali()
+            ->getJson(route('wali_kelas.rapor.pdf-progress', [
+                'requestId' => $requestId,
+                'disposition' => 'inline',
+            ]))
+            ->assertOk()
+            ->assertJsonPath('status', 'ready');
+
+        $this->assertStringContainsString('disposition=inline', $inline->json('url'));
+
+        $attachment = $this->actingAsWali()
+            ->getJson(route('wali_kelas.rapor.pdf-progress', [
+                'requestId' => $requestId,
+                'disposition' => 'attachment',
+            ]))
+            ->assertOk()
+            ->assertJsonPath('status', 'ready');
+
+        $this->assertStringContainsString('disposition=attachment', $attachment->json('url'));
+    }
+
     public function test_pdf_template_lookup_uses_enrollment_context_not_unrelated_legacy_class(): void
     {
         $this->fakeLibreOfficeAvailability();
@@ -361,8 +586,9 @@ class ReportCardAuthorizationTest extends TestCase
                 'type' => 'UTS',
                 'tahun_ajaran_id' => $this->activeYearId,
             ])
-            ->assertOk()
-            ->assertJsonPath('success', true);
+            ->assertAccepted()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('status', 'processing');
 
         Bus::assertDispatched(GeneratePdfReportJob::class);
     }

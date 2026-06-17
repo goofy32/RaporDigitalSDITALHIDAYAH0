@@ -13,6 +13,8 @@ class PdfCacheService
     const CACHE_DURATION = 24; // hours
     const STORAGE_DISK = 'public';
     const PDF_DIRECTORY = 'pdf_reports';
+    const PROGRESS_TTL_MINUTES = 30;
+    const PROCESSING_STALE_MINUTES = 15;
 
     /**
      * Generate cache key for PDF
@@ -25,6 +27,16 @@ class PdfCacheService
     public static function getGenerationLockKey(Siswa $siswa, $type, $tahunAjaranId): string
     {
         return self::CACHE_PREFIX . "generation_lock_{$siswa->id}_{$type}_{$tahunAjaranId}";
+    }
+
+    public static function getGenerationRequestKey(Siswa $siswa, $type, $tahunAjaranId): string
+    {
+        return self::CACHE_PREFIX . "generation_request_{$siswa->id}_{$type}_{$tahunAjaranId}";
+    }
+
+    public static function getProgressKey(string $requestId): string
+    {
+        return "pdf_progress_{$requestId}";
     }
 
     /**

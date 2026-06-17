@@ -24,7 +24,6 @@ use App\Services\DocumentConversionService;
 use App\Services\PdfCacheService;
 use App\Services\SiswaKelasSemesterResolver;
 use App\Services\ReportPerformanceTracker;
-use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\URL;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
@@ -1466,23 +1465,14 @@ class ReportController extends Controller
             if ($cachedPdf) {
                 ReportPerformanceTracker::setFlowTypeIfEnabled("{$flowPrefix}_cache_hit");
 
-                return ReportPerformanceTracker::measureSegment('response', function () use ($cachedPdf, $disposition) {
-                    return redirect()->away(
-                        $this->createSecureRaporFileUrl(
-                            $cachedPdf['path'],
-                            $cachedPdf['filename'],
-                            $disposition,
-                            60
-                        )
-                    );
-                });
+                return $this->pdfReadyResponse($request, $cachedPdf, $disposition, true);
             }
 
-            ReportPerformanceTracker::setFlowTypeIfEnabled("{$flowPrefix}_cache_miss");
+            ReportPerformanceTracker::setFlowTypeIfEnabled("{$flowPrefix}_queued");
 
-            return $this->generatePdfWithCacheLock(
+            return $this->queuePdfGenerationResponse(
+                $request,
                 $siswa,
-                $template,
                 $type,
                 (int) $tahunAjaranId,
                 $disposition,
@@ -1512,218 +1502,221 @@ class ReportController extends Controller
         }
     }
 
-    protected function generatePdfWithCacheLock(
+    protected function queuePdfGenerationResponse(
+        Request $request,
         Siswa $siswa,
-        ReportTemplate $template,
         string $type,
         int $tahunAjaranId,
         string $disposition,
         string $flowPrefix
     ) {
-        $lock = Cache::lock(PdfCacheService::getGenerationLockKey($siswa, $type, $tahunAjaranId), 180);
+        $existingRequestId = $this->activePdfGenerationRequestId($siswa, $type, $tahunAjaranId);
 
-        try {
-            return $lock->block(20, function () use ($siswa, $template, $type, $tahunAjaranId, $disposition, $flowPrefix) {
-                $cachedPdf = PdfCacheService::getCachedPdf($siswa, $type, $tahunAjaranId);
-
-                if ($cachedPdf) {
-                    ReportPerformanceTracker::setFlowTypeIfEnabled("{$flowPrefix}_cache_hit");
-
-                    return $this->redirectToSecureRaporPdf(
-                        $cachedPdf['path'],
-                        $cachedPdf['filename'],
-                        $disposition
-                    );
-                }
-
-                ReportPerformanceTracker::setFlowTypeIfEnabled("{$flowPrefix}_cache_miss");
-
-                $conversionService = app(DocumentConversionService::class);
-                $libreOfficeAvailable = ReportPerformanceTracker::measureSegment(
-                    'libreoffice',
-                    fn () => $conversionService->isLibreOfficeAvailable()
-                );
-
-                if (!$libreOfficeAvailable) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'LibreOffice tidak tersedia untuk membuat PDF.'
-                    ], 500);
-                }
-
-                $processor = new \App\Services\RaporTemplateProcessor($template, $siswa, $type, $tahunAjaranId);
-                $result = $processor->generate(true);
-
-                if (!$result['success'] || !isset($result['path'], $result['filename'])) {
-                    throw new \Exception('Gagal generate file DOCX: ' . ($result['message'] ?? 'Unknown error'));
-                }
-
-                $pdfResult = $conversionService->convertStorageDocxToPdf($result['path'], 'pdf_reports');
-
-                if (!$pdfResult['success']) {
-                    throw new \Exception('Konversi ke PDF gagal: ' . $pdfResult['message']);
-                }
-
-                $downloadFilename = pathinfo($result['filename'], PATHINFO_FILENAME) . '.pdf';
-
-                PdfCacheService::cachePdf(
-                    $siswa,
-                    $type,
-                    $tahunAjaranId,
-                    $pdfResult['storage_path'],
-                    $downloadFilename,
-                    Storage::disk('public')->size($pdfResult['storage_path'])
-                );
-
-                return $this->redirectToSecureRaporPdf(
-                    $pdfResult['storage_path'],
-                    $downloadFilename,
-                    $disposition
-                );
-            });
-        } catch (LockTimeoutException) {
-            return response()->json([
-                'success' => false,
-                'message' => 'PDF sedang disiapkan oleh permintaan lain. Silakan coba lagi sebentar.',
-                'error_type' => 'pdf_generation_locked',
-            ], 202);
+        if ($existingRequestId) {
+            return $this->pdfProcessingResponse($request, $existingRequestId, $disposition, true);
         }
+
+        $requestId = 'pdf_' . (string) Str::uuid();
+        $userId = auth()->guard('guru')->id();
+
+        Cache::put(PdfCacheService::getProgressKey($requestId), [
+            'status' => 'queued',
+            'stage' => 'queued',
+            'message' => 'Menunggu antrean',
+            'completed' => false,
+            'error' => false,
+            'request_id' => $requestId,
+            'siswa_id' => $siswa->id,
+            'type' => $type,
+            'tahun_ajaran_id' => $tahunAjaranId,
+            'user_id' => $userId,
+            'cached' => false,
+            'updated_at' => time(),
+            'timestamp' => now()->toISOString(),
+        ], now()->addMinutes(PdfCacheService::PROGRESS_TTL_MINUTES));
+
+        Cache::put(
+            PdfCacheService::getGenerationRequestKey($siswa, $type, $tahunAjaranId),
+            $requestId,
+            now()->addMinutes(PdfCacheService::PROGRESS_TTL_MINUTES)
+        );
+
+        GeneratePdfReportJob::dispatch($siswa, $type, $tahunAjaranId, $requestId, $userId);
+
+        return $this->pdfProcessingResponse($request, $requestId, $disposition, false);
     }
 
-    protected function redirectToSecureRaporPdf(string $path, string $filename, string $disposition)
+    protected function activePdfGenerationRequestId(Siswa $siswa, string $type, int $tahunAjaranId): ?string
     {
-        return ReportPerformanceTracker::measureSegment('response', function () use ($path, $filename, $disposition) {
-            return redirect()->away(
-                $this->createSecureRaporFileUrl(
-                    $path,
-                    $filename,
-                    $disposition,
-                    60
-                )
+        $requestKey = PdfCacheService::getGenerationRequestKey($siswa, $type, $tahunAjaranId);
+        $requestId = Cache::get($requestKey);
+
+        if (! is_string($requestId) || $requestId === '') {
+            return null;
+        }
+
+        $progress = Cache::get(PdfCacheService::getProgressKey($requestId));
+
+        if (! is_array($progress)) {
+            Cache::forget($requestKey);
+
+            return null;
+        }
+
+        if ((int) ($progress['siswa_id'] ?? 0) !== (int) $siswa->id ||
+            (string) ($progress['type'] ?? '') !== (string) $type ||
+            (int) ($progress['tahun_ajaran_id'] ?? 0) !== (int) $tahunAjaranId) {
+            Cache::forget($requestKey);
+
+            return null;
+        }
+
+        $currentUserId = auth()->guard('guru')->id();
+        if ($currentUserId && isset($progress['user_id']) && (string) $progress['user_id'] !== (string) $currentUserId) {
+            return null;
+        }
+
+        if (($progress['completed'] ?? false) || ($progress['error'] ?? false)) {
+            Cache::forget($requestKey);
+
+            return null;
+        }
+
+        $updatedAt = (int) ($progress['updated_at'] ?? 0);
+        if ($updatedAt > 0 && $updatedAt < now()->subMinutes(PdfCacheService::PROCESSING_STALE_MINUTES)->timestamp) {
+            Cache::forget($requestKey);
+
+            return null;
+        }
+
+        return $requestId;
+    }
+
+    protected function pdfReadyResponse(Request $request, array $cachedPdf, string $disposition, bool $cacheHit, ?string $requestId = null)
+    {
+        return ReportPerformanceTracker::measureSegment('response', function () use ($request, $cachedPdf, $disposition, $cacheHit, $requestId) {
+            $url = $this->createSecureRaporFileUrl(
+                $cachedPdf['path'],
+                $cachedPdf['filename'],
+                $disposition,
+                60
             );
+
+            if ($this->expectsPdfJson($request)) {
+                return response()->json([
+                    'success' => true,
+                    'status' => 'ready',
+                    'ready' => true,
+                    'cache_hit' => $cacheHit,
+                    'cached' => $cacheHit,
+                    'url' => $url,
+                    'download_url' => $url,
+                    'filename' => $cachedPdf['filename'],
+                    'file_size' => $cachedPdf['file_size'] ?? null,
+                    'request_id' => $requestId,
+                ]);
+            }
+
+            return redirect()->away($url);
         });
+    }
+
+    protected function pdfProcessingResponse(Request $request, string $requestId, string $disposition, bool $reused)
+    {
+        return ReportPerformanceTracker::measureSegment('response', function () use ($request, $requestId, $disposition, $reused) {
+            $pollUrl = route('wali_kelas.rapor.pdf-progress', [
+                'requestId' => $requestId,
+                'disposition' => $disposition,
+            ]);
+
+            if ($this->expectsPdfJson($request)) {
+                return response()->json([
+                    'success' => true,
+                    'status' => 'processing',
+                    'ready' => false,
+                    'cache_hit' => false,
+                    'cached' => false,
+                    'reused' => $reused,
+                    'request_id' => $requestId,
+                    'poll_url' => $pollUrl,
+                    'progress_url' => $pollUrl,
+                    'message' => 'Sedang menyiapkan PDF rapor. Proses ini biasanya membutuhkan beberapa detik.',
+                ], 202);
+            }
+
+            return redirect()->route('wali_kelas.rapor.index')
+                ->with('success', 'PDF sedang disiapkan. Silakan buka kembali beberapa saat lagi.');
+        });
+    }
+
+    protected function expectsPdfJson(Request $request): bool
+    {
+        return $request->expectsJson() || $request->ajax();
     }
 
     public function requestPdf(Siswa $siswa, Request $request)
     {
         $type = $request->input('type', 'UTS');
-        $tahunAjaranId = $this->getValidTahunAjaranId(
-            $request->input('tahun_ajaran_id') ? (int) $request->input('tahun_ajaran_id') : null
+        $disposition = $request->input('disposition') === 'inline' ? 'inline' : 'attachment';
+        $performance = ReportPerformanceTracker::startFlowIfEnabled(
+            'pdf_request_pending',
+            $type,
+            $request->route()?->getName()
         );
 
-        if (!$tahunAjaranId) {
-            return $this->failTahunAjaranNotSet($request, true);
-        }
-
-        $this->authorizeWaliRaporAccess($siswa, $tahunAjaranId);
-        $kelas = $this->resolveRaporClass($siswa, $tahunAjaranId);
-        $template = $this->getTemplateForSiswa($siswa, $type, $tahunAjaranId);
-
-        if (!$template) {
-            return $this->pdfTemplateUnavailableResponse($request, $siswa, $type, $tahunAjaranId, $kelas?->id);
-        }
-
-        $requestId = uniqid('pdf_', true);
-
-        Log::info("=== PDF REQUEST RECEIVED ===", [
-            'request_id' => $requestId,
-            'siswa_id' => $siswa->id,
-            'siswa_name' => $siswa->nama,
-            'type' => $type,
-            'tahun_ajaran_id' => $tahunAjaranId,
-            'user_agent' => $request->userAgent(),
-            'ip' => $request->ip()
-        ]);
-
         try {
-            // Initialize progress immediately
-            $progressKey = "pdf_progress_{$requestId}";
-            Cache::put($progressKey, [
-                'percentage' => 0,
-                'message' => 'Permintaan diterima...',
-                'completed' => false,
-                'error' => false,
-                'timestamp' => now()->toISOString(),
-                'request_id' => $requestId,
-                'initiated' => true
-            ], now()->addMinutes(30));
+            $tahunAjaranId = $this->getValidTahunAjaranId(
+                $request->input('tahun_ajaran_id') ? (int) $request->input('tahun_ajaran_id') : null
+            );
 
-            // Check cache first
+            if (!$tahunAjaranId) {
+                return $this->failTahunAjaranNotSet($request, true);
+            }
+
+            $this->authorizeWaliRaporAccess($siswa, $tahunAjaranId);
+            $kelas = $this->resolveRaporClass($siswa, $tahunAjaranId);
+            $template = $this->getTemplateForSiswa($siswa, $type, $tahunAjaranId);
+
+            if (!$template) {
+                return $this->pdfTemplateUnavailableResponse($request, $siswa, $type, $tahunAjaranId, $kelas?->id);
+            }
+
             $cachedPdf = PdfCacheService::getCachedPdf($siswa, $type, $tahunAjaranId);
             
             if ($cachedPdf) {
-                Log::info("PDF found in cache, returning immediately", [
-                    'request_id' => $requestId,
-                    'cache_path' => $cachedPdf['path']
-                ]);
+                ReportPerformanceTracker::setFlowTypeIfEnabled('pdf_request_cache_hit');
 
-                return response()->json([
-                    'success' => true,
-                    'ready' => true,
-                    'cached' => true,
-                    'download_url' => $this->createSecureRaporFileUrl(
-                        $cachedPdf['path'],
-                        $cachedPdf['filename'],
-                        'attachment'
-                    ),
-                    'filename' => $cachedPdf['filename'],
-                    'file_size' => $cachedPdf['file_size'],
-                    'request_id' => $requestId
-                ]);
+                return $this->pdfReadyResponse($request, $cachedPdf, $disposition, true);
             }
 
-            // Update progress: Dispatching job
-            Cache::put($progressKey, [
-                'percentage' => 5,
-                'message' => 'Memulai generate PDF...',
-                'completed' => false,
-                'error' => false,
-                'timestamp' => now()->toISOString(),
-                'request_id' => $requestId,
-                'dispatching' => true
-            ], now()->addMinutes(30));
+            ReportPerformanceTracker::setFlowTypeIfEnabled('pdf_request_queued');
 
-            // Dispatch job
-            $userId = auth()->guard('guru')->id();
-            GeneratePdfReportJob::dispatch($siswa, $type, $tahunAjaranId, $requestId, $userId);
-
-            Log::info("PDF job dispatched successfully", [
-                'request_id' => $requestId,
-                'job_dispatched' => true
-            ]);
-
-            return response()->json([
-                'success' => true,
-                'ready' => false,
-                'cached' => false,
-                'request_id' => $requestId,
-                'estimated_time' => '30-60 seconds',
-                'message' => 'PDF sedang diproses. Mohon tunggu...',
-                'progress_url' => route('wali_kelas.rapor.pdf-progress', $requestId)
-            ]);
+            return $this->queuePdfGenerationResponse(
+                $request,
+                $siswa,
+                $type,
+                (int) $tahunAjaranId,
+                $disposition,
+                'pdf_request'
+            );
 
         } catch (\Exception $e) {
+            if ($e instanceof HttpExceptionInterface) {
+                throw $e;
+            }
+
             Log::error("Error in requestPdf", [
-                'request_id' => $requestId,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
 
-            // Update progress with error
-            Cache::put($progressKey, [
-                'percentage' => -1,
-                'message' => 'Error: ' . $e->getMessage(),
-                'completed' => true,
-                'error' => true,
-                'timestamp' => now()->toISOString(),
-                'request_id' => $requestId
-            ], now()->addMinutes(30));
-
             return response()->json([
                 'success' => false,
-                'message' => 'Gagal memproses permintaan PDF: ' . $e->getMessage(),
-                'request_id' => $requestId
+                'status' => 'failed',
+                'message' => 'PDF gagal disiapkan. Silakan coba lagi atau hubungi administrator.'
             ], 500);
+        } finally {
+            ReportPerformanceTracker::finishIfEnabled($performance);
         }
     }
 
@@ -1731,48 +1724,103 @@ class ReportController extends Controller
     /**
      * Check PDF generation progress
      */
-    public function checkPdfProgress($requestId)
+    public function checkPdfProgress(Request $request, string $requestId)
     {
-        Log::info("Progress check requested", [
-            'request_id' => $requestId,
-            'timestamp' => now()->toISOString()
-        ]);
-
         try {
-            $progressKey = "pdf_progress_{$requestId}";
+            $progressKey = PdfCacheService::getProgressKey($requestId);
             $progress = Cache::get($progressKey);
 
             if (!$progress) {
                 Log::warning("Progress not found", [
                     'request_id' => $requestId,
                     'progress_key' => $progressKey,
-                    'all_keys' => Cache::get('all_progress_keys', [])
                 ]);
 
                 return response()->json([
                     'success' => false,
+                    'status' => 'failed',
                     'message' => 'Progress tidak ditemukan. Request mungkin sudah kadaluarsa.',
                     'request_id' => $requestId,
-                    'debug_info' => [
-                        'progress_key' => $progressKey,
-                        'cache_available' => Cache::getStore() !== null
-                    ]
                 ], 404);
             }
 
-            Log::info("Progress found", [
-                'request_id' => $requestId,
-                'progress' => $progress
-            ]);
+            $this->authorizePdfProgress($progress);
+
+            if (($progress['error'] ?? false) || ($progress['status'] ?? null) === 'failed') {
+                return response()->json([
+                    'success' => true,
+                    'status' => 'failed',
+                    'message' => $progress['message'] ?? 'PDF gagal disiapkan. Silakan coba lagi atau hubungi administrator.',
+                    'request_id' => $requestId,
+                    'progress' => $this->sanitizePdfProgress($progress),
+                ]);
+            }
+
+            $siswaId = (int) ($progress['siswa_id'] ?? 0);
+            $type = (string) ($progress['type'] ?? 'UTS');
+            $tahunAjaranId = (int) ($progress['tahun_ajaran_id'] ?? 0);
+            $siswa = $siswaId ? Siswa::find($siswaId) : null;
+
+            if ($siswa && $tahunAjaranId) {
+                $cachedPdf = PdfCacheService::getCachedPdf($siswa, $type, $tahunAjaranId);
+
+                if ($cachedPdf) {
+                    $disposition = $request->query('disposition') === 'inline' ? 'inline' : 'attachment';
+                    $url = $this->createSecureRaporFileUrl(
+                        $cachedPdf['path'],
+                        $cachedPdf['filename'],
+                        $disposition,
+                        60
+                    );
+
+                    return response()->json([
+                        'success' => true,
+                        'status' => 'ready',
+                        'ready' => true,
+                        'cache_hit' => (bool) ($progress['cached'] ?? false),
+                        'cached' => (bool) ($progress['cached'] ?? false),
+                        'url' => $url,
+                        'download_url' => $url,
+                        'filename' => $cachedPdf['filename'],
+                        'file_size' => $cachedPdf['file_size'] ?? null,
+                        'request_id' => $requestId,
+                        'progress' => $this->sanitizePdfProgress(array_merge($progress, [
+                            'status' => 'ready',
+                            'completed' => true,
+                            'filename' => $cachedPdf['filename'],
+                            'file_size' => $cachedPdf['file_size'] ?? null,
+                        ])),
+                    ]);
+                }
+            }
+
+            if (($progress['completed'] ?? false) && ! ($progress['error'] ?? false)) {
+                return response()->json([
+                    'success' => true,
+                    'status' => 'failed',
+                    'message' => 'PDF belum tersedia. Silakan coba lagi atau hubungi administrator.',
+                    'request_id' => $requestId,
+                    'progress' => $this->sanitizePdfProgress($progress),
+                ]);
+            }
 
             return response()->json([
                 'success' => true,
-                'progress' => $progress,
+                'status' => 'processing',
+                'ready' => false,
+                'cache_hit' => false,
+                'cached' => false,
+                'message' => $progress['message'] ?? 'Sedang menyiapkan PDF rapor.',
+                'progress' => $this->sanitizePdfProgress($progress),
                 'request_id' => $requestId,
                 'timestamp' => now()->toISOString()
             ]);
 
         } catch (\Exception $e) {
+            if ($e instanceof HttpExceptionInterface) {
+                throw $e;
+            }
+
             Log::error("Error checking progress", [
                 'request_id' => $requestId,
                 'error' => $e->getMessage()
@@ -1780,10 +1828,50 @@ class ReportController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' => 'Error checking progress: ' . $e->getMessage(),
+                'status' => 'failed',
+                'message' => 'Gagal memeriksa status PDF. Silakan coba lagi.',
                 'request_id' => $requestId
             ], 500);
         }
+    }
+
+    protected function authorizePdfProgress(array $progress): void
+    {
+        $currentGuruId = auth()->guard('guru')->id();
+
+        abort_unless(
+            $currentGuruId &&
+            isset($progress['user_id']) &&
+            (string) $progress['user_id'] === (string) $currentGuruId,
+            403
+        );
+
+        $siswaId = (int) ($progress['siswa_id'] ?? 0);
+        $tahunAjaranId = (int) ($progress['tahun_ajaran_id'] ?? 0);
+
+        if ($siswaId && $tahunAjaranId && ($siswa = Siswa::find($siswaId))) {
+            $this->authorizeWaliRaporAccess($siswa, $tahunAjaranId);
+        }
+    }
+
+    protected function sanitizePdfProgress(array $progress): array
+    {
+        return collect($progress)
+            ->only([
+                'status',
+                'stage',
+                'message',
+                'completed',
+                'error',
+                'request_id',
+                'percentage',
+                'cached',
+                'filename',
+                'file_size',
+                'updated_at',
+                'timestamp',
+            ])
+            ->all();
     }
 
     /**

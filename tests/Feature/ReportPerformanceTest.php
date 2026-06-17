@@ -353,9 +353,34 @@ class ReportPerformanceTest extends TestCase
 
         $progress = Cache::get('pdf_progress_locked-request');
 
-        $this->assertSame(5, $progress['percentage']);
+        $this->assertSame('processing', $progress['status']);
+        $this->assertSame('waiting', $progress['stage']);
         $this->assertTrue($progress['processing']);
         $this->assertFalse($progress['cached']);
+    }
+
+    public function test_pdf_job_rechecks_cache_before_conversion(): void
+    {
+        $siswa = $this->createStudent('Cached Job Student', 'JOB-001', 'JOB-NISN-001');
+        Storage::disk('public')->put('pdf_reports/job-cached.pdf', 'PDF');
+        Cache::put(PdfCacheService::getCacheKey($siswa, 'UTS', 1), [
+            'path' => 'pdf_reports/job-cached.pdf',
+            'filename' => 'job-cached.pdf',
+            'file_size' => 3,
+            'generated_at' => now()->toISOString(),
+        ], now()->addHour());
+
+        $this->mock(DocumentConversionService::class, function ($mock) {
+            $mock->shouldNotReceive('convertStorageDocxToPdf');
+        });
+
+        (new GeneratePdfReportJob($siswa, 'UTS', 1, 'cache-hit-request'))->handle();
+
+        $progress = Cache::get('pdf_progress_cache-hit-request');
+
+        $this->assertSame('ready', $progress['status']);
+        $this->assertTrue($progress['cached']);
+        $this->assertArrayNotHasKey('download_url', $progress);
     }
 
     public function test_pdf_generation_lock_is_released_after_job_failure(): void
@@ -369,6 +394,12 @@ class ReportPerformanceTest extends TestCase
         } catch (Throwable) {
             // The minimal test schema intentionally has no report template table.
         }
+
+        $progress = Cache::get('pdf_progress_failed-request');
+        $this->assertSame('failed', $progress['status']);
+        $this->assertSame('PDF gagal disiapkan. Silakan coba lagi atau hubungi administrator.', $progress['message']);
+        $this->assertArrayNotHasKey('download_url', $progress);
+        $this->assertStringNotContainsString('report_templates', json_encode($progress));
 
         $lock = Cache::lock($key, 1);
 
@@ -398,6 +429,19 @@ class ReportPerformanceTest extends TestCase
             PdfCacheService::getGenerationLockKey($first, 'UTS', 1),
             PdfCacheService::getGenerationLockKey($first, 'UTS', 2)
         );
+    }
+
+    public function test_frontend_pdf_polling_is_turbo_safe_and_stops_on_terminal_states(): void
+    {
+        $source = file_get_contents(resource_path('js/features/rapor-manager/pdf.js'));
+
+        $this->assertStringContainsString('activePdfPolls', $source);
+        $this->assertStringContainsString("document.addEventListener('turbo:before-cache'", $source);
+        $this->assertStringContainsString("document.addEventListener('turbo:before-render'", $source);
+        $this->assertStringContainsString("data.status === 'processing'", $source);
+        $this->assertStringContainsString("data.status === 'ready'", $source);
+        $this->assertStringContainsString('setTimeout(tick, 1000)', $source);
+        $this->assertStringContainsString('maxChecks = 180', $source);
     }
 
     private function resetReportPerformance(bool $enabled): void

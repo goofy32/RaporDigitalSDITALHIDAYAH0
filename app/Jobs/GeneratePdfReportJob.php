@@ -18,6 +18,7 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\URL;
 
 class GeneratePdfReportJob implements ShouldQueue
@@ -66,14 +67,18 @@ class GeneratePdfReportJob implements ShouldQueue
 
         Log::info('=== PDF JOB STARTED ===', [
             'request_id' => $this->requestId,
-            'siswa_id' => $this->siswa->id,
             'type' => $this->type,
             'queue_attempts' => $this->attempts(),
         ]);
 
         try {
+            $this->validateGenerationContext();
+
             // Update progress: Started
-            $this->updateProgress(10, 'Memulai generate PDF...');
+            $this->updateProgress(null, 'Menyiapkan data rapor', [
+                'status' => 'processing',
+                'stage' => 'preparing',
+            ]);
 
             // Step 1: Check if PDF already cached
             $cacheKey = PdfCacheService::getCacheKey($this->siswa, $this->type, $this->tahunAjaranId);
@@ -89,14 +94,11 @@ class GeneratePdfReportJob implements ShouldQueue
                 Log::info('PDF found in cache', [
                     'request_id' => $this->requestId,
                     'cache_key' => $cacheKey,
-                    'cached_path' => $cachedPdf['path'],
                 ]);
 
-                $this->updateProgress(100, 'PDF siap diunduh', [
-                    'download_url' => $this->createSecureDownloadUrl(
-                        $cachedPdf['path'],
-                        $cachedPdf['filename']
-                    ),
+                $this->updateProgress(100, 'PDF siap dibuka', [
+                    'status' => 'ready',
+                    'stage' => 'ready',
                     'filename' => $cachedPdf['filename'],
                     'file_size' => $cachedPdf['file_size'],
                     'cached' => true,
@@ -111,7 +113,9 @@ class GeneratePdfReportJob implements ShouldQueue
             );
 
             if (! $generationLock->get()) {
-                $this->updateProgress(5, 'PDF sedang diproses oleh permintaan lain. Coba cek kembali sebentar lagi.', [
+                $this->updateProgress(null, 'PDF sedang diproses oleh permintaan lain. Coba cek kembali sebentar lagi.', [
+                    'status' => 'processing',
+                    'stage' => 'waiting',
                     'processing' => true,
                     'cached' => false,
                 ]);
@@ -129,11 +133,9 @@ class GeneratePdfReportJob implements ShouldQueue
             if ($cachedPdf) {
                 ReportPerformanceTracker::setFlowTypeIfEnabled('pdf_job_cache_hit');
 
-                $this->updateProgress(100, 'PDF siap diunduh', [
-                    'download_url' => $this->createSecureDownloadUrl(
-                        $cachedPdf['path'],
-                        $cachedPdf['filename']
-                    ),
+                $this->updateProgress(100, 'PDF siap dibuka', [
+                    'status' => 'ready',
+                    'stage' => 'ready',
                     'filename' => $cachedPdf['filename'],
                     'file_size' => $cachedPdf['file_size'],
                     'cached' => true,
@@ -145,7 +147,10 @@ class GeneratePdfReportJob implements ShouldQueue
             ReportPerformanceTracker::setFlowTypeIfEnabled('pdf_job_cache_miss');
 
             // Update progress: Template processing
-            $this->updateProgress(20, 'Mengambil template...');
+            $this->updateProgress(null, 'Menyiapkan data rapor', [
+                'status' => 'processing',
+                'stage' => 'preparing',
+            ]);
 
             // Step 2: Get template
             $template = $this->getTemplateForSiswa();
@@ -154,7 +159,10 @@ class GeneratePdfReportJob implements ShouldQueue
             }
 
             // Update progress: DOCX generation
-            $this->updateProgress(30, 'Generate file DOCX...');
+            $this->updateProgress(null, 'Menyusun dokumen rapor', [
+                'status' => 'processing',
+                'stage' => 'document',
+            ]);
 
             // Step 3: Generate DOCX
             $processor = new RaporTemplateProcessor($template, $this->siswa, $this->type, $this->tahunAjaranId);
@@ -172,7 +180,10 @@ class GeneratePdfReportJob implements ShouldQueue
             }
 
             // Update progress: PDF conversion
-            $this->updateProgress(60, 'Konversi ke PDF...');
+            $this->updateProgress(null, 'Mengonversi PDF', [
+                'status' => 'processing',
+                'stage' => 'conversion',
+            ]);
 
             // Step 4: Convert to PDF
             $conversionService = app(DocumentConversionService::class);
@@ -183,7 +194,10 @@ class GeneratePdfReportJob implements ShouldQueue
             }
 
             // Update progress: Finalizing
-            $this->updateProgress(90, 'Finalisasi...');
+            $this->updateProgress(null, 'Finalisasi PDF', [
+                'status' => 'processing',
+                'stage' => 'finalizing',
+            ]);
 
             // Step 5: Store in cache and prepare response
             $pdfPath = $pdfResult['storage_path'];
@@ -209,8 +223,9 @@ class GeneratePdfReportJob implements ShouldQueue
             );
 
             // Update progress: Completed
-            $this->updateProgress(100, 'PDF siap diunduh', [
-                'download_url' => $this->createSecureDownloadUrl($pdfPath, $filename),
+            $this->updateProgress(100, 'PDF siap dibuka', [
+                'status' => 'ready',
+                'stage' => 'ready',
                 'filename' => $filename,
                 'file_size' => $fileSize,
                 'cached' => false,
@@ -237,7 +252,11 @@ class GeneratePdfReportJob implements ShouldQueue
                 'trace' => $e->getTraceAsString(),
             ]);
 
-            $this->updateProgress(-1, 'Gagal generate PDF: '.$e->getMessage(), [
+            Cache::forget(PdfCacheService::getGenerationRequestKey($this->siswa, $this->type, $this->tahunAjaranId));
+
+            $this->updateProgress(-1, 'PDF gagal disiapkan. Silakan coba lagi atau hubungi administrator.', [
+                'status' => 'failed',
+                'stage' => 'failed',
                 'error' => true,
                 'attempts' => $this->attempts(),
                 'max_attempts' => $this->tries,
@@ -257,15 +276,17 @@ class GeneratePdfReportJob implements ShouldQueue
     {
         Log::error('=== PDF JOB PERMANENTLY FAILED ===', [
             'request_id' => $this->requestId,
-            'siswa_id' => $this->siswa->id,
             'error' => $exception->getMessage(),
             'attempts' => $this->attempts(),
         ]);
 
-        $this->updateProgress(-1, 'PDF generation gagal setelah '.$this->tries.' percobaan', [
+        Cache::forget(PdfCacheService::getGenerationRequestKey($this->siswa, $this->type, $this->tahunAjaranId));
+
+        $this->updateProgress(-1, 'PDF gagal disiapkan. Silakan coba lagi atau hubungi administrator.', [
+            'status' => 'failed',
+            'stage' => 'failed',
             'error' => true,
             'final_failure' => true,
-            'error_message' => $exception->getMessage(),
         ]);
     }
 
@@ -339,26 +360,55 @@ class GeneratePdfReportJob implements ShouldQueue
         }
     }
 
+    private function validateGenerationContext(): void
+    {
+        if (! $this->userId) {
+            return;
+        }
+
+        if (! Schema::hasTable('tahun_ajarans') || ! Schema::hasTable('guru_kelas')) {
+            return;
+        }
+
+        $tahunAjaran = TahunAjaran::find($this->tahunAjaranId);
+
+        if (! $tahunAjaran) {
+            throw new Exception('Konteks tahun ajaran PDF tidak valid.');
+        }
+
+        if (! $this->siswa->isInKelasWali($this->userId, $this->tahunAjaranId, (int) $tahunAjaran->semester)) {
+            throw new Exception('Konteks wali kelas PDF tidak valid.');
+        }
+    }
+
     private function updateProgress($percentage, $message, $data = [])
     {
-        $progressKey = "pdf_progress_{$this->requestId}";
+        $progressKey = PdfCacheService::getProgressKey($this->requestId);
+        $existingProgress = Cache::get($progressKey, []);
 
-        $progressData = [
+        $progressData = array_merge($existingProgress, [
+            'status' => $percentage >= 100 ? 'ready' : ($percentage < 0 ? 'failed' : ($existingProgress['status'] ?? 'processing')),
             'percentage' => $percentage,
             'message' => $message,
             'completed' => $percentage >= 100 || $percentage < 0,
             'error' => $percentage < 0,
             'timestamp' => now()->toISOString(),
             'request_id' => $this->requestId,
+            'siswa_id' => $this->siswa->id,
+            'type' => $this->type,
+            'tahun_ajaran_id' => $this->tahunAjaranId,
+            'user_id' => $this->userId,
             'updated_at' => time(), // Add timestamp for debugging
-        ];
+        ]);
 
         if (! empty($data)) {
             $progressData = array_merge($progressData, $data);
         }
 
+        unset($progressData['download_url']);
+
         // Store for 30 minutes
-        Cache::put($progressKey, $progressData, now()->addMinutes(30));
+        Cache::put($progressKey, $progressData, now()->addMinutes(PdfCacheService::PROGRESS_TTL_MINUTES));
 
         // TAMBAHAN: Track semua progress keys untuk debugging
         $allKeys = Cache::get('all_progress_keys', []);
