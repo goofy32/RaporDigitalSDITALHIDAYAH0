@@ -27,38 +27,51 @@ class PdfCacheService
      */
     public static function getCachedPdf(Siswa $siswa, $type, $tahunAjaranId)
     {
-        $cacheKey = self::getCacheKey($siswa, $type, $tahunAjaranId);
-        $cachedData = Cache::get($cacheKey);
+        $token = ReportPerformanceTracker::startSegmentIfEnabled('cache_lookup');
 
-        if (!$cachedData) {
-            return null;
-        }
+        try {
+            $cacheKey = self::getCacheKey($siswa, $type, $tahunAjaranId);
+            $cachedData = Cache::get($cacheKey);
 
-        // Verify file still exists
-        if (!Storage::disk(self::STORAGE_DISK)->exists($cachedData['path'])) {
-            // File missing, remove from cache
-            Cache::forget($cacheKey);
-            Log::warning("Cached PDF file missing, removed from cache", [
+            if (!$cachedData) {
+                ReportPerformanceTracker::setCacheHitIfEnabled(false);
+
+                return null;
+            }
+
+            // Verify file still exists
+            if (!Storage::disk(self::STORAGE_DISK)->exists($cachedData['path'])) {
+                // File missing, remove from cache
+                Cache::forget($cacheKey);
+                ReportPerformanceTracker::setCacheHitIfEnabled(false);
+                Log::warning("Cached PDF file missing, removed from cache", [
+                    'cache_key' => $cacheKey,
+                    'missing_path' => $cachedData['path']
+                ]);
+                return null;
+            }
+
+            // Check if file is too old (older than cache duration)
+            $fileAge = now()->diffInHours($cachedData['generated_at']);
+            if ($fileAge > self::CACHE_DURATION) {
+                self::removeCachedPdf($siswa, $type, $tahunAjaranId);
+                ReportPerformanceTracker::setCacheHitIfEnabled(false);
+
+                return null;
+            }
+
+            ReportPerformanceTracker::setCacheHitIfEnabled(true);
+
+            Log::info("PDF found in cache", [
                 'cache_key' => $cacheKey,
-                'missing_path' => $cachedData['path']
+                'file_age_hours' => $fileAge,
+                'file_size' => $cachedData['file_size']
             ]);
-            return null;
+
+            return $cachedData;
+        } finally {
+            ReportPerformanceTracker::endSegmentIfEnabled($token);
         }
-
-        // Check if file is too old (older than cache duration)
-        $fileAge = now()->diffInHours($cachedData['generated_at']);
-        if ($fileAge > self::CACHE_DURATION) {
-            self::removeCachedPdf($siswa, $type, $tahunAjaranId);
-            return null;
-        }
-
-        Log::info("PDF found in cache", [
-            'cache_key' => $cacheKey,
-            'file_age_hours' => $fileAge,
-            'file_size' => $cachedData['file_size']
-        ]);
-
-        return $cachedData;
     }
 
     /**
@@ -80,19 +93,21 @@ class PdfCacheService
             'cache_key' => $cacheKey
         ];
 
-        Cache::put($cacheKey, $cacheData, now()->addHours(self::CACHE_DURATION));
+        ReportPerformanceTracker::measureSegment('cache_write', function () use ($cacheKey, $cacheData, $siswa, $type, $tahunAjaranId) {
+            Cache::put($cacheKey, $cacheData, now()->addHours(self::CACHE_DURATION));
 
-        $indexKey = "pdf_cache_index_{$siswa->id}";
-        $index = Cache::get($indexKey, []);
-        $index[] = [
-            'type' => $type,
-            'tahun_ajaran_id' => $tahunAjaranId,
-        ];
-        $index = collect($index)
-            ->unique(fn ($item) => ($item['type'] ?? '') . '_' . ($item['tahun_ajaran_id'] ?? ''))
-            ->values()
-            ->toArray();
-        Cache::put($indexKey, $index, now()->addDays(30));
+            $indexKey = "pdf_cache_index_{$siswa->id}";
+            $index = Cache::get($indexKey, []);
+            $index[] = [
+                'type' => $type,
+                'tahun_ajaran_id' => $tahunAjaranId,
+            ];
+            $index = collect($index)
+                ->unique(fn ($item) => ($item['type'] ?? '') . '_' . ($item['tahun_ajaran_id'] ?? ''))
+                ->values()
+                ->toArray();
+            Cache::put($indexKey, $index, now()->addDays(30));
+        });
 
         Log::info("PDF cached successfully", [
             'cache_key' => $cacheKey,

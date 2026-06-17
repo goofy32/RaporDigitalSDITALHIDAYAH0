@@ -8,6 +8,7 @@ use App\Models\TahunAjaran;
 use App\Services\DocumentConversionService;
 use App\Services\PdfCacheService;
 use App\Services\RaporTemplateProcessor;
+use App\Services\ReportPerformanceTracker;
 use App\Services\SiswaKelasSemesterResolver;
 use Exception;
 use Illuminate\Bus\Queueable;
@@ -55,6 +56,11 @@ class GeneratePdfReportJob implements ShouldQueue
     {
         $startTime = microtime(true);
         $memoryStart = memory_get_usage(true);
+        $performance = ReportPerformanceTracker::startFlowIfEnabled(
+            'pdf_job_pending',
+            $this->type,
+            'queue.generate_pdf_report'
+        );
 
         Log::info('=== PDF JOB STARTED ===', [
             'request_id' => $this->requestId,
@@ -76,6 +82,8 @@ class GeneratePdfReportJob implements ShouldQueue
             );
 
             if ($cachedPdf) {
+                ReportPerformanceTracker::setFlowTypeIfEnabled('pdf_job_cache_hit');
+
                 Log::info('PDF found in cache', [
                     'request_id' => $this->requestId,
                     'cache_key' => $cacheKey,
@@ -94,6 +102,8 @@ class GeneratePdfReportJob implements ShouldQueue
 
                 return;
             }
+
+            ReportPerformanceTracker::setFlowTypeIfEnabled('pdf_job_cache_miss');
 
             // Update progress: Template processing
             $this->updateProgress(20, 'Mengambil template...');
@@ -195,6 +205,8 @@ class GeneratePdfReportJob implements ShouldQueue
             ]);
 
             throw $e; // Re-throw untuk retry mechanism
+        } finally {
+            ReportPerformanceTracker::finishIfEnabled($performance);
         }
     }
 

@@ -79,38 +79,39 @@ class DocumentConversionService
      */
     public function convertDocxToPdf(string $sourcePath, string $outputDir): array
     {
-        // Check if LibreOffice is available
-        if (!$this->isLibreOfficeAvailable()) {
-            return [
-                'success' => false,
-                'message' => 'LibreOffice tidak tersedia. Pastikan LibreOffice sudah terinstall.'
-            ];
-        }
-
-        // Ensure source file exists
-        if (!file_exists($sourcePath)) {
-            return [
-                'success' => false,
-                'message' => "Source file tidak ditemukan: $sourcePath"
-            ];
-        }
-
-        // Ensure output directory exists
-        if (!file_exists($outputDir)) {
-            mkdir($outputDir, 0755, true);
-        }
-        
-        $isWindows = PHP_OS === 'WINNT' || PHP_OS === 'WIN32' || strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
+        $token = ReportPerformanceTracker::startSegmentIfEnabled('libreoffice');
 
         try {
+            // Check if LibreOffice is available
+            if (!$this->isLibreOfficeAvailable()) {
+                return [
+                    'success' => false,
+                    'message' => 'LibreOffice tidak tersedia. Pastikan LibreOffice sudah terinstall.'
+                ];
+            }
+
+            // Ensure source file exists
+            if (!file_exists($sourcePath)) {
+                return [
+                    'success' => false,
+                    'message' => "Source file tidak ditemukan: $sourcePath"
+                ];
+            }
+
+            // Ensure output directory exists
+            if (!file_exists($outputDir)) {
+                mkdir($outputDir, 0755, true);
+            }
+
+            $isWindows = PHP_OS === 'WINNT' || PHP_OS === 'WIN32' || strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
+
             $libreOfficePath = $this->getLibreOfficePath();
-            
+
             if ($isWindows) {
                 return $this->convertOnWindows($libreOfficePath, $sourcePath, $outputDir);
-            } else {
-                return $this->convertOnLinux($libreOfficePath, $sourcePath, $outputDir);
             }
-            
+
+            return $this->convertOnLinux($libreOfficePath, $sourcePath, $outputDir);
         } catch (\Exception $e) {
             Log::error('Exception during PDF conversion', [
                 'exception' => $e->getMessage(),
@@ -121,6 +122,8 @@ class DocumentConversionService
                 'success' => false,
                 'message' => 'PDF conversion error: ' . $e->getMessage()
             ];
+        } finally {
+            ReportPerformanceTracker::endSegmentIfEnabled($token);
         }
     }
 

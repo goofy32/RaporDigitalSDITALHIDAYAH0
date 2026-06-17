@@ -55,6 +55,10 @@ return [
         'log_report_processing' => (bool) env('LOG_REPORT_PROCESSING', false),
     ],
 
+    'report_performance' => [
+        'enabled' => (bool) env('REPORT_PERFORMANCE_ENABLED', false),
+    ],
+
     /*
     |--------------------------------------------------------------------------
     | Log Channels

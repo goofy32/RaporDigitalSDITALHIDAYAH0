@@ -23,6 +23,7 @@ use App\Jobs\GeneratePdfReportJob;
 use App\Services\DocumentConversionService;
 use App\Services\PdfCacheService;
 use App\Services\SiswaKelasSemesterResolver;
+use App\Services\ReportPerformanceTracker;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\URL;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
@@ -187,58 +188,89 @@ class ReportController extends Controller
      */
     public function printRaporHtml(Siswa $siswa, Request $request)
     {
-        $tahunAjaranId = $this->resolveRaporTahunAjaranId($request);
-        abort_unless($tahunAjaranId, 403);
-        $this->authorizeWaliRaporAccess($siswa, $tahunAjaranId);
+        $performance = ReportPerformanceTracker::startFlowIfEnabled(
+            'html_print',
+            $request->query('type', 'UTS'),
+            $request->route()?->getName()
+        );
 
-        $guru = auth()->guard('guru')->user();
-        $tahunAjaran = TahunAjaran::find($tahunAjaranId);
-        $semester = $tahunAjaran ? $tahunAjaran->semester : 1;
-        $kelas = $this->applyRaporClassContext($siswa, $tahunAjaranId);
-        abort_unless($kelas, 403);
-        
-        $siswa->load([
-            'nilais' => function($query) use ($tahunAjaranId, $semester) {
-                $query->where('tahun_ajaran_id', $tahunAjaranId)
-                    ->whereHas('mataPelajaran', function($q) use ($semester) {
-                        $q->where('semester', $semester);
-                    })
-                    ->where('is_submitted', true);
-            },
-            'nilais.mataPelajaran',
-            'nilaiEkstrakurikuler' => function($query) use ($tahunAjaranId, $semester) {
-                $query->where('tahun_ajaran_id', $tahunAjaranId)
-                    ->where('semester', $semester);
-            },
-            'nilaiEkstrakurikuler.ekstrakurikuler',
-            'absensi' => function($query) use ($tahunAjaranId, $semester) {
-                $query->where('semester', $semester)
-                    ->where('tahun_ajaran_id', $tahunAjaranId);
+        try {
+            $tahunAjaranId = ReportPerformanceTracker::measureSegment('context', function () use ($request) {
+                return $this->resolveRaporTahunAjaranId($request);
+            });
+            abort_unless($tahunAjaranId, 403);
+
+            ReportPerformanceTracker::measureSegment('authorization', function () use ($siswa, $tahunAjaranId) {
+                $this->authorizeWaliRaporAccess($siswa, $tahunAjaranId);
+            });
+
+            $guru = auth()->guard('guru')->user();
+            [$tahunAjaran, $kelas] = ReportPerformanceTracker::measureSegment('context', function () use ($siswa, $tahunAjaranId) {
+                return [
+                    TahunAjaran::find($tahunAjaranId),
+                    $this->applyRaporClassContext($siswa, $tahunAjaranId),
+                ];
+            });
+            $semester = $tahunAjaran ? $tahunAjaran->semester : 1;
+            abort_unless($kelas, 403);
+
+            ReportPerformanceTracker::measureSegment('preload', function () use ($siswa, $tahunAjaranId, $semester) {
+                $siswa->load([
+                    'nilais' => function($query) use ($tahunAjaranId, $semester) {
+                        $query->where('tahun_ajaran_id', $tahunAjaranId)
+                            ->whereHas('mataPelajaran', function($q) use ($semester) {
+                                $q->where('semester', $semester);
+                            })
+                            ->where('is_submitted', true);
+                    },
+                    'nilais.mataPelajaran',
+                    'nilaiEkstrakurikuler' => function($query) use ($tahunAjaranId, $semester) {
+                        $query->where('tahun_ajaran_id', $tahunAjaranId)
+                            ->where('semester', $semester);
+                    },
+                    'nilaiEkstrakurikuler.ekstrakurikuler',
+                    'absensi' => function($query) use ($tahunAjaranId, $semester) {
+                        $query->where('semester', $semester)
+                            ->where('tahun_ajaran_id', $tahunAjaranId);
+                    }
+                ]);
+            });
+
+            $profilSekolah = ReportPerformanceTracker::measureSegment('preload', fn () => ProfilSekolah::first());
+            $waliKelas = $guru;
+
+            if ($siswa->nilais->isEmpty()) {
+                return redirect()->back()
+                    ->with('error', 'Data nilai siswa belum lengkap. Pastikan semua nilai sudah diinput untuk semester ' . $semester);
             }
-        ]);
-        
-        $profilSekolah = ProfilSekolah::first();
-        $waliKelas = $guru;
-        
-        if ($siswa->nilais->isEmpty()) {
-            return redirect()->back()
-                ->with('error', 'Data nilai siswa belum lengkap. Pastikan semua nilai sudah diinput untuk semester ' . $semester);
+
+            if (!$siswa->absensi) {
+                return redirect()->back()
+                    ->with('error', 'Data absensi siswa belum diinput untuk semester ' . $semester);
+            }
+
+            return ReportPerformanceTracker::measureSegment('response', function () use (
+                $siswa,
+                $tahunAjaran,
+                $profilSekolah,
+                $waliKelas,
+                $semester,
+                $kelas,
+                $tahunAjaranId
+            ) {
+                return view('wali_kelas.rapor.print_html', compact(
+                    'siswa',
+                    'tahunAjaran',
+                    'profilSekolah',
+                    'waliKelas',
+                    'semester',
+                    'kelas',
+                    'tahunAjaranId'
+                ));
+            });
+        } finally {
+            ReportPerformanceTracker::finishIfEnabled($performance);
         }
-        
-        if (!$siswa->absensi) {
-            return redirect()->back()
-                ->with('error', 'Data absensi siswa belum diinput untuk semester ' . $semester);
-        }
-        
-        return view('wali_kelas.rapor.print_html', compact(
-            'siswa',
-            'tahunAjaran', 
-            'profilSekolah',
-            'waliKelas',
-            'semester',
-            'kelas',
-            'tahunAjaranId'
-        ));
     }
 
     /**
@@ -898,12 +930,19 @@ class ReportController extends Controller
         $requestId = uniqid('pdf_', true);
         $startTime = microtime(true);
         $memoryStart = memory_get_usage(true);
+        $type = $request->query('type', 'UTS');
+        $performance = ReportPerformanceTracker::startFlowIfEnabled(
+            'pdf_download_cache_miss',
+            $type,
+            $request->route()?->getName()
+        );
+        ReportPerformanceTracker::setCacheHitIfEnabled(false);
         
         Log::info("=== PDF REQUEST STARTED ===", [
             'request_id' => $requestId,
             'siswa_id' => $siswa->id,
             'siswa_name' => $siswa->nama,
-            'type' => $request->query('type', 'UTS'),
+            'type' => $type,
             'tahun_ajaran_id' => $request->query('tahun_ajaran_id', session('tahun_ajaran_id')),
             'memory_start' => round($memoryStart / 1024 / 1024, 2) . 'MB',
             'timestamp' => now()->toISOString(),
@@ -935,11 +974,16 @@ class ReportController extends Controller
             // ===== OPTIMIZATION 4: Enhanced Data Validation =====
             $validationStart = microtime(true);
             
-            $type = $request->query('type', 'UTS');
-            $tahunAjaranId = $this->resolveRaporTahunAjaranId($request);
+            $tahunAjaranId = ReportPerformanceTracker::measureSegment('context', function () use ($request) {
+                return $this->resolveRaporTahunAjaranId($request);
+            });
             abort_unless($tahunAjaranId, 403);
-            $this->authorizeWaliRaporAccess($siswa, $tahunAjaranId);
-            $kelas = $this->resolveRaporClass($siswa, $tahunAjaranId);
+            ReportPerformanceTracker::measureSegment('authorization', function () use ($siswa, $tahunAjaranId) {
+                $this->authorizeWaliRaporAccess($siswa, $tahunAjaranId);
+            });
+            $kelas = ReportPerformanceTracker::measureSegment('context', function () use ($siswa, $tahunAjaranId) {
+                return $this->resolveRaporClass($siswa, $tahunAjaranId);
+            });
             
             Log::info("PDF generation process started", [
                 'request_id' => $requestId,
@@ -956,7 +1000,9 @@ class ReportController extends Controller
             $templateStart = microtime(true);
             
             // Get the template
-            $template = $this->getTemplateForSiswa($siswa, $type, $tahunAjaranId);
+            $template = ReportPerformanceTracker::measureSegment('context', function () use ($siswa, $type, $tahunAjaranId) {
+                return $this->getTemplateForSiswa($siswa, $type, $tahunAjaranId);
+            });
             
             if (!$template) {
                 $this->logPerformanceMetrics($requestId, 'template_not_found', $startTime, $memoryStart);
@@ -1058,9 +1104,11 @@ class ReportController extends Controller
             ]);
             
             // Return file download response
-            return response()->download($pdfPath, $filename, [
-                'Content-Type' => 'application/pdf'
-            ]);
+            return ReportPerformanceTracker::measureSegment('response', function () use ($pdfPath, $filename) {
+                return response()->download($pdfPath, $filename, [
+                    'Content-Type' => 'application/pdf'
+                ]);
+            });
             
         } catch (\Exception $e) {
             if ($e instanceof HttpExceptionInterface) {
@@ -1103,6 +1151,8 @@ class ReportController extends Controller
                 'memory_peak_mb' => round(memory_get_peak_usage(true) / 1024 / 1024, 2),
                 'timestamp' => now()->toISOString()
             ]);
+
+            ReportPerformanceTracker::finishIfEnabled($performance);
         }
     }
     
@@ -1320,20 +1370,34 @@ class ReportController extends Controller
     }
 
     public function previewRapor(Request $request, $siswa_id) {
+        $type = $request->query('type', 'UTS');
+        $performance = ReportPerformanceTracker::startFlowIfEnabled(
+            'html_preview',
+            $type,
+            $request->route()?->getName()
+        );
+
         try {
             // Ambil tipe rapor dari query param
-            $type = $request->query('type', 'UTS');
-            $tahunAjaranId = $this->resolveRaporTahunAjaranId($request);
+            $tahunAjaranId = ReportPerformanceTracker::measureSegment('context', function () use ($request) {
+                return $this->resolveRaporTahunAjaranId($request);
+            });
             abort_unless($tahunAjaranId, 403);
 
-            $siswa = Siswa::find($siswa_id);
+            $siswa = ReportPerformanceTracker::measureSegment('context', fn () => Siswa::find($siswa_id));
             abort_unless($siswa, 403);
-            $this->authorizeWaliRaporAccess($siswa, $tahunAjaranId);
+            ReportPerformanceTracker::measureSegment('authorization', function () use ($siswa, $tahunAjaranId) {
+                $this->authorizeWaliRaporAccess($siswa, $tahunAjaranId);
+            });
             
             // Ambil semester dari tahun ajaran
-            $tahunAjaran = \App\Models\TahunAjaran::find($tahunAjaranId);
+            [$tahunAjaran, $kelas] = ReportPerformanceTracker::measureSegment('context', function () use ($siswa, $tahunAjaranId) {
+                return [
+                    \App\Models\TahunAjaran::find($tahunAjaranId),
+                    $this->applyRaporClassContext($siswa, $tahunAjaranId),
+                ];
+            });
             $semester = $tahunAjaran ? $tahunAjaran->semester : 1;
-            $kelas = $this->applyRaporClassContext($siswa, $tahunAjaranId);
             abort_unless($kelas, 403);
             
             \Log::info('Preview rapor', [
@@ -1344,26 +1408,28 @@ class ReportController extends Controller
             ]);
             
             // Cari siswa dengan relasi yang dibutuhkan
-            $siswa->load([
-                'nilais' => function($query) use ($tahunAjaranId, $semester) {
-                    // Filter nilai berdasarkan semester dan tahun ajaran
-                    $query->where('tahun_ajaran_id', $tahunAjaranId);
-                    $query->whereHas('mataPelajaran', function($q) use ($semester) {
-                        $q->where('semester', $semester);
-                    });
-                    $query->where('is_submitted', true);
-                },
-                'nilais.mataPelajaran',
-                'nilaiEkstrakurikuler' => function($query) use ($tahunAjaranId, $semester) {
-                    $query->where('tahun_ajaran_id', $tahunAjaranId)
-                        ->where('semester', $semester);
-                },
-                'nilaiEkstrakurikuler.ekstrakurikuler',
-                'absensi' => function($query) use ($tahunAjaranId, $semester) {
-                    $query->where('semester', $semester)
-                        ->where('tahun_ajaran_id', $tahunAjaranId);
-                }
-            ]);
+            ReportPerformanceTracker::measureSegment('preload', function () use ($siswa, $tahunAjaranId, $semester) {
+                $siswa->load([
+                    'nilais' => function($query) use ($tahunAjaranId, $semester) {
+                        // Filter nilai berdasarkan semester dan tahun ajaran
+                        $query->where('tahun_ajaran_id', $tahunAjaranId);
+                        $query->whereHas('mataPelajaran', function($q) use ($semester) {
+                            $q->where('semester', $semester);
+                        });
+                        $query->where('is_submitted', true);
+                    },
+                    'nilais.mataPelajaran',
+                    'nilaiEkstrakurikuler' => function($query) use ($tahunAjaranId, $semester) {
+                        $query->where('tahun_ajaran_id', $tahunAjaranId)
+                            ->where('semester', $semester);
+                    },
+                    'nilaiEkstrakurikuler.ekstrakurikuler',
+                    'absensi' => function($query) use ($tahunAjaranId, $semester) {
+                        $query->where('semester', $semester)
+                            ->where('tahun_ajaran_id', $tahunAjaranId);
+                    }
+                ]);
+            });
             
             // Logging untuk debug
             \Log::info('Preview data loaded', [
@@ -1374,14 +1440,16 @@ class ReportController extends Controller
             ]);
             
             // Render view ke HTML
-            $html = view('wali_kelas.rapor.preview', [
-                'siswa' => $siswa,
-                'type' => $type,
-                'semester' => $semester,
-                'kelas' => $kelas,
-                'tahunAjaran' => $tahunAjaran,
-                'tahunAjaranId' => $tahunAjaranId
-            ])->render();
+            $html = ReportPerformanceTracker::measureSegment('response', function () use ($siswa, $type, $semester, $kelas, $tahunAjaran, $tahunAjaranId) {
+                return view('wali_kelas.rapor.preview', [
+                    'siswa' => $siswa,
+                    'type' => $type,
+                    'semester' => $semester,
+                    'kelas' => $kelas,
+                    'tahunAjaran' => $tahunAjaran,
+                    'tahunAjaranId' => $tahunAjaranId
+                ])->render();
+            });
             
             // Kembalikan sebagai JSON response
             return response()->json([
@@ -1402,6 +1470,8 @@ class ReportController extends Controller
                 'success' => false,
                 'message' => 'Terjadi kesalahan saat memuat preview rapor: ' . $e->getMessage()
             ], 500);
+        } finally {
+            ReportPerformanceTracker::finishIfEnabled($performance);
         }
     }
 
@@ -1582,20 +1652,32 @@ class ReportController extends Controller
      */
     public function previewPdf(Siswa $siswa, Request $request)
     {
+        $type = $request->query('type', 'UTS');
+        $disposition = $request->query('disposition', 'inline') === 'attachment' ? 'attachment' : 'inline';
+        $flowPrefix = $disposition === 'attachment' ? 'pdf_download' : 'pdf_preview';
+        $performance = ReportPerformanceTracker::startFlowIfEnabled(
+            "{$flowPrefix}_pending",
+            $type,
+            $request->route()?->getName()
+        );
+
         try {
-            $type = $request->query('type', 'UTS');
-            $tahunAjaranId = $this->getValidTahunAjaranId(
-                $request->query('tahun_ajaran_id') ? (int) $request->query('tahun_ajaran_id') : null
-            );
+            $tahunAjaranId = ReportPerformanceTracker::measureSegment('context', function () use ($request) {
+                return $this->getValidTahunAjaranId(
+                    $request->query('tahun_ajaran_id') ? (int) $request->query('tahun_ajaran_id') : null
+                );
+            });
 
             if (!$tahunAjaranId) {
                 return $this->failTahunAjaranNotSet($request, true);
             }
 
-            $this->authorizeWaliRaporAccess($siswa, $tahunAjaranId);
-            $kelas = $this->resolveRaporClass($siswa, $tahunAjaranId);
-
-            $disposition = $request->query('disposition', 'inline') === 'attachment' ? 'attachment' : 'inline';
+            ReportPerformanceTracker::measureSegment('authorization', function () use ($siswa, $tahunAjaranId) {
+                $this->authorizeWaliRaporAccess($siswa, $tahunAjaranId);
+            });
+            $kelas = ReportPerformanceTracker::measureSegment('context', function () use ($siswa, $tahunAjaranId) {
+                return $this->resolveRaporClass($siswa, $tahunAjaranId);
+            });
 
             // Similar to downloadPdf but return for inline viewing
             $conversionService = app(DocumentConversionService::class);
@@ -1607,7 +1689,9 @@ class ReportController extends Controller
             }
 
             // Get template and generate DOCX
-            $template = $this->getTemplateForSiswa($siswa, $type, $tahunAjaranId);
+            $template = ReportPerformanceTracker::measureSegment('context', function () use ($siswa, $type, $tahunAjaranId) {
+                return $this->getTemplateForSiswa($siswa, $type, $tahunAjaranId);
+            });
             if (!$template) {
                 return $this->pdfTemplateUnavailableResponse($request, $siswa, $type, $tahunAjaranId, $kelas?->id);
             }
@@ -1619,15 +1703,21 @@ class ReportController extends Controller
             );
 
             if ($cachedPdf) {
-                return redirect()->away(
-                    $this->createSecureRaporFileUrl(
-                        $cachedPdf['path'],
-                        $cachedPdf['filename'],
-                        $disposition,
-                        60
-                    )
-                );
+                ReportPerformanceTracker::setFlowTypeIfEnabled("{$flowPrefix}_cache_hit");
+
+                return ReportPerformanceTracker::measureSegment('response', function () use ($cachedPdf, $disposition) {
+                    return redirect()->away(
+                        $this->createSecureRaporFileUrl(
+                            $cachedPdf['path'],
+                            $cachedPdf['filename'],
+                            $disposition,
+                            60
+                        )
+                    );
+                });
             }
+
+            ReportPerformanceTracker::setFlowTypeIfEnabled("{$flowPrefix}_cache_miss");
             
             $processor = new \App\Services\RaporTemplateProcessor($template, $siswa, $type, $tahunAjaranId);
             $result = $processor->generate(true);
@@ -1652,14 +1742,16 @@ class ReportController extends Controller
                 Storage::disk('public')->size($pdfResult['storage_path'])
             );
             
-            return redirect()->away(
-                $this->createSecureRaporFileUrl(
-                    $pdfResult['storage_path'],
-                    $downloadFilename,
-                    $disposition,
-                    60
-                )
-            );
+            return ReportPerformanceTracker::measureSegment('response', function () use ($pdfResult, $downloadFilename, $disposition) {
+                return redirect()->away(
+                    $this->createSecureRaporFileUrl(
+                        $pdfResult['storage_path'],
+                        $downloadFilename,
+                        $disposition,
+                        60
+                    )
+                );
+            });
             
         } catch (\Exception $e) {
             if ($e instanceof HttpExceptionInterface) {
@@ -1679,6 +1771,8 @@ class ReportController extends Controller
                 'success' => false,
                 'message' => 'Terjadi kesalahan. Silakan coba lagi.'
             ], 500);
+        } finally {
+            ReportPerformanceTracker::finishIfEnabled($performance);
         }
     }
 
@@ -1942,17 +2036,28 @@ class ReportController extends Controller
     {
         $type = $request->input('type', 'UTS');
         $action = $request->input('action', 'download');
-        $tahunAjaranId = $this->getValidTahunAjaranId(
-            $request->input('tahun_ajaran_id') ? (int) $request->input('tahun_ajaran_id') : null
+        $tahunAjaranId = null;
+        $performance = ReportPerformanceTracker::startFlowIfEnabled(
+            'docx_generate',
+            $type,
+            $request->route()?->getName()
         );
-
-        if (!$tahunAjaranId) {
-            return $this->failTahunAjaranNotSet($request, true);
-        }
-
-        $this->authorizeWaliRaporAccess($siswa, $tahunAjaranId);
         
         try {
+            $tahunAjaranId = ReportPerformanceTracker::measureSegment('context', function () use ($request) {
+                return $this->getValidTahunAjaranId(
+                    $request->input('tahun_ajaran_id') ? (int) $request->input('tahun_ajaran_id') : null
+                );
+            });
+
+            if (!$tahunAjaranId) {
+                return $this->failTahunAjaranNotSet($request, true);
+            }
+
+            ReportPerformanceTracker::measureSegment('authorization', function () use ($siswa, $tahunAjaranId) {
+                $this->authorizeWaliRaporAccess($siswa, $tahunAjaranId);
+            });
+
             \Log::info('Generate report request', [
                 'siswa_id' => $siswa->id,
                 'type' => $type,
@@ -1961,7 +2066,9 @@ class ReportController extends Controller
             ]);
             
             // Get the template based on the report type requested
-            $template = $this->getTemplateForSiswa($siswa, $type, $tahunAjaranId);
+            $template = ReportPerformanceTracker::measureSegment('context', function () use ($siswa, $type, $tahunAjaranId) {
+                return $this->getTemplateForSiswa($siswa, $type, $tahunAjaranId);
+            });
             
             if (!$template) {
                 return response()->json([
@@ -1972,22 +2079,25 @@ class ReportController extends Controller
             }
             
             // Better validation - verify data for the CURRENT semester, not based on report type
-            $tahunAjaran = \App\Models\TahunAjaran::find($tahunAjaranId);
+            $tahunAjaran = ReportPerformanceTracker::measureSegment('context', fn () => \App\Models\TahunAjaran::find($tahunAjaranId));
             $currentSemester = $tahunAjaran ? $tahunAjaran->semester : ($type === 'UTS' ? 1 : 2);
             
             // Check for proper data in the current semester
-            $hasNilai = $siswa->nilais()
-                ->whereHas('mataPelajaran', function($q) use ($currentSemester) {
-                    $q->where('semester', $currentSemester);
-                })
-                ->where('tahun_ajaran_id', $tahunAjaranId)
-                ->where('is_submitted', true)
-                ->exists();
-                
-            $hasAbsensi = $siswa->absensi()
-                ->where('semester', $currentSemester)
-                ->where('tahun_ajaran_id', $tahunAjaranId)
-                ->exists();
+            [$hasNilai, $hasAbsensi] = ReportPerformanceTracker::measureSegment('preload', function () use ($siswa, $currentSemester, $tahunAjaranId) {
+                return [
+                    $siswa->nilais()
+                        ->whereHas('mataPelajaran', function($q) use ($currentSemester) {
+                            $q->where('semester', $currentSemester);
+                        })
+                        ->where('tahun_ajaran_id', $tahunAjaranId)
+                        ->where('is_submitted', true)
+                        ->exists(),
+                    $siswa->absensi()
+                        ->where('semester', $currentSemester)
+                        ->where('tahun_ajaran_id', $tahunAjaranId)
+                        ->exists(),
+                ];
+            });
                 
             if (!$hasNilai || !$hasAbsensi) {
                 \Log::warning('Data incomplete for report generation', [
@@ -2050,19 +2160,23 @@ class ReportController extends Controller
             
             // Handle preview vs download
             if ($action == 'preview') {
-                return response()->json([
-                    'success' => true,
-                    'file_url' => $this->createSecureRaporFileUrl(
-                        $result['path'],
-                        $result['filename'],
-                        'attachment'
-                    ),
-                    'filename' => $result['filename']
-                ]);
+                return ReportPerformanceTracker::measureSegment('response', function () use ($result) {
+                    return response()->json([
+                        'success' => true,
+                        'file_url' => $this->createSecureRaporFileUrl(
+                            $result['path'],
+                            $result['filename'],
+                            'attachment'
+                        ),
+                        'filename' => $result['filename']
+                    ]);
+                });
             }
             
             // **SOLUTION: Download dengan headers yang BENAR untuk DOCX**
-            return $this->downloadDocxFile($fullPath, $result['filename']);
+            return ReportPerformanceTracker::measureSegment('response', function () use ($fullPath, $result) {
+                return $this->downloadDocxFile($fullPath, $result['filename']);
+            });
             
         } 
         catch (\App\Exceptions\RaporException $e) {
@@ -2090,6 +2204,8 @@ class ReportController extends Controller
                 'success' => false,
                 'message' => 'Terjadi kesalahan saat generate rapor: ' . $e->getMessage()
             ], 500);
+        } finally {
+            ReportPerformanceTracker::finishIfEnabled($performance);
         }
     }
 
@@ -2225,12 +2341,22 @@ class ReportController extends Controller
      */
     public function regenerateHistoryRapor(ReportGeneration $report)
     {
+        $performance = ReportPerformanceTracker::startFlowIfEnabled(
+            'docx_regenerate',
+            $report->type,
+            request()->route()?->getName()
+        );
+
         try {
             // Ambil data yang diperlukan
-            $siswa = $report->siswa;
-            $template = $report->template;
-            $type = $report->type;
-            $tahunAjaranId = $report->tahun_ajaran_id;
+            [$siswa, $template, $type, $tahunAjaranId] = ReportPerformanceTracker::measureSegment('context', function () use ($report) {
+                return [
+                    $report->siswa,
+                    $report->template,
+                    $report->type,
+                    $report->tahun_ajaran_id,
+                ];
+            });
             
             if (!$template) {
                 return response()->json([
@@ -2259,10 +2385,10 @@ class ReportController extends Controller
             $report->generated_at = now();
             $report->save();
             
-            return response()->json([
+            return ReportPerformanceTracker::measureSegment('response', fn () => response()->json([
                 'success' => true,
                 'message' => 'Rapor berhasil digenerate ulang'
-            ]);
+            ]));
         } catch (\Exception $e) {
             \Log::error('Error regenerating report: ' . $e->getMessage(), [
                 'report_id' => $report->id,
@@ -2273,6 +2399,8 @@ class ReportController extends Controller
                 'success' => false,
                 'message' => 'Terjadi kesalahan saat regenerasi rapor: ' . $e->getMessage()
             ], 500);
+        } finally {
+            ReportPerformanceTracker::finishIfEnabled($performance);
         }
     }
     
@@ -2617,19 +2745,28 @@ class ReportController extends Controller
      */
     public function generateBatchReport(Request $request)
     {
+        $type = $request->input('type', 'UTS');
+        $guru = null;
+        $performance = ReportPerformanceTracker::startFlowIfEnabled(
+            'batch_docx',
+            $type,
+            $request->route()?->getName()
+        );
+
         try {
             $siswaIds = $request->input('siswa_ids', []);
-            $type = $request->input('type', 'UTS');
-            $tahunAjaranId = $this->getValidTahunAjaranId(
-                $request->input('tahun_ajaran_id') ? (int) $request->input('tahun_ajaran_id') : null
-            );
+            $tahunAjaranId = ReportPerformanceTracker::measureSegment('context', function () use ($request) {
+                return $this->getValidTahunAjaranId(
+                    $request->input('tahun_ajaran_id') ? (int) $request->input('tahun_ajaran_id') : null
+                );
+            });
 
             if (!$tahunAjaranId) {
                 return $this->failTahunAjaranNotSet($request, true);
             }
             
             // Get current semester from tahun ajaran
-            $tahunAjaran = \App\Models\TahunAjaran::find($tahunAjaranId);
+            $tahunAjaran = ReportPerformanceTracker::measureSegment('context', fn () => \App\Models\TahunAjaran::find($tahunAjaranId));
             $currentSemester = $tahunAjaran ? $tahunAjaran->semester : 1;
             
             // Log for debugging
@@ -2641,17 +2778,21 @@ class ReportController extends Controller
             ]);
             
             // Validasi siswa
-            $guru = auth()->guard('guru')->user();
-            abort_unless($guru && session('selected_role') === 'wali_kelas', 403);
+            $guru = ReportPerformanceTracker::measureSegment('authorization', fn () => auth()->guard('guru')->user());
+            ReportPerformanceTracker::measureSegment('authorization', function () use ($guru) {
+                abort_unless($guru && session('selected_role') === 'wali_kelas', 403);
+            });
 
-            $kelas = DB::table('guru_kelas')
-                ->join('kelas', 'guru_kelas.kelas_id', '=', 'kelas.id')
-                ->where('guru_kelas.guru_id', $guru->id)
-                ->where('guru_kelas.is_wali_kelas', true)
-                ->where('guru_kelas.role', 'wali_kelas')
-                ->where('kelas.tahun_ajaran_id', $tahunAjaranId)
-                ->select('kelas.*')
-                ->first();
+            $kelas = ReportPerformanceTracker::measureSegment('context', function () use ($guru, $tahunAjaranId) {
+                return DB::table('guru_kelas')
+                    ->join('kelas', 'guru_kelas.kelas_id', '=', 'kelas.id')
+                    ->where('guru_kelas.guru_id', $guru->id)
+                    ->where('guru_kelas.is_wali_kelas', true)
+                    ->where('guru_kelas.role', 'wali_kelas')
+                    ->where('kelas.tahun_ajaran_id', $tahunAjaranId)
+                    ->select('kelas.*')
+                    ->first();
+            });
             
             if (!$kelas) {
                 throw new \Exception('Anda tidak memiliki kelas yang diwalikan');
@@ -2663,35 +2804,41 @@ class ReportController extends Controller
             }
             
             // Verifikasi siswa berdasarkan enrollment semester/tahun ajaran
-            $authorizedStudentIds = app(SiswaKelasSemesterResolver::class)
-                ->studentsForClass((int) $kelas->id, (int) $tahunAjaranId, (int) $currentSemester, true)
-                ->pluck('id')
-                ->all();
+            $authorizedStudentIds = ReportPerformanceTracker::measureSegment('authorization', function () use ($kelas, $tahunAjaranId, $currentSemester) {
+                return app(SiswaKelasSemesterResolver::class)
+                    ->studentsForClass((int) $kelas->id, (int) $tahunAjaranId, (int) $currentSemester, true)
+                    ->pluck('id')
+                    ->all();
+            });
 
-            $siswaList = Siswa::whereIn('id', $siswaIds)
-                ->whereIn('id', $authorizedStudentIds)
-                ->get();
+            $siswaList = ReportPerformanceTracker::measureSegment('preload', function () use ($siswaIds, $authorizedStudentIds) {
+                return Siswa::whereIn('id', $siswaIds)
+                    ->whereIn('id', $authorizedStudentIds)
+                    ->get();
+            });
                 
             if ($siswaList->count() !== count($siswaIds)) {
                 throw new \Exception('Cetak Semua Rapor Masih Maintenance di Tahun Ajaran ini, Harap Gunakan Fitur Download Rapor Satu per Satu di Icon Aksi');
             }
             
             // Cek template untuk tipe rapor yang diminta
-            $template = ReportTemplate::where([
-                    'type' => $type,
-                    'is_active' => true,
-                ])
-                ->where(function($query) use ($kelas) {
-                    $query->where('kelas_id', $kelas->id)
-                        ->orWhereHas('kelasList', function($q) use ($kelas) {
-                            $q->where('kelas_id', $kelas->id);
-                        })
-                        ->orWhereNull('kelas_id'); // Template global
-                })
-                ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
-                    return $query->where('tahun_ajaran_id', $tahunAjaranId);
-                })
-                ->first();
+            $template = ReportPerformanceTracker::measureSegment('context', function () use ($type, $kelas, $tahunAjaranId) {
+                return ReportTemplate::where([
+                        'type' => $type,
+                        'is_active' => true,
+                    ])
+                    ->where(function($query) use ($kelas) {
+                        $query->where('kelas_id', $kelas->id)
+                            ->orWhereHas('kelasList', function($q) use ($kelas) {
+                                $q->where('kelas_id', $kelas->id);
+                            })
+                            ->orWhereNull('kelas_id'); // Template global
+                    })
+                    ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
+                        return $query->where('tahun_ajaran_id', $tahunAjaranId);
+                    })
+                    ->first();
+            });
             
             if (!$template) {
                 throw new \Exception("Tidak ada template {$type} aktif untuk kelas ini di tahun ajaran yang dipilih");
@@ -2870,7 +3017,7 @@ class ReportController extends Controller
             // Return signed URL download agar file batch tidak bisa diakses publik langsung
             $downloadUrl = $this->createSecureBatchDownloadUrl($webPath, $zipName);
             
-            return response()->json([
+            return ReportPerformanceTracker::measureSegment('response', fn () => response()->json([
                 'success' => true,
                 'message' => 'Batch rapor berhasil digenerate',
                 'download_url' => $downloadUrl,
@@ -2879,7 +3026,7 @@ class ReportController extends Controller
                     'success' => count($successSiswa),
                     'error' => count($errorSiswa)
                 ]
-            ]);
+            ]));
             
         } catch (\Exception $e) {
             if ($e instanceof HttpExceptionInterface) {
@@ -2910,6 +3057,8 @@ class ReportController extends Controller
                     'trace' => array_slice($e->getTrace(), 0, 3)
                 ] : null
             ], 500);
+        } finally {
+            ReportPerformanceTracker::finishIfEnabled($performance);
         }
     }
 

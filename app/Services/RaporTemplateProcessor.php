@@ -99,17 +99,19 @@ class RaporTemplateProcessor
             );
         }
     
-        try {
-            $this->processor = new TemplateProcessor($templatePath);
-        } catch (\Exception $e) {
-            throw new RaporException(
-                "Gagal memproses template: " . $e->getMessage() . ". Hubungi admin untuk perbaiki template.",
-                'template_invalid',
-                self::ERROR_TEMPLATE_INVALID
-            );
-        }
-    
-        $this->placeholders = ReportPlaceholder::all()->groupBy('category');
+        ReportPerformanceTracker::measureSegment('template_open', function () use ($templatePath) {
+            try {
+                $this->processor = new TemplateProcessor($templatePath);
+            } catch (\Exception $e) {
+                throw new RaporException(
+                    "Gagal memproses template: " . $e->getMessage() . ". Hubungi admin untuk perbaiki template.",
+                    'template_invalid',
+                    self::ERROR_TEMPLATE_INVALID
+                );
+            }
+
+            $this->placeholders = ReportPlaceholder::all()->groupBy('category');
+        });
     }
 
     private function logReportProcessing(string $message, array $context = []): void
@@ -1244,7 +1246,9 @@ protected function prepareFotoSiswa()
             }
 
             // 2. Kumpulkan dan isi data
-            $data = $this->collectAllData();
+            $data = ReportPerformanceTracker::measureSegment('preload', function () {
+                return $this->collectAllData();
+            });
             
             // 3. Dapatkan semua variabel di template
             $variables = $this->processor->getVariables();
@@ -1257,99 +1261,103 @@ protected function prepareFotoSiswa()
                 'ttd_wali_kelas_found' => in_array('ttd_wali_kelas', $variables),
             ]);
             
-            // 4. HANDLE FOTO SISWA TERLEBIH DAHULU (PENTING!)
-            if (in_array('foto_siswa', $variables)) {
-                $this->setFotoSiswa($data['foto_siswa']);
-                
-                // Update variables list setelah foto di-set
-                $variables = $this->processor->getVariables();
-                
-                $this->logReportProcessing('After setting foto siswa', [
-                    'foto_siswa_still_exists' => in_array('foto_siswa', $variables),
-                    'remaining_variables_count' => count($variables)
-                ]);
-            }
+            ReportPerformanceTracker::measureSegment('images', function () use (&$variables, $data) {
+                // 4. HANDLE FOTO SISWA TERLEBIH DAHULU (PENTING!)
+                if (in_array('foto_siswa', $variables)) {
+                    $this->setFotoSiswa($data['foto_siswa']);
 
-            if (in_array('ttd_wali_kelas', $variables, true)) {
-                $this->setTtdWaliKelas($data['ttd_wali_kelas'] ?? null);
+                    // Update variables list setelah foto di-set
+                    $variables = $this->processor->getVariables();
 
-                $variables = $this->processor->getVariables();
-
-                $this->logReportProcessing('After setting ttd wali kelas', [
-                    'ttd_wali_kelas_still_exists' => in_array('ttd_wali_kelas', $variables, true),
-                    'remaining_variables_count' => count($variables),
-                ]);
-            }
-            
-            // 5. Isi placeholder text (EXCLUDE image placeholders yang sudah di-handle)
-            $imagePlaceholders = ['foto_siswa', 'ttd_wali_kelas'];
-            foreach ($data as $key => $value) {
-                if (in_array($key, $variables) && ! in_array($key, $imagePlaceholders, true)) {
-                    $processedValue = $this->processPlaceholderValue($value);
-                    $this->processor->setValue($key, $processedValue);
-                }
-            }
-            
-            // 6. Fill missing placeholders (EXCLUDE foto_siswa)
-            $remainingVariables = $this->processor->getVariables();
-            $missingPlaceholders = array_diff($remainingVariables, array_keys($data));
-            
-            $this->logReportProcessing('Filling missing placeholders', [
-                'missing_count' => count($missingPlaceholders),
-                'missing_placeholders' => $missingPlaceholders
-            ]);
-            
-            foreach ($missingPlaceholders as $placeholder) {
-                // CRITICAL: SKIP foto_siswa completely!
-                if ($placeholder === 'foto_siswa') {
-                    continue;
+                    $this->logReportProcessing('After setting foto siswa', [
+                        'foto_siswa_still_exists' => in_array('foto_siswa', $variables),
+                        'remaining_variables_count' => count($variables)
+                    ]);
                 }
 
-                if ($placeholder === 'ttd_wali_kelas') {
-                    $this->processor->setValue('ttd_wali_kelas', '');
-                    continue;
-                }
+                if (in_array('ttd_wali_kelas', $variables, true)) {
+                    $this->setTtdWaliKelas($data['ttd_wali_kelas'] ?? null);
 
-                if (! in_array($placeholder, $imagePlaceholders, true)) {
-                    try {
-                        $defaultValue = $this->getDefaultPlaceholderValue($placeholder);
-                        $this->processor->setValue($placeholder, $defaultValue);
-                    } catch (\Exception $e) {
-                        Log::warning("Could not set default value for placeholder '{$placeholder}':", [
-                            'error' => $e->getMessage()
-                        ]);
+                    $variables = $this->processor->getVariables();
+
+                    $this->logReportProcessing('After setting ttd wali kelas', [
+                        'ttd_wali_kelas_still_exists' => in_array('ttd_wali_kelas', $variables, true),
+                        'remaining_variables_count' => count($variables),
+                    ]);
+                }
+            });
+
+            ReportPerformanceTracker::measureSegment('template_replace', function () use (&$variables, $data) {
+                // 5. Isi placeholder text (EXCLUDE image placeholders yang sudah di-handle)
+                $imagePlaceholders = ['foto_siswa', 'ttd_wali_kelas'];
+                foreach ($data as $key => $value) {
+                    if (in_array($key, $variables) && ! in_array($key, $imagePlaceholders, true)) {
+                        $processedValue = $this->processPlaceholderValue($value);
+                        $this->processor->setValue($key, $processedValue);
                     }
                 }
-            }
 
-            // 7. Clean remaining placeholders (EXCLUDE foto_siswa)
-            $finalRemainingPlaceholders = $this->processor->getVariables();
-            
-            $this->logReportProcessing('Final cleanup placeholders', [
-                'final_remaining_count' => count($finalRemainingPlaceholders),
-                'final_remaining' => $finalRemainingPlaceholders
-            ]);
-            
-            foreach ($finalRemainingPlaceholders as $placeholder) {
-                // CRITICAL: NEVER touch foto_siswa again!
-                if ($placeholder === 'foto_siswa') {
-                    Log::warning('foto_siswa placeholder still exists after setImageValue - this should not happen!');
-                    continue;
-                }
+                // 6. Fill missing placeholders (EXCLUDE foto_siswa)
+                $remainingVariables = $this->processor->getVariables();
+                $missingPlaceholders = array_diff($remainingVariables, array_keys($data));
 
-                if ($placeholder === 'ttd_wali_kelas') {
-                    $this->processor->setValue('ttd_wali_kelas', '');
-                    continue;
-                }
+                $this->logReportProcessing('Filling missing placeholders', [
+                    'missing_count' => count($missingPlaceholders),
+                    'missing_placeholders' => $missingPlaceholders
+                ]);
 
-                if (! in_array($placeholder, $imagePlaceholders, true)) {
-                    try {
-                        $this->processor->setValue($placeholder, '');
-                    } catch (\Exception $e) {
-                        Log::warning("Could not clean placeholder '{$placeholder}'");
+                foreach ($missingPlaceholders as $placeholder) {
+                    // CRITICAL: SKIP foto_siswa completely!
+                    if ($placeholder === 'foto_siswa') {
+                        continue;
+                    }
+
+                    if ($placeholder === 'ttd_wali_kelas') {
+                        $this->processor->setValue('ttd_wali_kelas', '');
+                        continue;
+                    }
+
+                    if (! in_array($placeholder, $imagePlaceholders, true)) {
+                        try {
+                            $defaultValue = $this->getDefaultPlaceholderValue($placeholder);
+                            $this->processor->setValue($placeholder, $defaultValue);
+                        } catch (\Exception $e) {
+                            Log::warning("Could not set default value for placeholder '{$placeholder}':", [
+                                'error' => $e->getMessage()
+                            ]);
+                        }
                     }
                 }
-            }
+
+                // 7. Clean remaining placeholders (EXCLUDE foto_siswa)
+                $finalRemainingPlaceholders = $this->processor->getVariables();
+
+                $this->logReportProcessing('Final cleanup placeholders', [
+                    'final_remaining_count' => count($finalRemainingPlaceholders),
+                    'final_remaining' => $finalRemainingPlaceholders
+                ]);
+
+                foreach ($finalRemainingPlaceholders as $placeholder) {
+                    // CRITICAL: NEVER touch foto_siswa again!
+                    if ($placeholder === 'foto_siswa') {
+                        Log::warning('foto_siswa placeholder still exists after setImageValue - this should not happen!');
+                        continue;
+                    }
+
+                    if ($placeholder === 'ttd_wali_kelas') {
+                        $this->processor->setValue('ttd_wali_kelas', '');
+                        continue;
+                    }
+
+                    if (! in_array($placeholder, $imagePlaceholders, true)) {
+                        try {
+                            $this->processor->setValue($placeholder, '');
+                        } catch (\Exception $e) {
+                            Log::warning("Could not clean placeholder '{$placeholder}'");
+                        }
+                    }
+                }
+            });
             
             // 8. Generate file
             $filename = $this->generateFilename();
@@ -1725,11 +1733,13 @@ protected function prepareFotoSiswa()
         }
         
         try {
-            $this->processor->saveAs($outputPath);
-            
-            if (!file_exists($outputPath)) {
-                throw new \Exception("File tidak berhasil disimpan");
-            }
+            ReportPerformanceTracker::measureSegment('docx_save', function () use ($outputPath) {
+                $this->processor->saveAs($outputPath);
+
+                if (!file_exists($outputPath)) {
+                    throw new \Exception("File tidak berhasil disimpan");
+                }
+            });
             
             $this->logReportProcessing('Rapor berhasil disimpan:', [
                 'path' => $outputPath,

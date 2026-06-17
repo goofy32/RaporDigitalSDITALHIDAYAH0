@@ -28,6 +28,7 @@ use App\Models\TujuanPembelajaran;
 use App\Models\CatatanSiswa;
 use App\Models\CapaianKompetensiCustom;
 use App\Services\SiswaKelasSemesterResolver;
+use App\Services\ReportPerformanceTracker;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -37,6 +38,7 @@ class AppServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->app->scoped(SiswaKelasSemesterResolver::class);
+        $this->app->scoped(ReportPerformanceTracker::class);
 
         $this->app->bind(RaporTemplateProcessor::class, function ($app) {
             return new RaporTemplateProcessor();
@@ -60,6 +62,7 @@ class AppServiceProvider extends ServiceProvider
         });
 
         // Register the audit observers for various models
+        ReportPerformanceTracker::registerDatabaseListener();
         $this->registerAuditObservers();
         $this->registerPdfCacheInvalidationObservers();
 
