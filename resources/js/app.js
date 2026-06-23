@@ -59,6 +59,7 @@ const pageLoaders = {
     'tahun-ajaran-index': () => import('./pages/tahun-ajaran-index').then(module => module.initTahunAjaranIndexPage()),
     'admin-profile': () => import('./pages/admin-profile').then(module => module.initAdminProfilePage()),
     'edit-class': () => import('./pages/edit-class').then(module => module.initEditClassPage()),
+    'staging-simulation': () => import('./pages/staging-simulation').then(module => module.initStagingSimulationPage()),
 };
 
 function shouldLoadFlowbite() {

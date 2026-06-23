@@ -28,6 +28,7 @@ use App\Http\Controllers\CatatanController;
 use App\Http\Controllers\CapaianKompetensiController;
 use App\Http\Controllers\CapaianRangeTemplateController;
 use App\Http\Controllers\RecycleBinController;
+use App\Http\Controllers\Admin\StagingSimulationController;
 use App\Models\Siswa;
 use App\Models\Kelas;
 use Illuminate\Support\Facades\Auth;
@@ -301,6 +302,13 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
     Route::get('/dashboard', [DashboardController::class, 'adminDashboard'])->name('admin.dashboard');
     Route::get('/kelas-progress/{id}', [DashboardController::class, 'getKelasProgressAdmin'])
         ->name('admin.kelas.progress');
+
+    Route::prefix('testing/multi-user-simulation')->name('admin.testing.multi-user.')->group(function () {
+        Route::get('/', [StagingSimulationController::class, 'index'])->name('index');
+        Route::get('/queue-health', [StagingSimulationController::class, 'queueHealth'])->name('queue-health');
+        Route::post('/pdf', [StagingSimulationController::class, 'simulatePdf'])->name('pdf');
+        Route::post('/score', [StagingSimulationController::class, 'simulateScore'])->name('score');
+    });
     
     // Information/Notifications
     Route::prefix('information')->name('information.')->group(function () {
