@@ -13,19 +13,19 @@
         <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
                 <p class="text-sm text-gray-600">Nama Siswa</p>
-                <p class="font-medium">{{ $siswa->nama }}</p>
+                <p class="font-medium break-words">{{ $siswa->nama }}</p>
             </div>
             <div>
                 <p class="text-sm text-gray-600">NIS/NISN</p>
-                <p class="font-medium">{{ $siswa->nis }} / {{ $siswa->nisn }}</p>
+                <p class="font-medium break-words">{{ $siswa->nis ?: '-' }} / {{ $siswa->nisn ?: '-' }}</p>
             </div>
             <div>
                 <p class="text-sm text-gray-600">Kelas</p>
-                <p class="font-medium">{{ $reportKelas?->nama_kelas ?? '-' }}</p>
+                <p class="font-medium break-words">{{ $reportKelas?->nama_kelas ?? '-' }}</p>
             </div>
             <div>
                 <p class="text-sm text-gray-600">Tahun Ajaran</p>
-                <p class="font-medium">{{ $reportTahunAjaranText }}</p>
+                <p class="font-medium break-words">{{ $reportTahunAjaranText }}</p>
             </div>
         </div>
     </div>

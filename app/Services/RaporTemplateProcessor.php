@@ -1739,6 +1739,8 @@ protected function prepareFotoSiswa()
                 if (!file_exists($outputPath)) {
                     throw new \Exception("File tidak berhasil disimpan");
                 }
+
+                app(ReportIdentityLayoutStabilizer::class)->stabilize($outputPath);
             });
             
             $this->logReportProcessing('Rapor berhasil disimpan:', [

@@ -71,8 +71,8 @@ class ReportDashboardSemesterContextTest extends TestCase
 
         $this->assertStringContainsString('Ganjil Pramuka', $html);
         $this->assertStringNotContainsString('Genap Pramuka', $html);
-        $this->assertStringContainsString('<p class="font-medium">A</p>', $html);
-        $this->assertStringNotContainsString('<p class="font-medium">B</p>', $html);
+        $this->assertMatchesRegularExpression('/<p class="font-medium[^"]*">A<\/p>/', $html);
+        $this->assertDoesNotMatchRegularExpression('/<p class="font-medium[^"]*">B<\/p>/', $html);
     }
 
     public function test_genap_preview_does_not_include_ganjil_supporting_data(): void

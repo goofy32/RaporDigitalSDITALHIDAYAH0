@@ -182,6 +182,9 @@
         .student-info .value {
             width: 28%;
             font-weight: bold;
+            line-height: 1.35;
+            overflow-wrap: anywhere;
+            word-break: normal;
         }
 
         /* Main Table */
@@ -521,7 +524,7 @@
                 <tr>
                     <td class="label">NISN/NIS</td>
                     <td class="colon">:</td>
-                    <td class="value">{{ $siswa->nisn }}/{{ $siswa->nis }}</td>
+                    <td class="value">{{ $siswa->nisn ?: '-' }}/{{ $siswa->nis ?: '-' }}</td>
                     <td class="label">Tahun Pelajaran</td>
                     <td class="colon">:</td>
                     <td class="value">{{ $tahunAjaran->tahun_ajaran ?? '2024/2025' }}</td>
