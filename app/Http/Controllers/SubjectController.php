@@ -21,10 +21,10 @@ class SubjectController extends Controller
         // Ambil tahun ajaran dari session
         $tahunAjaranId = session('tahun_ajaran_id');
 
-        // Gunakan join untuk memastikan kita bisa mengurutkan berdasarkan kolom dari tabel kelas
-        $query = MataPelajaran::join('kelas', 'mata_pelajarans.kelas_id', '=', 'kelas.id')
+        // Gunakan left join agar mapel dengan relasi kelas/guru yang hilang tetap terlihat di admin.
+        $query = MataPelajaran::leftJoin('kelas', 'mata_pelajarans.kelas_id', '=', 'kelas.id')
             ->select('mata_pelajarans.*') // Pastikan hanya mengambil kolom dari mata_pelajarans
-            ->with(['kelas', 'guru']); // Load relasi kelas dan guru
+            ->with(['kelas', 'guru', 'lingkupMateris']); // Load relasi yang ditampilkan di tabel
 
         // Filter berdasarkan tahun ajaran jika ada
         if ($tahunAjaranId) {

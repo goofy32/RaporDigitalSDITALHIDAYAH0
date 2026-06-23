@@ -364,6 +364,101 @@ class SubjectTeacherAssignmentRuleTest extends TestCase
         ]);
     }
 
+    public function test_admin_subject_index_renders_valid_subjects_normally(): void
+    {
+        $subjectId = DB::table('mata_pelajarans')->insertGetId([
+            'nama_pelajaran' => 'Matematika Valid',
+            'kelas_id' => $this->kelas5AId,
+            'guru_id' => $this->budi->id,
+            'semester' => 1,
+            'is_muatan_lokal' => false,
+            'allow_non_wali' => false,
+            'tahun_ajaran_id' => $this->yearId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        DB::table('lingkup_materis')->insert([
+            'mata_pelajaran_id' => $subjectId,
+            'judul_lingkup_materi' => 'Materi Valid',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->get(route('subject.index'))
+            ->assertOk()
+            ->assertSee('Matematika Valid')
+            ->assertSee('5-a')
+            ->assertSee('Budi Santoso')
+            ->assertSee('Materi Valid');
+    }
+
+    public function test_admin_subject_index_does_not_500_when_guru_relation_is_missing_or_deleted(): void
+    {
+        $deletedGuruId = $this->insertGuru('Guru Terhapus', 'guru_terhapus', 'guru');
+        DB::table('gurus')->where('id', $deletedGuruId)->update(['deleted_at' => now()]);
+
+        DB::table('mata_pelajarans')->insert([
+            [
+                'nama_pelajaran' => 'Mapel Tanpa Guru',
+                'kelas_id' => $this->kelas5AId,
+                'guru_id' => null,
+                'semester' => 1,
+                'is_muatan_lokal' => false,
+                'allow_non_wali' => false,
+                'tahun_ajaran_id' => $this->yearId,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+            [
+                'nama_pelajaran' => 'Mapel Guru Tidak Aktif',
+                'kelas_id' => $this->kelas5AId,
+                'guru_id' => $deletedGuruId,
+                'semester' => 1,
+                'is_muatan_lokal' => false,
+                'allow_non_wali' => false,
+                'tahun_ajaran_id' => $this->yearId,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+        ]);
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->get(route('subject.index'))
+            ->assertOk()
+            ->assertSee('Mapel Tanpa Guru')
+            ->assertSee('Belum ada guru')
+            ->assertSee('Mapel Guru Tidak Aktif')
+            ->assertSee('Guru tidak aktif');
+    }
+
+    public function test_admin_subject_index_does_not_500_when_class_relation_is_missing(): void
+    {
+        DB::table('mata_pelajarans')->insert([
+            'nama_pelajaran' => 'Mapel Kelas Hilang',
+            'kelas_id' => 999999,
+            'guru_id' => $this->yusuf->id,
+            'semester' => 1,
+            'is_muatan_lokal' => false,
+            'allow_non_wali' => true,
+            'tahun_ajaran_id' => $this->yearId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->get(route('subject.index'))
+            ->assertOk()
+            ->assertSee('Mapel Kelas Hilang')
+            ->assertSee('Kelas tidak tersedia')
+            ->assertSee('Yusuf Hidayat')
+            ->assertSee('Tidak ada Lingkup Materi');
+    }
+
     private function postSubject(string $name, int $kelasId, int $guruId, string $teachingType)
     {
         return $this->actingAs($this->admin, 'web')

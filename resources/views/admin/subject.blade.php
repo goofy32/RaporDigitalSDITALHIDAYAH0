@@ -64,16 +64,35 @@
                 </thead>
                 <tbody>
                     @forelse($subjects as $index => $subject)
+                    @php
+                        $kelas = $subject->kelas;
+                        $guru = $subject->guru;
+                        $lingkupMateris = $subject->lingkupMateris ?? collect();
+                    @endphp
                     <tr class="bg-white border-b hover:bg-gray-50">
                         <td class="px-6 py-4">{{ ($subjects->currentPage() - 1) * $subjects->perPage() + $loop->iteration }}</td>
                         <td class="px-6 py-4">{{ $subject->nama_pelajaran }}</td>
-                        <td class="px-6 py-4">{{ $subject->kelas->nomor_kelas }}-{{ $subject->kelas->nama_kelas }}</td>
-                        <td class="px-6 py-4">Semester {{ $subject->semester }}</td>
-                        <td class="px-6 py-4">{{ $subject->guru->nama }}</td>
                         <td class="px-6 py-4">
-                            @if($subject->lingkupMateris->isNotEmpty())
+                            @if($kelas)
+                                {{ $kelas->nomor_kelas }}-{{ $kelas->nama_kelas }}
+                            @else
+                                <span class="text-amber-700">Kelas tidak tersedia</span>
+                            @endif
+                        </td>
+                        <td class="px-6 py-4">Semester {{ $subject->semester }}</td>
+                        <td class="px-6 py-4">
+                            @if($guru)
+                                {{ $guru->nama }}
+                            @elseif($subject->guru_id)
+                                <span class="text-amber-700">Guru tidak aktif</span>
+                            @else
+                                <span class="text-gray-500">Belum ada guru</span>
+                            @endif
+                        </td>
+                        <td class="px-6 py-4">
+                            @if($lingkupMateris->isNotEmpty())
                                 <ul class="list-disc list-inside">
-                                    @foreach($subject->lingkupMateris as $lm)
+                                    @foreach($lingkupMateris as $lm)
                                         <li>{{ $lm->judul_lingkup_materi }}</li>
                                     @endforeach
                                 </ul>
