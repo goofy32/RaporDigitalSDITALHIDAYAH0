@@ -232,9 +232,12 @@ class GuruSignatureTest extends TestCase
             ->assertSee('data-turbo="false"', false)
             ->assertSee('data-signature-upload-form', false)
             ->assertSee('name="signature"', false)
+            ->assertSee('accept="image/png,image/jpeg,image/webp"', false)
             ->assertSee('data-signature-upload-input', false)
             ->assertSee('class="sr-only"', false)
             ->assertSee('data-signature-upload-label', false)
+            ->assertSee('data-signature-upload-client-error', false)
+            ->assertSee('Format PNG, JPG, JPEG, atau WebP. Maksimal 1 MB.')
             ->assertSee('Pilih dan Unggah Tanda Tangan')
             ->assertDontSee('Pilih Gambar');
 
@@ -254,6 +257,12 @@ class GuruSignatureTest extends TestCase
 
         $editTeacherJs = file_get_contents(resource_path('js/pages/edit-teacher.js'));
         $this->assertStringContainsString('function bindSignatureUploadForm()', $editTeacherJs);
+        $this->assertStringContainsString("const signatureUploadAllowedTypes = ['image/png', 'image/jpeg', 'image/webp'];", $editTeacherJs);
+        $this->assertStringContainsString('const signatureUploadMaxBytes = 1024 * 1024;', $editTeacherJs);
+        $this->assertStringContainsString('function validateSignatureUploadFile(file)', $editTeacherJs);
+        $this->assertStringContainsString('Ukuran tanda tangan maksimal 1 MB.', $editTeacherJs);
+        $this->assertStringContainsString('Format tanda tangan harus PNG, JPG, JPEG, atau WebP.', $editTeacherJs);
+        $this->assertStringContainsString('showSignatureUploadClientError(form, validationMessage);', $editTeacherJs);
         $this->assertStringContainsString("form.dataset.signatureUploadBound === 'true'", $editTeacherJs);
         $this->assertStringContainsString("input.addEventListener('change'", $editTeacherJs);
         $this->assertStringContainsString('form.submit();', $editTeacherJs);

@@ -227,12 +227,50 @@ function bindEditTeacherValidation(form) {
 }
 
 let signatureUploadResetBound = false;
+const signatureUploadAllowedTypes = ['image/png', 'image/jpeg', 'image/webp'];
+const signatureUploadMaxBytes = 1024 * 1024;
+const signatureUploadFormatMessage = 'Format tanda tangan harus PNG, JPG, JPEG, atau WebP.';
+const signatureUploadSizeMessage = 'Ukuran tanda tangan maksimal 1 MB.';
+
+function showSignatureUploadClientError(form, message) {
+    const errorBox = form.closest('section')?.querySelector('[data-signature-upload-client-error]');
+
+    if (!errorBox) {
+        alert(message);
+        return;
+    }
+
+    errorBox.textContent = message;
+    errorBox.classList.remove('hidden');
+}
+
+function clearSignatureUploadClientError(form) {
+    const errorBox = form.closest('section')?.querySelector('[data-signature-upload-client-error]');
+
+    if (!errorBox) return;
+
+    errorBox.textContent = '';
+    errorBox.classList.add('hidden');
+}
+
+function validateSignatureUploadFile(file) {
+    if (!signatureUploadAllowedTypes.includes(file.type)) {
+        return signatureUploadFormatMessage;
+    }
+
+    if (file.size > signatureUploadMaxBytes) {
+        return signatureUploadSizeMessage;
+    }
+
+    return '';
+}
 
 function resetSignatureUploadForm() {
     document.querySelectorAll('[data-signature-upload-form]').forEach(form => {
         const label = form.querySelector('[data-signature-upload-label]');
 
         form.dataset.submitting = 'false';
+        clearSignatureUploadClientError(form);
 
         if (label?.dataset.originalText) {
             label.textContent = label.dataset.originalText;
@@ -259,6 +297,16 @@ function bindSignatureUploadForm() {
             return;
         }
 
+        const validationMessage = validateSignatureUploadFile(input.files[0]);
+
+        if (validationMessage) {
+            input.value = '';
+            form.dataset.submitting = 'false';
+            showSignatureUploadClientError(form, validationMessage);
+            return;
+        }
+
+        clearSignatureUploadClientError(form);
         form.dataset.submitting = 'true';
 
         if (label) {
