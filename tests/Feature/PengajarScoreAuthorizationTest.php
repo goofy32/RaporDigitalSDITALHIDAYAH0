@@ -66,7 +66,10 @@ class PengajarScoreAuthorizationTest extends TestCase
             'is_submitted' => true,
             'tahun_ajaran_id' => $this->activeYearId,
         ]);
-        $this->assertSame(1, DB::table('nilais')->count());
+        $this->assertSame(3, DB::table('nilais')->count());
+        $this->assertSame(1, DB::table('nilais')->whereNotNull('tujuan_pembelajaran_id')->whereNotNull('nilai_tp')->count());
+        $this->assertSame(1, DB::table('nilais')->whereNotNull('lingkup_materi_id')->whereNull('tujuan_pembelajaran_id')->whereNotNull('nilai_lm')->count());
+        $this->assertSame(1, DB::table('nilais')->whereNull('lingkup_materi_id')->whereNull('tujuan_pembelajaran_id')->whereNotNull('nilai_akhir_rapor')->count());
     }
 
     public function test_another_pengajar_receives_forbidden_and_existing_grades_are_not_modified(): void
@@ -123,6 +126,22 @@ class PengajarScoreAuthorizationTest extends TestCase
 
         $this->actingAsPengajar($this->budi)
             ->postJson(route('pengajar.score.save_scores', $this->wrongSemesterSubjectId), [
+                'scores' => $this->validScoresPayload(),
+            ])
+            ->assertForbidden();
+
+        $this->assertSame(0, DB::table('nilais')->count());
+    }
+
+    public function test_stale_score_form_after_active_semester_change_is_rejected_without_saving(): void
+    {
+        DB::table('tahun_ajarans')
+            ->where('id', $this->activeYearId)
+            ->update(['semester' => 2]);
+
+        $this->actingAs($this->budi, 'guru')
+            ->withSession($this->sessionForActiveYear('pengajar'))
+            ->postJson(route('pengajar.score.save_scores', $this->subjectId), [
                 'scores' => $this->validScoresPayload(),
             ])
             ->assertForbidden();

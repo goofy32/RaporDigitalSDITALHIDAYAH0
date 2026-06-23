@@ -1103,6 +1103,44 @@ class CapaianPhraseCustomizationTest extends TestCase
         ]);
     }
 
+    public function test_repeated_unified_capaian_save_reuses_existing_rows(): void
+    {
+        $payload = $this->saveAllPayload([
+            'defaults' => [
+                'tertinggi' => [
+                    'changed' => '1',
+                    'mode' => 'preset',
+                    'phrase' => 'menunjukkan penguasaan dalam',
+                ],
+            ],
+            'student_changes' => [
+                [
+                    'siswa_id' => $this->ahmadId,
+                    'tertinggi' => [
+                        'action' => 'custom_full',
+                        'text' => 'Ahmad memiliki deskripsi khusus yang stabil.',
+                    ],
+                ],
+            ],
+        ]);
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->put(route('wali_kelas.capaian_kompetensi.save_all', $this->mathGanjilSubjectId), $payload)
+            ->assertRedirect(route('wali_kelas.capaian_kompetensi.edit', $this->mathGanjilSubjectId));
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->put(route('wali_kelas.capaian_kompetensi.save_all', $this->mathGanjilSubjectId), $payload)
+            ->assertRedirect(route('wali_kelas.capaian_kompetensi.edit', $this->mathGanjilSubjectId));
+
+        $this->assertSame(1, DB::table('capaian_phrase_defaults')->count());
+        $this->assertSame(1, DB::table('capaian_custom')->count());
+        $this->assertDatabaseHas('capaian_custom', [
+            'siswa_id' => $this->ahmadId,
+            'mata_pelajaran_id' => $this->mathGanjilSubjectId,
+            'custom_capaian_tertinggi' => 'Ahmad memiliki deskripsi khusus yang stabil.',
+        ]);
+    }
+
     public function test_unified_endpoint_rejects_invalid_student_and_rolls_back_default_changes(): void
     {
         $otherStudentId = $this->insertStudent('2002', 'Raka Kelas Lain', $this->otherClassId);

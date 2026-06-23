@@ -3,6 +3,8 @@
 namespace Tests\Feature;
 
 use App\Models\Guru;
+use App\Models\Siswa;
+use App\Services\PdfCacheService;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
 use Illuminate\Support\Facades\Cache;
@@ -185,6 +187,64 @@ class EnrollmentAwareAuthorizationRosterTest extends TestCase
         ]);
     }
 
+    public function test_repeated_score_save_updates_existing_logical_rows_without_duplicates(): void
+    {
+        DB::table('nilais')->delete();
+
+        $this->actingAsPengajar($this->ganjilYearId, 1)
+            ->postJson(route('pengajar.score.save_scores', $this->ganjilSubjectId), [
+                'scores' => $this->scorePayloadForStudent($this->ahmadId, $this->ganjilSubjectId, 80),
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $this->actingAsPengajar($this->ganjilYearId, 1)
+            ->postJson(route('pengajar.score.save_scores', $this->ganjilSubjectId), [
+                'scores' => $this->scorePayloadForStudent($this->ahmadId, $this->ganjilSubjectId, 90),
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $activeRows = DB::table('nilais')
+            ->where('siswa_id', $this->ahmadId)
+            ->where('mata_pelajaran_id', $this->ganjilSubjectId)
+            ->where('tahun_ajaran_id', $this->ganjilYearId)
+            ->whereNull('deleted_at');
+
+        $this->assertSame(3, (clone $activeRows)->count());
+        $this->assertSame(1, (clone $activeRows)->whereNotNull('tujuan_pembelajaran_id')->whereNotNull('nilai_tp')->count());
+        $this->assertSame(1, (clone $activeRows)->whereNotNull('lingkup_materi_id')->whereNull('tujuan_pembelajaran_id')->whereNotNull('nilai_lm')->count());
+        $this->assertSame(1, (clone $activeRows)->whereNull('lingkup_materi_id')->whereNull('tujuan_pembelajaran_id')->whereNotNull('nilai_akhir_rapor')->count());
+
+        $this->assertEquals(90, (clone $activeRows)
+            ->whereNull('lingkup_materi_id')
+            ->whereNull('tujuan_pembelajaran_id')
+            ->value('nilai_akhir_rapor'));
+    }
+
+    public function test_score_save_clears_pdf_cache_for_changed_student_only(): void
+    {
+        DB::table('nilais')->delete();
+
+        $ahmad = Siswa::findOrFail($this->ahmadId);
+        $siti = Siswa::findOrFail($this->sitiId);
+        $ahmadCacheKey = PdfCacheService::getCacheKey($ahmad, 'UTS', $this->ganjilYearId);
+        $sitiCacheKey = PdfCacheService::getCacheKey($siti, 'UTS', $this->ganjilYearId);
+
+        Cache::put($ahmadCacheKey, ['path' => 'missing-ahmad.pdf', 'filename' => 'missing-ahmad.pdf'], now()->addHour());
+        Cache::put($sitiCacheKey, ['path' => 'missing-siti.pdf', 'filename' => 'missing-siti.pdf'], now()->addHour());
+
+        $this->actingAsPengajar($this->ganjilYearId, 1)
+            ->postJson(route('pengajar.score.save_scores', $this->ganjilSubjectId), [
+                'scores' => $this->scorePayloadForStudent($this->ahmadId, $this->ganjilSubjectId, 80),
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $this->assertFalse(Cache::has($ahmadCacheKey));
+        $this->assertTrue(Cache::has($sitiCacheKey));
+    }
+
     public function test_genap_enrolled_student_can_save_when_legacy_class_points_to_ganjil(): void
     {
         DB::table('nilais')->delete();
@@ -295,6 +355,8 @@ class EnrollmentAwareAuthorizationRosterTest extends TestCase
     public function test_pengajar_can_delete_grade_for_enrolled_student(): void
     {
         $gradeId = $this->insertScoreRow($this->ahmadId, $this->ganjilSubjectId, $this->ganjilYearId);
+        $cacheKey = PdfCacheService::getCacheKey(Siswa::findOrFail($this->ahmadId), 'UTS', $this->ganjilYearId);
+        Cache::put($cacheKey, ['path' => 'missing-ahmad.pdf', 'filename' => 'missing-ahmad.pdf'], now()->addHour());
 
         $this->actingAsPengajar($this->ganjilYearId, 1)
             ->postJson(route('pengajar.score.nilai.delete'), [
@@ -305,6 +367,7 @@ class EnrollmentAwareAuthorizationRosterTest extends TestCase
             ->assertJsonPath('success', true);
 
         $this->assertGradeSoftDeleted($gradeId);
+        $this->assertFalse(Cache::has($cacheKey));
     }
 
     public function test_another_pengajar_cannot_delete_grade(): void

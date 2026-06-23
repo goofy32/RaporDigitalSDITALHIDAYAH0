@@ -351,7 +351,7 @@ class HelpCenterTest extends TestCase
 
     private function createSchema(): void
     {
-        foreach (['gemini_chats', 'profil_sekolah', 'tahun_ajarans', 'audit_logs', 'gurus', 'users'] as $table) {
+        foreach (['gemini_chats', 'mata_pelajarans', 'guru_kelas', 'kelas', 'profil_sekolah', 'tahun_ajarans', 'audit_logs', 'gurus', 'users'] as $table) {
             Schema::dropIfExists($table);
         }
 
@@ -409,6 +409,35 @@ class HelpCenterTest extends TestCase
             $table->timestamps();
         });
 
+        Schema::create('kelas', function (Blueprint $table) {
+            $table->id();
+            $table->integer('nomor_kelas');
+            $table->string('nama_kelas');
+            $table->foreignId('tahun_ajaran_id')->nullable();
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('guru_kelas', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('guru_id');
+            $table->foreignId('kelas_id');
+            $table->boolean('is_wali_kelas')->default(false);
+            $table->string('role')->default('pengajar');
+            $table->timestamps();
+        });
+
+        Schema::create('mata_pelajarans', function (Blueprint $table) {
+            $table->id();
+            $table->string('nama_pelajaran');
+            $table->foreignId('kelas_id')->nullable();
+            $table->foreignId('guru_id')->nullable();
+            $table->integer('semester')->default(1);
+            $table->foreignId('tahun_ajaran_id')->nullable();
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
         Schema::create('gemini_chats', function (Blueprint $table) {
             $table->id();
             $table->unsignedBigInteger('user_id')->nullable();
@@ -434,7 +463,7 @@ class HelpCenterTest extends TestCase
             'password' => Hash::make('password'),
         ]);
 
-        DB::table('tahun_ajarans')->insert([
+        $tahunAjaranId = DB::table('tahun_ajarans')->insertGetId([
             'tahun_ajaran' => '2026/2027',
             'is_active' => true,
             'semester' => 1,
@@ -446,6 +475,43 @@ class HelpCenterTest extends TestCase
             'nama_sekolah' => 'SDIT Al Hidayah',
             'tahun_pelajaran' => '2026/2027',
             'semester' => 1,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $kelasId = DB::table('kelas')->insertGetId([
+            'nomor_kelas' => 5,
+            'nama_kelas' => 'A',
+            'tahun_ajaran_id' => $tahunAjaranId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        DB::table('guru_kelas')->insert([
+            [
+                'guru_id' => $this->guru->id,
+                'kelas_id' => $kelasId,
+                'is_wali_kelas' => false,
+                'role' => 'pengajar',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+            [
+                'guru_id' => $this->guru->id,
+                'kelas_id' => $kelasId,
+                'is_wali_kelas' => true,
+                'role' => 'wali_kelas',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+        ]);
+
+        DB::table('mata_pelajarans')->insert([
+            'nama_pelajaran' => 'Matematika',
+            'kelas_id' => $kelasId,
+            'guru_id' => $this->guru->id,
+            'semester' => 1,
+            'tahun_ajaran_id' => $tahunAjaranId,
             'created_at' => now(),
             'updated_at' => now(),
         ]);

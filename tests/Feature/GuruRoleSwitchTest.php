@@ -2,12 +2,14 @@
 
 namespace Tests\Feature;
 
+use App\Http\Middleware\CheckRole;
 use App\Models\Guru;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
 
@@ -137,6 +139,71 @@ class GuruRoleSwitchTest extends TestCase
 
         $this->assertStringContainsString('Beralih ke Wali Kelas', $html);
         $this->assertStringContainsString(route('auth.switch.role', ['role' => 'wali_kelas']), $html);
+    }
+
+    public function test_revoked_selected_pengajar_role_is_rejected_on_next_protected_request(): void
+    {
+        DB::table('guru_kelas')
+            ->where('guru_id', $this->multiRoleGuru->id)
+            ->where('role', 'pengajar')
+            ->delete();
+
+        DB::table('mata_pelajarans')
+            ->where('guru_id', $this->multiRoleGuru->id)
+            ->update(['guru_id' => null]);
+
+        $this->actingAs($this->multiRoleGuru, 'guru');
+        session([
+            'selected_role' => 'pengajar',
+            'tahun_ajaran_id' => $this->tahunAjaranId,
+            'selected_semester' => 1,
+            'no_tahun_ajaran' => false,
+        ]);
+
+        $response = $this->runRoleMiddleware('pengajar');
+
+        $this->assertSame(403, $response->getStatusCode());
+        $this->assertFalse(session()->has('selected_role'));
+    }
+
+    public function test_revoked_selected_wali_role_is_rejected_on_next_protected_request(): void
+    {
+        DB::table('guru_kelas')
+            ->where('guru_id', $this->multiRoleGuru->id)
+            ->where('role', 'wali_kelas')
+            ->delete();
+
+        $this->actingAs($this->multiRoleGuru, 'guru');
+        session([
+            'selected_role' => 'wali_kelas',
+            'tahun_ajaran_id' => $this->tahunAjaranId,
+            'selected_semester' => 1,
+            'no_tahun_ajaran' => false,
+        ]);
+
+        $response = $this->runRoleMiddleware('wali_kelas');
+
+        $this->assertSame(403, $response->getStatusCode());
+        $this->assertFalse(session()->has('selected_role'));
+    }
+
+    public function test_soft_deleted_guru_is_blocked_on_next_protected_request(): void
+    {
+        $this->multiRoleGuru->forceFill(['deleted_at' => now()]);
+
+        $this->actingAs($this->multiRoleGuru, 'guru');
+        session([
+            'selected_role' => 'pengajar',
+            'tahun_ajaran_id' => $this->tahunAjaranId,
+            'selected_semester' => 1,
+            'no_tahun_ajaran' => false,
+        ]);
+
+        $response = $this->runRoleMiddleware('pengajar');
+
+        $this->assertTrue($response->isRedirect(route('login')));
+        $this->assertSame('Akun guru sudah tidak aktif. Silakan hubungi admin.', session('error'));
+        $this->assertFalse(session()->has('selected_role'));
     }
 
     private function createSchema(): void
@@ -314,5 +381,13 @@ class GuruRoleSwitchTest extends TestCase
             'created_at' => now(),
             'updated_at' => now(),
         ]);
+    }
+
+    private function runRoleMiddleware(string $role)
+    {
+        $request = Request::create('/_test/protected-role', 'GET');
+        $request->setLaravelSession(app('session.store'));
+
+        return app(CheckRole::class)->handle($request, fn () => response('ok'), $role);
     }
 }

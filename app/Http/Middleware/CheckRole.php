@@ -2,6 +2,8 @@
 
 namespace App\Http\Middleware;
 
+use App\Models\Guru;
+use App\Models\TahunAjaran;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -25,16 +27,45 @@ class CheckRole
                 return redirect()->route('login');
             }
 
-            $selectedRole = session('selected_role');
-            
-            // Fallback aman untuk session lama/kosong
-            if (!$selectedRole && Auth::guard('guru')->check()) {
-                session(['selected_role' => 'pengajar']);
-                $selectedRole = 'pengajar';
+            /** @var Guru|null $guru */
+            $guru = Auth::guard('guru')->user();
+
+            if (!$guru || (method_exists($guru, 'trashed') && $guru->trashed())) {
+                Auth::guard('guru')->logout();
+                $request->session()->forget('selected_role');
+
+                if ($request->expectsJson()) {
+                    return response()->json([
+                        'message' => 'Akun guru sudah tidak aktif. Silakan hubungi admin.',
+                    ], 403);
+                }
+
+                return redirect()->route('login')
+                    ->with('error', 'Akun guru sudah tidak aktif. Silakan hubungi admin.');
             }
 
-            $normalizedRequestedRole = $role === 'guru' ? 'pengajar' : $role;
-            $normalizedSelectedRole = $selectedRole === 'guru' ? 'pengajar' : $selectedRole;
+            $selectedRole = session('selected_role');
+            $normalizedRequestedRole = $this->normalizeGuruRole($role);
+            $normalizedSelectedRole = $this->normalizeGuruRole($selectedRole);
+            $availableRoles = $this->availableGuruRoles($guru);
+            
+            // Fallback aman untuk session lama/kosong
+            if (!$normalizedSelectedRole && in_array($normalizedRequestedRole, $availableRoles, true)) {
+                session(['selected_role' => $normalizedRequestedRole]);
+                $selectedRole = $normalizedRequestedRole;
+                $normalizedSelectedRole = $normalizedRequestedRole;
+            }
+
+            if (!$normalizedSelectedRole || !in_array($normalizedSelectedRole, $availableRoles, true)) {
+                $request->session()->forget('selected_role');
+
+                return $this->roleMismatchResponse(
+                    $request,
+                    $selectedRole,
+                    $role,
+                    'Role guru sudah tidak tersedia. Silakan pilih role kembali atau hubungi admin.'
+                );
+            }
 
             // Pastikan role yang diminta sesuai dengan yang dipilih saat login
             if ($normalizedRequestedRole === $normalizedSelectedRole) {
@@ -42,14 +73,56 @@ class CheckRole
             }
     
             // Jika mencoba akses role yang berbeda, tampilkan error
-            return response()->view('errors.role-mismatch', [
-                'current_role' => $selectedRole,
-                'attempted_role' => $role
-            ], 403);
+            return $this->roleMismatchResponse($request, $selectedRole, $role);
         }
         
         // Jika role tidak dikenal
         return redirect()->route('login')
             ->with('error', 'Unauthorized access');
+    }
+
+    private function normalizeGuruRole(?string $role): ?string
+    {
+        return $role === 'guru' ? 'pengajar' : $role;
+    }
+
+    private function availableGuruRoles(Guru $guru): array
+    {
+        $tahunAjaran = $this->currentTahunAjaran();
+
+        return $guru->availableRoles(
+            $tahunAjaran?->id,
+            $tahunAjaran?->semester
+        );
+    }
+
+    private function currentTahunAjaran(): ?TahunAjaran
+    {
+        $tahunAjaranId = session('tahun_ajaran_id');
+
+        if ($tahunAjaranId) {
+            return TahunAjaran::find($tahunAjaranId);
+        }
+
+        return TahunAjaran::where('is_active', true)->first();
+    }
+
+    private function roleMismatchResponse(
+        Request $request,
+        ?string $selectedRole,
+        string $attemptedRole,
+        string $message = 'Anda tidak memiliki akses ke role ini.'
+    ) {
+        if ($request->expectsJson()) {
+            return response()->json([
+                'message' => $message,
+            ], 403);
+        }
+
+        return response()->view('errors.role-mismatch', [
+            'current_role' => $selectedRole,
+            'attempted_role' => $attemptedRole,
+            'message' => $message,
+        ], 403);
     }
 }

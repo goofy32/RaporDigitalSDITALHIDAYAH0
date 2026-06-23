@@ -14,6 +14,7 @@ use App\Models\LingkupMateri;
 use App\Models\Kkm;
 use App\Models\BobotNilai;
 use App\Models\TahunAjaran;
+use App\Services\PdfCacheService;
 use App\Services\SiswaKelasSemesterResolver;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Http\Request;
@@ -27,8 +28,21 @@ class ScoreController extends Controller
 
     private function restoreOrUpdateNilai(array $attributes, array $nilaiData): ?Nilai
     {
+        $lookupAttributes = $this->normalizeNilaiLookupAttributes($attributes);
         $existingNilai = Nilai::withTrashed()
-            ->where($attributes)
+            ->where('siswa_id', $lookupAttributes['siswa_id'])
+            ->where('mata_pelajaran_id', $lookupAttributes['mata_pelajaran_id'])
+            ->where('tahun_ajaran_id', $lookupAttributes['tahun_ajaran_id'])
+            ->when(
+                $lookupAttributes['lingkup_materi_id'] === null,
+                fn ($query) => $query->whereNull('lingkup_materi_id'),
+                fn ($query) => $query->where('lingkup_materi_id', $lookupAttributes['lingkup_materi_id'])
+            )
+            ->when(
+                $lookupAttributes['tujuan_pembelajaran_id'] === null,
+                fn ($query) => $query->whereNull('tujuan_pembelajaran_id'),
+                fn ($query) => $query->where('tujuan_pembelajaran_id', $lookupAttributes['tujuan_pembelajaran_id'])
+            )
             ->first();
 
         $hasMeaningfulScore = $this->hasMeaningfulScoreData($nilaiData);
@@ -57,7 +71,7 @@ class ScoreController extends Controller
             return $existingNilai;
         }
 
-        $nilai = Nilai::create(array_merge($attributes, $nilaiData));
+        $nilai = Nilai::create(array_merge($lookupAttributes, $nilaiData));
 
         if (!$this->nilaiHasPersistedScores($nilai)) {
             $nilai->delete();
@@ -65,6 +79,34 @@ class ScoreController extends Controller
         }
 
         return $nilai;
+    }
+
+    private function normalizeNilaiLookupAttributes(array $attributes): array
+    {
+        return [
+            'siswa_id' => $attributes['siswa_id'],
+            'mata_pelajaran_id' => $attributes['mata_pelajaran_id'],
+            'lingkup_materi_id' => $attributes['lingkup_materi_id'] ?? null,
+            'tujuan_pembelajaran_id' => $attributes['tujuan_pembelajaran_id'] ?? null,
+            'tahun_ajaran_id' => $attributes['tahun_ajaran_id'],
+        ];
+    }
+
+    private function clearScorePdfCacheForStudents(array $studentIds, int $tahunAjaranId): void
+    {
+        $studentIds = collect($studentIds)
+            ->map(fn ($id) => (int) $id)
+            ->filter()
+            ->unique()
+            ->values();
+
+        if ($studentIds->isEmpty()) {
+            return;
+        }
+
+        Siswa::whereIn('id', $studentIds)
+            ->get()
+            ->each(fn (Siswa $siswa) => PdfCacheService::clearStudentCache($siswa, $tahunAjaranId));
     }
 
     private function hasMeaningfulScoreData(array $nilaiData): bool
@@ -432,6 +474,7 @@ class ScoreController extends Controller
             $savedData = [];
             $notSavedData = []; // Tracking data yang tidak tersimpan
             $newlySubmittedStudents = [];
+            $affectedStudentIds = [];
 
             foreach($request->scores as $siswaId => $scoreData) {
                 $siswa = Siswa::find($siswaId);
@@ -455,6 +498,7 @@ class ScoreController extends Controller
                 if (!$hasActualInput && $existingStudentNilais->isEmpty()) {
                     continue;
                 }
+                $affectedStudentIds[] = (int) $siswaId;
 
                 $studentData = [
                     'nama' => $siswa->nama,
@@ -619,6 +663,7 @@ class ScoreController extends Controller
                 $mataPelajaran->kelas_id,
                 $guru?->id
             );
+            $this->clearScorePdfCacheForStudents($affectedStudentIds, $tahunAjaranId);
 
             foreach (collect($newlySubmittedStudents)->unique('id') as $completedStudent) {
                 try {
@@ -1100,6 +1145,7 @@ class ScoreController extends Controller
                 $mataPelajaran->kelas_id,
                 $guru?->id
             );
+            $this->clearScorePdfCacheForStudents([$siswaId], $tahunAjaranId);
 
             return response()->json([
                 'success' => true,
