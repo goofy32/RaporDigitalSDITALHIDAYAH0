@@ -170,6 +170,188 @@ class TestingToolsTest extends TestCase
             ->assertNotFound();
     }
 
+    public function test_simulation_data_command_is_blocked_when_not_allowed(): void
+    {
+        config([
+            'app.env' => 'production',
+            'staging_test_tools.enabled' => false,
+        ]);
+
+        $this->artisan('staging:create-simulation-data')
+            ->expectsOutput('Command ini hanya boleh dijalankan di local, testing, staging, atau saat STAGING_TEST_TOOLS_ENABLED=true.')
+            ->assertFailed();
+    }
+
+    public function test_simulation_data_command_creates_complete_dummy_context(): void
+    {
+        $tahunAjaranId = $this->basicSetup();
+        config([
+            'app.env' => 'staging',
+            'staging_test_tools.enabled' => true,
+        ]);
+
+        $this->artisan('staging:create-simulation-data')
+            ->assertSuccessful();
+
+        $kelas = DB::table('kelas')
+            ->where('nama_kelas', 'Kelas Simulasi Load Test')
+            ->where('tahun_ajaran_id', $tahunAjaranId)
+            ->first();
+
+        $this->assertNotNull($kelas);
+
+        $guru = DB::table('gurus')->where('username', 'dummy_simulasi_load')->first();
+        $this->assertNotNull($guru);
+        $this->assertTrue(Hash::check('Simulasi123!', $guru->password));
+
+        $subject = DB::table('mata_pelajarans')
+            ->where('nama_pelajaran', 'Mapel Dummy Simulasi Load Test')
+            ->where('kelas_id', $kelas->id)
+            ->where('guru_id', $guru->id)
+            ->where('tahun_ajaran_id', $tahunAjaranId)
+            ->where('semester', 1)
+            ->first();
+
+        $this->assertNotNull($subject);
+
+        $studentIds = DB::table('siswas')
+            ->where('nama', 'like', 'Siswa Dummy Simulasi Load Test%')
+            ->pluck('id');
+
+        $this->assertCount(20, $studentIds);
+        $this->assertSame(20, DB::table('siswa_kelas_semester')
+            ->where('kelas_id', $kelas->id)
+            ->where('tahun_ajaran_id', $tahunAjaranId)
+            ->where('semester', 1)
+            ->whereIn('siswa_id', $studentIds)
+            ->count());
+
+        $lmIds = DB::table('lingkup_materis')
+            ->where('mata_pelajaran_id', $subject->id)
+            ->pluck('id');
+
+        $this->assertCount(2, $lmIds);
+        $this->assertSame(6, DB::table('tujuan_pembelajarans')
+            ->whereIn('lingkup_materi_id', $lmIds)
+            ->count());
+
+        $this->assertDatabaseHas('kkms', [
+            'mata_pelajaran_id' => $subject->id,
+            'kelas_id' => $kelas->id,
+            'tahun_ajaran_id' => $tahunAjaranId,
+            'nilai' => 70,
+        ]);
+
+        $this->assertDatabaseHas('bobot_nilais', [
+            'tahun_ajaran_id' => $tahunAjaranId,
+            'bobot_tp' => 1,
+            'bobot_lm' => 1,
+            'bobot_as' => 2,
+        ]);
+
+        $this->assertDatabaseHas('guru_kelas', [
+            'guru_id' => $guru->id,
+            'kelas_id' => $kelas->id,
+            'role' => 'pengajar',
+            'is_wali_kelas' => false,
+        ]);
+
+        $this->assertDatabaseHas('guru_kelas', [
+            'guru_id' => $guru->id,
+            'kelas_id' => $kelas->id,
+            'role' => 'wali_kelas',
+            'is_wali_kelas' => true,
+        ]);
+    }
+
+    public function test_simulation_data_command_is_idempotent_and_does_not_touch_real_data(): void
+    {
+        $tahunAjaranId = $this->basicSetup();
+        $realKelasId = $this->createClass($tahunAjaranId, 'A');
+        $realGuruId = $this->createGuru($realKelasId, [
+            'nama' => 'Guru Real',
+            'username' => 'guru_real',
+            'email' => 'guru.real@example.test',
+            'nuptk' => 'REALNUPTK001',
+        ]);
+        $realSiswaId = Siswa::query()->insertGetId([
+            'nis' => 'REAL-001',
+            'nisn' => 'REALN-001',
+            'nama' => 'Siswa Real',
+            'tanggal_lahir' => '2015-01-01',
+            'jenis_kelamin' => 'Laki-laki',
+            'agama' => 'Islam',
+            'alamat' => 'Alamat Real',
+            'kelas_id' => $realKelasId,
+            'nama_ayah' => 'Ayah Real',
+            'nama_ibu' => 'Ibu Real',
+            'pekerjaan_ayah' => 'Wiraswasta',
+            'pekerjaan_ibu' => 'Ibu Rumah Tangga',
+            'alamat_orangtua' => 'Alamat Orang Tua Real',
+            'tahun_ajaran_id' => $tahunAjaranId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        config([
+            'app.env' => 'staging',
+            'staging_test_tools.enabled' => true,
+        ]);
+
+        $this->artisan('staging:create-simulation-data')->assertSuccessful();
+        $this->artisan('staging:create-simulation-data')->assertSuccessful();
+
+        $this->assertSame(1, DB::table('kelas')
+            ->where('nama_kelas', 'Kelas Simulasi Load Test')
+            ->where('tahun_ajaran_id', $tahunAjaranId)
+            ->count());
+        $this->assertSame(1, DB::table('gurus')->where('username', 'dummy_simulasi_load')->count());
+        $this->assertSame(1, DB::table('mata_pelajarans')->where('nama_pelajaran', 'Mapel Dummy Simulasi Load Test')->count());
+        $this->assertSame(20, DB::table('siswas')->where('nama', 'like', 'Siswa Dummy Simulasi Load Test%')->count());
+
+        $dummyKelas = DB::table('kelas')->where('nama_kelas', 'Kelas Simulasi Load Test')->first();
+        $dummySubject = DB::table('mata_pelajarans')->where('nama_pelajaran', 'Mapel Dummy Simulasi Load Test')->first();
+        $dummyLmIds = DB::table('lingkup_materis')->where('mata_pelajaran_id', $dummySubject->id)->pluck('id');
+
+        $this->assertSame(2, $dummyLmIds->count());
+        $this->assertSame(6, DB::table('tujuan_pembelajarans')->whereIn('lingkup_materi_id', $dummyLmIds)->count());
+        $this->assertSame(20, DB::table('siswa_kelas_semester')->where('kelas_id', $dummyKelas->id)->count());
+
+        $this->assertDatabaseHas('kelas', [
+            'id' => $realKelasId,
+            'nama_kelas' => 'A',
+        ]);
+        $this->assertDatabaseHas('gurus', [
+            'id' => $realGuruId,
+            'nama' => 'Guru Real',
+            'username' => 'guru_real',
+        ]);
+        $this->assertDatabaseHas('siswas', [
+            'id' => $realSiswaId,
+            'nama' => 'Siswa Real',
+            'kelas_id' => $realKelasId,
+        ]);
+    }
+
+    public function test_simulation_page_lists_command_dummy_class_subject_and_students(): void
+    {
+        $this->basicSetup();
+        config([
+            'app.env' => 'staging',
+            'staging_test_tools.enabled' => true,
+        ]);
+
+        $this->artisan('staging:create-simulation-data')
+            ->assertSuccessful();
+
+        $this->actingAs(User::factory()->create())
+            ->get(route('admin.testing.multi-user.index'))
+            ->assertOk()
+            ->assertSee('Kelas Simulasi Load Test')
+            ->assertSee('Mapel Dummy Simulasi Load Test')
+            ->assertSee('Siswa Dummy Simulasi Load Test 01');
+    }
+
     private function basicSetup(): int
     {
         ProfilSekolah::create([
@@ -303,11 +485,11 @@ class TestingToolsTest extends TestCase
         ]);
     }
 
-    private function createGuru(?int $kelasId = null): int
+    private function createGuru(?int $kelasId = null, array $overrides = []): int
     {
         $kelasId ??= $this->createClass($this->basicSetup(), 'Simulasi Test');
 
-        return DB::table('gurus')->insertGetId([
+        return DB::table('gurus')->insertGetId(array_merge([
             'nuptk' => 'NUPTK'.fake()->unique()->numerify('######'),
             'nama' => 'Guru Simulasi Test',
             'jenis_kelamin' => 'Laki-laki',
@@ -321,7 +503,7 @@ class TestingToolsTest extends TestCase
             'password' => Hash::make('password'),
             'created_at' => now(),
             'updated_at' => now(),
-        ]);
+        ], $overrides));
     }
 
     private function createSchema(): void
@@ -432,6 +614,24 @@ class TestingToolsTest extends TestCase
             $table->softDeletes();
         });
 
+        Schema::create('lingkup_materis', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('mata_pelajaran_id');
+            $table->string('judul_lingkup_materi');
+            $table->boolean('is_active')->default(true);
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('tujuan_pembelajarans', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('lingkup_materi_id');
+            $table->string('kode_tp');
+            $table->text('deskripsi_tp');
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
         Schema::create('siswas', function (Blueprint $table) {
             $table->id();
             $table->string('nis')->unique();
@@ -489,6 +689,15 @@ class TestingToolsTest extends TestCase
             $table->integer('bobot_tp')->default(1);
             $table->integer('bobot_lm')->default(1);
             $table->integer('bobot_as')->default(2);
+            $table->timestamps();
+        });
+
+        Schema::create('kkms', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('mata_pelajaran_id')->nullable();
+            $table->foreignId('kelas_id')->nullable();
+            $table->foreignId('tahun_ajaran_id')->nullable();
+            $table->integer('nilai')->default(70);
             $table->timestamps();
         });
 
