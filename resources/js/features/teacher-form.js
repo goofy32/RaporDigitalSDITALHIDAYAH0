@@ -101,17 +101,17 @@ export function validateTeacherFile(input) {
     var file = input.files?.[0];
     if (!file) return true;
 
-    var allowedTypes = ['image/jpeg', 'image/jpg', 'image/png'];
+    var allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
     var maxSize = 2 * 1024 * 1024;
 
     if (!allowedTypes.includes(file.type)) {
-        alert('Format file harus JPG, JPEG, atau PNG');
+        alert('Format foto guru harus JPG, JPEG, PNG, atau WebP.');
         input.value = '';
         return false;
     }
 
     if (file.size > maxSize) {
-        alert('Ukuran file maksimal 2MB');
+        alert('Ukuran foto guru maksimal 2 MB.');
         input.value = '';
         return false;
     }

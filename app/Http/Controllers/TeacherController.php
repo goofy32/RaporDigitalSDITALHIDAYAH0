@@ -15,6 +15,8 @@ use Illuminate\Support\Str;
 
 class TeacherController extends Controller
 {
+    private const PHOTO_MAX_KB = 2048;
+
     private function logTeacherSearch(string $message, array $context = []): void
     {
         if (! config('logging.diagnostics.log_teacher_search')) {
@@ -245,7 +247,7 @@ class TeacherController extends Controller
                 'jabatan' => 'required|in:guru,guru_wali',
                 'username' => 'required|string|max:255|unique:gurus,username',
                 'password' => 'required|string|min:6|confirmed',
-                'photo' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp', 'max:2048'],
+                'photo' => $this->teacherPhotoRules(),
             ];
 
             // Tambah validasi kelas_ids dan wali_kelas_id berdasarkan jabatan
@@ -282,9 +284,7 @@ class TeacherController extends Controller
                 'password.required' => 'Password wajib diisi',
                 'password.min' => 'Password minimal 6 karakter',
                 'password.confirmed' => 'Konfirmasi password tidak cocok',
-                'photo.file' => 'File foto tidak valid',
-                'photo.mimes' => 'Format file harus JPG, JPEG, PNG, atau WEBP',
-                'photo.max' => 'Ukuran file maksimal 2MB',
+                ...$this->teacherPhotoValidationMessages(),
             ]);
 
             $validated['nuptk'] = $request->filled('nuptk') ? $validated['nuptk'] : null;
@@ -464,7 +464,7 @@ class TeacherController extends Controller
                 'alamat' => 'required|string|max:500',
                 'jabatan' => 'required|in:guru,guru_wali',
                 'username' => 'required|string|max:255|unique:gurus,username,'.$id,
-                'photo' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp', 'max:2048'],
+                'photo' => $this->teacherPhotoRules(),
             ];
 
             // Tambah validasi berdasarkan jabatan
@@ -521,9 +521,7 @@ class TeacherController extends Controller
                 'password.min' => 'Password minimal 6 karakter',
                 'password.confirmed' => 'Konfirmasi password tidak cocok',
                 'current_password.required' => 'Password saat ini wajib diisi untuk mengubah password',
-                'photo.file' => 'File foto tidak valid',
-                'photo.mimes' => 'Format file harus JPG, JPEG, PNG, atau WEBP',
-                'photo.max' => 'Ukuran file maksimal 2MB',
+                ...$this->teacherPhotoValidationMessages(),
             ]);
 
             if (
@@ -723,6 +721,30 @@ class TeacherController extends Controller
         }
 
         return $filePath;
+    }
+
+    private function teacherPhotoRules(): array
+    {
+        return [
+            'nullable',
+            'file',
+            'image',
+            'mimes:jpg,jpeg,png,webp',
+            'mimetypes:image/jpeg,image/png,image/webp',
+            'max:'.self::PHOTO_MAX_KB,
+        ];
+    }
+
+    private function teacherPhotoValidationMessages(): array
+    {
+        return [
+            'photo.file' => 'File foto guru tidak valid.',
+            'photo.image' => 'Foto guru harus berupa gambar.',
+            'photo.mimes' => 'Format foto guru harus JPG, JPEG, PNG, atau WebP.',
+            'photo.mimetypes' => 'Format foto guru harus JPG, JPEG, PNG, atau WebP.',
+            'photo.max' => 'Ukuran foto guru maksimal 2 MB.',
+            'photo.uploaded' => 'Upload foto guru gagal. Pastikan ukuran file maksimal 2 MB dan formatnya JPG, JPEG, PNG, atau WebP.',
+        ];
     }
 
     private function waliClassHasOtherTeacher(int $kelasId, ?int $teacherId = null): bool

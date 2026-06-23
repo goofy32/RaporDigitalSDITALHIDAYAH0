@@ -213,9 +213,12 @@
 
                     <div>
                         <label class="block text-sm font-medium text-gray-700">Foto</label>
-                        <input type="file" name="photo" accept="image/*"
+                        <input type="file" name="photo" accept="image/jpeg,image/png,image/webp"
                             class="mt-1 block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-green-50 file:text-green-700 hover:file:bg-green-100">
-                        <p class="mt-1 text-sm text-gray-500">Format: JPG, JPEG, atau PNG (Maks. 2MB)</p>
+                        <p class="mt-1 text-sm text-gray-500">Format JPG, JPEG, PNG, atau WebP. Maksimal 2 MB.</p>
+                        @error('photo')
+                            <p class="mt-1 text-sm text-red-500">{{ $message }}</p>
+                        @enderror
                     </div>
                 </div>
             </div>

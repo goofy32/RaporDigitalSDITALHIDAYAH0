@@ -6,6 +6,7 @@ use App\Models\Guru;
 use App\Models\User;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -204,7 +205,48 @@ class CleanSetupGuruQaTest extends TestCase
             ->assertSee('Tanggung Jawab Guru')
             ->assertSee('Pilih kelas wali')
             ->assertSee('Kelas yang diajar sebagai pengajar khusus/muatan lokal')
+            ->assertSee('accept="image/jpeg,image/png,image/webp"', false)
+            ->assertSee('Format JPG, JPEG, PNG, atau WebP. Maksimal 2 MB.')
             ->assertSee('max="'.now()->subDay()->format('Y-m-d').'"', false);
+    }
+
+    public function test_teacher_create_rejects_oversized_photo_with_indonesian_message(): void
+    {
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->from(route('teacher.create'))
+            ->post(route('teacher.store'), $this->teacherPayload([
+                'username' => 'photo_large_create',
+                'email' => 'photo.large.create@example.test',
+                'photo' => UploadedFile::fake()->image('foto-guru.jpg')->size(2500),
+            ]))
+            ->assertRedirect(route('teacher.create'))
+            ->assertSessionHasErrors(['photo' => 'Ukuran foto guru maksimal 2 MB.']);
+
+        $this->assertDatabaseMissing('gurus', ['username' => 'photo_large_create']);
+    }
+
+    public function test_teacher_update_rejects_oversized_photo_with_indonesian_message(): void
+    {
+        $guruId = $this->insertGuru('Guru Foto', 'guru_foto', null);
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->from(route('teacher.edit', $guruId))
+            ->put(route('teacher.update', $guruId), $this->teacherPayload([
+                'nama' => 'Guru Foto',
+                'username' => 'guru_foto',
+                'email' => 'guru.foto@example.test',
+                'jabatan' => 'guru',
+                'kelas_ids' => [$this->kelas5BId],
+                'password' => null,
+                'password_confirmation' => null,
+                'photo' => UploadedFile::fake()->image('foto-guru.png')->size(2500),
+            ]))
+            ->assertRedirect(route('teacher.edit', $guruId))
+            ->assertSessionHasErrors(['photo' => 'Ukuran foto guru maksimal 2 MB.']);
+
+        $this->assertNull(Guru::findOrFail($guruId)->photo);
     }
 
     public function test_class_forms_no_longer_render_wali_selector_but_guru_form_still_does(): void
@@ -282,7 +324,9 @@ class CleanSetupGuruQaTest extends TestCase
             ->get(route('teacher.edit', $guruId))
             ->assertOk()
             ->assertSee('Pengajar Biasa')
-            ->assertSee('Kelas 5B');
+            ->assertSee('Kelas 5B')
+            ->assertSee('accept="image/jpeg,image/png,image/webp"', false)
+            ->assertSee('Format JPG, JPEG, PNG, atau WebP. Maksimal 2 MB.');
     }
 
     public function test_editing_wali_guru_still_loads_current_wali_assignment(): void
