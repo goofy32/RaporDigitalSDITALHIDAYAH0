@@ -93,7 +93,9 @@ class PengajarScoreAuthorizationTest extends TestCase
         Queue::assertPushed(AutoPreparePdfReportJob::class, function (AutoPreparePdfReportJob $job) {
             return $job->siswaId === $this->studentId
                 && $job->tahunAjaranId === $this->activeYearId
-                && $job->type === 'UTS';
+                && $job->type === 'UTS'
+                && $job->delay
+                && abs($job->delay->getTimestamp() - now()->addSeconds(60)->getTimestamp()) <= 2;
         });
         Queue::assertNotPushed(AutoPreparePdfReportJob::class, fn (AutoPreparePdfReportJob $job) => $job->type === 'UAS');
     }

@@ -133,6 +133,8 @@ class EnrollmentAwareAttendanceNotesTest extends TestCase
     {
         $ahmadCacheKey = $this->putPdfCache($this->ahmadId, 'ahmad-attendance.pdf');
         $sitiCacheKey = $this->putPdfCache($this->sitiId, 'siti-attendance.pdf');
+        $ahmadDocxCacheKey = $this->putDocxCache($this->ahmadId, 'ahmad-attendance.docx');
+        $sitiDocxCacheKey = $this->putDocxCache($this->sitiId, 'siti-attendance.docx');
 
         $this->actingAsWali($this->ganjilYearId, 1)
             ->postJson(route('wali_kelas.absence.bulk-save'), [
@@ -146,6 +148,8 @@ class EnrollmentAwareAttendanceNotesTest extends TestCase
 
         $this->assertFalse(Cache::has($ahmadCacheKey));
         $this->assertTrue(Cache::has($sitiCacheKey));
+        $this->assertFalse(Cache::has($ahmadDocxCacheKey));
+        $this->assertTrue(Cache::has($sitiDocxCacheKey));
     }
 
     public function test_unchanged_attendance_batch_does_not_enqueue_pdf_warmup(): void
@@ -167,6 +171,33 @@ class EnrollmentAwareAttendanceNotesTest extends TestCase
 
         $this->assertTrue(Cache::has($cacheKey));
         Queue::assertNotPushed(AutoPreparePdfReportJob::class);
+    }
+
+    public function test_attendance_change_uses_late_stage_pdf_warmup_delay(): void
+    {
+        config()->set('report.pdf_auto_prepare.enabled', true);
+        config()->set('report.pdf_auto_prepare.delay_seconds', 60);
+        config()->set('report.pdf_auto_prepare.late_stage_delay_seconds', 10);
+        config()->set('report.pdf_auto_prepare.queue', 'pdf-warm');
+        Queue::fake();
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->postJson(route('wali_kelas.absence.bulk-save'), [
+                'rows' => [
+                    $this->attendanceRow($this->ahmadId, 2, 0, 0),
+                ],
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        Queue::assertPushedOn('pdf-warm', AutoPreparePdfReportJob::class);
+        Queue::assertPushed(AutoPreparePdfReportJob::class, function (AutoPreparePdfReportJob $job) {
+            return $job->siswaId === $this->ahmadId
+                && $job->type === 'UTS'
+                && $job->delay
+                && abs($job->delay->getTimestamp() - now()->addSeconds(10)->getTimestamp()) <= 2;
+        });
+        Queue::assertNotPushed(AutoPreparePdfReportJob::class, fn (AutoPreparePdfReportJob $job) => $job->siswaId === $this->sitiId);
     }
 
     public function test_attendance_student_from_another_class_is_rejected(): void
@@ -493,6 +524,21 @@ class EnrollmentAwareAttendanceNotesTest extends TestCase
 
         Cache::put($cacheKey, [
             'path' => "pdf_reports/{$filename}",
+            'filename' => $filename,
+            'file_size' => 3,
+            'generated_at' => now()->toISOString(),
+        ], now()->addHour());
+
+        return $cacheKey;
+    }
+
+    private function putDocxCache(int $studentId, string $filename): string
+    {
+        $siswa = Siswa::findOrFail($studentId);
+        $cacheKey = PdfCacheService::getDocxCacheKey($siswa, 'UTS', $this->ganjilYearId);
+
+        Cache::put($cacheKey, [
+            'path' => "docx_reports/{$filename}",
             'filename' => $filename,
             'file_size' => 3,
             'generated_at' => now()->toISOString(),

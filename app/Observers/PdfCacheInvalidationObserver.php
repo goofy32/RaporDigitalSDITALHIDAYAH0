@@ -25,7 +25,7 @@ class PdfCacheInvalidationObserver
         $siswa = Siswa::find($siswaId);
 
         if ($siswa) {
-            PdfCacheService::clearStudentCache($siswa, $tahunAjaranId, true);
+            PdfCacheService::clearStudentCache($siswa, $tahunAjaranId, true, $this->autoPrepareDelaySeconds($model));
         }
     }
 
@@ -148,5 +148,14 @@ class PdfCacheInvalidationObserver
             ],
             default => [],
         };
+    }
+
+    private function autoPrepareDelaySeconds($model): ?int
+    {
+        if ($model instanceof Nilai) {
+            return null;
+        }
+
+        return max(0, (int) config('report.pdf_auto_prepare.late_stage_delay_seconds', 10));
     }
 }

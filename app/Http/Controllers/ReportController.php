@@ -1993,6 +1993,35 @@ class ReportController extends Controller
                     'error_type' => 'template_missing'
                 ], 404);
             }
+
+            $cachedDocx = PdfCacheService::getCachedDocx($siswa, $type, $tahunAjaranId);
+            if ($cachedDocx) {
+                ReportPerformanceTracker::setFlowTypeIfEnabled('docx_cache_hit');
+
+                $cachedPath = storage_path('app/public/' . $cachedDocx['path']);
+                $cachedFilename = $cachedDocx['filename'] ?? basename($cachedPath);
+
+                if ($action == 'preview') {
+                    return ReportPerformanceTracker::measureSegment('response', function () use ($cachedDocx, $cachedFilename) {
+                        return response()->json([
+                            'success' => true,
+                            'file_url' => $this->createSecureRaporFileUrl(
+                                $cachedDocx['path'],
+                                $cachedFilename,
+                                'attachment'
+                            ),
+                            'filename' => $cachedFilename,
+                            'cache_hit' => true,
+                        ]);
+                    });
+                }
+
+                return ReportPerformanceTracker::measureSegment('response', function () use ($cachedPath, $cachedFilename) {
+                    return $this->downloadDocxFile($cachedPath, $cachedFilename);
+                });
+            }
+
+            ReportPerformanceTracker::setFlowTypeIfEnabled('docx_cache_miss');
             
             // Better validation - verify data for the CURRENT semester, not based on report type
             $tahunAjaran = ReportPerformanceTracker::measureSegment('context', fn () => \App\Models\TahunAjaran::find($tahunAjaranId));
@@ -2073,25 +2102,33 @@ class ReportController extends Controller
                 'file_size' => $fileSize,
                 'action' => $action
             ]);
+
+            $cachedDocx = PdfCacheService::cacheDocx($siswa, $type, $tahunAjaranId, $fullPath, $result['filename']);
+            $responsePath = $cachedDocx
+                ? storage_path('app/public/' . $cachedDocx['path'])
+                : $fullPath;
+            $responseFilename = $cachedDocx['filename'] ?? $result['filename'];
+            $responseStoragePath = $cachedDocx['path'] ?? $result['path'];
             
             // Handle preview vs download
             if ($action == 'preview') {
-                return ReportPerformanceTracker::measureSegment('response', function () use ($result) {
+                return ReportPerformanceTracker::measureSegment('response', function () use ($responseStoragePath, $responseFilename) {
                     return response()->json([
                         'success' => true,
                         'file_url' => $this->createSecureRaporFileUrl(
-                            $result['path'],
-                            $result['filename'],
+                            $responseStoragePath,
+                            $responseFilename,
                             'attachment'
                         ),
-                        'filename' => $result['filename']
+                        'filename' => $responseFilename,
+                        'cache_hit' => false,
                     ]);
                 });
             }
             
             // **SOLUTION: Download dengan headers yang BENAR untuk DOCX**
-            return ReportPerformanceTracker::measureSegment('response', function () use ($fullPath, $result) {
-                return $this->downloadDocxFile($fullPath, $result['filename']);
+            return ReportPerformanceTracker::measureSegment('response', function () use ($responsePath, $responseFilename) {
+                return $this->downloadDocxFile($responsePath, $responseFilename);
             });
             
         } 

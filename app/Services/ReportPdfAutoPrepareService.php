@@ -21,7 +21,8 @@ class ReportPdfAutoPrepareService
         Siswa $siswa,
         int $tahunAjaranId,
         array $types = ['UTS', 'UAS'],
-        ?string $reason = null
+        ?string $reason = null,
+        ?int $delaySeconds = null
     ): int {
         if (! $this->enabled()) {
             return 0;
@@ -38,6 +39,7 @@ class ReportPdfAutoPrepareService
         }
 
         $scheduled = 0;
+        $resolvedDelaySeconds = $this->delaySeconds($delaySeconds);
 
         foreach ($types as $type) {
             $unavailableReason = $this->unavailableReason($siswa, $type, $tahunAjaranId);
@@ -67,7 +69,7 @@ class ReportPdfAutoPrepareService
             );
 
             AutoPreparePdfReportJob::dispatch($siswa->id, $type, $tahunAjaranId, $token, $reason)
-                ->delay(now()->addSeconds($this->delaySeconds()))
+                ->delay(now()->addSeconds($resolvedDelaySeconds))
                 ->onQueue($this->queueName());
 
             $this->scheduledThisScope[$scopeKey] = true;
@@ -79,7 +81,7 @@ class ReportPdfAutoPrepareService
                 'tahun_ajaran_id' => $tahunAjaranId,
                 'semester' => $this->semesterForType($type),
                 'cache_key' => PdfCacheService::getCacheKey($siswa, $type, $tahunAjaranId),
-                'delay_seconds' => $this->delaySeconds(),
+                'delay_seconds' => $resolvedDelaySeconds,
                 'queue' => $this->queueName(),
                 'reason' => $reason,
             ]);
@@ -302,8 +304,17 @@ class ReportPdfAutoPrepareService
         return max(1, (int) config('report.pdf_dashboard_warmup.cooldown_seconds', 900));
     }
 
-    private function delaySeconds(): int
+    public function lateStageDelaySeconds(): int
     {
+        return max(0, (int) config('report.pdf_auto_prepare.late_stage_delay_seconds', 10));
+    }
+
+    private function delaySeconds(?int $overrideSeconds = null): int
+    {
+        if ($overrideSeconds !== null) {
+            return max(0, $overrideSeconds);
+        }
+
         return max(0, (int) config('report.pdf_auto_prepare.delay_seconds', 60));
     }
 

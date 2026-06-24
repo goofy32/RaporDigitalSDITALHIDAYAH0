@@ -557,6 +557,7 @@ class ReportCardAuthorizationTest extends TestCase
     public function test_wali_dashboard_schedules_pdf_warmup_for_owned_class_and_current_semester_only(): void
     {
         config()->set('report.pdf_auto_prepare.enabled', true);
+        config()->set('report.pdf_auto_prepare.delay_seconds', 60);
         config()->set('report.pdf_dashboard_warmup.enabled', true);
         config()->set('report.pdf_auto_prepare.queue', 'pdf-warm');
         Queue::fake();
@@ -574,7 +575,9 @@ class ReportCardAuthorizationTest extends TestCase
             return $job->siswaId === $this->authorizedStudentId
                 && $job->type === 'UTS'
                 && $job->tahunAjaranId === $this->activeYearId
-                && $job->reason === 'dashboard_warmup';
+                && $job->reason === 'dashboard_warmup'
+                && $job->delay
+                && abs($job->delay->getTimestamp() - now()->addSeconds(60)->getTimestamp()) <= 2;
         });
         Queue::assertNotPushed(
             AutoPreparePdfReportJob::class,
@@ -895,6 +898,36 @@ class ReportCardAuthorizationTest extends TestCase
             ])
             ->assertNotFound()
             ->assertJsonPath('error_type', 'template_missing');
+    }
+
+    public function test_docx_cache_hit_returns_secure_url_without_pdf_generation(): void
+    {
+        $this->insertReportTemplate($this->currentClassId);
+        Bus::fake([GeneratePdfReportJob::class]);
+
+        $siswa = Siswa::findOrFail($this->authorizedStudentId);
+        Storage::disk('public')->put('docx_reports/cached-report.docx', 'PK cached docx');
+        Cache::put(PdfCacheService::getDocxCacheKey($siswa, 'UTS', $this->activeYearId), [
+            'path' => 'docx_reports/cached-report.docx',
+            'filename' => 'cached-report.docx',
+            'file_size' => 14,
+            'generated_at' => now()->toISOString(),
+        ], now()->addHour());
+
+        $response = $this->actingAsWali()
+            ->postJson(route('wali_kelas.rapor.generate', $this->authorizedStudentId), [
+                'type' => 'UTS',
+                'tahun_ajaran_id' => $this->activeYearId,
+                'action' => 'preview',
+            ]);
+
+        $response->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('filename', 'cached-report.docx')
+            ->assertJsonPath('cache_hit', true);
+        $this->assertStringContainsString('/wali-kelas/rapor/secure-file', (string) $response->json('file_url'));
+        $this->assertStringContainsString('docx_reports%2Fcached-report.docx', (string) $response->json('file_url'));
+        Bus::assertNotDispatched(GeneratePdfReportJob::class);
     }
 
     public function test_admin_report_history_access_is_not_restricted_by_wali_authorization(): void

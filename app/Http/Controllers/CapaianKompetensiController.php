@@ -492,7 +492,7 @@ class CapaianKompetensiController extends Controller
             });
 
             if ($studentChanged) {
-                PdfCacheService::clearStudentCache($siswa, $tahunAjaranId, true);
+                PdfCacheService::clearStudentCache($siswa, $tahunAjaranId, true, $this->lateStageWarmupDelaySeconds());
             }
         }
 
@@ -1134,7 +1134,12 @@ class CapaianKompetensiController extends Controller
     {
         Siswa::whereIn('id', $studentIds)
             ->get()
-            ->each(fn (Siswa $siswa) => PdfCacheService::clearStudentCache($siswa, $tahunAjaranId, true));
+            ->each(fn (Siswa $siswa) => PdfCacheService::clearStudentCache($siswa, $tahunAjaranId, true, $this->lateStageWarmupDelaySeconds()));
+    }
+
+    private function lateStageWarmupDelaySeconds(): int
+    {
+        return max(0, (int) config('report.pdf_auto_prepare.late_stage_delay_seconds', 10));
     }
 
     private function getCurrentSemester(int $tahunAjaranId): int
