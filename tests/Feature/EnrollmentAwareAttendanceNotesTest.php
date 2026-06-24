@@ -2,12 +2,16 @@
 
 namespace Tests\Feature;
 
+use App\Jobs\AutoPreparePdfReportJob;
 use App\Models\Guru;
+use App\Models\Siswa;
+use App\Services\PdfCacheService;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
 
@@ -123,6 +127,46 @@ class EnrollmentAwareAttendanceNotesTest extends TestCase
             'semester' => 1,
             'sakit' => 1,
         ]);
+    }
+
+    public function test_attendance_update_invalidates_only_changed_student_pdf_cache(): void
+    {
+        $ahmadCacheKey = $this->putPdfCache($this->ahmadId, 'ahmad-attendance.pdf');
+        $sitiCacheKey = $this->putPdfCache($this->sitiId, 'siti-attendance.pdf');
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->postJson(route('wali_kelas.absence.bulk-save'), [
+                'rows' => [
+                    $this->attendanceRow($this->ahmadId, 1, 0, 0),
+                    $this->attendanceRow($this->sitiId, 0, 0, 0),
+                ],
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $this->assertFalse(Cache::has($ahmadCacheKey));
+        $this->assertTrue(Cache::has($sitiCacheKey));
+    }
+
+    public function test_unchanged_attendance_batch_does_not_enqueue_pdf_warmup(): void
+    {
+        config()->set('report.pdf_auto_prepare.enabled', true);
+        config()->set('report.pdf_auto_prepare.queue', 'pdf-warm');
+        Queue::fake();
+
+        $cacheKey = $this->putPdfCache($this->ahmadId, 'ahmad-unchanged-attendance.pdf');
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->postJson(route('wali_kelas.absence.bulk-save'), [
+                'rows' => [
+                    $this->attendanceRow($this->ahmadId, 0, 0, 0),
+                ],
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $this->assertTrue(Cache::has($cacheKey));
+        Queue::assertNotPushed(AutoPreparePdfReportJob::class);
     }
 
     public function test_attendance_student_from_another_class_is_rejected(): void
@@ -261,6 +305,21 @@ class EnrollmentAwareAttendanceNotesTest extends TestCase
         ]);
     }
 
+    public function test_student_note_update_invalidates_only_changed_student_pdf_cache(): void
+    {
+        $ahmadCacheKey = $this->putPdfCache($this->ahmadId, 'ahmad-student-note.pdf');
+        $sitiCacheKey = $this->putPdfCache($this->sitiId, 'siti-student-note.pdf');
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->post(route('wali_kelas.catatan.siswa.store', $this->ahmadId), [
+                'catatan_umum' => 'Catatan wali berubah.',
+            ])
+            ->assertRedirect();
+
+        $this->assertFalse(Cache::has($ahmadCacheKey));
+        $this->assertTrue(Cache::has($sitiCacheKey));
+    }
+
     public function test_note_student_from_another_class_is_rejected(): void
     {
         $this->assertUnauthorizedStudentNoteDoesNotCreateRows($this->otherClassStudentId);
@@ -358,6 +417,24 @@ class EnrollmentAwareAttendanceNotesTest extends TestCase
         ]);
     }
 
+    public function test_subject_note_update_invalidates_only_changed_student_pdf_cache(): void
+    {
+        $ahmadCacheKey = $this->putPdfCache($this->ahmadId, 'ahmad-subject-note.pdf');
+        $sitiCacheKey = $this->putPdfCache($this->sitiId, 'siti-subject-note.pdf');
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->post(route('wali_kelas.catatan.mata_pelajaran.store', $this->ganjilSubjectId), [
+                'catatan' => [
+                    $this->ahmadId => ['umum' => 'Catatan mapel berubah.'],
+                    $this->sitiId => ['umum' => ''],
+                ],
+            ])
+            ->assertRedirect(route('wali_kelas.catatan.mata_pelajaran.index'));
+
+        $this->assertFalse(Cache::has($ahmadCacheKey));
+        $this->assertTrue(Cache::has($sitiCacheKey));
+    }
+
     private function actingAsWali(int $tahunAjaranId, int $semester): self
     {
         return $this->actingAs($this->wali, 'guru')
@@ -407,6 +484,21 @@ class EnrollmentAwareAttendanceNotesTest extends TestCase
             'izin' => $izin,
             'tanpa_keterangan' => $tanpaKeterangan,
         ];
+    }
+
+    private function putPdfCache(int $studentId, string $filename): string
+    {
+        $siswa = Siswa::findOrFail($studentId);
+        $cacheKey = PdfCacheService::getCacheKey($siswa, 'UTS', $this->ganjilYearId);
+
+        Cache::put($cacheKey, [
+            'path' => "pdf_reports/{$filename}",
+            'filename' => $filename,
+            'file_size' => 3,
+            'generated_at' => now()->toISOString(),
+        ], now()->addHour());
+
+        return $cacheKey;
     }
 
     private function createSchema(): void

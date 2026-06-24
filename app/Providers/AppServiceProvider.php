@@ -26,6 +26,7 @@ use App\Models\NilaiEkstrakurikuler;
 use App\Models\ReportTemplate;
 use App\Models\TujuanPembelajaran;
 use App\Models\CatatanSiswa;
+use App\Models\CatatanMataPelajaran;
 use App\Models\CapaianKompetensiCustom;
 use App\Services\DocumentConversionService;
 use App\Services\SiswaKelasSemesterResolver;
@@ -103,6 +104,7 @@ class AppServiceProvider extends ServiceProvider
         Nilai::observe(PdfCacheInvalidationObserver::class);
         Absensi::observe(PdfCacheInvalidationObserver::class);
         CatatanSiswa::observe(PdfCacheInvalidationObserver::class);
+        CatatanMataPelajaran::observe(PdfCacheInvalidationObserver::class);
         NilaiEkstrakurikuler::observe(PdfCacheInvalidationObserver::class);
         CapaianKompetensiCustom::observe(PdfCacheInvalidationObserver::class);
     }

@@ -774,6 +774,33 @@ class ReportCardAuthorizationTest extends TestCase
             ->assertForbidden();
     }
 
+    public function test_pdf_status_endpoint_keeps_unchanged_cached_student_ready_after_targeted_clear(): void
+    {
+        $secondStudentId = $this->insertStudent('1010', 'Second Authorized Student', $this->currentClassId);
+        $this->insertEnrollment($secondStudentId, $this->currentClassId, $this->activeYearId, 1);
+        $this->insertReportData($secondStudentId, $this->currentClassId, $this->activeYearId, $this->wali->id);
+
+        Storage::fake('public');
+        $this->putPdfCache($this->authorizedStudentId, 'changed-student.pdf');
+        $this->putPdfCache($secondStudentId, 'unchanged-student.pdf');
+
+        PdfCacheService::clearStudentCache(
+            Siswa::findOrFail($this->authorizedStudentId),
+            $this->activeYearId,
+            false
+        );
+
+        $this->actingAsWali()
+            ->getJson(route('wali_kelas.rapor.pdf-statuses', [
+                'type' => 'UTS',
+                'tahun_ajaran_id' => $this->activeYearId,
+                'student_ids' => [$this->authorizedStudentId, $secondStudentId],
+            ]))
+            ->assertOk()
+            ->assertJsonPath("statuses.{$this->authorizedStudentId}", 'missing')
+            ->assertJsonPath("statuses.{$secondStudentId}", 'ready');
+    }
+
     public function test_report_index_exposes_pdf_status_polling_endpoint(): void
     {
         $this->fakeLibreOfficeAvailability();
@@ -1273,9 +1300,14 @@ class ReportCardAuthorizationTest extends TestCase
     private function cachePdfForAuthorizedStudent(string $filename): void
     {
         Storage::fake('public');
+        $this->putPdfCache($this->authorizedStudentId, $filename);
+    }
+
+    private function putPdfCache(int $studentId, string $filename): void
+    {
         Storage::disk('public')->put("pdf_reports/{$filename}", 'PDF');
 
-        Cache::put(PdfCacheService::getCacheKey(Siswa::findOrFail($this->authorizedStudentId), 'UTS', $this->activeYearId), [
+        Cache::put(PdfCacheService::getCacheKey(Siswa::findOrFail($studentId), 'UTS', $this->activeYearId), [
             'path' => "pdf_reports/{$filename}",
             'filename' => $filename,
             'file_size' => 3,

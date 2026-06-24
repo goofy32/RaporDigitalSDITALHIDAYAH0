@@ -96,7 +96,7 @@ class CatatanController extends Controller
                         'tahun_ajaran_id' => $tahunAjaranId,
                         'semester' => $selectedSemester,
                         'type' => $type,
-                    ])->delete();
+                    ])->get()->each->delete();
                 }
             }
             
@@ -278,7 +278,7 @@ public function indexCatatanMataPelajaran()
                             'tahun_ajaran_id' => $tahunAjaranId,
                             'semester' => $selectedSemester,
                             'type' => $type,
-                        ])->delete();
+                        ])->get()->each->delete();
                     }
                 }
             }

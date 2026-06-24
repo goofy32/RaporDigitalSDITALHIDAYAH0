@@ -1058,6 +1058,25 @@ class CapaianPhraseCustomizationTest extends TestCase
         $this->assertTrue(Cache::has($sitiCacheKey));
     }
 
+    public function test_batch_save_with_unchanged_capaian_text_keeps_existing_pdf_cache(): void
+    {
+        $this->insertFullCustom($this->ahmadId, $this->mathGanjilSubjectId, 'Ahmad cache tetap.', null);
+
+        $ahmadCacheKey = PdfCacheService::getCacheKey(Siswa::find($this->ahmadId), 'UTS', $this->ganjilYearId);
+        Cache::put($ahmadCacheKey, ['path' => 'missing-ahmad.pdf', 'filename' => 'missing-ahmad.pdf'], now()->addHour());
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->put(route('wali_kelas.capaian_kompetensi.students.phrases.batch_update', $this->mathGanjilSubjectId), $this->batchPayload([
+                [
+                    'siswa_id' => $this->ahmadId,
+                    'tertinggi' => 'Ahmad cache tetap.',
+                ],
+            ]))
+            ->assertRedirect();
+
+        $this->assertTrue(Cache::has($ahmadCacheKey));
+    }
+
     public function test_unified_endpoint_saves_defaults_and_student_edits_together(): void
     {
         $this->actingAsWali($this->ganjilYearId, 1)

@@ -369,12 +369,14 @@ class CapaianKompetensiController extends Controller
         $tertinggi = $this->resolveDefaultPhrasePayload($request, 'tertinggi', $presets['tertinggi']);
         $terendah = $this->resolveDefaultPhrasePayload($request, 'terendah', $presets['terendah']);
 
-        DB::transaction(function () use ($tahunAjaranId, $semester, $kelas, $mataPelajaranId, $tertinggi, $terendah) {
+        $defaultsChanged = false;
+
+        DB::transaction(function () use (&$defaultsChanged, $tahunAjaranId, $semester, $kelas, $mataPelajaranId, $tertinggi, $terendah) {
             foreach ([
                 CapaianKompetensiTextService::TYPE_TERTINGGI => $tertinggi,
                 CapaianKompetensiTextService::TYPE_TERENDAH => $terendah,
             ] as $type => $payload) {
-                CapaianPhraseDefault::updateOrCreate(
+                $default = CapaianPhraseDefault::updateOrCreate(
                     [
                         'tahun_ajaran_id' => $tahunAjaranId,
                         'semester' => $semester,
@@ -387,13 +389,19 @@ class CapaianKompetensiController extends Controller
                         'phrase' => $payload['phrase'],
                     ]
                 );
+
+                if ($this->modelChangedForPdf($default, ['mode', 'phrase'])) {
+                    $defaultsChanged = true;
+                }
             }
         });
 
-        $this->clearCapaianPdfCacheForStudents(
-            $this->studentsForWaliClass((int) $kelas->id, $tahunAjaranId, $semester)->pluck('id')->all(),
-            $tahunAjaranId
-        );
+        if ($defaultsChanged) {
+            $this->clearCapaianPdfCacheForStudents(
+                $this->studentsForWaliClass((int) $kelas->id, $tahunAjaranId, $semester)->pluck('id')->all(),
+                $tahunAjaranId
+            );
+        }
 
         return redirect()
             ->route('wali_kelas.capaian_kompetensi.edit', $mataPelajaranId)
@@ -467,8 +475,10 @@ class CapaianKompetensiController extends Controller
         }
 
         if (! empty($updates)) {
-            DB::transaction(function () use ($siswa, $mataPelajaranId, $tahunAjaranId, $semester, $updates) {
-                CapaianKompetensiCustom::updateOrCreate(
+            $studentChanged = false;
+
+            DB::transaction(function () use (&$studentChanged, $siswa, $mataPelajaranId, $tahunAjaranId, $semester, $updates) {
+                $custom = CapaianKompetensiCustom::updateOrCreate(
                     [
                         'siswa_id' => $siswa->id,
                         'mata_pelajaran_id' => $mataPelajaranId,
@@ -477,10 +487,14 @@ class CapaianKompetensiController extends Controller
                     ],
                     $updates
                 );
-            });
-        }
 
-        PdfCacheService::clearStudentCache($siswa, $tahunAjaranId, true);
+                $studentChanged = $this->modelChangedForPdf($custom, array_keys($updates));
+            });
+
+            if ($studentChanged) {
+                PdfCacheService::clearStudentCache($siswa, $tahunAjaranId, true);
+            }
+        }
 
         return redirect()
             ->route('wali_kelas.capaian_kompetensi.edit', $mataPelajaranId)
@@ -614,9 +628,12 @@ class CapaianKompetensiController extends Controller
             $this->assertAllStudentsBelongToWaliClass($studentIds, $kelasId, $tahunAjaranId, $semester);
         }
 
-        DB::transaction(function () use ($defaultUpdates, $studentUpdates, $tahunAjaranId, $semester, $kelasId, $mataPelajaranId) {
+        $defaultsChanged = false;
+        $changedStudentIds = [];
+
+        DB::transaction(function () use (&$defaultsChanged, &$changedStudentIds, $defaultUpdates, $studentUpdates, $tahunAjaranId, $semester, $kelasId, $mataPelajaranId) {
             foreach ($defaultUpdates as $type => $payload) {
-                CapaianPhraseDefault::updateOrCreate(
+                $default = CapaianPhraseDefault::updateOrCreate(
                     [
                         'tahun_ajaran_id' => $tahunAjaranId,
                         'semester' => $semester,
@@ -629,10 +646,14 @@ class CapaianKompetensiController extends Controller
                         'phrase' => $payload['phrase'],
                     ]
                 );
+
+                if ($this->modelChangedForPdf($default, ['mode', 'phrase'])) {
+                    $defaultsChanged = true;
+                }
             }
 
             foreach ($studentUpdates as $studentId => $updates) {
-                CapaianKompetensiCustom::updateOrCreate(
+                $custom = CapaianKompetensiCustom::updateOrCreate(
                     [
                         'siswa_id' => $studentId,
                         'mata_pelajaran_id' => $mataPelajaranId,
@@ -641,12 +662,16 @@ class CapaianKompetensiController extends Controller
                     ],
                     $updates
                 );
+
+                if ($this->modelChangedForPdf($custom, array_keys($updates))) {
+                    $changedStudentIds[] = (int) $studentId;
+                }
             }
         });
 
-        $cacheStudentIds = empty($defaultUpdates)
-            ? $studentIds
-            : $this->studentsForWaliClass($kelasId, $tahunAjaranId, $semester)->pluck('id')->all();
+        $cacheStudentIds = $defaultsChanged
+            ? $this->studentsForWaliClass($kelasId, $tahunAjaranId, $semester)->pluck('id')->all()
+            : $changedStudentIds;
 
         $this->clearCapaianPdfCacheForStudents(array_unique(array_map('intval', $cacheStudentIds)), $tahunAjaranId);
 
@@ -740,9 +765,11 @@ class CapaianKompetensiController extends Controller
         $updatesByStudent = $this->resolveBatchCapaianUpdates($changes->all());
         abort_unless(! empty($updatesByStudent), 422);
 
-        DB::transaction(function () use ($updatesByStudent, $mataPelajaranId, $tahunAjaranId, $semester) {
+        $changedStudentIds = [];
+
+        DB::transaction(function () use (&$changedStudentIds, $updatesByStudent, $mataPelajaranId, $tahunAjaranId, $semester) {
             foreach ($updatesByStudent as $studentId => $updates) {
-                CapaianKompetensiCustom::updateOrCreate(
+                $custom = CapaianKompetensiCustom::updateOrCreate(
                     [
                         'siswa_id' => $studentId,
                         'mata_pelajaran_id' => $mataPelajaranId,
@@ -751,10 +778,14 @@ class CapaianKompetensiController extends Controller
                     ],
                     $updates
                 );
+
+                if ($this->modelChangedForPdf($custom, array_keys($updates))) {
+                    $changedStudentIds[] = (int) $studentId;
+                }
             }
         });
 
-        $this->clearCapaianPdfCacheForStudents(array_keys($updatesByStudent), $tahunAjaranId);
+        $this->clearCapaianPdfCacheForStudents($changedStudentIds, $tahunAjaranId);
 
         return redirect()
             ->route('wali_kelas.capaian_kompetensi.edit', $mataPelajaranId)
@@ -1086,6 +1117,17 @@ class CapaianKompetensiController extends Controller
         return $type === CapaianKompetensiTextService::TYPE_TERTINGGI
             ? 'tertinggi_prefix_text'
             : 'terendah_prefix_text';
+    }
+
+    private function modelChangedForPdf($model, array $fields): bool
+    {
+        if ((bool) ($model->wasRecentlyCreated ?? false)) {
+            return true;
+        }
+
+        return method_exists($model, 'wasChanged')
+            ? $model->wasChanged($fields)
+            : true;
     }
 
     private function clearCapaianPdfCacheForStudents(array $studentIds, int $tahunAjaranId): void

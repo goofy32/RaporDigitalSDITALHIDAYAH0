@@ -109,6 +109,53 @@ class ScoreController extends Controller
             ->each(fn (Siswa $siswa) => PdfCacheService::clearStudentCache($siswa, $tahunAjaranId, true));
     }
 
+    private function studentScoreSnapshot(int $siswaId, int $mataPelajaranId, int $tahunAjaranId): array
+    {
+        return Nilai::query()
+            ->where('siswa_id', $siswaId)
+            ->where('mata_pelajaran_id', $mataPelajaranId)
+            ->where('tahun_ajaran_id', $tahunAjaranId)
+            ->orderBy('lingkup_materi_id')
+            ->orderBy('tujuan_pembelajaran_id')
+            ->orderBy('id')
+            ->get([
+                'siswa_id',
+                'mata_pelajaran_id',
+                'tujuan_pembelajaran_id',
+                'lingkup_materi_id',
+                'nilai_tp',
+                'nilai_lm',
+                'nilai_akhir_semester',
+                'na_tp',
+                'na_lm',
+                'tp_number',
+                'nilai_tes',
+                'nilai_non_tes',
+                'nilai_akhir_rapor',
+                'is_submitted',
+                'tahun_ajaran_id',
+            ])
+            ->map(fn (Nilai $nilai) => [
+                'siswa_id' => (int) $nilai->siswa_id,
+                'mata_pelajaran_id' => (int) $nilai->mata_pelajaran_id,
+                'tujuan_pembelajaran_id' => $nilai->tujuan_pembelajaran_id !== null ? (int) $nilai->tujuan_pembelajaran_id : null,
+                'lingkup_materi_id' => $nilai->lingkup_materi_id !== null ? (int) $nilai->lingkup_materi_id : null,
+                'nilai_tp' => $nilai->nilai_tp,
+                'nilai_lm' => $nilai->nilai_lm,
+                'nilai_akhir_semester' => $nilai->nilai_akhir_semester,
+                'na_tp' => $nilai->na_tp,
+                'na_lm' => $nilai->na_lm,
+                'tp_number' => $nilai->tp_number,
+                'nilai_tes' => $nilai->nilai_tes,
+                'nilai_non_tes' => $nilai->nilai_non_tes,
+                'nilai_akhir_rapor' => $nilai->nilai_akhir_rapor,
+                'is_submitted' => (bool) $nilai->is_submitted,
+                'tahun_ajaran_id' => (int) $nilai->tahun_ajaran_id,
+            ])
+            ->values()
+            ->all();
+    }
+
     private function hasMeaningfulScoreData(array $nilaiData): bool
     {
         foreach ($nilaiData as $key => $value) {
@@ -498,7 +545,8 @@ class ScoreController extends Controller
                 if (!$hasActualInput && $existingStudentNilais->isEmpty()) {
                     continue;
                 }
-                $affectedStudentIds[] = (int) $siswaId;
+
+                $scoreSnapshotBefore = $this->studentScoreSnapshot((int) $siswaId, (int) $id, (int) $tahunAjaranId);
 
                 $studentData = [
                     'nama' => $siswa->nama,
@@ -653,6 +701,10 @@ class ScoreController extends Controller
                 }
                 if (!empty($studentNotSaved)) {
                     $notSavedData[$studentData['nama']] = $studentNotSaved;
+                }
+
+                if ($scoreSnapshotBefore !== $this->studentScoreSnapshot((int) $siswaId, (int) $id, (int) $tahunAjaranId)) {
+                    $affectedStudentIds[] = (int) $siswaId;
                 }
             }
 
