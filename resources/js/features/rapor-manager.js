@@ -13,6 +13,7 @@ export function registerRaporManager() {
         templateUTSActive: false,
         templateUASActive: false,
         pdfTemplateAvailability: {},
+        pdfStatuses: {},
         loadingPdf: null,
         tahunAjaranId: '',
         semester: 0,

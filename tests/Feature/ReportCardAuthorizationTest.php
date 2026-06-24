@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Jobs\AutoPreparePdfReportJob;
 use App\Jobs\GeneratePdfReportJob;
 use App\Models\Guru;
 use App\Models\Siswa;
@@ -14,6 +15,7 @@ use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
@@ -552,6 +554,170 @@ class ReportCardAuthorizationTest extends TestCase
             ->assertSee('"UTS":true', false);
     }
 
+    public function test_wali_dashboard_schedules_pdf_warmup_for_owned_class_and_current_semester_only(): void
+    {
+        config()->set('report.pdf_auto_prepare.enabled', true);
+        config()->set('report.pdf_dashboard_warmup.enabled', true);
+        config()->set('report.pdf_auto_prepare.queue', 'pdf-warm');
+        Queue::fake();
+
+        $this->insertReportTemplate($this->currentClassId, 'UTS', $this->activeYearId, 1);
+        $this->insertReportTemplate($this->currentClassId, 'UAS', $this->activeYearId, 2);
+
+        $this->actingAsWali()
+            ->get(route('wali_kelas.dashboard'))
+            ->assertOk();
+
+        Queue::assertPushedOn('pdf-warm', AutoPreparePdfReportJob::class);
+        Queue::assertPushed(AutoPreparePdfReportJob::class, 1);
+        Queue::assertPushed(AutoPreparePdfReportJob::class, function (AutoPreparePdfReportJob $job) {
+            return $job->siswaId === $this->authorizedStudentId
+                && $job->type === 'UTS'
+                && $job->tahunAjaranId === $this->activeYearId
+                && $job->reason === 'dashboard_warmup';
+        });
+        Queue::assertNotPushed(
+            AutoPreparePdfReportJob::class,
+            fn (AutoPreparePdfReportJob $job) => $job->siswaId === $this->otherClassStudentId || $job->type === 'UAS'
+        );
+    }
+
+    public function test_wali_dashboard_does_not_schedule_warmup_for_cached_pdf(): void
+    {
+        config()->set('report.pdf_auto_prepare.enabled', true);
+        config()->set('report.pdf_dashboard_warmup.enabled', true);
+        Queue::fake();
+
+        $this->insertReportTemplate($this->currentClassId);
+        $this->cachePdfForAuthorizedStudent('cached-dashboard-warmup.pdf');
+
+        $this->actingAsWali()
+            ->get(route('wali_kelas.dashboard'))
+            ->assertOk();
+
+        Queue::assertNotPushed(AutoPreparePdfReportJob::class);
+    }
+
+    public function test_wali_dashboard_warmup_cooldown_prevents_duplicate_scheduling(): void
+    {
+        config()->set('report.pdf_auto_prepare.enabled', true);
+        config()->set('report.pdf_dashboard_warmup.enabled', true);
+        config()->set('report.pdf_dashboard_warmup.cooldown_seconds', 900);
+        Queue::fake();
+
+        $this->insertReportTemplate($this->currentClassId);
+
+        $this->actingAsWali()
+            ->get(route('wali_kelas.dashboard'))
+            ->assertOk();
+
+        $this->actingAsWali()
+            ->get(route('wali_kelas.dashboard'))
+            ->assertOk();
+
+        Queue::assertPushed(AutoPreparePdfReportJob::class, 1);
+    }
+
+    public function test_wali_dashboard_warmup_skips_inactive_academic_year(): void
+    {
+        config()->set('report.pdf_auto_prepare.enabled', true);
+        config()->set('report.pdf_dashboard_warmup.enabled', true);
+        Queue::fake();
+
+        $this->insertReportTemplate($this->oldClassId, 'UTS', $this->oldYearId, 1);
+
+        $this->actingAsWaliWithSession([
+            'selected_role' => 'wali_kelas',
+            'tahun_ajaran_id' => $this->oldYearId,
+            'selected_semester' => 1,
+            'no_tahun_ajaran' => false,
+        ])
+            ->get(route('wali_kelas.dashboard'))
+            ->assertOk();
+
+        Queue::assertNotPushed(AutoPreparePdfReportJob::class);
+    }
+
+    public function test_non_wali_cannot_trigger_dashboard_pdf_warmup(): void
+    {
+        config()->set('report.pdf_auto_prepare.enabled', true);
+        config()->set('report.pdf_dashboard_warmup.enabled', true);
+        Queue::fake();
+
+        $guruId = DB::table('gurus')->insertGetId([
+            'nuptk' => 'pengajar-only',
+            'nama' => 'Pengajar Only',
+            'email' => 'pengajar-only@example.test',
+            'username' => 'pengajar-only',
+            'password' => Hash::make('password'),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $guru = Guru::query()->findOrFail($guruId);
+
+        $this->actingAs($guru, 'guru')
+            ->withSession([
+                'selected_role' => 'pengajar',
+                'tahun_ajaran_id' => $this->activeYearId,
+                'selected_semester' => 1,
+                'no_tahun_ajaran' => false,
+            ])
+            ->get(route('wali_kelas.dashboard'))
+            ->assertStatus(403);
+
+        Queue::assertNotPushed(AutoPreparePdfReportJob::class);
+    }
+
+    public function test_report_index_shows_pdf_ready_status_for_cached_pdf(): void
+    {
+        $this->fakeLibreOfficeAvailability();
+        $this->insertReportTemplate($this->currentClassId);
+        $this->cachePdfForAuthorizedStudent('cached-status-ready.pdf');
+
+        $this->actingAsWali()
+            ->get(route('wali_kelas.rapor.index', [
+                'type' => 'UTS',
+                'tahun_ajaran_id' => $this->activeYearId,
+            ]))
+            ->assertOk()
+            ->assertSee('PDF siap');
+    }
+
+    public function test_report_index_shows_pdf_preparing_status_for_active_warmup(): void
+    {
+        $this->fakeLibreOfficeAvailability();
+        $this->insertReportTemplate($this->currentClassId);
+
+        $siswa = Siswa::findOrFail($this->authorizedStudentId);
+        Cache::put(
+            PdfCacheService::getAutoPrepareTokenKey($siswa, 'UTS', $this->activeYearId),
+            'active-warmup-token',
+            now()->addHour()
+        );
+
+        $this->actingAsWali()
+            ->get(route('wali_kelas.rapor.index', [
+                'type' => 'UTS',
+                'tahun_ajaran_id' => $this->activeYearId,
+            ]))
+            ->assertOk()
+            ->assertSee('Sedang disiapkan');
+    }
+
+    public function test_report_index_shows_pdf_missing_status_without_cache_or_warmup(): void
+    {
+        $this->fakeLibreOfficeAvailability();
+        $this->insertReportTemplate($this->currentClassId);
+
+        $this->actingAsWali()
+            ->get(route('wali_kelas.rapor.index', [
+                'type' => 'UTS',
+                'tahun_ajaran_id' => $this->activeYearId,
+            ]))
+            ->assertOk()
+            ->assertSee('Belum siap');
+    }
+
     public function test_wali_cannot_clear_cache_for_student_from_another_class(): void
     {
         $this->actingAsWali()
@@ -776,6 +942,7 @@ class ReportCardAuthorizationTest extends TestCase
             $table->id();
             $table->foreignId('siswa_id');
             $table->foreignId('mata_pelajaran_id')->nullable();
+            $table->json('nilai_tp')->nullable();
             $table->decimal('nilai_akhir_rapor', 5, 2)->nullable();
             $table->boolean('is_submitted')->default(false);
             $table->foreignId('tahun_ajaran_id')->nullable();
@@ -1030,6 +1197,19 @@ class ReportCardAuthorizationTest extends TestCase
             'created_at' => now(),
             'updated_at' => now(),
         ]);
+    }
+
+    private function cachePdfForAuthorizedStudent(string $filename): void
+    {
+        Storage::fake('public');
+        Storage::disk('public')->put("pdf_reports/{$filename}", 'PDF');
+
+        Cache::put(PdfCacheService::getCacheKey(Siswa::findOrFail($this->authorizedStudentId), 'UTS', $this->activeYearId), [
+            'path' => "pdf_reports/{$filename}",
+            'filename' => $filename,
+            'file_size' => 3,
+            'generated_at' => now()->toISOString(),
+        ], now()->addHour());
     }
 
     private function fakeLibreOfficeAvailability(bool $available = true): void

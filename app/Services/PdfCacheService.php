@@ -44,6 +44,68 @@ class PdfCacheService
         return self::CACHE_PREFIX . "auto_prepare_token_{$siswa->id}_{$type}_{$tahunAjaranId}";
     }
 
+    public static function getPdfPreparationStatus(Siswa $siswa, $type, $tahunAjaranId): string
+    {
+        if (self::hasValidCachedPdf($siswa, $type, $tahunAjaranId)) {
+            return 'ready';
+        }
+
+        if (self::hasActiveGenerationRequest($siswa, $type, $tahunAjaranId) ||
+            Cache::has(self::getAutoPrepareTokenKey($siswa, $type, $tahunAjaranId))) {
+            return 'preparing';
+        }
+
+        return 'missing';
+    }
+
+    public static function hasValidCachedPdf(Siswa $siswa, $type, $tahunAjaranId): bool
+    {
+        $cachedData = Cache::get(self::getCacheKey($siswa, $type, $tahunAjaranId));
+
+        if (! $cachedData || ! isset($cachedData['path'], $cachedData['generated_at'])) {
+            return false;
+        }
+
+        if (! Storage::disk(self::STORAGE_DISK)->exists($cachedData['path'])) {
+            return false;
+        }
+
+        return now()->diffInHours($cachedData['generated_at']) <= self::CACHE_DURATION;
+    }
+
+    public static function hasActiveGenerationRequest(Siswa $siswa, $type, $tahunAjaranId): bool
+    {
+        $requestKey = self::getGenerationRequestKey($siswa, $type, $tahunAjaranId);
+        $requestId = Cache::get($requestKey);
+
+        if (! is_string($requestId) || $requestId === '') {
+            return false;
+        }
+
+        $progress = Cache::get(self::getProgressKey($requestId));
+
+        if (! is_array($progress)) {
+            Cache::forget($requestKey);
+
+            return false;
+        }
+
+        if (($progress['completed'] ?? false) || ($progress['error'] ?? false)) {
+            Cache::forget($requestKey);
+
+            return false;
+        }
+
+        $updatedAt = (int) ($progress['updated_at'] ?? 0);
+        if ($updatedAt > 0 && $updatedAt < now()->subMinutes(self::PROCESSING_STALE_MINUTES)->timestamp) {
+            Cache::forget($requestKey);
+
+            return false;
+        }
+
+        return true;
+    }
+
     /**
      * Check if PDF exists in cache
      */

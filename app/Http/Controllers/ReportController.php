@@ -2526,10 +2526,15 @@ class ReportController extends Controller
         }
 
         $pdfTemplateAvailability = [];
+        $pdfStatuses = [];
         foreach ($siswa as $student) {
             $pdfTemplateAvailability[$student->id] = [
                 'UTS' => (bool) $this->getTemplateForSiswa($student, 'UTS', $tahunAjaranId),
                 'UAS' => (bool) $this->getTemplateForSiswa($student, 'UAS', $tahunAjaranId),
+            ];
+            $pdfStatuses[$student->id] = [
+                'UTS' => PdfCacheService::getPdfPreparationStatus($student, 'UTS', $tahunAjaranId),
+                'UAS' => PdfCacheService::getPdfPreparationStatus($student, 'UAS', $tahunAjaranId),
             ];
         }
         
@@ -2539,6 +2544,7 @@ class ReportController extends Controller
             'nilaiCounts' => $nilaiCounts,
             'completionData' => $completionData,
             'pdfTemplateAvailability' => $pdfTemplateAvailability,
+            'pdfStatuses' => $pdfStatuses,
             'type' => $type, // Kirim ke view
             'semester' => $semester, // Kirim ke view
             'tahunAjaran' => $tahunAjaran,

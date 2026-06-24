@@ -9,6 +9,12 @@ export const raporManagerCore = {
             console.error('Error parsing PDF template availability:', error);
             this.pdfTemplateAvailability = {};
         }
+        try {
+            this.pdfStatuses = JSON.parse(this.$el.dataset.pdfStatuses || '{}');
+        } catch (error) {
+            console.error('Error parsing PDF statuses:', error);
+            this.pdfStatuses = {};
+        }
         this.initializeTemplates();
     },
 
@@ -108,6 +114,40 @@ export const raporManagerCore = {
 
     hasPdfTemplate(siswaId) {
         return Boolean(this.pdfTemplateAvailability?.[siswaId]?.[this.activeTab]);
+    },
+
+    pdfStatus(siswaId) {
+        return this.pdfStatuses?.[siswaId]?.[this.activeTab] || 'missing';
+    },
+
+    pdfStatusLabel(siswaId) {
+        const labels = {
+            ready: 'PDF siap',
+            preparing: 'Sedang disiapkan',
+            missing: 'Belum siap'
+        };
+
+        return labels[this.pdfStatus(siswaId)] || labels.missing;
+    },
+
+    pdfStatusClass(siswaId) {
+        const classes = {
+            ready: 'bg-green-100 text-green-800',
+            preparing: 'bg-yellow-100 text-yellow-800',
+            missing: 'bg-gray-100 text-gray-700'
+        };
+
+        return classes[this.pdfStatus(siswaId)] || classes.missing;
+    },
+
+    pdfStatusTitle(siswaId) {
+        const titles = {
+            ready: 'PDF sudah tersedia dari cache.',
+            preparing: 'PDF sedang disiapkan oleh antrean latar belakang.',
+            missing: 'PDF belum tersedia dan akan disiapkan saat preview atau unduh diminta.'
+        };
+
+        return titles[this.pdfStatus(siswaId)] || titles.missing;
     },
 
     pdfActionTitle(siswaId, availableTitle) {

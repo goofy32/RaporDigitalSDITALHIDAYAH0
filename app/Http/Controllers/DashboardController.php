@@ -11,6 +11,7 @@ use App\Models\Ekstrakurikuler;
 use App\Models\Notification;
 use App\Models\TahunAjaran;
 use App\Models\ProfilSekolah;
+use App\Services\ReportPdfAutoPrepareService;
 use App\Services\SiswaKelasSemesterResolver;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
@@ -486,6 +487,8 @@ class DashboardController extends Controller
                     'schoolProfile' => \App\Models\ProfilSekolah::first()
                 ]);
             }
+
+            $this->scheduleWaliDashboardPdfWarmup($guru, (int) $tahunAjaranId, (int) $selectedSemester);
             
             // Get stats data
             $waliStudentIds = $this->studentIdsForClass((int) $kelasWali->id, (int) $tahunAjaranId, (int) $selectedSemester);
@@ -585,6 +588,31 @@ class DashboardController extends Controller
         } catch (\Exception $e) {
             \Log::error('Error in waliKelasDashboard: ' . $e->getMessage() . "\n" . $e->getTraceAsString());
             return back()->with('error', 'Terjadi kesalahan saat memuat dashboard: ' . $e->getMessage());
+        }
+    }
+
+    private function scheduleWaliDashboardPdfWarmup(Guru $guru, int $tahunAjaranId, int $semester): void
+    {
+        if ($tahunAjaranId <= 0 || $semester <= 0) {
+            return;
+        }
+
+        $tahunAjaran = TahunAjaran::find($tahunAjaranId);
+
+        if (! $tahunAjaran) {
+            return;
+        }
+
+        try {
+            app(ReportPdfAutoPrepareService::class)
+                ->scheduleDashboardWarmupForWali($guru, $tahunAjaran, $semester);
+        } catch (\Throwable $exception) {
+            \Log::warning('Wali dashboard PDF warm-up scheduling failed', [
+                'guru_id' => $guru->id,
+                'tahun_ajaran_id' => $tahunAjaranId,
+                'semester' => $semester,
+                'exception' => $exception::class,
+            ]);
         }
     }
     

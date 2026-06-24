@@ -25,6 +25,7 @@
 @php
     $pdfAvailable = $pdfAvailable ?? false;
     $pdfTemplateAvailability = $pdfTemplateAvailability ?? [];
+    $pdfStatuses = $pdfStatuses ?? [];
     $hasPdfTemplateForCurrentType = collect($pdfTemplateAvailability)->contains(function ($availability) use ($type) {
         return (bool) ($availability[$type] ?? false);
     });
@@ -34,7 +35,7 @@
 @endphp
 
 <!-- Main Container with Single Alpine Instance -->
-<div x-data="raporManager" x-cloak class="p-4 bg-white mt-14" data-active-tab="{{ $type }}" data-tahun-ajaran-id="{{ session('tahun_ajaran_id') }}" data-semester="{{ $semester }}" data-pdf-template-availability='@json($pdfTemplateAvailability)'>
+<div x-data="raporManager" x-cloak class="p-4 bg-white mt-14" data-active-tab="{{ $type }}" data-tahun-ajaran-id="{{ session('tahun_ajaran_id') }}" data-semester="{{ $semester }}" data-pdf-template-availability='@json($pdfTemplateAvailability)' data-pdf-statuses='@json($pdfStatuses)'>
     
     <!-- Loading State -->
     <div x-show="!initialized" class="flex items-center justify-center p-12">
@@ -161,6 +162,7 @@
                         <th class="px-6 py-3">Nama Siswa</th>
                         <th class="px-6 py-3">Status Nilai</th>
                         <th class="px-6 py-3">Status Kehadiran</th>
+                        <th class="px-6 py-3">Status PDF</th>
                         <th class="px-6 py-3">Aksi</th>
                     </tr>
                 </thead>
@@ -256,6 +258,25 @@
                             </div>
                         </td>
 
+                        <!-- Status PDF -->
+                        <td class="px-6 py-4">
+                            @php
+                                $currentPdfStatus = $pdfStatuses[$s->id][$type] ?? 'missing';
+                                $pdfStatusLabels = [
+                                    'ready' => 'PDF siap',
+                                    'preparing' => 'Sedang disiapkan',
+                                    'missing' => 'Belum siap',
+                                ];
+                            @endphp
+                            <span
+                                class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium"
+                                :class="pdfStatusClass({{ $s->id }})"
+                                :title="pdfStatusTitle({{ $s->id }})"
+                                x-text="pdfStatusLabel({{ $s->id }})">
+                                {{ $pdfStatusLabels[$currentPdfStatus] ?? 'Belum siap' }}
+                            </span>
+                        </td>
+
                         <!-- Actions -->
                         <td class="px-1 py-4 text-center whitespace-nowrap">
                             <div class="flex items-center justify-center space-x-2">                                
@@ -313,7 +334,7 @@
                     </tr>
                     @empty
                     <tr>
-                        <td colspan="6" class="px-6 py-4 text-center text-gray-500">
+                        <td colspan="7" class="px-6 py-4 text-center text-gray-500">
                             Tidak ada data siswa
                         </td>
                     </tr>

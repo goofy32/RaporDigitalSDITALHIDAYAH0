@@ -3,12 +3,14 @@
 namespace App\Services;
 
 use App\Jobs\AutoPreparePdfReportJob;
+use App\Models\Guru;
 use App\Models\ReportTemplate;
 use App\Models\Siswa;
 use App\Models\TahunAjaran;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 
 class ReportPdfAutoPrepareService
@@ -20,9 +22,9 @@ class ReportPdfAutoPrepareService
         int $tahunAjaranId,
         array $types = ['UTS', 'UAS'],
         ?string $reason = null
-    ): void {
+    ): int {
         if (! $this->enabled()) {
-            return;
+            return 0;
         }
 
         $types = collect($types)
@@ -32,8 +34,10 @@ class ReportPdfAutoPrepareService
             ->values();
 
         if ($types->isEmpty()) {
-            return;
+            return 0;
         }
+
+        $scheduled = 0;
 
         foreach ($types as $type) {
             $unavailableReason = $this->unavailableReason($siswa, $type, $tahunAjaranId);
@@ -41,6 +45,10 @@ class ReportPdfAutoPrepareService
             if ($unavailableReason) {
                 $this->logSkippedUnavailable($siswa, $type, $tahunAjaranId, $unavailableReason, $reason);
 
+                continue;
+            }
+
+            if (PdfCacheService::getPdfPreparationStatus($siswa, $type, $tahunAjaranId) === 'ready') {
                 continue;
             }
 
@@ -63,6 +71,7 @@ class ReportPdfAutoPrepareService
                 ->onQueue($this->queueName());
 
             $this->scheduledThisScope[$scopeKey] = true;
+            $scheduled++;
 
             Log::info('report.pdf.auto_prepare_scheduled', [
                 'siswa_id' => $siswa->id,
@@ -75,6 +84,90 @@ class ReportPdfAutoPrepareService
                 'reason' => $reason,
             ]);
         }
+
+        return $scheduled;
+    }
+
+    public function scheduleDashboardWarmupForWali(Guru $guru, TahunAjaran $tahunAjaran, ?int $semester = null): array
+    {
+        $summary = [
+            'classes' => 0,
+            'students' => 0,
+            'scheduled' => 0,
+            'cached' => 0,
+            'cooldown' => 0,
+            'skipped' => 0,
+        ];
+
+        if (! $this->enabled() || ! $this->dashboardWarmupEnabled()) {
+            return $summary;
+        }
+
+        if (! (bool) $tahunAjaran->is_active) {
+            return $summary;
+        }
+
+        $semester = (int) ($semester ?: $tahunAjaran->semester);
+        $type = $this->typeForSemester($semester);
+
+        if (! $type) {
+            return $summary;
+        }
+
+        $classes = DB::table('guru_kelas')
+            ->join('kelas', 'guru_kelas.kelas_id', '=', 'kelas.id')
+            ->where('guru_kelas.guru_id', $guru->id)
+            ->where('guru_kelas.is_wali_kelas', true)
+            ->where('guru_kelas.role', 'wali_kelas')
+            ->where('kelas.tahun_ajaran_id', $tahunAjaran->id)
+            ->whereNull('kelas.deleted_at')
+            ->select('kelas.id')
+            ->get();
+
+        $summary['classes'] = $classes->count();
+
+        foreach ($classes as $kelas) {
+            $students = app(SiswaKelasSemesterResolver::class)
+                ->studentsForClass((int) $kelas->id, (int) $tahunAjaran->id, $semester, true);
+            $pendingStudents = collect();
+
+            foreach ($students as $student) {
+                $summary['students']++;
+
+                if (PdfCacheService::getPdfPreparationStatus($student, $type, (int) $tahunAjaran->id) === 'ready') {
+                    $summary['cached']++;
+
+                    continue;
+                }
+
+                $pendingStudents->push($student);
+            }
+
+            if ($pendingStudents->isEmpty()) {
+                continue;
+            }
+
+            $cooldownKey = $this->dashboardWarmupCooldownKey($guru->id, (int) $kelas->id, $type, (int) $tahunAjaran->id);
+
+            if (! Cache::add($cooldownKey, true, now()->addSeconds($this->dashboardWarmupCooldownSeconds()))) {
+                $summary['cooldown']++;
+                $summary['skipped'] += $pendingStudents->count();
+
+                continue;
+            }
+
+            foreach ($pendingStudents as $student) {
+                $scheduled = $this->scheduleForStudent($student, (int) $tahunAjaran->id, [$type], 'dashboard_warmup');
+
+                if ($scheduled > 0) {
+                    $summary['scheduled'] += $scheduled;
+                } else {
+                    $summary['skipped']++;
+                }
+            }
+        }
+
+        return $summary;
     }
 
     public function unavailableReason(Siswa $siswa, string $type, int $tahunAjaranId): ?string
@@ -120,35 +213,16 @@ class ReportPdfAutoPrepareService
 
     public function hasActiveUserGeneration(Siswa $siswa, string $type, int $tahunAjaranId): bool
     {
+        if (! PdfCacheService::hasActiveGenerationRequest($siswa, $type, $tahunAjaranId)) {
+            return false;
+        }
+
         $requestKey = PdfCacheService::getGenerationRequestKey($siswa, $type, $tahunAjaranId);
         $requestId = Cache::get($requestKey);
 
-        if (! is_string($requestId) || $requestId === '') {
-            return false;
-        }
-
         $progress = Cache::get(PdfCacheService::getProgressKey($requestId));
 
-        if (! is_array($progress)) {
-            Cache::forget($requestKey);
-
-            return false;
-        }
-
-        if (($progress['completed'] ?? false) || ($progress['error'] ?? false)) {
-            Cache::forget($requestKey);
-
-            return false;
-        }
-
-        $updatedAt = (int) ($progress['updated_at'] ?? 0);
-        if ($updatedAt > 0 && $updatedAt < now()->subMinutes(PdfCacheService::PROCESSING_STALE_MINUTES)->timestamp) {
-            Cache::forget($requestKey);
-
-            return false;
-        }
-
-        return isset($progress['user_id']) && $progress['user_id'] !== null;
+        return is_array($progress) && isset($progress['user_id']) && $progress['user_id'] !== null;
     }
 
     private function hasActiveTemplateForStudent(Siswa $siswa, string $type, int $tahunAjaranId, int $semester): bool
@@ -218,6 +292,16 @@ class ReportPdfAutoPrepareService
         return (bool) config('report.pdf_auto_prepare.enabled', false);
     }
 
+    private function dashboardWarmupEnabled(): bool
+    {
+        return (bool) config('report.pdf_dashboard_warmup.enabled', false);
+    }
+
+    private function dashboardWarmupCooldownSeconds(): int
+    {
+        return max(1, (int) config('report.pdf_dashboard_warmup.cooldown_seconds', 900));
+    }
+
     private function delaySeconds(): int
     {
         return max(0, (int) config('report.pdf_auto_prepare.delay_seconds', 60));
@@ -238,5 +322,19 @@ class ReportPdfAutoPrepareService
     private function semesterForType(string $type): int
     {
         return strtoupper($type) === 'UTS' ? 1 : 2;
+    }
+
+    private function typeForSemester(int $semester): ?string
+    {
+        return match ($semester) {
+            1 => 'UTS',
+            2 => 'UAS',
+            default => null,
+        };
+    }
+
+    private function dashboardWarmupCooldownKey(int $guruId, int $kelasId, string $type, int $tahunAjaranId): string
+    {
+        return "report_pdf_dashboard_warmup:{$guruId}:{$kelasId}:{$type}:{$tahunAjaranId}";
     }
 }
