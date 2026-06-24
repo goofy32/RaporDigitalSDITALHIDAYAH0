@@ -370,6 +370,10 @@ class TestingToolsTest extends TestCase
         $this->artisan('staging:simulate-multi-wali-dashboard-warmup')
             ->expectsOutput('Command ini hanya boleh dijalankan di local, testing, staging, atau saat STAGING_TEST_TOOLS_ENABLED=true.')
             ->assertFailed();
+
+        $this->artisan('staging:simulate-concurrent-score-saves')
+            ->expectsOutput('Command ini hanya boleh dijalankan di local, testing, staging, atau saat STAGING_TEST_TOOLS_ENABLED=true.')
+            ->assertFailed();
     }
 
     public function test_multi_wali_load_data_dry_run_does_not_write_data(): void
@@ -579,6 +583,142 @@ class TestingToolsTest extends TestCase
         ])->assertSuccessful();
 
         Queue::assertPushed(AutoPreparePdfReportJob::class, 4);
+    }
+
+    public function test_concurrent_score_save_dry_run_does_not_write_data(): void
+    {
+        $this->basicSetup();
+        config([
+            'app.env' => 'staging',
+            'staging_test_tools.enabled' => true,
+        ]);
+
+        $this->artisan('staging:create-multi-wali-load-data', [
+            '--wali' => 1,
+            '--students' => 2,
+        ])->assertSuccessful();
+
+        $nilaiCountBefore = DB::table('nilais')->count();
+        $nilaiSumBefore = (float) DB::table('nilais')->sum('nilai_tp');
+
+        $this->artisan('staging:simulate-concurrent-score-saves', [
+            '--teachers' => 1,
+            '--students' => 2,
+            '--subject-limit' => 1,
+            '--changed-values' => 1,
+            '--dry-run' => true,
+        ])->assertSuccessful();
+
+        $this->assertSame($nilaiCountBefore, DB::table('nilais')->count());
+        $this->assertSame($nilaiSumBefore, (float) DB::table('nilais')->sum('nilai_tp'));
+    }
+
+    public function test_concurrent_score_save_single_teacher_updates_only_dummy_scores(): void
+    {
+        $tahunAjaranId = $this->basicSetup();
+        config([
+            'app.env' => 'staging',
+            'staging_test_tools.enabled' => true,
+            'report.pdf_auto_prepare.enabled' => true,
+        ]);
+
+        $this->artisan('staging:create-multi-wali-load-data', [
+            '--wali' => 1,
+            '--students' => 2,
+        ])->assertSuccessful();
+
+        $dummyTeacherId = (int) DB::table('gurus')->where('nama', 'Wali Load Test 01')->value('id');
+        $dummySubject = DB::table('mata_pelajarans')
+            ->join('kelas', 'mata_pelajarans.kelas_id', '=', 'kelas.id')
+            ->where('mata_pelajarans.guru_id', $dummyTeacherId)
+            ->where('mata_pelajarans.nama_pelajaran', 'like', 'Load Test%')
+            ->where('kelas.nama_kelas', 'like', 'Kelas Load Test%')
+            ->orderBy('mata_pelajarans.nama_pelajaran')
+            ->select('mata_pelajarans.id')
+            ->first();
+        $dummyStudentId = (int) DB::table('siswas')
+            ->where('nama', 'like', 'Siswa Load Test 01-%')
+            ->orderBy('nama')
+            ->value('id');
+        $firstTpRow = DB::table('nilais')
+            ->where('siswa_id', $dummyStudentId)
+            ->where('mata_pelajaran_id', $dummySubject->id)
+            ->whereNotNull('tujuan_pembelajaran_id')
+            ->orderBy('tujuan_pembelajaran_id')
+            ->first(['id', 'nilai_tp']);
+
+        $realClassId = $this->createClass($tahunAjaranId, 'A');
+        DB::table('guru_kelas')->insert([
+            'guru_id' => $dummyTeacherId,
+            'kelas_id' => $realClassId,
+            'is_wali_kelas' => false,
+            'role' => 'pengajar',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $realSubjectId = DB::table('mata_pelajarans')->insertGetId([
+            'nama_pelajaran' => 'Matematika Real',
+            'kelas_id' => $realClassId,
+            'semester' => 1,
+            'guru_id' => $dummyTeacherId,
+            'tahun_ajaran_id' => $tahunAjaranId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $realStudentId = Siswa::query()->insertGetId([
+            'nis' => 'REAL-SCORE-001',
+            'nisn' => 'REAL-SCOREN-001',
+            'nama' => 'Siswa Real Score',
+            'tanggal_lahir' => '2015-01-01',
+            'jenis_kelamin' => 'Laki-laki',
+            'agama' => 'Islam',
+            'alamat' => 'Alamat Real',
+            'kelas_id' => $realClassId,
+            'nama_ayah' => 'Ayah Real',
+            'nama_ibu' => 'Ibu Real',
+            'pekerjaan_ayah' => 'Wiraswasta',
+            'pekerjaan_ibu' => 'Ibu Rumah Tangga',
+            'alamat_orangtua' => 'Alamat Orang Tua Real',
+            'tahun_ajaran_id' => $tahunAjaranId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('siswa_kelas_semester')->insert([
+            'siswa_id' => $realStudentId,
+            'kelas_id' => $realClassId,
+            'tahun_ajaran_id' => $tahunAjaranId,
+            'semester' => 1,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('nilais')->insert([
+            'siswa_id' => $realStudentId,
+            'mata_pelajaran_id' => $realSubjectId,
+            'tahun_ajaran_id' => $tahunAjaranId,
+            'nilai_akhir_rapor' => 77,
+            'is_submitted' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->artisan('staging:simulate-concurrent-score-saves', [
+            '--run-teacher' => true,
+            '--teacher-id' => $dummyTeacherId,
+            '--students' => 2,
+            '--subject-limit' => 1,
+            '--changed-values' => 1,
+            '--ignore-pdf-warmup' => true,
+        ])->assertSuccessful();
+
+        $updatedTp = (float) DB::table('nilais')->where('id', $firstTpRow->id)->value('nilai_tp');
+
+        $this->assertNotSame((float) $firstTpRow->nilai_tp, $updatedTp);
+        $this->assertGreaterThanOrEqual(70, $updatedTp);
+        $this->assertLessThanOrEqual(95, $updatedTp);
+        $this->assertSame(77.0, (float) DB::table('nilais')
+            ->where('siswa_id', $realStudentId)
+            ->where('mata_pelajaran_id', $realSubjectId)
+            ->value('nilai_akhir_rapor'));
     }
 
     private function createActiveReportTemplate(int $tahunAjaranId): int
