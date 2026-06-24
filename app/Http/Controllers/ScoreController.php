@@ -164,7 +164,10 @@ class ScoreController extends Controller
     private function scoreSaveProfilingEnabled(): bool
     {
         return (bool) config('report.score_save_profiling.enabled', false)
-            && in_array((string) config('app.env'), ['local', 'testing', 'staging'], true);
+            && (
+                app()->environment(['local', 'testing', 'staging'])
+                || (bool) config('staging_test_tools.enabled', false)
+            );
     }
 
     private function elapsedMs(float $startedAt): float
@@ -875,13 +878,14 @@ class ScoreController extends Controller
             $this->addProfileStep($profileSteps, 'preload_context', $this->elapsedMs($stepStartedAt));
 
             app()->instance('score_save.defer_nilai_pdf_cache_invalidation', true);
-            DB::beginTransaction();
-            $savedData = [];
-            $notSavedData = [];
-            $newlySubmittedStudents = [];
-            $affectedStudentIds = [];
+            try {
+                DB::beginTransaction();
+                $savedData = [];
+                $notSavedData = [];
+                $newlySubmittedStudents = [];
+                $affectedStudentIds = [];
 
-            foreach($scores as $siswaId => $scoreData) {
+                foreach($scores as $siswaId => $scoreData) {
                 $siswaId = (int) $siswaId;
                 $siswa = $studentsById->get($siswaId);
 
@@ -1082,8 +1086,10 @@ class ScoreController extends Controller
                 }
             }
 
-            DB::commit();
-            app()->forgetInstance('score_save.defer_nilai_pdf_cache_invalidation');
+                DB::commit();
+            } finally {
+                app()->forgetInstance('score_save.defer_nilai_pdf_cache_invalidation');
+            }
 
             $stepStartedAt = microtime(true);
             $guru = Auth::guard('guru')->user();
@@ -1140,8 +1146,6 @@ class ScoreController extends Controller
             if (DB::transactionLevel() > 0) {
                 DB::rollback();
             }
-
-            app()->forgetInstance('score_save.defer_nilai_pdf_cache_invalidation');
 
             if ($profilingEnabled) {
                 DB::connection()->disableQueryLog();

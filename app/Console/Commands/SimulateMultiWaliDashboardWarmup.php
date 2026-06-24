@@ -166,7 +166,7 @@ class SimulateMultiWaliDashboardWarmup extends Command
         $environment = (string) config('app.env');
 
         return in_array($environment, ['local', 'testing', 'staging'], true)
-            || filter_var(env('STAGING_TEST_TOOLS_ENABLED', false), FILTER_VALIDATE_BOOL);
+            || (bool) config('staging_test_tools.enabled');
     }
 
     private function dummyWaliRows(int $limit)

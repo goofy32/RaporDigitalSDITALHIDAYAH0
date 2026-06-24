@@ -376,6 +376,38 @@ class TestingToolsTest extends TestCase
             ->assertFailed();
     }
 
+    public function test_staging_commands_are_allowed_by_config_in_production_like_environment(): void
+    {
+        $this->basicSetup();
+        config([
+            'app.env' => 'production',
+            'staging_test_tools.enabled' => true,
+        ]);
+
+        $this->artisan('staging:create-simulation-data', [
+            '--dry-run' => true,
+        ])->assertSuccessful();
+
+        $this->artisan('staging:create-multi-wali-load-data', [
+            '--wali' => 1,
+            '--students' => 1,
+            '--dry-run' => true,
+        ])->assertSuccessful();
+
+        $this->artisan('staging:simulate-multi-wali-dashboard-warmup', [
+            '--wali' => 1,
+            '--dry-run' => true,
+        ])->assertSuccessful();
+
+        $this->artisan('staging:simulate-concurrent-score-saves', [
+            '--teachers' => 1,
+            '--students' => 1,
+            '--subject-limit' => 1,
+            '--changed-values' => 1,
+            '--dry-run' => true,
+        ])->assertSuccessful();
+    }
+
     public function test_multi_wali_load_data_dry_run_does_not_write_data(): void
     {
         $this->basicSetup();

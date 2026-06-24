@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Http\Controllers\ScoreController;
 use App\Jobs\AutoPreparePdfReportJob;
 use App\Models\Guru;
 use Illuminate\Database\Schema\Blueprint;
@@ -113,6 +114,42 @@ class PengajarScoreAuthorizationTest extends TestCase
             ->assertJsonPath('success', true);
 
         Queue::assertNotPushed(AutoPreparePdfReportJob::class);
+    }
+
+    public function test_score_save_cleans_deferred_pdf_cache_observer_flag_after_success(): void
+    {
+        $this->actingAsPengajar($this->budi)
+            ->postJson(route('pengajar.score.save_scores', $this->subjectId), [
+                'scores' => $this->validScoresPayload(),
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $this->assertFalse(app()->bound('score_save.defer_nilai_pdf_cache_invalidation'));
+    }
+
+    public function test_score_save_profiling_allows_production_like_staging_when_test_tools_are_enabled(): void
+    {
+        $originalEnvironment = app()->environment();
+        $method = new \ReflectionMethod(ScoreController::class, 'scoreSaveProfilingEnabled');
+        $method->setAccessible(true);
+
+        app()->detectEnvironment(fn () => 'production');
+
+        try {
+            config([
+                'report.score_save_profiling.enabled' => true,
+                'staging_test_tools.enabled' => true,
+            ]);
+
+            $this->assertTrue($method->invoke(new ScoreController()));
+
+            config(['staging_test_tools.enabled' => false]);
+
+            $this->assertFalse($method->invoke(new ScoreController()));
+        } finally {
+            app()->detectEnvironment(fn () => $originalEnvironment);
+        }
     }
 
     public function test_another_pengajar_receives_forbidden_and_existing_grades_are_not_modified(): void
