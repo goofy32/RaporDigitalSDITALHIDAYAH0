@@ -18,4 +18,8 @@ return [
         'lock_seconds' => (int) env('REPORT_PDF_LIBREOFFICE_LOCK_SECONDS', 180),
         'lock_wait_seconds' => (int) env('REPORT_PDF_LIBREOFFICE_LOCK_WAIT_SECONDS', 120),
     ],
+
+    'score_save_profiling' => [
+        'enabled' => (bool) env('REPORT_SCORE_SAVE_PROFILING_ENABLED', false),
+    ],
 ];

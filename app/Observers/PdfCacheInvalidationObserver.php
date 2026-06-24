@@ -31,6 +31,10 @@ class PdfCacheInvalidationObserver
 
     public function saved($model): void
     {
+        if ($model instanceof Nilai && app()->bound('score_save.defer_nilai_pdf_cache_invalidation')) {
+            return;
+        }
+
         if (! $this->shouldClearAfterSave($model)) {
             return;
         }
@@ -40,6 +44,10 @@ class PdfCacheInvalidationObserver
 
     public function deleted($model): void
     {
+        if ($model instanceof Nilai && app()->bound('score_save.defer_nilai_pdf_cache_invalidation')) {
+            return;
+        }
+
         $this->clearCacheForSiswa($model);
     }
 

@@ -15,6 +15,7 @@ use App\Models\Kkm;
 use App\Models\BobotNilai;
 use App\Models\TahunAjaran;
 use App\Services\PdfCacheService;
+use App\Services\ReportPdfAutoPrepareService;
 use App\Services\SiswaKelasSemesterResolver;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Http\Request;
@@ -92,7 +93,7 @@ class ScoreController extends Controller
         ];
     }
 
-    private function clearScorePdfCacheForStudents(array $studentIds, int $tahunAjaranId): void
+    private function clearScorePdfCacheForStudents(array $studentIds, int $tahunAjaranId): array
     {
         $studentIds = collect($studentIds)
             ->map(fn ($id) => (int) $id)
@@ -101,12 +102,317 @@ class ScoreController extends Controller
             ->values();
 
         if ($studentIds->isEmpty()) {
+            return [
+                'students' => 0,
+                'cache_invalidation_ms' => 0.0,
+                'pdf_warmup_scheduling_ms' => 0.0,
+                'jobs_scheduled' => 0,
+            ];
+        }
+
+        $students = Siswa::whereIn('id', $studentIds)->get();
+
+        if (! $this->scoreSaveProfilingEnabled()) {
+            $startedAt = microtime(true);
+
+            $students->each(fn (Siswa $siswa) => PdfCacheService::clearStudentCache($siswa, $tahunAjaranId, true));
+
+            return [
+                'students' => $students->count(),
+                'cache_invalidation_ms' => $this->elapsedMs($startedAt),
+                'pdf_warmup_scheduling_ms' => 0.0,
+                'jobs_scheduled' => 0,
+            ];
+        }
+
+        $cacheStartedAt = microtime(true);
+
+        foreach ($students as $siswa) {
+            foreach (['UTS', 'UAS'] as $type) {
+                PdfCacheService::removeCachedPdf($siswa, $type, $tahunAjaranId);
+                PdfCacheService::removeCachedDocx($siswa, $type, $tahunAjaranId);
+            }
+
+            Log::info('Student PDF cache cleared', ['siswa_id' => $siswa->id]);
+        }
+
+        $cacheInvalidationMs = $this->elapsedMs($cacheStartedAt);
+        $warmupStartedAt = microtime(true);
+        $jobsScheduled = 0;
+
+        if (config('report.pdf_auto_prepare.enabled', false)) {
+            $autoPrepare = app(ReportPdfAutoPrepareService::class);
+
+            foreach ($students as $siswa) {
+                $jobsScheduled += $autoPrepare->scheduleForStudent(
+                    $siswa,
+                    $tahunAjaranId,
+                    ['UTS', 'UAS'],
+                    'pdf_cache_invalidated'
+                );
+            }
+        }
+
+        return [
+            'students' => $students->count(),
+            'cache_invalidation_ms' => $cacheInvalidationMs,
+            'pdf_warmup_scheduling_ms' => $this->elapsedMs($warmupStartedAt),
+            'jobs_scheduled' => $jobsScheduled,
+        ];
+    }
+
+    private function scoreSaveProfilingEnabled(): bool
+    {
+        return (bool) config('report.score_save_profiling.enabled', false)
+            && in_array((string) config('app.env'), ['local', 'testing', 'staging'], true);
+    }
+
+    private function elapsedMs(float $startedAt): float
+    {
+        return round((microtime(true) - $startedAt) * 1000, 2);
+    }
+
+    /**
+     * @param array<string, float> $steps
+     */
+    private function addProfileStep(array &$steps, string $step, float $durationMs): void
+    {
+        $steps[$step] = round(($steps[$step] ?? 0.0) + $durationMs, 2);
+    }
+
+    /**
+     * @param array<string, float> $steps
+     */
+    private function logScoreSaveProfile(array $steps, array $context, float $startedAt, int $queryCount): void
+    {
+        if (! $this->scoreSaveProfilingEnabled()) {
             return;
         }
 
-        Siswa::whereIn('id', $studentIds)
+        $slowestStep = collect($steps)->sortDesc()->keys()->first();
+        $baseContext = $context + [
+            'query_count' => $queryCount,
+            'total_duration_ms' => $this->elapsedMs($startedAt),
+            'slowest_step' => $slowestStep,
+        ];
+
+        foreach ($steps as $step => $durationMs) {
+            Log::info('score_save.profile_step', $baseContext + [
+                'step' => $step,
+                'duration_ms' => $durationMs,
+            ]);
+        }
+
+        Log::info('score_save.profile_completed', $baseContext + [
+            'steps' => $steps,
+        ]);
+    }
+
+    private function nilaiLookupKey(int $siswaId, int $mataPelajaranId, int $tahunAjaranId, ?int $lingkupMateriId = null, ?int $tujuanPembelajaranId = null): string
+    {
+        return implode('|', [
+            $siswaId,
+            $mataPelajaranId,
+            $tahunAjaranId,
+            $lingkupMateriId ?? 'null',
+            $tujuanPembelajaranId ?? 'null',
+        ]);
+    }
+
+    /**
+     * @return array<string, Nilai>
+     */
+    private function preloadNilaisByLogicalKey(array $studentIds, int $mataPelajaranId, int $tahunAjaranId): array
+    {
+        return Nilai::withTrashed()
+            ->whereIn('siswa_id', $studentIds)
+            ->where('mata_pelajaran_id', $mataPelajaranId)
+            ->where('tahun_ajaran_id', $tahunAjaranId)
+            ->orderBy('id')
             ->get()
-            ->each(fn (Siswa $siswa) => PdfCacheService::clearStudentCache($siswa, $tahunAjaranId, true));
+            ->mapWithKeys(fn (Nilai $nilai) => [
+                $this->nilaiLookupKey(
+                    (int) $nilai->siswa_id,
+                    (int) $nilai->mata_pelajaran_id,
+                    (int) $nilai->tahun_ajaran_id,
+                    $nilai->lingkup_materi_id !== null ? (int) $nilai->lingkup_materi_id : null,
+                    $nilai->tujuan_pembelajaran_id !== null ? (int) $nilai->tujuan_pembelajaran_id : null
+                ) => $nilai,
+            ])
+            ->all();
+    }
+
+    /**
+     * @return array{lm_ids: array<int, int>, tp_ids: array<int, int>}
+     */
+    private function scorePayloadLearningIds(array $scores): array
+    {
+        $lmIds = [];
+        $tpIds = [];
+
+        foreach ($scores as $scoreData) {
+            foreach (($scoreData['tp'] ?? []) as $lmId => $tpScores) {
+                $lmIds[] = (int) $lmId;
+
+                foreach ((array) $tpScores as $tpId => $_) {
+                    $tpIds[] = (int) $tpId;
+                }
+            }
+
+            foreach (($scoreData['lm'] ?? []) as $lmId => $_) {
+                $lmIds[] = (int) $lmId;
+            }
+        }
+
+        return [
+            'lm_ids' => array_values(array_unique(array_filter($lmIds))),
+            'tp_ids' => array_values(array_unique(array_filter($tpIds))),
+        ];
+    }
+
+    private function valuesAreEqual($current, $new): bool
+    {
+        if ($current === null || $new === null) {
+            return $current === null && $new === null;
+        }
+
+        if (is_bool($current) || is_bool($new)) {
+            return (bool) $current === (bool) $new;
+        }
+
+        if (is_numeric($current) && is_numeric($new)) {
+            return abs((float) $current - (float) $new) < 0.01;
+        }
+
+        return (string) $current === (string) $new;
+    }
+
+    private function nilaiDataChanged(Nilai $nilai, array $nilaiData): bool
+    {
+        foreach ($nilaiData as $key => $value) {
+            if (! $this->valuesAreEqual($nilai->{$key}, $value)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function findNilaiByLookupAttributes(array $lookupAttributes): ?Nilai
+    {
+        return Nilai::withTrashed()
+            ->where('siswa_id', $lookupAttributes['siswa_id'])
+            ->where('mata_pelajaran_id', $lookupAttributes['mata_pelajaran_id'])
+            ->where('tahun_ajaran_id', $lookupAttributes['tahun_ajaran_id'])
+            ->when(
+                $lookupAttributes['lingkup_materi_id'] === null,
+                fn ($query) => $query->whereNull('lingkup_materi_id'),
+                fn ($query) => $query->where('lingkup_materi_id', $lookupAttributes['lingkup_materi_id'])
+            )
+            ->when(
+                $lookupAttributes['tujuan_pembelajaran_id'] === null,
+                fn ($query) => $query->whereNull('tujuan_pembelajaran_id'),
+                fn ($query) => $query->where('tujuan_pembelajaran_id', $lookupAttributes['tujuan_pembelajaran_id'])
+            )
+            ->orderBy('id')
+            ->first();
+    }
+
+    /**
+     * @param array<string, Nilai> $existingNilais
+     * @return array{nilai: ?Nilai, changed: bool}
+     */
+    private function restoreOrUpdatePreloadedNilai(array &$existingNilais, array $attributes, array $nilaiData): array
+    {
+        $lookupAttributes = $this->normalizeNilaiLookupAttributes($attributes);
+        $key = $this->nilaiLookupKey(
+            (int) $lookupAttributes['siswa_id'],
+            (int) $lookupAttributes['mata_pelajaran_id'],
+            (int) $lookupAttributes['tahun_ajaran_id'],
+            $lookupAttributes['lingkup_materi_id'] !== null ? (int) $lookupAttributes['lingkup_materi_id'] : null,
+            $lookupAttributes['tujuan_pembelajaran_id'] !== null ? (int) $lookupAttributes['tujuan_pembelajaran_id'] : null
+        );
+        $existingNilai = $existingNilais[$key] ?? null;
+        $hasMeaningfulScore = $this->hasMeaningfulScoreData($nilaiData);
+
+        if (! $hasMeaningfulScore && ! $existingNilai) {
+            return ['nilai' => null, 'changed' => false];
+        }
+
+        if ($existingNilai) {
+            $changed = false;
+
+            if ($existingNilai->trashed()) {
+                if (! $hasMeaningfulScore) {
+                    return ['nilai' => null, 'changed' => false];
+                }
+
+                try {
+                    $existingNilai->restore();
+                } catch (\Exception $exception) {
+                    $reloaded = $this->findNilaiByLookupAttributes($lookupAttributes);
+
+                    if (! $reloaded || $reloaded->trashed()) {
+                        throw $exception;
+                    }
+
+                    $existingNilai = $reloaded;
+                }
+
+                $changed = true;
+            }
+
+            if ($this->nilaiDataChanged($existingNilai, $nilaiData)) {
+                $existingNilai->fill($nilaiData);
+
+                try {
+                    $existingNilai->save();
+                } catch (\Exception $exception) {
+                    $reloaded = $this->findNilaiByLookupAttributes($lookupAttributes);
+
+                    if (! $reloaded || $this->nilaiDataChanged($reloaded, $nilaiData)) {
+                        throw $exception;
+                    }
+
+                    $existingNilai = $reloaded;
+                }
+
+                $changed = true;
+            }
+
+            if (! $this->nilaiHasPersistedScores($existingNilai)) {
+                if (! $existingNilai->trashed()) {
+                    $existingNilai->delete();
+                    $changed = true;
+                }
+
+                return ['nilai' => null, 'changed' => $changed];
+            }
+
+            $existingNilais[$key] = $existingNilai;
+
+            return ['nilai' => $existingNilai, 'changed' => $changed];
+        }
+
+        try {
+            $nilai = Nilai::create(array_merge($lookupAttributes, $nilaiData));
+        } catch (\Exception $exception) {
+            $nilai = $this->findNilaiByLookupAttributes($lookupAttributes);
+
+            if (! $nilai || $this->nilaiDataChanged($nilai, $nilaiData)) {
+                throw $exception;
+            }
+        }
+
+        if (! $this->nilaiHasPersistedScores($nilai)) {
+            $nilai->delete();
+
+            return ['nilai' => null, 'changed' => false];
+        }
+
+        $existingNilais[$key] = $nilai;
+
+        return ['nilai' => $nilai, 'changed' => true];
     }
 
     private function studentScoreSnapshot(int $siswaId, int $mataPelajaranId, int $tahunAjaranId): array
@@ -506,61 +812,109 @@ class ScoreController extends Controller
 
     public function saveScore(Request $request, $id)
     {
+        $profileStartedAt = microtime(true);
+        $profileSteps = [];
+        $profilingEnabled = $this->scoreSaveProfilingEnabled();
+
+        if ($profilingEnabled) {
+            DB::connection()->flushQueryLog();
+            DB::connection()->enableQueryLog();
+        }
+
+        if ($profilingEnabled) {
+            Log::info('score_save.profile_started', [
+                'guru_id' => Auth::guard('guru')->id(),
+                'mata_pelajaran_id' => (int) $id,
+            ]);
+        }
+
+        $stepStartedAt = microtime(true);
         $tahunAjaranId = $this->getValidTahunAjaranId();
+        $this->addProfileStep($profileSteps, 'request_controller_setup', $this->elapsedMs($stepStartedAt));
 
         if (!$tahunAjaranId) {
+            if ($profilingEnabled) {
+                DB::connection()->disableQueryLog();
+            }
+
             return $this->failTahunAjaranNotSet($request, true);
         }
 
+        $stepStartedAt = microtime(true);
         $mataPelajaran = $this->authorizePengajarSubjectForSave($id, $tahunAjaranId);
+        $this->addProfileStep($profileSteps, 'authorization_context', $this->elapsedMs($stepStartedAt));
+
+        $stepStartedAt = microtime(true);
         $this->assertScorePayloadBelongsToSubject($request, $mataPelajaran, $tahunAjaranId);
+        $this->addProfileStep($profileSteps, 'validation', $this->elapsedMs($stepStartedAt));
+
+        $scores = $request->input('scores', []);
+        $studentIds = collect(array_keys(is_array($scores) ? $scores : []))
+            ->map(fn ($studentId) => (int) $studentId)
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+        $rowsChanged = 0;
+        $cacheStats = [
+            'students' => 0,
+            'cache_invalidation_ms' => 0.0,
+            'pdf_warmup_scheduling_ms' => 0.0,
+            'jobs_scheduled' => 0,
+        ];
 
         try {
-            DB::beginTransaction();
+            $stepStartedAt = microtime(true);
+            $learningIds = $this->scorePayloadLearningIds($scores);
+            $studentsById = Siswa::whereIn('id', $studentIds)->get()->keyBy('id');
+            $existingNilaisByKey = $this->preloadNilaisByLogicalKey($studentIds, (int) $id, (int) $tahunAjaranId);
+            $existingNilaisByStudent = collect($existingNilaisByKey)->groupBy(fn (Nilai $nilai) => (int) $nilai->siswa_id);
+            $tujuanPembelajarans = TujuanPembelajaran::whereIn('id', $learningIds['tp_ids'])->get()->keyBy('id');
+            $lingkupMateris = LingkupMateri::whereIn('id', $learningIds['lm_ids'])->get()->keyBy('id');
             $bobotNilai = BobotNilai::getDefault();
+            $this->addProfileStep($profileSteps, 'preload_context', $this->elapsedMs($stepStartedAt));
+
+            app()->instance('score_save.defer_nilai_pdf_cache_invalidation', true);
+            DB::beginTransaction();
             $savedData = [];
-            $notSavedData = []; // Tracking data yang tidak tersimpan
+            $notSavedData = [];
             $newlySubmittedStudents = [];
             $affectedStudentIds = [];
 
-            foreach($request->scores as $siswaId => $scoreData) {
-                $siswa = Siswa::find($siswaId);
+            foreach($scores as $siswaId => $scoreData) {
+                $siswaId = (int) $siswaId;
+                $siswa = $studentsById->get($siswaId);
 
                 if (!$siswa) {
                     continue;
                 }
 
-                $existingStudentNilais = Nilai::withTrashed()
-                    ->where('siswa_id', $siswaId)
-                    ->where('mata_pelajaran_id', $id)
-                    ->where('tahun_ajaran_id', $tahunAjaranId)
-                    ->get();
-
-                $wasSubmitted = Nilai::where('siswa_id', $siswaId)
-                    ->where('mata_pelajaran_id', $id)
-                    ->where('tahun_ajaran_id', $tahunAjaranId)
-                    ->where('is_submitted', true)
-                    ->exists();
+                $existingStudentNilais = $existingNilaisByStudent->get($siswaId, collect());
+                $wasSubmitted = $existingStudentNilais->contains(
+                    fn (Nilai $nilai) => ! $nilai->trashed() && (bool) $nilai->is_submitted
+                );
                 $hasActualInput = $this->studentHasActualInput($scoreData);
                 if (!$hasActualInput && $existingStudentNilais->isEmpty()) {
                     continue;
                 }
 
-                $scoreSnapshotBefore = $this->studentScoreSnapshot((int) $siswaId, (int) $id, (int) $tahunAjaranId);
-
                 $studentData = [
                     'nama' => $siswa->nama,
                     'nilai' => []
                 ];
-                $studentNotSaved = []; // Tracking nilai yang tidak tersimpan per siswa
+                $studentNotSaved = [];
+                $studentChanged = false;
 
-                // Simpan nilai TP dan LM
                 if (isset($scoreData['tp']) && is_array($scoreData['tp'])) {
                     foreach($scoreData['tp'] as $lmId => $tpScores) {
                         foreach($tpScores as $tpId => $nilai) {
                             try {
-                                $tp = TujuanPembelajaran::find($tpId);
-                                $lm = LingkupMateri::find($lmId);
+                                $tp = $tujuanPembelajarans->get((int) $tpId);
+                                $lm = $lingkupMateris->get((int) $lmId);
+
+                                if (! $tp || ! $lm) {
+                                    throw new \RuntimeException('TP atau Lingkup Materi tidak ditemukan.');
+                                }
                                 
                                 $nilaiData = [
                                     'nilai_tp' => $this->normalizeScoreValue($nilai)
@@ -569,8 +923,10 @@ class ScoreController extends Controller
                                 if ($tahunAjaranId) {
                                     $nilaiData['tahun_ajaran_id'] = $tahunAjaranId;
                                 }
-                                
-                                $this->restoreOrUpdateNilai(
+
+                                $stepStartedAt = microtime(true);
+                                $result = $this->restoreOrUpdatePreloadedNilai(
+                                    $existingNilaisByKey,
                                     [
                                         'siswa_id' => $siswaId,
                                         'mata_pelajaran_id' => $id,
@@ -580,6 +936,9 @@ class ScoreController extends Controller
                                     ],
                                     $nilaiData
                                 );
+                                $this->addProfileStep($profileSteps, 'nilai_update_create', $this->elapsedMs($stepStartedAt));
+                                $studentChanged = $studentChanged || $result['changed'];
+                                $rowsChanged += $result['changed'] ? 1 : 0;
 
                                 if ($nilai !== '' && $nilai !== null) {
                                     $studentData['nilai'][] = [
@@ -589,27 +948,32 @@ class ScoreController extends Controller
                                     ];
                                 }
                             } catch (\Exception $e) {
-                                $studentNotSaved[] = "TP {$tp->kode_tp}: {$e->getMessage()}";
+                                $studentNotSaved[] = 'TP '.($tp->kode_tp ?? $tpId).": {$e->getMessage()}";
                             }
                         }
                     }
                 }
                 
-                // Tambahkan kode untuk simpan nilai Lingkup Materi (LM)
                 if (isset($scoreData['lm']) && is_array($scoreData['lm'])) {
                     foreach($scoreData['lm'] as $lmId => $nilai) {
                         try {
-                            $lm = LingkupMateri::find($lmId);
+                            $lm = $lingkupMateris->get((int) $lmId);
+
+                            if (! $lm) {
+                                throw new \RuntimeException('Lingkup Materi tidak ditemukan.');
+                            }
                             
-                                $nilaiData = [
-                                    'nilai_lm' => $this->normalizeScoreValue($nilai)
-                                ];
+                            $nilaiData = [
+                                'nilai_lm' => $this->normalizeScoreValue($nilai)
+                            ];
                             
                             if ($tahunAjaranId) {
                                 $nilaiData['tahun_ajaran_id'] = $tahunAjaranId;
                             }
-                            
-                            $this->restoreOrUpdateNilai(
+
+                            $stepStartedAt = microtime(true);
+                            $result = $this->restoreOrUpdatePreloadedNilai(
+                                $existingNilaisByKey,
                                 [
                                     'siswa_id' => $siswaId,
                                     'mata_pelajaran_id' => $id,
@@ -618,6 +982,9 @@ class ScoreController extends Controller
                                 ],
                                 $nilaiData
                             );
+                            $this->addProfileStep($profileSteps, 'nilai_update_create', $this->elapsedMs($stepStartedAt));
+                            $studentChanged = $studentChanged || $result['changed'];
+                            $rowsChanged += $result['changed'] ? 1 : 0;
 
                             if ($nilai !== '' && $nilai !== null) {
                                 $studentData['nilai'][] = [
@@ -627,12 +994,12 @@ class ScoreController extends Controller
                                 ];
                             }
                         } catch (\Exception $e) {
-                            $studentNotSaved[] = "LM {$lm->judul_lingkup_materi}: {$e->getMessage()}";
+                            $studentNotSaved[] = 'LM '.($lm->judul_lingkup_materi ?? $lmId).": {$e->getMessage()}";
                         }
                     }
                 }
 
-                // Simpan nilai agregat
+                $stepStartedAt = microtime(true);
                 $finalScores = [];
                 $hasTpInput = $this->hasFilledScores($scoreData['tp'] ?? []);
                 $hasLmInput = $this->hasFilledScores($scoreData['lm'] ?? []);
@@ -652,6 +1019,7 @@ class ScoreController extends Controller
                 $nilaiAkhirRapor = $nilaiAkhirSemester !== null
                     ? $this->calculateNilaiAkhirRapor($naTp ?? 0.0, $naLm ?? 0.0, $nilaiAkhirSemester, $bobotNilai)
                     : null;
+                $this->addProfileStep($profileSteps, 'final_score_calculation', $this->elapsedMs($stepStartedAt));
 
                 $finalScores = [
                     'na_tp' => $naTp,
@@ -669,7 +1037,9 @@ class ScoreController extends Controller
                 
                 try {
                     if (!empty($finalScores)) {
-                        $savedFinalNilai = $this->restoreOrUpdateNilai(
+                        $stepStartedAt = microtime(true);
+                        $result = $this->restoreOrUpdatePreloadedNilai(
+                            $existingNilaisByKey,
                             [
                                 'siswa_id' => $siswaId,
                                 'mata_pelajaran_id' => $id,
@@ -677,6 +1047,10 @@ class ScoreController extends Controller
                             ],
                             $finalScores
                         );
+                        $this->addProfileStep($profileSteps, 'nilai_update_create', $this->elapsedMs($stepStartedAt));
+                        $savedFinalNilai = $result['nilai'];
+                        $studentChanged = $studentChanged || $result['changed'];
+                        $rowsChanged += $result['changed'] ? 1 : 0;
 
                         foreach($finalScores as $key => $value) {
                             if (!in_array($key, ['tahun_ajaran_id', 'is_submitted'], true) && $value !== null) {
@@ -703,20 +1077,26 @@ class ScoreController extends Controller
                     $notSavedData[$studentData['nama']] = $studentNotSaved;
                 }
 
-                if ($scoreSnapshotBefore !== $this->studentScoreSnapshot((int) $siswaId, (int) $id, (int) $tahunAjaranId)) {
+                if ($studentChanged) {
                     $affectedStudentIds[] = (int) $siswaId;
                 }
             }
 
             DB::commit();
+            app()->forgetInstance('score_save.defer_nilai_pdf_cache_invalidation');
 
+            $stepStartedAt = microtime(true);
             $guru = Auth::guard('guru')->user();
             DashboardController::clearProgressCacheForKelas(
                 $mataPelajaran->kelas_id,
                 $guru?->id
             );
-            $this->clearScorePdfCacheForStudents($affectedStudentIds, $tahunAjaranId);
+            $cacheStats = $this->clearScorePdfCacheForStudents($affectedStudentIds, $tahunAjaranId);
+            $this->addProfileStep($profileSteps, 'dashboard_cache_clear', max(0, $this->elapsedMs($stepStartedAt) - $cacheStats['cache_invalidation_ms'] - $cacheStats['pdf_warmup_scheduling_ms']));
+            $this->addProfileStep($profileSteps, 'cache_invalidation', $cacheStats['cache_invalidation_ms']);
+            $this->addProfileStep($profileSteps, 'pdf_warmup_scheduling', $cacheStats['pdf_warmup_scheduling_ms']);
 
+            $stepStartedAt = microtime(true);
             foreach (collect($newlySubmittedStudents)->unique('id') as $completedStudent) {
                 try {
                     $this->sendScoreCompletionNotification(
@@ -733,6 +1113,21 @@ class ScoreController extends Controller
                     ]);
                 }
             }
+            $this->addProfileStep($profileSteps, 'notifications', $this->elapsedMs($stepStartedAt));
+
+            $queryCount = $profilingEnabled ? count(DB::getQueryLog()) : 0;
+            if ($profilingEnabled) {
+                DB::connection()->disableQueryLog();
+            }
+            $this->logScoreSaveProfile($profileSteps, [
+                'guru_id' => $guru?->id,
+                'kelas_id' => $mataPelajaran->kelas_id,
+                'mata_pelajaran_id' => (int) $id,
+                'student_count' => count($studentIds),
+                'students_changed' => count(array_unique($affectedStudentIds)),
+                'rows_changed' => $rowsChanged,
+                'pdf_warmup_jobs_scheduled' => $cacheStats['jobs_scheduled'],
+            ], $profileStartedAt, $queryCount);
 
             return response()->json([
                 'success' => true,
@@ -742,7 +1137,15 @@ class ScoreController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            DB::rollback();
+            if (DB::transactionLevel() > 0) {
+                DB::rollback();
+            }
+
+            app()->forgetInstance('score_save.defer_nilai_pdf_cache_invalidation');
+
+            if ($profilingEnabled) {
+                DB::connection()->disableQueryLog();
+            }
             Log::error('[ScoreController] Save score failed', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
