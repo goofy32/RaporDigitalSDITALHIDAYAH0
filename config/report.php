@@ -12,4 +12,10 @@ return [
         'enabled' => (bool) env('REPORT_PDF_DASHBOARD_WARMUP_ENABLED', false),
         'cooldown_seconds' => (int) env('REPORT_PDF_DASHBOARD_WARMUP_COOLDOWN_SECONDS', 900),
     ],
+
+    'pdf_libreoffice' => [
+        'max_concurrent' => (int) env('REPORT_PDF_LIBREOFFICE_MAX_CONCURRENT', 0),
+        'lock_seconds' => (int) env('REPORT_PDF_LIBREOFFICE_LOCK_SECONDS', 180),
+        'lock_wait_seconds' => (int) env('REPORT_PDF_LIBREOFFICE_LOCK_WAIT_SECONDS', 120),
+    ],
 ];
