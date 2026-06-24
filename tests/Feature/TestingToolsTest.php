@@ -2,14 +2,17 @@
 
 namespace Tests\Feature;
 
+use App\Jobs\AutoPreparePdfReportJob;
 use App\Models\Guru;
 use App\Models\Nilai;
 use App\Models\ProfilSekolah;
 use App\Models\Siswa;
 use App\Models\User;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
 
@@ -26,6 +29,7 @@ class TestingToolsTest extends TestCase
 
         DB::purge('sqlite');
         DB::reconnect('sqlite');
+        Cache::flush();
 
         $this->createSchema();
     }
@@ -350,6 +354,246 @@ class TestingToolsTest extends TestCase
             ->assertSee('Kelas Simulasi Load Test')
             ->assertSee('Mapel Dummy Simulasi Load Test')
             ->assertSee('Siswa Dummy Simulasi Load Test 01');
+    }
+
+    public function test_multi_wali_load_commands_are_blocked_when_not_allowed(): void
+    {
+        config([
+            'app.env' => 'production',
+            'staging_test_tools.enabled' => false,
+        ]);
+
+        $this->artisan('staging:create-multi-wali-load-data')
+            ->expectsOutput('Command ini hanya boleh dijalankan di local, testing, staging, atau saat STAGING_TEST_TOOLS_ENABLED=true.')
+            ->assertFailed();
+
+        $this->artisan('staging:simulate-multi-wali-dashboard-warmup')
+            ->expectsOutput('Command ini hanya boleh dijalankan di local, testing, staging, atau saat STAGING_TEST_TOOLS_ENABLED=true.')
+            ->assertFailed();
+    }
+
+    public function test_multi_wali_load_data_dry_run_does_not_write_data(): void
+    {
+        $this->basicSetup();
+        config([
+            'app.env' => 'staging',
+            'staging_test_tools.enabled' => true,
+        ]);
+
+        $this->artisan('staging:create-multi-wali-load-data', [
+            '--wali' => 2,
+            '--students' => 3,
+            '--dry-run' => true,
+        ])->assertSuccessful();
+
+        $this->assertSame(0, DB::table('kelas')->where('nama_kelas', 'like', 'Kelas Load Test%')->count());
+        $this->assertSame(0, DB::table('gurus')->where('nama', 'like', 'Wali Load Test%')->count());
+        $this->assertSame(0, DB::table('siswas')->where('nama', 'like', 'Siswa Load Test%')->count());
+    }
+
+    public function test_multi_wali_load_data_is_idempotent_and_creates_realistic_report_rows(): void
+    {
+        $tahunAjaranId = $this->basicSetup();
+        $this->createActiveReportTemplate($tahunAjaranId);
+        config([
+            'app.env' => 'staging',
+            'staging_test_tools.enabled' => true,
+        ]);
+
+        $this->artisan('staging:create-multi-wali-load-data', [
+            '--wali' => 2,
+            '--students' => 3,
+        ])->assertSuccessful();
+
+        $this->artisan('staging:create-multi-wali-load-data', [
+            '--wali' => 2,
+            '--students' => 3,
+        ])->assertSuccessful();
+
+        $classIds = DB::table('kelas')
+            ->where('nama_kelas', 'like', 'Kelas Load Test%')
+            ->pluck('id');
+        $waliIds = DB::table('gurus')
+            ->where('nama', 'like', 'Wali Load Test%')
+            ->pluck('id');
+        $studentIds = DB::table('siswas')
+            ->where('nama', 'like', 'Siswa Load Test%')
+            ->pluck('id');
+        $subjectIds = DB::table('mata_pelajarans')
+            ->whereIn('kelas_id', $classIds)
+            ->pluck('id');
+
+        $this->assertCount(2, $classIds);
+        $this->assertCount(2, $waliIds);
+        $this->assertCount(6, $studentIds);
+        $this->assertCount(18, $subjectIds);
+
+        foreach ($classIds as $classId) {
+            $this->assertSame(3, DB::table('siswa_kelas_semester')
+                ->where('kelas_id', $classId)
+                ->where('tahun_ajaran_id', $tahunAjaranId)
+                ->where('semester', 1)
+                ->count());
+        }
+
+        foreach ($waliIds as $waliId) {
+            $this->assertSame(1, DB::table('guru_kelas')
+                ->join('kelas', 'guru_kelas.kelas_id', '=', 'kelas.id')
+                ->where('guru_kelas.guru_id', $waliId)
+                ->where('guru_kelas.is_wali_kelas', true)
+                ->where('guru_kelas.role', 'wali_kelas')
+                ->where('kelas.nama_kelas', 'like', 'Kelas Load Test%')
+                ->count());
+        }
+
+        $this->assertSame(36, DB::table('lingkup_materis')->whereIn('mata_pelajaran_id', $subjectIds)->count());
+        $this->assertSame(108, DB::table('tujuan_pembelajarans')
+            ->join('lingkup_materis', 'tujuan_pembelajarans.lingkup_materi_id', '=', 'lingkup_materis.id')
+            ->whereIn('lingkup_materis.mata_pelajaran_id', $subjectIds)
+            ->count());
+
+        $this->assertSame(486, DB::table('nilais')
+            ->whereIn('siswa_id', $studentIds)
+            ->whereIn('mata_pelajaran_id', $subjectIds)
+            ->count());
+        $this->assertSame(54, DB::table('nilais')
+            ->whereIn('siswa_id', $studentIds)
+            ->whereIn('mata_pelajaran_id', $subjectIds)
+            ->whereNull('tujuan_pembelajaran_id')
+            ->whereNull('lingkup_materi_id')
+            ->whereNotNull('nilai_akhir_rapor')
+            ->where('is_submitted', true)
+            ->count());
+        $this->assertGreaterThanOrEqual(78, (float) DB::table('nilais')->whereNotNull('nilai_tp')->min('nilai_tp'));
+        $this->assertLessThanOrEqual(95, (float) DB::table('nilais')->whereNotNull('nilai_tp')->max('nilai_tp'));
+        $this->assertGreaterThanOrEqual(80, (float) DB::table('nilais')->whereNotNull('nilai_tes')->min('nilai_tes'));
+        $this->assertLessThanOrEqual(92, (float) DB::table('nilais')->whereNotNull('nilai_tes')->max('nilai_tes'));
+
+        $this->assertSame(6, DB::table('absensis')->whereIn('siswa_id', $studentIds)->count());
+        $this->assertSame(6, DB::table('catatan_siswa')->whereIn('siswa_id', $studentIds)->count());
+        $this->assertSame(54, DB::table('catatan_mata_pelajaran')->whereIn('siswa_id', $studentIds)->count());
+        $this->assertSame(54, DB::table('capaian_custom')->whereIn('siswa_id', $studentIds)->count());
+    }
+
+    public function test_multi_wali_dashboard_warmup_schedules_only_dummy_owned_classes(): void
+    {
+        $tahunAjaranId = $this->basicSetup();
+        $this->createActiveReportTemplate($tahunAjaranId);
+        config([
+            'app.env' => 'staging',
+            'staging_test_tools.enabled' => true,
+            'report.pdf_auto_prepare.enabled' => true,
+            'report.pdf_dashboard_warmup.enabled' => true,
+            'report.pdf_auto_prepare.queue' => 'pdf-warm',
+        ]);
+
+        $this->artisan('staging:create-multi-wali-load-data', [
+            '--wali' => 1,
+            '--students' => 2,
+        ])->assertSuccessful();
+
+        $dummyWaliId = DB::table('gurus')->where('nama', 'Wali Load Test 01')->value('id');
+        $realClassId = $this->createClass($tahunAjaranId, 'A');
+        $realStudentId = Siswa::query()->insertGetId([
+            'nis' => 'REAL-WARM-001',
+            'nisn' => 'REAL-WARMN-001',
+            'nama' => 'Siswa Real Warmup',
+            'tanggal_lahir' => '2015-01-01',
+            'jenis_kelamin' => 'Laki-laki',
+            'agama' => 'Islam',
+            'alamat' => 'Alamat Real',
+            'kelas_id' => $realClassId,
+            'nama_ayah' => 'Ayah Real',
+            'nama_ibu' => 'Ibu Real',
+            'pekerjaan_ayah' => 'Wiraswasta',
+            'pekerjaan_ibu' => 'Ibu Rumah Tangga',
+            'alamat_orangtua' => 'Alamat Orang Tua Real',
+            'tahun_ajaran_id' => $tahunAjaranId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('siswa_kelas_semester')->insert([
+            'siswa_id' => $realStudentId,
+            'kelas_id' => $realClassId,
+            'tahun_ajaran_id' => $tahunAjaranId,
+            'semester' => 1,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('guru_kelas')->insert([
+            'guru_id' => $dummyWaliId,
+            'kelas_id' => $realClassId,
+            'is_wali_kelas' => true,
+            'role' => 'wali_kelas',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        Queue::fake();
+
+        $this->artisan('staging:simulate-multi-wali-dashboard-warmup', [
+            '--wali' => 1,
+        ])->assertSuccessful();
+
+        Queue::assertPushed(AutoPreparePdfReportJob::class, 2);
+        Queue::assertNotPushed(
+            AutoPreparePdfReportJob::class,
+            fn (AutoPreparePdfReportJob $job) => $job->siswaId === $realStudentId
+        );
+    }
+
+    public function test_multi_wali_dashboard_warmup_cooldown_blocks_duplicates_unless_ignored(): void
+    {
+        $tahunAjaranId = $this->basicSetup();
+        $this->createActiveReportTemplate($tahunAjaranId);
+        config([
+            'app.env' => 'staging',
+            'staging_test_tools.enabled' => true,
+            'report.pdf_auto_prepare.enabled' => true,
+            'report.pdf_dashboard_warmup.enabled' => true,
+            'report.pdf_dashboard_warmup.cooldown_seconds' => 900,
+            'report.pdf_auto_prepare.queue' => 'pdf-warm',
+        ]);
+
+        $this->artisan('staging:create-multi-wali-load-data', [
+            '--wali' => 1,
+            '--students' => 2,
+        ])->assertSuccessful();
+
+        Queue::fake();
+
+        $this->artisan('staging:simulate-multi-wali-dashboard-warmup', [
+            '--wali' => 1,
+        ])->assertSuccessful();
+        $this->app->forgetScopedInstances();
+
+        $this->artisan('staging:simulate-multi-wali-dashboard-warmup', [
+            '--wali' => 1,
+        ])->assertSuccessful();
+        Queue::assertPushed(AutoPreparePdfReportJob::class, 2);
+        $this->app->forgetScopedInstances();
+
+        $this->artisan('staging:simulate-multi-wali-dashboard-warmup', [
+            '--wali' => 1,
+            '--ignore-cooldown' => true,
+        ])->assertSuccessful();
+
+        Queue::assertPushed(AutoPreparePdfReportJob::class, 4);
+    }
+
+    private function createActiveReportTemplate(int $tahunAjaranId): int
+    {
+        return DB::table('report_templates')->insertGetId([
+            'filename' => 'load-test-template.docx',
+            'path' => 'templates/load-test-template.docx',
+            'type' => 'UTS',
+            'is_active' => true,
+            'kelas_id' => null,
+            'tahun_ajaran_id' => $tahunAjaranId,
+            'semester' => 1,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
     }
 
     private function basicSetup(): int
@@ -698,6 +942,78 @@ class TestingToolsTest extends TestCase
             $table->foreignId('kelas_id')->nullable();
             $table->foreignId('tahun_ajaran_id')->nullable();
             $table->integer('nilai')->default(70);
+            $table->timestamps();
+        });
+
+        Schema::create('absensis', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('siswa_id');
+            $table->integer('sakit')->default(0);
+            $table->integer('izin')->default(0);
+            $table->integer('tanpa_keterangan')->default(0);
+            $table->integer('semester')->default(1);
+            $table->foreignId('tahun_ajaran_id')->nullable();
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('catatan_siswa', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('siswa_id');
+            $table->text('catatan');
+            $table->foreignId('tahun_ajaran_id');
+            $table->integer('semester');
+            $table->string('type')->default('umum');
+            $table->foreignId('created_by');
+            $table->timestamps();
+        });
+
+        Schema::create('catatan_mata_pelajaran', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('mata_pelajaran_id');
+            $table->foreignId('siswa_id');
+            $table->text('catatan');
+            $table->foreignId('tahun_ajaran_id');
+            $table->integer('semester');
+            $table->string('type')->default('umum');
+            $table->foreignId('created_by');
+            $table->timestamps();
+        });
+
+        Schema::create('capaian_custom', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('siswa_id');
+            $table->foreignId('mata_pelajaran_id');
+            $table->text('custom_capaian')->nullable();
+            $table->text('custom_capaian_tertinggi')->nullable();
+            $table->text('custom_capaian_terendah')->nullable();
+            $table->string('tertinggi_prefix_mode')->nullable();
+            $table->text('tertinggi_prefix_text')->nullable();
+            $table->string('terendah_prefix_mode')->nullable();
+            $table->text('terendah_prefix_text')->nullable();
+            $table->foreignId('tahun_ajaran_id');
+            $table->tinyInteger('semester');
+            $table->timestamps();
+        });
+
+        Schema::create('report_templates', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('kelas_id')->nullable();
+            $table->string('filename')->nullable();
+            $table->string('path')->nullable();
+            $table->string('type');
+            $table->boolean('is_active')->default(false);
+            $table->string('tahun_ajaran')->nullable();
+            $table->string('tahun_ajaran_text')->nullable();
+            $table->integer('semester')->nullable();
+            $table->foreignId('tahun_ajaran_id')->nullable();
+            $table->timestamps();
+        });
+
+        Schema::create('report_template_kelas', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('report_template_id');
+            $table->foreignId('kelas_id');
             $table->timestamps();
         });
 

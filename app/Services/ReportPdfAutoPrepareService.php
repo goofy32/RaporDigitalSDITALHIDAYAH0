@@ -90,14 +90,20 @@ class ReportPdfAutoPrepareService
         return $scheduled;
     }
 
-    public function scheduleDashboardWarmupForWali(Guru $guru, TahunAjaran $tahunAjaran, ?int $semester = null): array
-    {
+    public function scheduleDashboardWarmupForWali(
+        Guru $guru,
+        TahunAjaran $tahunAjaran,
+        ?int $semester = null,
+        bool $ignoreCooldown = false,
+        ?array $onlyClassIds = null
+    ): array {
         $summary = [
             'classes' => 0,
             'students' => 0,
             'scheduled' => 0,
             'cached' => 0,
             'cooldown' => 0,
+            'cooldown_students' => 0,
             'skipped' => 0,
         ];
 
@@ -116,6 +122,10 @@ class ReportPdfAutoPrepareService
             return $summary;
         }
 
+        $onlyClassIds = $onlyClassIds === null
+            ? null
+            : collect($onlyClassIds)->map(fn ($id) => (int) $id)->filter()->unique()->values()->all();
+
         $classes = DB::table('guru_kelas')
             ->join('kelas', 'guru_kelas.kelas_id', '=', 'kelas.id')
             ->where('guru_kelas.guru_id', $guru->id)
@@ -123,6 +133,7 @@ class ReportPdfAutoPrepareService
             ->where('guru_kelas.role', 'wali_kelas')
             ->where('kelas.tahun_ajaran_id', $tahunAjaran->id)
             ->whereNull('kelas.deleted_at')
+            ->when($onlyClassIds !== null, fn ($query) => $query->whereIn('kelas.id', $onlyClassIds))
             ->select('kelas.id')
             ->get();
 
@@ -151,8 +162,9 @@ class ReportPdfAutoPrepareService
 
             $cooldownKey = $this->dashboardWarmupCooldownKey($guru->id, (int) $kelas->id, $type, (int) $tahunAjaran->id);
 
-            if (! Cache::add($cooldownKey, true, now()->addSeconds($this->dashboardWarmupCooldownSeconds()))) {
+            if (! $ignoreCooldown && ! Cache::add($cooldownKey, true, now()->addSeconds($this->dashboardWarmupCooldownSeconds()))) {
                 $summary['cooldown']++;
+                $summary['cooldown_students'] += $pendingStudents->count();
                 $summary['skipped'] += $pendingStudents->count();
 
                 continue;
