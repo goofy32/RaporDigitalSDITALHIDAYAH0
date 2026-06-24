@@ -780,6 +780,9 @@ Route::prefix('rapor')->name('rapor.')->group(function () {
         ->middleware('check.rapor.access')
         ->name('preview');
     Route::get('/check-templates', [ReportController::class, 'checkActiveTemplates'])->name('check-templates');
+    Route::get('/pdf-statuses', [ReportController::class, 'pdfStatuses'])
+        ->middleware('throttle:30,1')
+        ->name('pdf-statuses');
     Route::post('/batch-generate', [ReportController::class, 'generateBatchReport'])
         ->middleware('throttle:60,1')
         ->name('batch.generate');

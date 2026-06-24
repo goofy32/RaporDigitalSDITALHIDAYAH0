@@ -216,6 +216,7 @@ export const raporManagerPdf = {
             }
 
             if (result.status === 'processing') {
+                this.updatePdfStatus?.(siswaId, 'preparing');
                 const key = pdfPollKey(result.requestId, 'attachment');
 
                 Swal.fire({
@@ -245,6 +246,7 @@ export const raporManagerPdf = {
                 Swal.close();
             }
 
+            this.updatePdfStatus?.(siswaId, 'ready');
             openDownload(result.url);
 
             Swal.fire({
@@ -307,6 +309,7 @@ export const raporManagerPdf = {
             }
 
             if (result.status === 'processing') {
+                this.updatePdfStatus?.(siswaId, 'preparing');
                 result = await pollPdfUntilReady({
                     requestId: result.requestId,
                     pollUrl: result.pollUrl,
@@ -322,6 +325,7 @@ export const raporManagerPdf = {
                 });
             }
 
+            this.updatePdfStatus?.(siswaId, 'ready');
             if (!newWindow.closed) {
                 newWindow.location.href = result.url;
             }

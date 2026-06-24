@@ -3,6 +3,8 @@ export const raporManagerCore = {
         this.activeTab = this.$el.dataset.activeTab || 'UTS';
         this.tahunAjaranId = this.$el.dataset.tahunAjaranId || '';
         this.semester = parseInt(this.$el.dataset.semester || '0', 10);
+        this.pdfStatusUrl = this.$el.dataset.pdfStatusUrl || '';
+        this.dashboardWarmupEnabled = this.$el.dataset.dashboardWarmupEnabled === '1';
         try {
             this.pdfTemplateAvailability = JSON.parse(this.$el.dataset.pdfTemplateAvailability || '{}');
         } catch (error) {
@@ -15,7 +17,12 @@ export const raporManagerCore = {
             console.error('Error parsing PDF statuses:', error);
             this.pdfStatuses = {};
         }
+        this.$watch('activeTab', () => this.schedulePdfStatusRefresh());
         this.initializeTemplates();
+    },
+
+    destroy() {
+        this.clearPdfStatusRefresh();
     },
 
     async initializeTemplates() {
@@ -37,11 +44,13 @@ export const raporManagerCore = {
 
             localStorage.setItem('activeRaporTab', this.activeTab);
             this.initialized = true;
+            this.schedulePdfStatusRefresh();
         } catch (error) {
             console.error('Error initializing templates:', error);
             this.initialized = true;
             this.templateUTSActive = true;
             this.templateUASActive = false;
+            this.schedulePdfStatusRefresh();
         }
     },
 
@@ -84,6 +93,7 @@ export const raporManagerCore = {
 
         this.activeTab = tab;
         localStorage.setItem('activeRaporTab', tab);
+        this.schedulePdfStatusRefresh();
     },
 
     handleSearch(event) {
@@ -118,6 +128,103 @@ export const raporManagerCore = {
 
     pdfStatus(siswaId) {
         return this.pdfStatuses?.[siswaId]?.[this.activeTab] || 'missing';
+    },
+
+    updatePdfStatus(siswaId, status, type = null) {
+        const id = String(siswaId);
+        const targetType = type || this.activeTab;
+
+        if (!this.pdfStatuses[id]) {
+            this.pdfStatuses[id] = {};
+        }
+
+        this.pdfStatuses[id][targetType] = status;
+        this.schedulePdfStatusRefresh();
+    },
+
+    pdfStatusStudentIds() {
+        return Object.keys(this.pdfStatuses || {})
+            .map((id) => Number(id))
+            .filter((id) => Number.isInteger(id) && id > 0);
+    },
+
+    pdfStatusPollDelay() {
+        const statuses = this.pdfStatusStudentIds().map((id) => this.pdfStatus(id));
+
+        if (statuses.includes('preparing')) {
+            return 5000;
+        }
+
+        if (this.dashboardWarmupEnabled && statuses.includes('missing')) {
+            return 10000;
+        }
+
+        return null;
+    },
+
+    clearPdfStatusRefresh() {
+        if (this.pdfStatusTimer) {
+            clearTimeout(this.pdfStatusTimer);
+            this.pdfStatusTimer = null;
+        }
+    },
+
+    schedulePdfStatusRefresh() {
+        this.clearPdfStatusRefresh();
+
+        const delay = this.pdfStatusPollDelay();
+        if (!delay || !this.pdfStatusUrl) {
+            return;
+        }
+
+        this.pdfStatusTimer = setTimeout(() => this.refreshPdfStatuses(), delay);
+    },
+
+    async refreshPdfStatuses() {
+        const studentIds = this.pdfStatusStudentIds();
+
+        if (!studentIds.length || !this.pdfStatusUrl) {
+            return;
+        }
+
+        try {
+            const url = new URL(this.pdfStatusUrl, window.location.origin);
+            url.searchParams.set('type', this.activeTab);
+
+            if (this.tahunAjaranId) {
+                url.searchParams.set('tahun_ajaran_id', this.tahunAjaranId);
+            }
+
+            studentIds.forEach((id) => url.searchParams.append('student_ids[]', id));
+
+            const response = await fetch(url.toString(), {
+                method: 'GET',
+                headers: {
+                    Accept: 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest'
+                }
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
+            const data = await response.json();
+            Object.entries(data.statuses || {}).forEach(([id, status]) => {
+                this.updatePdfStatus(id, status, data.type || this.activeTab);
+            });
+
+            this.pdfStatusFailures = 0;
+        } catch (error) {
+            this.pdfStatusFailures += 1;
+
+            if (this.pdfStatusFailures >= 3) {
+                this.clearPdfStatusRefresh();
+                return;
+            }
+        }
+
+        this.schedulePdfStatusRefresh();
     },
 
     pdfStatusLabel(siswaId) {

@@ -110,7 +110,7 @@
                     <tr>
                         @foreach($mataPelajaran->lingkupMateris as $lm)
                             @foreach($lm->tujuanPembelajarans as $tp)
-                                <th class="px-4 py-2 border">TP {{ $tp->kode_tp }}</th>
+                                <th class="px-4 py-2 border">{{ $tp->display_kode_tp }}</th>
                             @endforeach
                         @endforeach
                         @foreach($mataPelajaran->lingkupMateris as $lm)

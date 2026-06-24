@@ -35,7 +35,18 @@
 @endphp
 
 <!-- Main Container with Single Alpine Instance -->
-<div x-data="raporManager" x-cloak class="p-4 bg-white mt-14" data-active-tab="{{ $type }}" data-tahun-ajaran-id="{{ session('tahun_ajaran_id') }}" data-semester="{{ $semester }}" data-pdf-template-availability='@json($pdfTemplateAvailability)' data-pdf-statuses='@json($pdfStatuses)'>
+<div
+    x-data="raporManager"
+    x-cloak
+    class="p-4 bg-white mt-14"
+    data-active-tab="{{ $type }}"
+    data-tahun-ajaran-id="{{ session('tahun_ajaran_id') }}"
+    data-semester="{{ $semester }}"
+    data-pdf-status-url="{{ route('wali_kelas.rapor.pdf-statuses') }}"
+    data-dashboard-warmup-enabled="{{ config('report.pdf_dashboard_warmup.enabled') ? '1' : '0' }}"
+    data-pdf-template-availability='@json($pdfTemplateAvailability)'
+    data-pdf-statuses='@json($pdfStatuses)'
+>
     
     <!-- Loading State -->
     <div x-show="!initialized" class="flex items-center justify-center p-12">

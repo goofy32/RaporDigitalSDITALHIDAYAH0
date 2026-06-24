@@ -128,7 +128,7 @@
                 <tr>
                     @foreach($mataPelajaran->lingkupMateris as $lm)
                         @foreach($lm->tujuanPembelajarans as $tp)
-                            <th class="px-4 py-2 border">TP {{ $tp->kode_tp }}</th>
+                            <th class="px-4 py-2 border">{{ $tp->display_kode_tp }}</th>
                         @endforeach
                     @endforeach
                     @foreach($mataPelajaran->lingkupMateris as $lm)
@@ -259,7 +259,7 @@
                             $nilaiTP = $existingScores[$student['id']]['tp'][$lm->id][$tp->id] ?? null;
                             if ($nilaiTP !== null && $nilaiTP !== '' && $nilaiTP < $kkmValue) {
                                 $needRemedial = true;
-                                $belowKkmValues[] = "TP {$tp->kode_tp}: {$nilaiTP}";
+                                $belowKkmValues[] = "TP {$tp->display_kode_tp}: {$nilaiTP}";
                             }
                         }
                     }

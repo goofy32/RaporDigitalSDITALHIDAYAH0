@@ -2553,6 +2553,90 @@ class ReportController extends Controller
         ]);
     }
 
+    public function pdfStatuses(Request $request)
+    {
+        $type = strtoupper((string) $request->query('type', 'UTS'));
+
+        if (! in_array($type, ['UTS', 'UAS'], true)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Tipe rapor tidak valid.',
+            ], 422);
+        }
+
+        $tahunAjaranId = $this->getValidTahunAjaranId(
+            $request->query('tahun_ajaran_id') ? (int) $request->query('tahun_ajaran_id') : null
+        );
+
+        if (! $tahunAjaranId) {
+            return $this->failTahunAjaranNotSet($request, true);
+        }
+
+        $tahunAjaran = TahunAjaran::find($tahunAjaranId);
+        if (! $tahunAjaran) {
+            return $this->failTahunAjaranNotSet($request, true);
+        }
+
+        $studentIds = collect($request->query('student_ids', []))
+            ->flatten()
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn ($id) => $id > 0)
+            ->unique()
+            ->values();
+
+        if ($studentIds->count() > 50) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Maksimal 50 status PDF dapat diperiksa sekaligus.',
+            ], 422);
+        }
+
+        if ($studentIds->isEmpty()) {
+            return response()->json([
+                'success' => true,
+                'type' => $type,
+                'statuses' => [],
+            ]);
+        }
+
+        $guru = auth()->guard('guru')->user();
+        abort_unless($guru, 403);
+
+        $kelas = DB::table('guru_kelas')
+            ->join('kelas', 'guru_kelas.kelas_id', '=', 'kelas.id')
+            ->where('guru_kelas.guru_id', $guru->id)
+            ->where('guru_kelas.is_wali_kelas', true)
+            ->where('guru_kelas.role', 'wali_kelas')
+            ->where('kelas.tahun_ajaran_id', $tahunAjaranId)
+            ->whereNull('kelas.deleted_at')
+            ->select('kelas.*')
+            ->first();
+
+        abort_unless($kelas, 403);
+
+        $students = app(SiswaKelasSemesterResolver::class)
+            ->studentQueryForClass((int) $kelas->id, (int) $tahunAjaranId, (int) $tahunAjaran->semester, true)
+            ->whereIn('siswas.id', $studentIds->all())
+            ->get();
+
+        $authorizedIds = $students->pluck('id')->map(fn ($id) => (int) $id)->sort()->values()->all();
+        $requestedIds = $studentIds->sort()->values()->all();
+
+        abort_unless($authorizedIds === $requestedIds, 403);
+
+        $statuses = [];
+        foreach ($students as $student) {
+            $statuses[$student->id] = PdfCacheService::getPdfPreparationStatus($student, $type, $tahunAjaranId);
+        }
+
+        return response()->json([
+            'success' => true,
+            'type' => $type,
+            'tahun_ajaran_id' => $tahunAjaranId,
+            'statuses' => $statuses,
+        ]);
+    }
+
     public function activate(ReportTemplate $template)
     {
         try {

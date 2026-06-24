@@ -718,6 +718,77 @@ class ReportCardAuthorizationTest extends TestCase
             ->assertSee('Belum siap');
     }
 
+    public function test_pdf_status_endpoint_returns_ready_for_cached_pdf(): void
+    {
+        $this->cachePdfForAuthorizedStudent('cached-status-endpoint.pdf');
+
+        $this->actingAsWali()
+            ->getJson(route('wali_kelas.rapor.pdf-statuses', [
+                'type' => 'UTS',
+                'tahun_ajaran_id' => $this->activeYearId,
+                'student_ids' => [$this->authorizedStudentId],
+            ]))
+            ->assertOk()
+            ->assertJsonPath("statuses.{$this->authorizedStudentId}", 'ready');
+    }
+
+    public function test_pdf_status_endpoint_returns_preparing_for_active_warmup_token(): void
+    {
+        $siswa = Siswa::findOrFail($this->authorizedStudentId);
+        Cache::put(
+            PdfCacheService::getAutoPrepareTokenKey($siswa, 'UTS', $this->activeYearId),
+            'active-warmup-token',
+            now()->addHour()
+        );
+
+        $this->actingAsWali()
+            ->getJson(route('wali_kelas.rapor.pdf-statuses', [
+                'type' => 'UTS',
+                'tahun_ajaran_id' => $this->activeYearId,
+                'student_ids' => [$this->authorizedStudentId],
+            ]))
+            ->assertOk()
+            ->assertJsonPath("statuses.{$this->authorizedStudentId}", 'preparing');
+    }
+
+    public function test_pdf_status_endpoint_returns_missing_without_cache_or_token(): void
+    {
+        $this->actingAsWali()
+            ->getJson(route('wali_kelas.rapor.pdf-statuses', [
+                'type' => 'UTS',
+                'tahun_ajaran_id' => $this->activeYearId,
+                'student_ids' => [$this->authorizedStudentId],
+            ]))
+            ->assertOk()
+            ->assertJsonPath("statuses.{$this->authorizedStudentId}", 'missing');
+    }
+
+    public function test_pdf_status_endpoint_rejects_students_outside_wali_class(): void
+    {
+        $this->actingAsWali()
+            ->getJson(route('wali_kelas.rapor.pdf-statuses', [
+                'type' => 'UTS',
+                'tahun_ajaran_id' => $this->activeYearId,
+                'student_ids' => [$this->otherClassStudentId],
+            ]))
+            ->assertForbidden();
+    }
+
+    public function test_report_index_exposes_pdf_status_polling_endpoint(): void
+    {
+        $this->fakeLibreOfficeAvailability();
+        $this->insertReportTemplate($this->currentClassId);
+
+        $this->actingAsWali()
+            ->get(route('wali_kelas.rapor.index', [
+                'type' => 'UTS',
+                'tahun_ajaran_id' => $this->activeYearId,
+            ]))
+            ->assertOk()
+            ->assertSee('/wali-kelas/rapor/pdf-statuses', false)
+            ->assertSee('data-dashboard-warmup-enabled', false);
+    }
+
     public function test_wali_cannot_clear_cache_for_student_from_another_class(): void
     {
         $this->actingAsWali()
