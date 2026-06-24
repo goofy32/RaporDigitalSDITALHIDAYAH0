@@ -39,6 +39,11 @@ class PdfCacheService
         return "pdf_progress_{$requestId}";
     }
 
+    public static function getAutoPrepareTokenKey(Siswa $siswa, $type, $tahunAjaranId): string
+    {
+        return self::CACHE_PREFIX . "auto_prepare_token_{$siswa->id}_{$type}_{$tahunAjaranId}";
+    }
+
     /**
      * Check if PDF exists in cache
      */
@@ -159,13 +164,18 @@ class PdfCacheService
     /**
      * Clear all PDF cache for a student
      */
-    public static function clearStudentCache(Siswa $siswa, ?int $tahunAjaranId = null): void
+    public static function clearStudentCache(Siswa $siswa, ?int $tahunAjaranId = null, bool $scheduleAutoPrepare = false): void
     {
         $types = ['UTS', 'UAS'];
 
         if ($tahunAjaranId) {
             foreach ($types as $type) {
                 self::removeCachedPdf($siswa, $type, $tahunAjaranId);
+            }
+
+            if ($scheduleAutoPrepare) {
+                app(ReportPdfAutoPrepareService::class)
+                    ->scheduleForStudent($siswa, $tahunAjaranId, $types, 'pdf_cache_invalidated');
             }
         } else {
             $indexKey = "pdf_cache_index_{$siswa->id}";
@@ -181,6 +191,16 @@ class PdfCacheService
                     $entry['type'],
                     $entry['tahun_ajaran_id']
                 );
+
+                if ($scheduleAutoPrepare) {
+                    app(ReportPdfAutoPrepareService::class)
+                        ->scheduleForStudent(
+                            $siswa,
+                            (int) $entry['tahun_ajaran_id'],
+                            [(string) $entry['type']],
+                            'pdf_cache_invalidated'
+                        );
+                }
             }
 
             Cache::forget($indexKey);

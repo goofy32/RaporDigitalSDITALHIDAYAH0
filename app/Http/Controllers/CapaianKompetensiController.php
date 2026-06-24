@@ -480,7 +480,7 @@ class CapaianKompetensiController extends Controller
             });
         }
 
-        PdfCacheService::clearStudentCache($siswa, $tahunAjaranId);
+        PdfCacheService::clearStudentCache($siswa, $tahunAjaranId, true);
 
         return redirect()
             ->route('wali_kelas.capaian_kompetensi.edit', $mataPelajaranId)
@@ -1092,7 +1092,7 @@ class CapaianKompetensiController extends Controller
     {
         Siswa::whereIn('id', $studentIds)
             ->get()
-            ->each(fn (Siswa $siswa) => PdfCacheService::clearStudentCache($siswa, $tahunAjaranId));
+            ->each(fn (Siswa $siswa) => PdfCacheService::clearStudentCache($siswa, $tahunAjaranId, true));
     }
 
     private function getCurrentSemester(int $tahunAjaranId): int

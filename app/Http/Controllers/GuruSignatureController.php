@@ -399,7 +399,7 @@ class GuruSignatureController extends Controller
 
             $resolver
                 ->studentsForClass((int) $kelas->id, (int) $tahunAjaranId, (int) $semester, true)
-                ->each(fn ($student) => PdfCacheService::clearStudentCache($student, (int) $tahunAjaranId));
+                ->each(fn ($student) => PdfCacheService::clearStudentCache($student, (int) $tahunAjaranId, true));
         }
     }
 }

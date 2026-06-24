@@ -106,7 +106,7 @@ class ScoreController extends Controller
 
         Siswa::whereIn('id', $studentIds)
             ->get()
-            ->each(fn (Siswa $siswa) => PdfCacheService::clearStudentCache($siswa, $tahunAjaranId));
+            ->each(fn (Siswa $siswa) => PdfCacheService::clearStudentCache($siswa, $tahunAjaranId, true));
     }
 
     private function hasMeaningfulScoreData(array $nilaiData): bool

@@ -19,7 +19,7 @@ class PdfCacheInvalidationObserver
         $siswa = Siswa::find($siswaId);
 
         if ($siswa) {
-            PdfCacheService::clearStudentCache($siswa, $tahunAjaranId);
+            PdfCacheService::clearStudentCache($siswa, $tahunAjaranId, true);
         }
     }
 

@@ -2,15 +2,18 @@
 
 namespace Tests\Feature;
 
+use App\Jobs\AutoPreparePdfReportJob;
 use App\Jobs\GeneratePdfReportJob;
 use App\Models\Siswa;
 use App\Services\DocumentConversionService;
 use App\Services\PdfCacheService;
+use App\Services\ReportPdfAutoPrepareService;
 use App\Services\ReportPerformanceTracker;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Mockery;
@@ -429,6 +432,100 @@ class ReportPerformanceTest extends TestCase
             PdfCacheService::getGenerationLockKey($first, 'UTS', 1),
             PdfCacheService::getGenerationLockKey($first, 'UTS', 2)
         );
+    }
+
+    public function test_pdf_auto_prepare_is_disabled_by_default_even_when_cache_is_cleared(): void
+    {
+        Queue::fake();
+        config()->set('report.pdf_auto_prepare.enabled', false);
+
+        $siswa = $this->createStudent('Disabled Auto Prepare', 'AUTO-DIS-001', 'AUTO-DIS-NISN-001');
+
+        PdfCacheService::clearStudentCache($siswa, 1, true);
+
+        Queue::assertNotPushed(AutoPreparePdfReportJob::class);
+    }
+
+    public function test_pdf_auto_prepare_schedules_delayed_warm_jobs_when_enabled(): void
+    {
+        Queue::fake();
+        config()->set('report.pdf_auto_prepare.enabled', true);
+        config()->set('report.pdf_auto_prepare.delay_seconds', 60);
+        config()->set('report.pdf_auto_prepare.queue', 'pdf-warm');
+
+        $siswa = $this->createStudent('Enabled Auto Prepare', 'AUTO-EN-001', 'AUTO-EN-NISN-001');
+        Storage::disk('public')->put('pdf_reports/old.pdf', 'PDF');
+        Cache::put(PdfCacheService::getCacheKey($siswa, 'UTS', 1), [
+            'path' => 'pdf_reports/old.pdf',
+            'filename' => 'old.pdf',
+            'file_size' => 3,
+            'generated_at' => now()->toISOString(),
+        ], now()->addHour());
+
+        PdfCacheService::clearStudentCache($siswa, 1, true);
+
+        $this->assertFalse(Cache::has(PdfCacheService::getCacheKey($siswa, 'UTS', 1)));
+        $this->assertFalse(Storage::disk('public')->exists('pdf_reports/old.pdf'));
+        $this->assertNotEmpty(Cache::get(PdfCacheService::getAutoPrepareTokenKey($siswa, 'UTS', 1)));
+        $this->assertNotEmpty(Cache::get(PdfCacheService::getAutoPrepareTokenKey($siswa, 'UAS', 1)));
+
+        Queue::assertPushedOn('pdf-warm', AutoPreparePdfReportJob::class);
+        Queue::assertPushed(AutoPreparePdfReportJob::class, 2);
+    }
+
+    public function test_repeated_pdf_auto_prepare_tokens_make_older_jobs_skip(): void
+    {
+        Queue::fake();
+        config()->set('report.pdf_auto_prepare.enabled', true);
+
+        $siswa = $this->createStudent('Stale Auto Prepare', 'AUTO-ST-001', 'AUTO-ST-NISN-001');
+
+        (new ReportPdfAutoPrepareService())->scheduleForStudent($siswa, 1, ['UTS'], 'first_change');
+        $oldToken = Cache::get(PdfCacheService::getAutoPrepareTokenKey($siswa, 'UTS', 1));
+
+        (new ReportPdfAutoPrepareService())->scheduleForStudent($siswa, 1, ['UTS'], 'second_change');
+        $newToken = Cache::get(PdfCacheService::getAutoPrepareTokenKey($siswa, 'UTS', 1));
+
+        $this->assertNotSame($oldToken, $newToken);
+
+        $this->mock(DocumentConversionService::class, function ($mock) {
+            $mock->shouldNotReceive('convertStorageDocxToPdf');
+        });
+
+        app()->call([
+            new AutoPreparePdfReportJob($siswa->id, 'UTS', 1, $oldToken, 'first_change'),
+            'handle',
+        ]);
+
+        $this->assertFalse(Cache::has(PdfCacheService::getCacheKey($siswa, 'UTS', 1)));
+        Queue::assertPushed(AutoPreparePdfReportJob::class, 2);
+    }
+
+    public function test_pdf_auto_prepare_job_skips_when_cache_already_exists(): void
+    {
+        config()->set('report.pdf_auto_prepare.enabled', true);
+
+        $siswa = $this->createStudent('Cache Hit Auto Prepare', 'AUTO-HIT-001', 'AUTO-HIT-NISN-001');
+        Storage::disk('public')->put('pdf_reports/auto-hit.pdf', 'PDF');
+        Cache::put(PdfCacheService::getCacheKey($siswa, 'UTS', 1), [
+            'path' => 'pdf_reports/auto-hit.pdf',
+            'filename' => 'auto-hit.pdf',
+            'file_size' => 3,
+            'generated_at' => now()->toISOString(),
+        ], now()->addHour());
+
+        Cache::put(PdfCacheService::getAutoPrepareTokenKey($siswa, 'UTS', 1), 'current-token', now()->addHour());
+
+        $this->mock(DocumentConversionService::class, function ($mock) {
+            $mock->shouldNotReceive('convertStorageDocxToPdf');
+        });
+
+        app()->call([
+            new AutoPreparePdfReportJob($siswa->id, 'UTS', 1, 'current-token', 'cache_hit_test'),
+            'handle',
+        ]);
+
+        $this->assertTrue(Cache::has(PdfCacheService::getCacheKey($siswa, 'UTS', 1)));
     }
 
     public function test_frontend_pdf_polling_is_turbo_safe_and_stops_on_terminal_states(): void

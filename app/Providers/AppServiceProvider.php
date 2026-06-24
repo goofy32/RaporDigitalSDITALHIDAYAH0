@@ -30,6 +30,7 @@ use App\Models\CapaianKompetensiCustom;
 use App\Services\DocumentConversionService;
 use App\Services\SiswaKelasSemesterResolver;
 use App\Services\ReportPerformanceTracker;
+use App\Services\ReportPdfAutoPrepareService;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -41,6 +42,7 @@ class AppServiceProvider extends ServiceProvider
         $this->app->scoped(SiswaKelasSemesterResolver::class);
         $this->app->scoped(ReportPerformanceTracker::class);
         $this->app->scoped(DocumentConversionService::class);
+        $this->app->scoped(ReportPdfAutoPrepareService::class);
 
         $this->app->bind(RaporTemplateProcessor::class, function ($app) {
             return new RaporTemplateProcessor();

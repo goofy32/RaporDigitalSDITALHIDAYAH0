@@ -2,12 +2,14 @@
 
 namespace Tests\Feature;
 
+use App\Jobs\AutoPreparePdfReportJob;
 use App\Models\Guru;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
 
@@ -70,6 +72,44 @@ class PengajarScoreAuthorizationTest extends TestCase
         $this->assertSame(1, DB::table('nilais')->whereNotNull('tujuan_pembelajaran_id')->whereNotNull('nilai_tp')->count());
         $this->assertSame(1, DB::table('nilais')->whereNotNull('lingkup_materi_id')->whereNull('tujuan_pembelajaran_id')->whereNotNull('nilai_lm')->count());
         $this->assertSame(1, DB::table('nilais')->whereNull('lingkup_materi_id')->whereNull('tujuan_pembelajaran_id')->whereNotNull('nilai_akhir_rapor')->count());
+    }
+
+    public function test_score_save_schedules_pdf_auto_prepare_when_enabled(): void
+    {
+        config()->set('report.pdf_auto_prepare.enabled', true);
+        config()->set('report.pdf_auto_prepare.delay_seconds', 60);
+        config()->set('report.pdf_auto_prepare.queue', 'pdf-warm');
+        Queue::fake();
+
+        $this->actingAsPengajar($this->budi)
+            ->postJson(route('pengajar.score.save_scores', $this->subjectId), [
+                'scores' => $this->validScoresPayload(),
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        Queue::assertPushedOn('pdf-warm', AutoPreparePdfReportJob::class);
+        Queue::assertPushed(AutoPreparePdfReportJob::class, 2);
+        Queue::assertPushed(AutoPreparePdfReportJob::class, function (AutoPreparePdfReportJob $job) {
+            return $job->siswaId === $this->studentId
+                && $job->tahunAjaranId === $this->activeYearId
+                && in_array($job->type, ['UTS', 'UAS'], true);
+        });
+    }
+
+    public function test_score_save_does_not_schedule_pdf_auto_prepare_when_disabled(): void
+    {
+        config()->set('report.pdf_auto_prepare.enabled', false);
+        Queue::fake();
+
+        $this->actingAsPengajar($this->budi)
+            ->postJson(route('pengajar.score.save_scores', $this->subjectId), [
+                'scores' => $this->validScoresPayload(),
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        Queue::assertNotPushed(AutoPreparePdfReportJob::class);
     }
 
     public function test_another_pengajar_receives_forbidden_and_existing_grades_are_not_modified(): void

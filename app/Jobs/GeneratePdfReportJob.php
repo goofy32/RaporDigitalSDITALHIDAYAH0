@@ -252,7 +252,7 @@ class GeneratePdfReportJob implements ShouldQueue
                 'trace' => $e->getTraceAsString(),
             ]);
 
-            Cache::forget(PdfCacheService::getGenerationRequestKey($this->siswa, $this->type, $this->tahunAjaranId));
+            $this->forgetGenerationRequestIfCurrent();
 
             $this->updateProgress(-1, 'PDF gagal disiapkan. Silakan coba lagi atau hubungi administrator.', [
                 'status' => 'failed',
@@ -280,7 +280,7 @@ class GeneratePdfReportJob implements ShouldQueue
             'attempts' => $this->attempts(),
         ]);
 
-        Cache::forget(PdfCacheService::getGenerationRequestKey($this->siswa, $this->type, $this->tahunAjaranId));
+        $this->forgetGenerationRequestIfCurrent();
 
         $this->updateProgress(-1, 'PDF gagal disiapkan. Silakan coba lagi atau hubungi administrator.', [
             'status' => 'failed',
@@ -424,6 +424,15 @@ class GeneratePdfReportJob implements ShouldQueue
             'progress_key' => $progressKey,
             'cache_stored' => Cache::has($progressKey),
         ]);
+    }
+
+    private function forgetGenerationRequestIfCurrent(): void
+    {
+        $requestKey = PdfCacheService::getGenerationRequestKey($this->siswa, $this->type, $this->tahunAjaranId);
+
+        if (Cache::get($requestKey) === $this->requestId) {
+            Cache::forget($requestKey);
+        }
     }
 
     private function createSecureDownloadUrl(string $relativePath, string $filename): string
