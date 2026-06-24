@@ -18,6 +18,7 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Js;
 use Tests\TestCase;
 
 class ReportCardAuthorizationTest extends TestCase
@@ -552,6 +553,48 @@ class ReportCardAuthorizationTest extends TestCase
             ->assertOk()
             ->assertDontSee('Template PDF belum tersedia untuk UTS', false)
             ->assertSee('"UTS":true', false);
+    }
+
+    public function test_report_index_js_encodes_student_names_in_report_actions(): void
+    {
+        $this->fakeLibreOfficeAvailability();
+        $this->insertReportTemplate($this->currentClassId);
+
+        $studentNamesById = [];
+        foreach ([
+            ['1010', "Siswa 2 Sa'ad 01"],
+            ['1011', 'Siswa "Test" 01'],
+            ['1012', "Siswa \\ Backslash\nUnicode \u{96EA} <script> & 01"],
+        ] as [$nis, $name]) {
+            $studentId = $this->insertStudent($nis, $name, $this->currentClassId);
+            $this->insertEnrollment($studentId, $this->currentClassId, $this->activeYearId, 1);
+            $this->insertReportData($studentId, $this->currentClassId, $this->activeYearId, $this->wali->id);
+            $studentNamesById[$studentId] = $name;
+        }
+
+        $html = $this->actingAsWali()
+            ->get(route('wali_kelas.rapor.index', [
+                'type' => 'UTS',
+                'tahun_ajaran_id' => $this->activeYearId,
+            ]))
+            ->assertOk()
+            ->getContent();
+
+        foreach ($studentNamesById as $studentId => $name) {
+            $encodedName = Js::from($name)->toHtml();
+
+            $this->assertStringContainsString(
+                "handleGenerate({$studentId}, 1, true, {$encodedName})",
+                $html
+            );
+            $this->assertStringContainsString(
+                "handleDownloadPdf({$studentId}, 1, true, {$encodedName})",
+                $html
+            );
+        }
+
+        $this->assertStringNotContainsString("'Siswa 2 Sa&#039;ad 01'", $html);
+        $this->assertStringNotContainsString("'Siswa &quot;Test&quot; 01'", $html);
     }
 
     public function test_wali_dashboard_schedules_pdf_warmup_for_owned_class_and_current_semester_only(): void

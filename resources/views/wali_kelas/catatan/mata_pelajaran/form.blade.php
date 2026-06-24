@@ -61,7 +61,7 @@
         <div class="space-y-4">
             @foreach($siswaList as $siswa)
                 <div class="border border-gray-200 rounded-lg p-4 hover:border-gray-300 transition-colors"
-                     x-show="filterSiswa('{{ $siswa->nama }}')"
+                     x-show="filterSiswa(@js($siswa->nama))"
                      x-transition>
                     
                     <!-- Student Header -->

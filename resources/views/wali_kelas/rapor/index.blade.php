@@ -292,7 +292,7 @@
                         <td class="px-1 py-4 text-center whitespace-nowrap">
                             <div class="flex items-center justify-center space-x-2">                                
                                 <!-- Download DOCX Button -->
-                                <button @click="handleGenerate({{ $s->id }}, {{ $nilaiCounts[$s->id] ?? 0 }}, {{ $s->absensi ? 'true' : 'false' }}, '{{ $s->nama }}')"
+                                <button @click="handleGenerate({{ $s->id }}, {{ $nilaiCounts[$s->id] ?? 0 }}, {{ $s->absensi ? 'true' : 'false' }}, @js($s->nama))"
                                     :disabled="!{{ $nilaiCounts[$s->id] ?? 0 }} || !{{ $s->absensi ? 'true' : 'false' }}"
                                     :class="{ 
                                         'opacity-50 cursor-not-allowed': !{{ $nilaiCounts[$s->id] ?? 0 }} || !{{ $s->absensi ? 'true' : 'false' }}, 
@@ -320,7 +320,7 @@
                                     <img src="{{ asset('images/icons/detail.png') }}" alt="Preview" class="action-icon">
                                 </button>
 
-                                <button @click="handleDownloadPdf({{ $s->id }}, {{ $nilaiCounts[$s->id] ?? 0 }}, {{ $s->absensi ? 'true' : 'false' }}, '{{ $s->nama }}')"
+                                <button @click="handleDownloadPdf({{ $s->id }}, {{ $nilaiCounts[$s->id] ?? 0 }}, {{ $s->absensi ? 'true' : 'false' }}, @js($s->nama))"
                                         @disabled(!$pdfAvailable || !$currentPdfTemplateAvailable)
                                         :disabled="!{{ $pdfAvailable ? 'true' : 'false' }} || !hasPdfTemplate({{ $s->id }}) || !{{ $nilaiCounts[$s->id] ?? 0 }} || !{{ $s->absensi ? 'true' : 'false' }} || loading"
                                         :class="{
