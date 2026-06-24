@@ -3,7 +3,10 @@
 namespace App\Services;
 
 use App\Jobs\AutoPreparePdfReportJob;
+use App\Models\ReportTemplate;
 use App\Models\Siswa;
+use App\Models\TahunAjaran;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -33,6 +36,14 @@ class ReportPdfAutoPrepareService
         }
 
         foreach ($types as $type) {
+            $unavailableReason = $this->unavailableReason($siswa, $type, $tahunAjaranId);
+
+            if ($unavailableReason) {
+                $this->logSkippedUnavailable($siswa, $type, $tahunAjaranId, $unavailableReason, $reason);
+
+                continue;
+            }
+
             $scopeKey = $this->scopeKey($siswa->id, $type, $tahunAjaranId);
 
             if (isset($this->scheduledThisScope[$scopeKey])) {
@@ -64,6 +75,39 @@ class ReportPdfAutoPrepareService
                 'reason' => $reason,
             ]);
         }
+    }
+
+    public function unavailableReason(Siswa $siswa, string $type, int $tahunAjaranId): ?string
+    {
+        $type = strtoupper($type);
+
+        if (! in_array($type, ['UTS', 'UAS'], true)) {
+            return 'invalid_report_type';
+        }
+
+        if (! Schema::hasTable('tahun_ajarans')) {
+            return null;
+        }
+
+        $tahunAjaran = TahunAjaran::find($tahunAjaranId);
+
+        if (! $tahunAjaran) {
+            return 'academic_year_unavailable';
+        }
+
+        if ((int) $tahunAjaran->semester !== $this->semesterForType($type)) {
+            return 'inactive_semester';
+        }
+
+        if (! Schema::hasTable('report_templates')) {
+            return null;
+        }
+
+        if (! $this->hasActiveTemplateForStudent($siswa, $type, $tahunAjaranId, (int) $tahunAjaran->semester)) {
+            return 'template_unavailable';
+        }
+
+        return null;
     }
 
     public function isLatestToken(Siswa $siswa, string $type, int $tahunAjaranId, string $token): bool
@@ -105,6 +149,68 @@ class ReportPdfAutoPrepareService
         }
 
         return isset($progress['user_id']) && $progress['user_id'] !== null;
+    }
+
+    private function hasActiveTemplateForStudent(Siswa $siswa, string $type, int $tahunAjaranId, int $semester): bool
+    {
+        $kelasId = $this->resolveReportClassId($siswa, $tahunAjaranId, $semester);
+
+        $baseQuery = fn () => ReportTemplate::query()
+            ->where('type', $type)
+            ->where('is_active', true)
+            ->where('tahun_ajaran_id', $tahunAjaranId)
+            ->where(function ($query) use ($semester) {
+                $query->whereNull('semester')
+                    ->orWhere('semester', $semester);
+            });
+
+        if ($kelasId) {
+            if (Schema::hasTable('report_template_kelas') &&
+                $baseQuery()->whereHas('kelasList', fn ($query) => $query->where('kelas_id', $kelasId))->exists()) {
+                return true;
+            }
+
+            if ($baseQuery()->where('kelas_id', $kelasId)->exists()) {
+                return true;
+            }
+        }
+
+        $query = $baseQuery()->whereNull('kelas_id');
+
+        if (Schema::hasTable('report_template_kelas')) {
+            $query->whereDoesntHave('kelasList');
+        }
+
+        return $query->exists();
+    }
+
+    private function resolveReportClassId(Siswa $siswa, int $tahunAjaranId, int $semester): ?int
+    {
+        try {
+            return app(SiswaKelasSemesterResolver::class)
+                ->resolveClass($siswa, $tahunAjaranId, $semester, true)?->id
+                ?: $siswa->kelas_id;
+        } catch (\Throwable) {
+            return $siswa->kelas_id;
+        }
+    }
+
+    private function logSkippedUnavailable(
+        Siswa $siswa,
+        string $type,
+        int $tahunAjaranId,
+        string $unavailableReason,
+        ?string $reason
+    ): void {
+        Log::info('report.pdf.auto_prepare_skipped_unavailable', [
+            'siswa_id' => $siswa->id,
+            'report_type' => $type,
+            'tahun_ajaran_id' => $tahunAjaranId,
+            'semester' => $this->semesterForType($type),
+            'cache_key' => PdfCacheService::getCacheKey($siswa, $type, $tahunAjaranId),
+            'unavailable_reason' => $unavailableReason,
+            'reason' => $reason,
+        ]);
     }
 
     private function enabled(): bool

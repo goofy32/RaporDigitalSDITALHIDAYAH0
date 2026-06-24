@@ -89,12 +89,13 @@ class PengajarScoreAuthorizationTest extends TestCase
             ->assertJsonPath('success', true);
 
         Queue::assertPushedOn('pdf-warm', AutoPreparePdfReportJob::class);
-        Queue::assertPushed(AutoPreparePdfReportJob::class, 2);
+        Queue::assertPushed(AutoPreparePdfReportJob::class, 1);
         Queue::assertPushed(AutoPreparePdfReportJob::class, function (AutoPreparePdfReportJob $job) {
             return $job->siswaId === $this->studentId
                 && $job->tahunAjaranId === $this->activeYearId
-                && in_array($job->type, ['UTS', 'UAS'], true);
+                && $job->type === 'UTS';
         });
+        Queue::assertNotPushed(AutoPreparePdfReportJob::class, fn (AutoPreparePdfReportJob $job) => $job->type === 'UAS');
     }
 
     public function test_score_save_does_not_schedule_pdf_auto_prepare_when_disabled(): void
@@ -273,6 +274,7 @@ class PengajarScoreAuthorizationTest extends TestCase
     {
         foreach ([
             'notifications',
+            'report_templates',
             'nilais',
             'tujuan_pembelajarans',
             'lingkup_materis',
@@ -425,6 +427,18 @@ class PengajarScoreAuthorizationTest extends TestCase
             $table->timestamps();
             $table->softDeletes();
         });
+
+        Schema::create('report_templates', function (Blueprint $table) {
+            $table->id();
+            $table->string('filename')->nullable();
+            $table->string('path')->nullable();
+            $table->string('type');
+            $table->boolean('is_active')->default(false);
+            $table->foreignId('kelas_id')->nullable();
+            $table->foreignId('tahun_ajaran_id')->nullable();
+            $table->integer('semester')->nullable();
+            $table->timestamps();
+        });
     }
 
     private function seedFixture(): void
@@ -503,6 +517,18 @@ class PengajarScoreAuthorizationTest extends TestCase
 
         $this->subjectId = $this->insertSubject('Matematika', $budiId, 1);
         $this->wrongSemesterSubjectId = $this->insertSubject('Matematika Genap', $budiId, 2);
+
+        DB::table('report_templates')->insert([
+            'filename' => 'template-uts.docx',
+            'path' => 'templates/template-uts.docx',
+            'type' => 'UTS',
+            'is_active' => true,
+            'kelas_id' => $this->classId,
+            'tahun_ajaran_id' => $this->activeYearId,
+            'semester' => 1,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
 
         $this->lingkupMateriId = DB::table('lingkup_materis')->insertGetId([
             'mata_pelajaran_id' => $this->subjectId,

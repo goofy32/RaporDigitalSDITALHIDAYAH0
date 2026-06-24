@@ -53,6 +53,7 @@ class ReportCardAuthorizationTest extends TestCase
         config()->set('session.driver', 'array');
         DB::purge('sqlite');
         DB::reconnect('sqlite');
+        Cache::flush();
 
         $this->createSchema();
         $this->seedAuthorizationFixture();

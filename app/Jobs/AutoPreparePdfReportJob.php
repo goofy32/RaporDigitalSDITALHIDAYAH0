@@ -49,6 +49,14 @@ class AutoPreparePdfReportJob implements ShouldQueue
             return;
         }
 
+        if ($unavailableReason = $autoPrepare->unavailableReason($siswa, $this->type, $this->tahunAjaranId)) {
+            $this->log('report.pdf.auto_prepare_skipped_unavailable', $startedAt, $siswa, [
+                'unavailable_reason' => $unavailableReason,
+            ]);
+
+            return;
+        }
+
         if (PdfCacheService::getCachedPdf($siswa, $this->type, $this->tahunAjaranId)) {
             $this->log('report.pdf.auto_prepare_skipped_cache_hit', $startedAt, $siswa);
 

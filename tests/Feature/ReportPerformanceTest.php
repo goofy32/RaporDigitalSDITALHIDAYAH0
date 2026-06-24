@@ -452,6 +452,8 @@ class ReportPerformanceTest extends TestCase
         config()->set('report.pdf_auto_prepare.enabled', true);
         config()->set('report.pdf_auto_prepare.delay_seconds', 60);
         config()->set('report.pdf_auto_prepare.queue', 'pdf-warm');
+        $this->insertAcademicYear(1, 1);
+        $this->insertReportTemplate('UTS', 1, 1);
 
         $siswa = $this->createStudent('Enabled Auto Prepare', 'AUTO-EN-001', 'AUTO-EN-NISN-001');
         Storage::disk('public')->put('pdf_reports/old.pdf', 'PDF');
@@ -467,16 +469,19 @@ class ReportPerformanceTest extends TestCase
         $this->assertFalse(Cache::has(PdfCacheService::getCacheKey($siswa, 'UTS', 1)));
         $this->assertFalse(Storage::disk('public')->exists('pdf_reports/old.pdf'));
         $this->assertNotEmpty(Cache::get(PdfCacheService::getAutoPrepareTokenKey($siswa, 'UTS', 1)));
-        $this->assertNotEmpty(Cache::get(PdfCacheService::getAutoPrepareTokenKey($siswa, 'UAS', 1)));
+        $this->assertNull(Cache::get(PdfCacheService::getAutoPrepareTokenKey($siswa, 'UAS', 1)));
 
         Queue::assertPushedOn('pdf-warm', AutoPreparePdfReportJob::class);
-        Queue::assertPushed(AutoPreparePdfReportJob::class, 2);
+        Queue::assertPushed(AutoPreparePdfReportJob::class, 1);
+        Queue::assertNotPushed(AutoPreparePdfReportJob::class, fn (AutoPreparePdfReportJob $job) => $job->type === 'UAS');
     }
 
     public function test_repeated_pdf_auto_prepare_tokens_make_older_jobs_skip(): void
     {
         Queue::fake();
         config()->set('report.pdf_auto_prepare.enabled', true);
+        $this->insertAcademicYear(1, 1);
+        $this->insertReportTemplate('UTS', 1, 1);
 
         $siswa = $this->createStudent('Stale Auto Prepare', 'AUTO-ST-001', 'AUTO-ST-NISN-001');
 
@@ -504,6 +509,8 @@ class ReportPerformanceTest extends TestCase
     public function test_pdf_auto_prepare_job_skips_when_cache_already_exists(): void
     {
         config()->set('report.pdf_auto_prepare.enabled', true);
+        $this->insertAcademicYear(1, 1);
+        $this->insertReportTemplate('UTS', 1, 1);
 
         $siswa = $this->createStudent('Cache Hit Auto Prepare', 'AUTO-HIT-001', 'AUTO-HIT-NISN-001');
         Storage::disk('public')->put('pdf_reports/auto-hit.pdf', 'PDF');
@@ -526,6 +533,37 @@ class ReportPerformanceTest extends TestCase
         ]);
 
         $this->assertTrue(Cache::has(PdfCacheService::getCacheKey($siswa, 'UTS', 1)));
+    }
+
+    public function test_pdf_auto_prepare_job_skips_unavailable_report_type_without_failure_log(): void
+    {
+        config()->set('report.pdf_auto_prepare.enabled', true);
+        $this->insertAcademicYear(1, 1);
+        $this->insertReportTemplate('UTS', 1, 1);
+
+        $siswa = $this->createStudent('Unavailable Auto Prepare', 'AUTO-NA-001', 'AUTO-NA-NISN-001');
+        Cache::put(PdfCacheService::getAutoPrepareTokenKey($siswa, 'UAS', 1), 'uas-token', now()->addHour());
+
+        $this->mock(DocumentConversionService::class, function ($mock) {
+            $mock->shouldNotReceive('convertStorageDocxToPdf');
+        });
+
+        Log::shouldReceive('info')
+            ->with('report.pdf.auto_prepare_failed', Mockery::any())
+            ->never();
+        Log::shouldReceive('info')
+            ->with('report.pdf.auto_prepare_skipped_unavailable', Mockery::on(function (array $context) use ($siswa) {
+                return $context['siswa_id'] === $siswa->id
+                    && $context['report_type'] === 'UAS'
+                    && $context['unavailable_reason'] === 'inactive_semester';
+            }))
+            ->once();
+
+        app()->call([
+            new AutoPreparePdfReportJob($siswa->id, 'UAS', 1, 'uas-token', 'queued_before_fix'),
+            'handle',
+        ]);
+        $this->assertFalse(Cache::has(PdfCacheService::getCacheKey($siswa, 'UAS', 1)));
     }
 
     public function test_frontend_pdf_polling_is_turbo_safe_and_stops_on_terminal_states(): void
@@ -562,8 +600,44 @@ class ReportPerformanceTest extends TestCase
         return Siswa::findOrFail($id);
     }
 
+    private function insertAcademicYear(int $id, int $semester): void
+    {
+        DB::table('tahun_ajarans')->insert([
+            'id' => $id,
+            'tahun_ajaran' => '2026/2027',
+            'is_active' => true,
+            'semester' => $semester,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function insertReportTemplate(string $type, int $tahunAjaranId, int $semester): void
+    {
+        DB::table('report_templates')->insert([
+            'filename' => "template-{$type}.docx",
+            'path' => "templates/template-{$type}.docx",
+            'type' => $type,
+            'is_active' => true,
+            'kelas_id' => null,
+            'tahun_ajaran_id' => $tahunAjaranId,
+            'semester' => $semester,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
     private function createSchema(): void
     {
+        Schema::create('tahun_ajarans', function (Blueprint $table) {
+            $table->id();
+            $table->string('tahun_ajaran');
+            $table->boolean('is_active')->default(false);
+            $table->integer('semester')->default(1);
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
         Schema::create('siswas', function (Blueprint $table) {
             $table->id();
             $table->string('nis')->nullable();
@@ -585,6 +659,18 @@ class ReportPerformanceTest extends TestCase
             $table->foreignId('tahun_ajaran_id')->nullable();
             $table->timestamps();
             $table->softDeletes();
+        });
+
+        Schema::create('report_templates', function (Blueprint $table) {
+            $table->id();
+            $table->string('filename')->nullable();
+            $table->string('path')->nullable();
+            $table->string('type');
+            $table->boolean('is_active')->default(false);
+            $table->foreignId('kelas_id')->nullable();
+            $table->foreignId('tahun_ajaran_id')->nullable();
+            $table->integer('semester')->nullable();
+            $table->timestamps();
         });
     }
 }
