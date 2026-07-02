@@ -179,74 +179,11 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
         Route::get('/auto-switch-tahun', [GeminiChatController::class, 'autoSwitchTahunAjaran'])->name('gemini.auto-switch');
         Route::delete('/clear-conversation', [GeminiChatController::class, 'resetConversation'])->name('reset-conversation');
 
-        if (app()->environment('local')) {
+        if (config('staging_test_tools.enabled')) {
             Route::get('/test-knowledge', [GeminiChatController::class, 'testKnowledgeBase'])->name('test-knowledge');
             Route::get('/debug-test', [GeminiChatController::class, 'debugTest'])->name('debug-test');
-            Route::get('/test-direct', [GeminiChatController::class, 'testGeminiDirectly'])->name('test-direct');
-            Route::get('/test-db', [GeminiChatController::class, 'testDatabaseConnection'])->name('test-db');
-            Route::get('/test-intent', [GeminiChatController::class, 'testIntentAnalysis'])->name('test-intent');
-            Route::get('/test-data', [GeminiChatController::class, 'testDataFetching'])->name('test-data');
-            Route::get('/debug-nilai', [GeminiChatController::class, 'debugNilaiData'])->name('gemini.debug-nilai');
         }
     });
-
-    if (app()->environment('local')) {
-        Route::get('/admin/gemini/test-database', function() {
-            try {
-                $tahunAjaranId = session('tahun_ajaran_id');
-                
-                $nilaiCount = \App\Models\Nilai::where('tahun_ajaran_id', $tahunAjaranId)
-                    ->whereNotNull('nilai_akhir_rapor')
-                    ->count();
-                    
-                $siswaCount = \App\Models\Siswa::whereHas('kelas', function($q) use ($tahunAjaranId) {
-                    $q->where('tahun_ajaran_id', $tahunAjaranId);
-                })->count();
-                
-                $kelasCount = \App\Models\Kelas::where('tahun_ajaran_id', $tahunAjaranId)->count();
-                
-                $mataPelajaranCount = \App\Models\MataPelajaran::where('tahun_ajaran_id', $tahunAjaranId)->count();
-                
-                $userRole = 'unknown';
-                if (Auth::guard('web')->check()) {
-                    $userRole = 'admin';
-                } elseif (Auth::guard('guru')->check()) {
-                    $userRole = session('selected_role') === 'wali_kelas' ? 'wali_kelas' : 'guru';
-                }
-                
-                return response()->json([
-                    'success' => true,
-                    'tahun_ajaran_id' => $tahunAjaranId,
-                    'user_role' => $userRole,
-                    'data_counts' => [
-                        'nilai' => $nilaiCount,
-                        'siswa' => $siswaCount,
-                        'kelas' => $kelasCount,
-                        'mata_pelajaran' => $mataPelajaranCount
-                    ],
-                    'sample_nilai' => \App\Models\Nilai::where('tahun_ajaran_id', $tahunAjaranId)
-                        ->with(['siswa', 'mataPelajaran'])
-                        ->whereNotNull('nilai_akhir_rapor')
-                        ->limit(3)
-                        ->get()
-                        ->map(function($nilai) {
-                            return [
-                                'siswa' => $nilai->siswa->nama ?? 'N/A',
-                                'mata_pelajaran' => $nilai->mataPelajaran->nama_pelajaran ?? 'N/A',
-                                'nilai' => $nilai->nilai_akhir_rapor
-                            ];
-                        })
-                ]);
-                
-            } catch (\Exception $e) {
-                return response()->json([
-                    'success' => false,
-                    'error' => $e->getMessage(),
-                    'trace' => $e->getTraceAsString()
-                ]);
-            }
-        })->middleware(['auth:web']);
-    }
 
     Route::prefix('kkm')->name('admin.kkm.')->group(function() {
         Route::get('/', [KkmController::class, 'index'])->name('index');
@@ -303,12 +240,14 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
     Route::get('/kelas-progress/{id}', [DashboardController::class, 'getKelasProgressAdmin'])
         ->name('admin.kelas.progress');
 
-    Route::prefix('testing/multi-user-simulation')->name('admin.testing.multi-user.')->group(function () {
-        Route::get('/', [StagingSimulationController::class, 'index'])->name('index');
-        Route::get('/queue-health', [StagingSimulationController::class, 'queueHealth'])->name('queue-health');
-        Route::post('/pdf', [StagingSimulationController::class, 'simulatePdf'])->name('pdf');
-        Route::post('/score', [StagingSimulationController::class, 'simulateScore'])->name('score');
-    });
+    if (config('staging_test_tools.enabled')) {
+        Route::prefix('testing/multi-user-simulation')->name('admin.testing.multi-user.')->group(function () {
+            Route::get('/', [StagingSimulationController::class, 'index'])->name('index');
+            Route::get('/queue-health', [StagingSimulationController::class, 'queueHealth'])->name('queue-health');
+            Route::post('/pdf', [StagingSimulationController::class, 'simulatePdf'])->name('pdf');
+            Route::post('/score', [StagingSimulationController::class, 'simulateScore'])->name('score');
+        });
+    }
     
     // Information/Notifications
     Route::prefix('information')->name('information.')->group(function () {
@@ -728,7 +667,7 @@ Route::post('/lingkup-materi/{id}/update', [SubjectController::class, 'updateLin
 // Ensure this route exists for tujuan pembelajaran view
 Route::get('/tujuan-pembelajaran/{mata_pelajaran_id}/view', [TujuanPembelajaranController::class, 'teacherView'])
     ->name('tujuan_pembelajaran.view');
-if (app()->environment('local')) {
+if (config('staging_test_tools.enabled')) {
     Route::get('/test-pdf-request', function() {
         try {
             $siswa = \App\Models\Siswa::first();
@@ -824,7 +763,7 @@ Route::prefix('rapor')->name('rapor.')->group(function () {
         ->middleware('throttle:10,1')
         ->name('batch.generate-pdf');
     
-    if (app()->environment('local')) {
+    if (config('staging_test_tools.enabled')) {
         Route::get('/test-pdf-conversion', [ReportController::class, 'testPdfConversion'])->name('test.pdf');
         Route::get('/conversion-status', [ReportController::class, 'getConversionStatus'])->name('conversion.status');
     }

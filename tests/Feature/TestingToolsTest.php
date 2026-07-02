@@ -14,6 +14,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
+use Symfony\Component\Process\Process;
 use Tests\TestCase;
 
 class TestingToolsTest extends TestCase
@@ -40,8 +41,64 @@ class TestingToolsTest extends TestCase
         config(['staging_test_tools.enabled' => false]);
 
         $this->actingAs(User::factory()->create())
-            ->get(route('admin.testing.multi-user.index'))
+            ->get('/admin/testing/multi-user-simulation')
             ->assertNotFound();
+    }
+
+    public function test_debug_web_routes_are_not_registered_when_staging_tools_are_disabled_in_production_like_environment(): void
+    {
+        $uris = $this->productionLikeRouteUrisWithStagingTools(false);
+
+        foreach ([
+            'admin/testing/multi-user-simulation',
+            'admin/gemini/debug-test',
+            'admin/gemini/test-knowledge',
+            'admin/gemini/test-direct',
+            'admin/gemini/test-db',
+            'admin/gemini/test-intent',
+            'admin/gemini/test-data',
+            'admin/admin/gemini/test-database',
+            'wali-kelas/test-pdf-request',
+            'wali-kelas/rapor/test-pdf-conversion',
+        ] as $fragment) {
+            $this->assertFalse(
+                collect($uris)->contains(fn (string $uri) => str_contains($uri, $fragment)),
+                "Unexpected debug/testing route registered: {$fragment}"
+            );
+        }
+    }
+
+    public function test_staging_web_routes_are_registered_only_when_staging_tools_are_enabled(): void
+    {
+        $uris = $this->productionLikeRouteUrisWithStagingTools(true);
+
+        foreach ([
+            'admin/testing/multi-user-simulation',
+            'admin/testing/multi-user-simulation/pdf',
+            'admin/testing/multi-user-simulation/score',
+            'admin/gemini/debug-test',
+            'admin/gemini/test-knowledge',
+            'wali-kelas/test-pdf-request',
+            'wali-kelas/rapor/test-pdf-conversion',
+        ] as $fragment) {
+            $this->assertTrue(
+                collect($uris)->contains(fn (string $uri) => str_contains($uri, $fragment)),
+                "Expected staging route was not registered: {$fragment}"
+            );
+        }
+
+        foreach ([
+            'admin/gemini/test-direct',
+            'admin/gemini/test-db',
+            'admin/gemini/test-intent',
+            'admin/gemini/test-data',
+            'admin/admin/gemini/test-database',
+        ] as $fragment) {
+            $this->assertFalse(
+                collect($uris)->contains(fn (string $uri) => str_contains($uri, $fragment)),
+                "Obsolete debug route should not be registered: {$fragment}"
+            );
+        }
     }
 
     public function test_route_is_accessible_to_admin_when_enabled(): void
@@ -170,7 +227,7 @@ class TestingToolsTest extends TestCase
         ]);
 
         $this->actingAs(User::factory()->create())
-            ->get(route('admin.testing.multi-user.index'))
+            ->get('/admin/testing/multi-user-simulation')
             ->assertNotFound();
     }
 
@@ -816,6 +873,32 @@ class TestingToolsTest extends TestCase
             nis: '1001',
             nisn: '2001'
         );
+    }
+
+    private function productionLikeRouteUrisWithStagingTools(bool $enabled): array
+    {
+        $process = new Process([
+            PHP_BINARY,
+            'artisan',
+            'route:list',
+            '--json',
+            '--no-ansi',
+        ], base_path(), [
+            'APP_ENV' => 'production',
+            'STAGING_TEST_TOOLS_ENABLED' => $enabled ? 'true' : 'false',
+        ]);
+
+        $process->run();
+
+        $this->assertTrue($process->isSuccessful(), $process->getErrorOutput());
+
+        $routes = json_decode($process->getOutput(), true, 512, JSON_THROW_ON_ERROR);
+
+        return collect($routes)
+            ->pluck('uri')
+            ->filter()
+            ->values()
+            ->all();
     }
 
     private function createContext(string $className, string $subjectName, string $studentName, string $nis, string $nisn): array
