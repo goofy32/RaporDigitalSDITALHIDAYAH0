@@ -137,10 +137,10 @@
                 data-type="{{ $report->type }}" 
                 data-kelas="{{ $report->kelas_id }}"
                 data-tahun-ajaran="{{ $report->tahun_ajaran_id }}"
-                data-search="{{ $report->siswa->nama }} {{ $report->siswa->nis }}">
+                data-search="{{ trim(($report->siswa?->nama ?? '') . ' ' . ($report->siswa?->nis ?? '')) }}">
                 <td class="px-6 py-4">{{ $reports->firstItem() + $index }}</td>
                 <td class="px-6 py-4 font-medium text-gray-900">
-                    {{ $report->siswa->nis }} - {{ $report->siswa->nama }}
+                    {{ $report->siswa?->nis ?? '-' }} - {{ $report->siswa?->nama ?? 'Siswa tidak tersedia' }}
                 </td>
                 <td class="px-6 py-4">{{ $report->kelas?->full_kelas ?? '-' }}</td>
                 <td class="px-6 py-4">
@@ -150,13 +150,13 @@
                 </td>
                 <td class="px-6 py-4">
                     @if($report->template && $report->template->kelas_id)
-                        <span class="text-xs">{{ $report->template->kelas->full_kelas }}</span>
+                        <span class="text-xs">{{ $report->template->kelas?->full_kelas ?? 'Kelas tidak tersedia' }}</span>
                     @else
                         <span class="text-xs text-gray-500">Global</span>
                     @endif
                 </td>
                 <td class="px-6 py-4">{{ $report->tahun_ajaran }}</td>
-                <td class="px-6 py-4">{{ $report->generator->nama }}</td>
+                <td class="px-6 py-4">{{ $report->generator?->nama ?? 'Guru tidak tersedia' }}</td>
                 <td class="px-6 py-4">{{ $report->created_at->format('d M Y H:i') }}</td>
                 <td class="px-1 py-4 text-center whitespace-nowrap">
                     <div class="flex items-center justify-center space-x-2">

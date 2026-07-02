@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\MessageBag;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 class SubjectController extends Controller
@@ -115,11 +116,13 @@ class SubjectController extends Controller
         \Log::info('Subject store method called with data:', $request->all());
 
         try {
+            $tahunAjaranId = session('tahun_ajaran_id');
+
             // Validasi array subjects
             $request->validate([
                 'subjects' => 'required|array',
                 'subjects.*.mata_pelajaran' => 'required|string|max:255',
-                'subjects.*.kelas' => 'required|exists:kelas,id',
+                'subjects.*.kelas' => ['required', $this->kelasExistsRule($tahunAjaranId)],
                 'subjects.*.guru_pengampu' => 'required|exists:gurus,id',
                 'subjects.*.semester' => 'required|integer|min:1|max:2',
                 'subjects.*.teaching_type' => 'nullable|in:regular,muatan_lokal,specialist',
@@ -401,10 +404,11 @@ class SubjectController extends Controller
     {
         try {
             $subject = MataPelajaran::findOrFail($id);
+            $tahunAjaranId = session('tahun_ajaran_id') ?: $subject->tahun_ajaran_id;
 
             $validated = $request->validate([
                 'mata_pelajaran' => 'required|string|max:255',
-                'kelas' => 'required|exists:kelas,id',
+                'kelas' => ['required', $this->kelasExistsRule($tahunAjaranId)],
                 'guru_pengampu' => 'required|exists:gurus,id',
                 'semester' => 'required|integer|min:1|max:2',
                 'teaching_type' => 'nullable|in:regular,muatan_lokal,specialist',
@@ -923,6 +927,17 @@ class SubjectController extends Controller
     private function subjectFlags(array $subjectData): array
     {
         return app(SubjectTeacherAssignmentValidator::class)->flagsFromRequest($subjectData);
+    }
+
+    private function kelasExistsRule(?int $tahunAjaranId)
+    {
+        $rule = Rule::exists('kelas', 'id');
+
+        if ($tahunAjaranId) {
+            $rule->where(fn ($query) => $query->where('tahun_ajaran_id', $tahunAjaranId));
+        }
+
+        return $rule;
     }
 
     /**

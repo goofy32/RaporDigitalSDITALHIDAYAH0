@@ -203,7 +203,7 @@ class SubjectTeacherAssignmentRuleTest extends TestCase
     {
         $this->postSubject('Matematika Tahun Lama', $this->oldKelas5AId, $this->budi->id, 'regular')
             ->assertRedirect()
-            ->assertSessionHasErrors('subjects.0.guru_pengampu');
+            ->assertSessionHasErrors('subjects.0.kelas');
 
         $this->assertDatabaseMissing('mata_pelajarans', ['nama_pelajaran' => 'Matematika Tahun Lama']);
     }

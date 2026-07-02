@@ -981,6 +981,41 @@ class ReportCardAuthorizationTest extends TestCase
             ->assertOk();
     }
 
+    public function test_admin_report_history_renders_when_related_student_teacher_or_class_is_deleted(): void
+    {
+        $templateId = $this->insertReportTemplate($this->currentClassId);
+
+        DB::table('report_generations')->insert([
+            'siswa_id' => $this->authorizedStudentId,
+            'kelas_id' => $this->currentClassId,
+            'report_template_id' => $templateId,
+            'generated_file' => 'generated/missing-history.docx',
+            'type' => 'UTS',
+            'tahun_ajaran_id' => $this->activeYearId,
+            'generated_by' => $this->wali->id,
+            'generated_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        DB::table('siswas')
+            ->where('id', $this->authorizedStudentId)
+            ->update(['deleted_at' => now()]);
+        DB::table('gurus')
+            ->where('id', $this->wali->id)
+            ->update(['deleted_at' => now()]);
+        DB::table('kelas')
+            ->where('id', $this->currentClassId)
+            ->update(['deleted_at' => now()]);
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession(['tahun_ajaran_id' => $this->activeYearId])
+            ->get(route('admin.report.history'))
+            ->assertOk()
+            ->assertSee('Authorized Student')
+            ->assertSee('Wali Kelas');
+    }
+
     private function actingAsWali(): self
     {
         return $this->actingAsWaliWithSession([

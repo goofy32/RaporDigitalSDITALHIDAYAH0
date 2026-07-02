@@ -31,6 +31,29 @@ class KkmController extends Controller
         return $this->getValidTahunAjaranId()
             ?? TahunAjaran::where('is_active', true)->value('id');
     }
+
+    private function validationErrorResponse(string $message)
+    {
+        return response()->json([
+            'success' => false,
+            'message' => $message,
+        ], 422);
+    }
+
+    private function classBelongsToTahunAjaran(int $kelasId, int $tahunAjaranId): bool
+    {
+        return Kelas::whereKey($kelasId)
+            ->where('tahun_ajaran_id', $tahunAjaranId)
+            ->exists();
+    }
+
+    private function subjectForKkmContext(int $mataPelajaranId, int $kelasId, int $tahunAjaranId): ?MataPelajaran
+    {
+        return MataPelajaran::whereKey($mataPelajaranId)
+            ->where('kelas_id', $kelasId)
+            ->where('tahun_ajaran_id', $tahunAjaranId)
+            ->first();
+    }
     
     public function store(Request $request)
     {
@@ -46,7 +69,17 @@ class KkmController extends Controller
         }
         
         try {
-            $mataPelajaran = MataPelajaran::find($request->mata_pelajaran_id);
+            $mataPelajaran = MataPelajaran::whereKey($request->mata_pelajaran_id)
+                ->where('tahun_ajaran_id', $tahunAjaranId)
+                ->first();
+
+            if (!$mataPelajaran || !$mataPelajaran->kelas_id) {
+                return $this->validationErrorResponse('Mata pelajaran tidak tersedia untuk tahun ajaran aktif.');
+            }
+
+            if (!$this->classBelongsToTahunAjaran((int) $mataPelajaran->kelas_id, $tahunAjaranId)) {
+                return $this->validationErrorResponse('Kelas mata pelajaran tidak sesuai dengan tahun ajaran aktif.');
+            }
             
             Kkm::updateOrCreate(
                 [
@@ -197,6 +230,10 @@ class KkmController extends Controller
             ], 422);
         }
 
+        if ((int) $kelas->tahun_ajaran_id !== (int) $tahunAjaranId) {
+            return $this->validationErrorResponse('Kelas tidak sesuai dengan tahun ajaran aktif.');
+        }
+
         $mataPelajarans = MataPelajaran::where('kelas_id', $kelas->id)
             ->where('tahun_ajaran_id', $tahunAjaranId)
             ->orderBy('nama_pelajaran')
@@ -233,6 +270,26 @@ class KkmController extends Controller
             'items.*.delete' => 'nullable|boolean',
         ]);
 
+        $tahunAjaranId = $this->resolveTahunAjaranId();
+
+        if (!$tahunAjaranId) {
+            return $this->failTahunAjaranNotSet($request, true);
+        }
+
+        if ((int) $validated['tahun_ajaran_id'] !== (int) $tahunAjaranId) {
+            return $this->validationErrorResponse('Tahun ajaran KKM tidak sesuai dengan konteks aktif.');
+        }
+
+        if (!$this->classBelongsToTahunAjaran((int) $validated['kelas_id'], (int) $tahunAjaranId)) {
+            return $this->validationErrorResponse('Kelas tidak sesuai dengan tahun ajaran aktif.');
+        }
+
+        foreach ($validated['items'] as $item) {
+            if (!$this->subjectForKkmContext((int) $item['mata_pelajaran_id'], (int) $validated['kelas_id'], (int) $tahunAjaranId)) {
+                return $this->validationErrorResponse('Mata pelajaran tidak tersedia untuk kelas dan tahun ajaran yang dipilih.');
+            }
+        }
+
         try {
             DB::beginTransaction();
 
@@ -240,6 +297,7 @@ class KkmController extends Controller
                 if (!empty($item['delete'])) {
                     Kkm::where('mata_pelajaran_id', $item['mata_pelajaran_id'])
                         ->where('tahun_ajaran_id', $validated['tahun_ajaran_id'])
+                        ->where('kelas_id', $validated['kelas_id'])
                         ->delete();
 
                     continue;

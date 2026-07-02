@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 
 class TeacherController extends Controller
 {
@@ -235,6 +236,8 @@ class TeacherController extends Controller
     public function store(Request $request)
     {
         return DB::transaction(function () use ($request) {
+            $tahunAjaranId = session('tahun_ajaran_id');
+
             // Validasi dasar tetap sama
             $rules = [
                 'nuptk' => 'nullable|numeric|digits_between:9,15|unique:gurus,nuptk',
@@ -253,10 +256,12 @@ class TeacherController extends Controller
             // Tambah validasi kelas_ids dan wali_kelas_id berdasarkan jabatan
             if ($request->jabatan === 'guru') {
                 $rules['kelas_ids'] = 'required|array';
+                $rules['kelas_ids.*'] = ['required', $this->kelasExistsRule($tahunAjaranId)];
             } elseif ($request->jabatan === 'guru_wali') {
-                $rules['wali_kelas_id'] = 'required|exists:kelas,id';
+                $rules['wali_kelas_id'] = ['required', $this->kelasExistsRule($tahunAjaranId)];
                 // Untuk guru_wali, kelas_ids bisa hanya berisi wali_kelas_id saja
                 $rules['kelas_ids'] = 'nullable|array';
+                $rules['kelas_ids.*'] = ['nullable', $this->kelasExistsRule($tahunAjaranId)];
             }
 
             $validated = $request->validate($rules, [
@@ -470,10 +475,12 @@ class TeacherController extends Controller
             // Tambah validasi berdasarkan jabatan
             if ($request->jabatan === 'guru') {
                 $rules['kelas_ids'] = 'required|array';
+                $rules['kelas_ids.*'] = ['required', $this->kelasExistsRule($tahunAjaranId)];
             } elseif ($request->jabatan === 'guru_wali') {
-                $rules['wali_kelas_id'] = 'required|exists:kelas,id';
+                $rules['wali_kelas_id'] = ['required', $this->kelasExistsRule($tahunAjaranId)];
                 // Untuk guru_wali, kelas_ids bisa hanya berisi wali_kelas_id saja
                 $rules['kelas_ids'] = 'nullable|array';
+                $rules['kelas_ids.*'] = ['nullable', $this->kelasExistsRule($tahunAjaranId)];
             }
 
             // Validasi password jika diisi
@@ -698,6 +705,17 @@ class TeacherController extends Controller
         $teacher->delete();
 
         return redirect()->route('teacher')->with('success', 'Data guru berhasil dihapus');
+    }
+
+    private function kelasExistsRule(?int $tahunAjaranId)
+    {
+        $rule = Rule::exists('kelas', 'id');
+
+        if ($tahunAjaranId) {
+            $rule->where(fn ($query) => $query->where('tahun_ajaran_id', $tahunAjaranId));
+        }
+
+        return $rule;
     }
 
     private function storePublicUpload(\Illuminate\Http\UploadedFile $file, string $folder, ?string $fileName = null): string

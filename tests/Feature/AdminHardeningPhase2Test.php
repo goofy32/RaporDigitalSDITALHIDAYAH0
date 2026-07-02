@@ -1,0 +1,865 @@
+<?php
+
+namespace Tests\Feature;
+
+use App\Models\BobotNilai;
+use App\Models\Guru;
+use App\Models\ReportTemplate;
+use App\Models\User;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Schema;
+use Tests\TestCase;
+
+class AdminHardeningPhase2Test extends TestCase
+{
+    private User $admin;
+
+    private Guru $guru;
+
+    private int $activeYearId;
+
+    private int $oldYearId;
+
+    private int $activeClassId;
+
+    private int $activeClassBId;
+
+    private int $oldClassId;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $this->withoutVite();
+        $this->withoutMiddleware(ValidateCsrfToken::class);
+
+        config()->set('database.default', 'sqlite');
+        config()->set('database.connections.sqlite.database', ':memory:');
+        config()->set('cache.default', 'array');
+        config()->set('session.driver', 'array');
+        DB::purge('sqlite');
+        DB::reconnect('sqlite');
+        Cache::flush();
+        Event::fake();
+
+        $this->createSchema();
+        $this->seedFixture();
+    }
+
+    public function test_audit_clear_all_requires_typed_confirmation(): void
+    {
+        $this->insertAuditLog('before');
+
+        $this->actingAsAdmin()
+            ->from(route('admin.audit.index'))
+            ->post(route('admin.audit.clear'), ['period' => 'all'])
+            ->assertRedirect(route('admin.audit.index'))
+            ->assertSessionHasErrors('confirmation');
+
+        $this->assertDatabaseCount('audit_logs', 1);
+
+        $this->actingAsAdmin()
+            ->from(route('admin.audit.index'))
+            ->post(route('admin.audit.clear'), [
+                'period' => 'all',
+                'confirmation' => 'hapus',
+            ])
+            ->assertRedirect(route('admin.audit.index'))
+            ->assertSessionHasErrors('confirmation');
+
+        $this->assertDatabaseCount('audit_logs', 1);
+
+        $this->actingAsAdmin()
+            ->post(route('admin.audit.clear'), [
+                'period' => 'all',
+                'confirmation' => 'HAPUS AUDIT LOG',
+            ])
+            ->assertRedirect(route('admin.audit.index'))
+            ->assertSessionHas('success');
+
+        $this->assertDatabaseCount('audit_logs', 0);
+    }
+
+    public function test_guru_cannot_clear_all_audit_logs(): void
+    {
+        $this->insertAuditLog('guarded');
+
+        $this->actingAs($this->guru, 'guru')
+            ->postJson(route('admin.audit.clear'), [
+                'period' => 'all',
+                'confirmation' => 'HAPUS AUDIT LOG',
+            ])
+            ->assertUnauthorized();
+
+        $this->assertDatabaseCount('audit_logs', 1);
+    }
+
+    public function test_recycle_bin_force_delete_all_requires_typed_confirmation(): void
+    {
+        $studentId = $this->insertDeletedStudent();
+
+        $this->actingAsAdmin()
+            ->deleteJson(route('admin.recycle-bin.force-delete-all'))
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('confirmation');
+
+        $this->assertNotNull(DB::table('siswas')->where('id', $studentId)->value('deleted_at'));
+
+        $this->actingAsAdmin()
+            ->deleteJson(route('admin.recycle-bin.force-delete-all'), [
+                'confirmation' => 'hapus',
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('confirmation');
+
+        $this->assertNotNull(DB::table('siswas')->where('id', $studentId)->value('deleted_at'));
+
+        $this->actingAsAdmin()
+            ->deleteJson(route('admin.recycle-bin.force-delete-all'), [
+                'confirmation' => 'HAPUS PERMANEN',
+            ])
+            ->assertOk()
+            ->assertJson(['success' => true]);
+
+        $this->assertDatabaseMissing('siswas', ['id' => $studentId]);
+    }
+
+    public function test_guru_cannot_force_delete_all_recycle_bin_items(): void
+    {
+        $this->insertDeletedStudent();
+
+        $this->actingAs($this->guru, 'guru')
+            ->deleteJson(route('admin.recycle-bin.force-delete-all'), [
+                'confirmation' => 'HAPUS PERMANEN',
+            ])
+            ->assertUnauthorized();
+
+        $this->assertSame(1, DB::table('siswas')->whereNotNull('deleted_at')->count());
+    }
+
+    public function test_cannot_delete_only_active_required_uts_template(): void
+    {
+        $template = $this->createTemplate('UTS', true, $this->activeClassId, 1);
+
+        $this->actingAsAdmin()
+            ->deleteJson(route('report.template.destroy', $template))
+            ->assertUnprocessable()
+            ->assertJsonPath('success', false)
+            ->assertJsonFragment(['message' => 'Template ini tidak dapat dihapus karena menjadi satu-satunya template aktif untuk rapor UTS/UAS pada konteks ini.']);
+
+        $this->assertDatabaseHas('report_templates', [
+            'id' => $template->id,
+            'is_active' => true,
+        ]);
+    }
+
+    public function test_cannot_deactivate_only_active_required_uas_template(): void
+    {
+        $template = $this->createTemplate('UAS', true, $this->activeClassId, 2);
+
+        $this->actingAsAdmin()
+            ->postJson(route('report.template.activate', $template))
+            ->assertUnprocessable()
+            ->assertJsonPath('success', false)
+            ->assertJsonFragment(['message' => 'Template ini tidak dapat dinonaktifkan karena menjadi satu-satunya template aktif untuk rapor UTS/UAS pada konteks ini.']);
+
+        $this->assertDatabaseHas('report_templates', [
+            'id' => $template->id,
+            'is_active' => true,
+        ]);
+    }
+
+    public function test_template_can_be_deleted_or_deactivated_when_active_fallback_remains(): void
+    {
+        $classTemplate = $this->createTemplate('UTS', true, $this->activeClassId, 1);
+        $this->createTemplate('UTS', true, null, 1);
+
+        $this->actingAsAdmin()
+            ->deleteJson(route('report.template.destroy', $classTemplate))
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $this->assertDatabaseMissing('report_templates', ['id' => $classTemplate->id]);
+
+        $template = $this->createTemplate('UAS', true, null, 2);
+        $fallback = $this->createTemplate('UAS', true, null, 2);
+
+        $this->actingAsAdmin()
+            ->postJson(route('report.template.activate', $template))
+            ->assertOk()
+            ->assertJsonPath('status', 'inactive');
+
+        $this->assertDatabaseHas('report_templates', [
+            'id' => $template->id,
+            'is_active' => false,
+        ]);
+        $this->assertDatabaseHas('report_templates', [
+            'id' => $fallback->id,
+            'is_active' => true,
+        ]);
+    }
+
+    public function test_activating_uts_template_does_not_deactivate_active_uas_template(): void
+    {
+        $uasTemplate = $this->createTemplate('UAS', true, null, 2);
+        $utsTemplate = $this->createTemplate('UTS', false, null, 1);
+
+        $this->actingAsAdmin()
+            ->postJson(route('report.template.activate', $utsTemplate))
+            ->assertOk()
+            ->assertJsonPath('status', 'active');
+
+        $this->assertDatabaseHas('report_templates', [
+            'id' => $utsTemplate->id,
+            'is_active' => true,
+        ]);
+        $this->assertDatabaseHas('report_templates', [
+            'id' => $uasTemplate->id,
+            'is_active' => true,
+        ]);
+    }
+
+    public function test_student_create_and_update_require_active_year_context(): void
+    {
+        DB::table('tahun_ajarans')->update(['is_active' => false]);
+        Cache::flush();
+
+        $this->actingAs($this->admin, 'web')
+            ->from(route('student.create'))
+            ->post(route('student.store'), $this->studentPayload([
+                'nis' => '12001',
+                'nisn' => '1200100001',
+            ]))
+            ->assertRedirect(route('student.create'))
+            ->assertSessionHas('error');
+
+        $this->assertDatabaseMissing('siswas', ['nis' => '12001']);
+
+        $studentId = $this->insertStudent([
+            'nis' => '12002',
+            'nisn' => '1200200002',
+            'nama' => 'Siswa Lama',
+            'kelas_id' => $this->activeClassId,
+            'tahun_ajaran_id' => $this->activeYearId,
+        ]);
+
+        $this->actingAs($this->admin, 'web')
+            ->from(route('student.edit', $studentId))
+            ->put(route('student.update', $studentId), $this->studentPayload([
+                'nis' => '12002',
+                'nisn' => '1200200002',
+                'nama' => 'Siswa Tanpa Tahun',
+            ]))
+            ->assertRedirect(route('student.edit', $studentId))
+            ->assertSessionHas('error');
+
+        $this->assertDatabaseHas('siswas', [
+            'id' => $studentId,
+            'nama' => 'Siswa Lama',
+        ]);
+    }
+
+    public function test_manual_student_uses_siswas_kelas_id_as_active_class_source_of_truth(): void
+    {
+        $this->actingAsAdmin()
+            ->post(route('student.store'), $this->studentPayload([
+                'nis' => '13001',
+                'nisn' => '1300100001',
+                'nama' => 'Siswa Manual',
+            ]))
+            ->assertRedirect(route('student'));
+
+        $studentId = (int) DB::table('siswas')->where('nis', '13001')->value('id');
+
+        $this->assertDatabaseHas('siswas', [
+            'id' => $studentId,
+            'kelas_id' => $this->activeClassId,
+            'tahun_ajaran_id' => $this->activeYearId,
+        ]);
+        $this->assertDatabaseCount('siswa_kelas_semester', 0);
+
+        $this->actingAsAdmin()
+            ->put(route('student.update', $studentId), $this->studentPayload([
+                'nis' => '13001',
+                'nisn' => '1300100001',
+                'nama' => 'Siswa Manual Update',
+                'kelas_id' => $this->activeClassBId,
+            ]))
+            ->assertRedirect(route('student'));
+
+        $this->assertDatabaseHas('siswas', [
+            'id' => $studentId,
+            'kelas_id' => $this->activeClassBId,
+            'tahun_ajaran_id' => $this->activeYearId,
+        ]);
+        $this->assertDatabaseCount('siswa_kelas_semester', 0);
+
+        $this->actingAsAdmin()
+            ->get(route('student', ['search' => 'Manual Update']))
+            ->assertOk()
+            ->assertSee('Siswa Manual Update')
+            ->assertSee('Kelas 2 B');
+    }
+
+    public function test_student_create_rejects_class_from_another_year_context(): void
+    {
+        $this->actingAsAdmin()
+            ->from(route('student.create'))
+            ->post(route('student.store'), $this->studentPayload([
+                'nis' => '13002',
+                'nisn' => '1300200002',
+                'kelas_id' => $this->oldClassId,
+            ]))
+            ->assertRedirect(route('student.create'))
+            ->assertSessionHasErrors('kelas_id');
+
+        $this->assertDatabaseMissing('siswas', ['nis' => '13002']);
+    }
+
+    public function test_valid_kkm_batch_save_accepts_class_subject_active_year(): void
+    {
+        $subjectId = $this->insertSubject($this->activeClassId, $this->activeYearId, 'Matematika');
+
+        $this->actingAsAdmin()
+            ->postJson(route('admin.kkm.batch-save'), [
+                'kelas_id' => $this->activeClassId,
+                'tahun_ajaran_id' => $this->activeYearId,
+                'items' => [
+                    ['mata_pelajaran_id' => $subjectId, 'nilai' => 78],
+                ],
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $this->assertDatabaseHas('kkms', [
+            'kelas_id' => $this->activeClassId,
+            'mata_pelajaran_id' => $subjectId,
+            'tahun_ajaran_id' => $this->activeYearId,
+            'nilai' => 78,
+        ]);
+    }
+
+    public function test_kkm_batch_save_rejects_class_from_another_year_context(): void
+    {
+        $subjectId = $this->insertSubject($this->oldClassId, $this->oldYearId, 'IPAS Lama');
+
+        $this->actingAsAdmin()
+            ->postJson(route('admin.kkm.batch-save'), [
+                'kelas_id' => $this->oldClassId,
+                'tahun_ajaran_id' => $this->activeYearId,
+                'items' => [
+                    ['mata_pelajaran_id' => $subjectId, 'nilai' => 80],
+                ],
+            ])
+            ->assertUnprocessable()
+            ->assertJsonPath('success', false);
+
+        $this->assertDatabaseCount('kkms', 0);
+    }
+
+    public function test_kkm_batch_save_rejects_subject_not_assigned_to_selected_class_year(): void
+    {
+        $subjectId = $this->insertSubject($this->activeClassBId, $this->activeYearId, 'Bahasa Indonesia');
+
+        $this->actingAsAdmin()
+            ->postJson(route('admin.kkm.batch-save'), [
+                'kelas_id' => $this->activeClassId,
+                'tahun_ajaran_id' => $this->activeYearId,
+                'items' => [
+                    ['mata_pelajaran_id' => $subjectId, 'nilai' => 82],
+                ],
+            ])
+            ->assertUnprocessable()
+            ->assertJsonPath('success', false)
+            ->assertJsonFragment(['message' => 'Mata pelajaran tidak tersedia untuk kelas dan tahun ajaran yang dipilih.']);
+
+        $this->assertDatabaseCount('kkms', 0);
+    }
+
+    public function test_kkm_store_rejects_subject_from_another_year_context(): void
+    {
+        $subjectId = $this->insertSubject($this->oldClassId, $this->oldYearId, 'PJOK Lama');
+
+        $this->actingAsAdmin()
+            ->postJson(route('admin.kkm.store'), [
+                'mata_pelajaran_id' => $subjectId,
+                'nilai' => 80,
+            ])
+            ->assertUnprocessable()
+            ->assertJsonPath('success', false);
+
+        $this->assertDatabaseCount('kkms', 0);
+    }
+
+    public function test_bobot_nilai_is_ratio_based_and_does_not_require_total_100(): void
+    {
+        $this->actingAsAdmin()
+            ->postJson(route('admin.bobot_nilai.update'), [
+                'bobot_tp' => 1,
+                'bobot_lm' => 1,
+                'bobot_as' => 2,
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $bobot = BobotNilai::where('tahun_ajaran_id', $this->activeYearId)->firstOrFail();
+
+        $this->assertSame(4, $bobot->getTotal());
+        $this->assertSame(25.0, $bobot->getTpPercentage());
+        $this->assertSame(50.0, $bobot->getAsPercentage());
+    }
+
+    private function actingAsAdmin(): self
+    {
+        return $this->actingAs($this->admin, 'web')->withSession($this->adminSession());
+    }
+
+    private function adminSession(): array
+    {
+        return [
+            'tahun_ajaran_id' => $this->activeYearId,
+            'selected_semester' => 1,
+            'no_tahun_ajaran' => false,
+        ];
+    }
+
+    private function studentPayload(array $overrides = []): array
+    {
+        return array_merge([
+            'nis' => '11001',
+            'nisn' => '1100100001',
+            'nama' => 'Siswa Baru',
+            'tanggal_lahir' => '2015-01-01',
+            'jenis_kelamin' => 'Laki-laki',
+            'agama' => 'Islam',
+            'alamat' => 'Jl. Testing',
+            'kelas_id' => $this->activeClassId,
+            'nama_ayah' => 'Ayah Testing',
+            'nama_ibu' => 'Ibu Testing',
+            'pekerjaan_ayah' => 'Guru',
+            'pekerjaan_ibu' => 'Guru',
+            'alamat_orangtua' => 'Jl. Orang Tua',
+            'wali_siswa' => '',
+            'pekerjaan_wali' => '',
+        ], $overrides);
+    }
+
+    private function createTemplate(string $type, bool $isActive, ?int $kelasId, ?int $semester): ReportTemplate
+    {
+        return ReportTemplate::create([
+            'filename' => strtolower($type) . '-' . uniqid('', true) . '.docx',
+            'path' => 'templates/' . strtolower($type) . '-' . uniqid('', true) . '.docx',
+            'type' => $type,
+            'is_active' => $isActive,
+            'tahun_ajaran' => '2025/2026',
+            'tahun_ajaran_text' => '2025/2026',
+            'semester' => $semester,
+            'kelas_id' => $kelasId,
+            'tahun_ajaran_id' => $this->activeYearId,
+        ]);
+    }
+
+    private function insertAuditLog(string $description): void
+    {
+        DB::table('audit_logs')->insert([
+            'user_type' => User::class,
+            'user_id' => $this->admin->id,
+            'action' => 'test',
+            'model_type' => null,
+            'model_id' => null,
+            'description' => $description,
+            'old_values' => null,
+            'new_values' => null,
+            'ip_address' => '127.0.0.1',
+            'user_agent' => 'phpunit',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function insertDeletedStudent(): int
+    {
+        return DB::table('siswas')->insertGetId([
+            'nis' => '90001',
+            'nisn' => '9000100001',
+            'nama' => 'Siswa Terhapus',
+            'tanggal_lahir' => '2015-01-01',
+            'jenis_kelamin' => 'Laki-laki',
+            'agama' => 'Islam',
+            'alamat' => 'Jl. Dihapus',
+            'kelas_id' => $this->activeClassId,
+            'nama_ayah' => 'Ayah',
+            'nama_ibu' => 'Ibu',
+            'pekerjaan_ayah' => '',
+            'pekerjaan_ibu' => '',
+            'alamat_orangtua' => '',
+            'photo' => null,
+            'wali_siswa' => '',
+            'pekerjaan_wali' => '',
+            'tahun_ajaran_id' => $this->activeYearId,
+            'status' => 'aktif',
+            'deleted_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function insertStudent(array $attributes): int
+    {
+        return DB::table('siswas')->insertGetId(array_merge([
+            'tanggal_lahir' => '2015-01-01',
+            'jenis_kelamin' => 'Laki-laki',
+            'agama' => 'Islam',
+            'alamat' => 'Jl. Testing',
+            'nama_ayah' => 'Ayah Testing',
+            'nama_ibu' => 'Ibu Testing',
+            'pekerjaan_ayah' => '',
+            'pekerjaan_ibu' => '',
+            'alamat_orangtua' => '',
+            'photo' => null,
+            'wali_siswa' => '',
+            'pekerjaan_wali' => '',
+            'status' => 'aktif',
+            'deleted_at' => null,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ], $attributes));
+    }
+
+    private function insertSubject(int $kelasId, int $tahunAjaranId, string $name): int
+    {
+        return DB::table('mata_pelajarans')->insertGetId([
+            'nama_pelajaran' => $name,
+            'kelas_id' => $kelasId,
+            'guru_id' => $this->guru->id,
+            'semester' => 1,
+            'is_muatan_lokal' => false,
+            'allow_non_wali' => false,
+            'tahun_ajaran_id' => $tahunAjaranId,
+            'deleted_at' => null,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function createSchema(): void
+    {
+        foreach ([
+            'bobot_nilais',
+            'kkms',
+            'report_template_kelas',
+            'report_templates',
+            'siswa_kelas_semester',
+            'siswas',
+            'absensis',
+            'prestasis',
+            'ekstrakurikulers',
+            'tujuan_pembelajarans',
+            'lingkup_materis',
+            'mata_pelajarans',
+            'guru_kelas',
+            'kelas',
+            'gurus',
+            'audit_logs',
+            'profil_sekolah',
+            'tahun_ajarans',
+            'users',
+        ] as $table) {
+            Schema::dropIfExists($table);
+        }
+
+        Schema::create('users', function (Blueprint $table) {
+            $table->id();
+            $table->string('name');
+            $table->string('username')->nullable();
+            $table->string('email')->unique();
+            $table->string('password');
+            $table->timestamp('email_verified_at')->nullable();
+            $table->rememberToken();
+            $table->timestamps();
+        });
+
+        Schema::create('tahun_ajarans', function (Blueprint $table) {
+            $table->id();
+            $table->string('tahun_ajaran');
+            $table->boolean('is_active')->default(false);
+            $table->date('tanggal_mulai')->nullable();
+            $table->date('tanggal_selesai')->nullable();
+            $table->unsignedTinyInteger('semester')->default(1);
+            $table->text('deskripsi')->nullable();
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('profil_sekolah', function (Blueprint $table) {
+            $table->id();
+            $table->string('nama_sekolah')->nullable();
+            $table->string('tahun_pelajaran')->nullable();
+            $table->unsignedTinyInteger('semester')->nullable();
+            $table->timestamps();
+        });
+
+        Schema::create('audit_logs', function (Blueprint $table) {
+            $table->id();
+            $table->string('user_type')->nullable();
+            $table->unsignedBigInteger('user_id')->nullable();
+            $table->string('action');
+            $table->string('model_type')->nullable();
+            $table->unsignedBigInteger('model_id')->nullable();
+            $table->text('description')->nullable();
+            $table->json('old_values')->nullable();
+            $table->json('new_values')->nullable();
+            $table->string('ip_address')->nullable();
+            $table->text('user_agent')->nullable();
+            $table->timestamps();
+        });
+
+        Schema::create('gurus', function (Blueprint $table) {
+            $table->id();
+            $table->string('nuptk')->nullable();
+            $table->string('nama');
+            $table->string('jenis_kelamin')->nullable();
+            $table->date('tanggal_lahir')->nullable();
+            $table->string('no_handphone')->nullable();
+            $table->string('email')->nullable()->unique();
+            $table->text('alamat')->nullable();
+            $table->string('jabatan')->nullable();
+            $table->string('username')->nullable()->unique();
+            $table->string('password');
+            $table->boolean('must_change_password')->default(false);
+            $table->string('photo')->nullable();
+            $table->string('signature_path')->nullable();
+            $table->rememberToken();
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('kelas', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedTinyInteger('nomor_kelas');
+            $table->string('nama_kelas');
+            $table->foreignId('tahun_ajaran_id')->nullable();
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('guru_kelas', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('guru_id');
+            $table->foreignId('kelas_id');
+            $table->boolean('is_wali_kelas')->default(false);
+            $table->string('role')->default('pengajar');
+            $table->timestamps();
+        });
+
+        Schema::create('mata_pelajarans', function (Blueprint $table) {
+            $table->id();
+            $table->string('nama_pelajaran');
+            $table->foreignId('kelas_id')->nullable();
+            $table->foreignId('guru_id')->nullable();
+            $table->unsignedTinyInteger('semester')->default(1);
+            $table->boolean('is_muatan_lokal')->default(false);
+            $table->boolean('allow_non_wali')->default(false);
+            $table->foreignId('tahun_ajaran_id')->nullable();
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('lingkup_materis', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('mata_pelajaran_id')->nullable();
+            $table->string('judul_lingkup_materi');
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('tujuan_pembelajarans', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('lingkup_materi_id')->nullable();
+            $table->string('kode_tp')->nullable();
+            $table->text('deskripsi_tp')->nullable();
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('ekstrakurikulers', function (Blueprint $table) {
+            $table->id();
+            $table->string('nama_ekstrakurikuler');
+            $table->string('pembina')->nullable();
+            $table->foreignId('tahun_ajaran_id')->nullable();
+            $table->unsignedTinyInteger('semester')->nullable();
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('prestasis', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('siswa_id')->nullable();
+            $table->foreignId('kelas_id')->nullable();
+            $table->string('jenis_prestasi');
+            $table->text('keterangan')->nullable();
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('absensis', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('siswa_id')->nullable();
+            $table->foreignId('tahun_ajaran_id')->nullable();
+            $table->unsignedTinyInteger('semester')->default(1);
+            $table->unsignedTinyInteger('sakit')->default(0);
+            $table->unsignedTinyInteger('izin')->default(0);
+            $table->unsignedTinyInteger('tanpa_keterangan')->default(0);
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('siswas', function (Blueprint $table) {
+            $table->id();
+            $table->string('nis')->unique();
+            $table->string('nisn')->unique();
+            $table->string('nama');
+            $table->date('tanggal_lahir')->nullable();
+            $table->string('jenis_kelamin')->nullable();
+            $table->string('agama')->nullable();
+            $table->text('alamat')->nullable();
+            $table->foreignId('kelas_id')->nullable();
+            $table->string('nama_ayah')->nullable();
+            $table->string('nama_ibu')->nullable();
+            $table->string('pekerjaan_ayah')->nullable();
+            $table->string('pekerjaan_ibu')->nullable();
+            $table->text('alamat_orangtua')->nullable();
+            $table->string('photo')->nullable();
+            $table->string('wali_siswa')->nullable();
+            $table->string('pekerjaan_wali')->nullable();
+            $table->foreignId('tahun_ajaran_id')->nullable();
+            $table->string('status')->default('aktif');
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('siswa_kelas_semester', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('siswa_id');
+            $table->foreignId('kelas_id');
+            $table->foreignId('tahun_ajaran_id');
+            $table->unsignedTinyInteger('semester');
+            $table->timestamps();
+            $table->unique(['siswa_id', 'tahun_ajaran_id', 'semester']);
+        });
+
+        Schema::create('report_templates', function (Blueprint $table) {
+            $table->id();
+            $table->string('filename');
+            $table->string('path')->nullable();
+            $table->string('type');
+            $table->boolean('is_active')->default(false);
+            $table->string('tahun_ajaran')->nullable();
+            $table->string('tahun_ajaran_text')->nullable();
+            $table->unsignedTinyInteger('semester')->nullable();
+            $table->foreignId('kelas_id')->nullable();
+            $table->foreignId('tahun_ajaran_id')->nullable();
+            $table->timestamps();
+        });
+
+        Schema::create('report_template_kelas', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('report_template_id');
+            $table->foreignId('kelas_id');
+            $table->timestamps();
+        });
+
+        Schema::create('kkms', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('mata_pelajaran_id');
+            $table->foreignId('kelas_id')->nullable();
+            $table->foreignId('tahun_ajaran_id');
+            $table->unsignedTinyInteger('nilai');
+            $table->timestamps();
+        });
+
+        Schema::create('bobot_nilais', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('tahun_ajaran_id')->nullable();
+            $table->unsignedTinyInteger('bobot_tp')->default(1);
+            $table->unsignedTinyInteger('bobot_lm')->default(1);
+            $table->unsignedTinyInteger('bobot_as')->default(2);
+            $table->timestamps();
+        });
+    }
+
+    private function seedFixture(): void
+    {
+        $this->admin = User::create([
+            'name' => 'Admin Test',
+            'username' => 'admin_test',
+            'email' => 'admin@example.test',
+            'password' => Hash::make('password'),
+        ]);
+
+        $this->guru = Guru::create([
+            'nama' => 'Guru Test',
+            'username' => 'guru_test',
+            'email' => 'guru@example.test',
+            'password' => Hash::make('password'),
+            'jabatan' => 'guru_wali',
+        ]);
+
+        $this->activeYearId = DB::table('tahun_ajarans')->insertGetId([
+            'tahun_ajaran' => '2025/2026',
+            'is_active' => true,
+            'semester' => 1,
+            'tanggal_mulai' => '2025-07-01',
+            'tanggal_selesai' => '2026-06-30',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->oldYearId = DB::table('tahun_ajarans')->insertGetId([
+            'tahun_ajaran' => '2024/2025',
+            'is_active' => false,
+            'semester' => 2,
+            'tanggal_mulai' => '2024-07-01',
+            'tanggal_selesai' => '2025-06-30',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        DB::table('profil_sekolah')->insert([
+            'nama_sekolah' => 'SDIT Test',
+            'tahun_pelajaran' => '2025/2026',
+            'semester' => 1,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->activeClassId = $this->insertClass(1, 'A', $this->activeYearId);
+        $this->activeClassBId = $this->insertClass(2, 'B', $this->activeYearId);
+        $this->oldClassId = $this->insertClass(1, 'Lama', $this->oldYearId);
+
+        DB::table('guru_kelas')->insert([
+            'guru_id' => $this->guru->id,
+            'kelas_id' => $this->activeClassId,
+            'is_wali_kelas' => true,
+            'role' => 'wali_kelas',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function insertClass(int $number, string $name, int $yearId): int
+    {
+        return DB::table('kelas')->insertGetId([
+            'nomor_kelas' => $number,
+            'nama_kelas' => $name,
+            'tahun_ajaran_id' => $yearId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+}

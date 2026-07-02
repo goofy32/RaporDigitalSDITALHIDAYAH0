@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
 class StudentController extends Controller
@@ -182,7 +183,7 @@ class StudentController extends Controller
     {
         $tahunAjaranId = $this->getValidTahunAjaranId();
 
-        if (!$tahunAjaranId) {
+        if (!$tahunAjaranId || !$this->isActiveTahunAjaran($tahunAjaranId)) {
             return $this->failTahunAjaranNotSet($request);
         }
 
@@ -209,7 +210,10 @@ class StudentController extends Controller
             'jenis_kelamin' => 'required|in:Laki-laki,Perempuan',
             'agama' => 'required|string|in:Islam,Kristen,Katolik,Hindu,Buddha,Konghucu',
             'alamat' => 'required|string|max:500',
-            'kelas_id' => 'required|exists:kelas,id',
+            'kelas_id' => [
+                'required',
+                Rule::exists('kelas', 'id')->where(fn ($query) => $query->where('tahun_ajaran_id', $tahunAjaranId)),
+            ],
             'photo' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp', 'max:2048'],
             'nama_ayah' => 'required|string|max:255',
             'nama_ibu' => 'required|string|max:255',
@@ -277,7 +281,7 @@ class StudentController extends Controller
     {
         $tahunAjaranId = $this->getValidTahunAjaranId();
 
-        if (!$tahunAjaranId) {
+        if (!$tahunAjaranId || !$this->isActiveTahunAjaran($tahunAjaranId)) {
             return $this->failTahunAjaranNotSet($request);
         }
 
@@ -290,7 +294,10 @@ class StudentController extends Controller
             'jenis_kelamin' => 'required|in:Laki-laki,Perempuan',
             'agama' => 'required|string|in:Islam,Kristen,Katolik,Hindu,Buddha,Konghucu',
             'alamat' => 'required|string|max:500',
-            'kelas_id' => 'required|exists:kelas,id',
+            'kelas_id' => [
+                'required',
+                Rule::exists('kelas', 'id')->where(fn ($query) => $query->where('tahun_ajaran_id', $tahunAjaranId)),
+            ],
             'photo' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp', 'max:2048'],
             'nama_ayah' => 'required|string|max:255',
             'nama_ibu' => 'required|string|max:255',
@@ -689,5 +696,12 @@ class StudentController extends Controller
         }
 
         return $filePath;
+    }
+
+    private function isActiveTahunAjaran(int $tahunAjaranId): bool
+    {
+        return TahunAjaran::whereKey($tahunAjaranId)
+            ->where('is_active', true)
+            ->exists();
     }
 }

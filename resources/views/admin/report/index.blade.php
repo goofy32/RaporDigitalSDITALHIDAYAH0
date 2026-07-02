@@ -97,7 +97,7 @@
                     @forelse($templates as $index => $template)
                     <tr class="bg-white border-b hover:bg-gray-50" 
                         data-type="{{ $template->type }}" 
-                        data-kelas="{{ $template->kelas_id ? $template->kelas->full_kelas : 'Template Global' }}"
+                        data-kelas="{{ $template->kelas_id ? ($template->kelas?->full_kelas ?? 'Kelas tidak tersedia') : 'Template Global' }}"
                         data-search="{{ $template->filename }}">
                         <td class="px-6 py-4">{{ $index + 1 }}</td>
                         <td class="px-6 py-4">
@@ -143,7 +143,7 @@
                             </span>
                         @elseif($template->kelas_id)
                             <span class="text-xs">
-                                {{ $template->kelas->nomor_kelas }}{{ $template->kelas->nama_kelas }}
+                                {{ $template->kelas ? $template->kelas->nomor_kelas . $template->kelas->nama_kelas : 'Kelas tidak tersedia' }}
                             </span>
                         @else
                             <span class="text-gray-500">Global</span>

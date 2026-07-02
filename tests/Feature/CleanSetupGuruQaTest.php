@@ -196,6 +196,178 @@ class CleanSetupGuruQaTest extends TestCase
         $this->assertSame('54321', DB::table('siswas')->where('id', $targetId)->value('nis'));
     }
 
+    public function test_admin_student_create_rejects_class_from_another_academic_year(): void
+    {
+        $oldYearId = DB::table('tahun_ajarans')->insertGetId([
+            'tahun_ajaran' => '2025/2026',
+            'semester' => 1,
+            'is_active' => false,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $oldClassId = $this->insertClass(5, 'Old', $oldYearId);
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->from(route('student.create'))
+            ->post(route('student.store'), $this->studentPayload([
+                'kelas_id' => $oldClassId,
+            ]))
+            ->assertRedirect(route('student.create'))
+            ->assertSessionHasErrors('kelas_id');
+
+        $this->assertDatabaseMissing('siswas', ['nis' => '12345']);
+    }
+
+    public function test_admin_student_update_rejects_class_from_another_academic_year(): void
+    {
+        $targetId = $this->insertStudent('54321', '0987654321', $this->kelas5AId, 'Siswa Target');
+        $oldYearId = DB::table('tahun_ajarans')->insertGetId([
+            'tahun_ajaran' => '2025/2026',
+            'semester' => 1,
+            'is_active' => false,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $oldClassId = $this->insertClass(5, 'Old', $oldYearId);
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->from(route('student.edit', $targetId))
+            ->put(route('student.update', $targetId), $this->studentPayload([
+                'nis' => '54321',
+                'nisn' => '0987654321',
+                'nama' => 'Siswa Target',
+                'kelas_id' => $oldClassId,
+            ]))
+            ->assertRedirect(route('student.edit', $targetId))
+            ->assertSessionHasErrors('kelas_id');
+
+        $this->assertSame($this->kelas5AId, (int) DB::table('siswas')->where('id', $targetId)->value('kelas_id'));
+    }
+
+    public function test_admin_teacher_create_rejects_class_from_another_academic_year(): void
+    {
+        $oldYearId = DB::table('tahun_ajarans')->insertGetId([
+            'tahun_ajaran' => '2025/2026',
+            'semester' => 1,
+            'is_active' => false,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $oldClassId = $this->insertClass(5, 'Old', $oldYearId);
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->from(route('teacher.create'))
+            ->post(route('teacher.store'), $this->teacherPayload([
+                'username' => 'wrong_year_teacher',
+                'email' => 'wrong.year.teacher@example.test',
+                'jabatan' => 'guru',
+                'kelas_ids' => [$oldClassId],
+            ]))
+            ->assertRedirect(route('teacher.create'))
+            ->assertSessionHasErrors('kelas_ids.0');
+
+        $this->assertDatabaseMissing('gurus', ['username' => 'wrong_year_teacher']);
+    }
+
+    public function test_admin_teacher_update_rejects_wali_class_from_another_academic_year(): void
+    {
+        $guruId = $this->insertGuru('Guru Tahun Salah', 'guru_tahun_salah', null);
+        $oldYearId = DB::table('tahun_ajarans')->insertGetId([
+            'tahun_ajaran' => '2025/2026',
+            'semester' => 1,
+            'is_active' => false,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $oldClassId = $this->insertClass(5, 'Old', $oldYearId);
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->from(route('teacher.edit', $guruId))
+            ->put(route('teacher.update', $guruId), $this->teacherPayload([
+                'nama' => 'Guru Tahun Salah',
+                'username' => 'guru_tahun_salah',
+                'email' => 'guru_tahun_salah@example.test',
+                'jabatan' => 'guru_wali',
+                'wali_kelas_id' => $oldClassId,
+                'password' => null,
+                'password_confirmation' => null,
+            ]))
+            ->assertRedirect(route('teacher.edit', $guruId))
+            ->assertSessionHasErrors('wali_kelas_id');
+
+        $this->assertDatabaseMissing('guru_kelas', [
+            'guru_id' => $guruId,
+            'kelas_id' => $oldClassId,
+        ]);
+    }
+
+    public function test_admin_subject_create_rejects_class_from_another_academic_year(): void
+    {
+        $guruId = $this->insertGuru('Guru Mapel', 'guru_mapel', null);
+        $oldYearId = DB::table('tahun_ajarans')->insertGetId([
+            'tahun_ajaran' => '2025/2026',
+            'semester' => 1,
+            'is_active' => false,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $oldClassId = $this->insertClass(5, 'Old', $oldYearId);
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->from(route('subject.create'))
+            ->post(route('subject.store'), [
+                'subjects' => [
+                    [
+                        'mata_pelajaran' => 'IPA',
+                        'kelas' => $oldClassId,
+                        'guru_pengampu' => $guruId,
+                        'semester' => 1,
+                        'teaching_type' => 'specialist',
+                        'lingkup_materi' => ['Makhluk Hidup'],
+                    ],
+                ],
+            ])
+            ->assertRedirect(route('subject.create'))
+            ->assertSessionHasErrors('subjects.0.kelas');
+
+        $this->assertDatabaseMissing('mata_pelajarans', ['nama_pelajaran' => 'IPA']);
+    }
+
+    public function test_admin_subject_update_rejects_class_from_another_academic_year(): void
+    {
+        $guruId = $this->insertGuru('Guru Mapel Update', 'guru_mapel_update', null);
+        $subjectId = $this->insertSubject('IPA', $this->kelas5AId, $guruId);
+        $oldYearId = DB::table('tahun_ajarans')->insertGetId([
+            'tahun_ajaran' => '2025/2026',
+            'semester' => 1,
+            'is_active' => false,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $oldClassId = $this->insertClass(5, 'Old', $oldYearId);
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->from(route('subject.edit', $subjectId))
+            ->put(route('subject.update', $subjectId), [
+                'mata_pelajaran' => 'IPA',
+                'kelas' => $oldClassId,
+                'guru_pengampu' => $guruId,
+                'semester' => 1,
+                'teaching_type' => 'specialist',
+                'lingkup_materi' => ['Makhluk Hidup'],
+            ])
+            ->assertRedirect(route('subject.edit', $subjectId))
+            ->assertSessionHasErrors('kelas');
+
+        $this->assertSame($this->kelas5AId, (int) DB::table('mata_pelajarans')->where('id', $subjectId)->value('kelas_id'));
+    }
+
     public function test_teacher_create_form_uses_clear_labels_and_date_limit(): void
     {
         $this->actingAs($this->admin, 'web')
@@ -555,12 +727,12 @@ class CleanSetupGuruQaTest extends TestCase
         ]);
     }
 
-    private function insertClass(int $number, string $name): int
+    private function insertClass(int $number, string $name, ?int $yearId = null): int
     {
         return DB::table('kelas')->insertGetId([
             'nomor_kelas' => $number,
             'nama_kelas' => $name,
-            'tahun_ajaran_id' => $this->yearId,
+            'tahun_ajaran_id' => $yearId ?? $this->yearId,
             'created_at' => now(),
             'updated_at' => now(),
         ]);
@@ -597,6 +769,21 @@ class CleanSetupGuruQaTest extends TestCase
             'kelas_id' => $kelasId,
             'nama_ayah' => 'Ayah Demo',
             'nama_ibu' => 'Ibu Demo',
+            'tahun_ajaran_id' => $this->yearId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function insertSubject(string $name, int $kelasId, int $guruId): int
+    {
+        return DB::table('mata_pelajarans')->insertGetId([
+            'nama_pelajaran' => $name,
+            'kelas_id' => $kelasId,
+            'guru_id' => $guruId,
+            'semester' => 1,
+            'is_muatan_lokal' => false,
+            'allow_non_wali' => true,
             'tahun_ajaran_id' => $this->yearId,
             'created_at' => now(),
             'updated_at' => now(),

@@ -449,6 +449,18 @@
                 return;
             }
 
+            var confirmation = prompt('Ketik HAPUS PERMANEN untuk menghapus seluruh isi recycle bin.');
+
+            if (confirmation === null) {
+                return;
+            }
+
+            if (confirmation !== 'HAPUS PERMANEN') {
+                alert('Konfirmasi tidak sesuai. Data tidak dihapus.');
+                return;
+            }
+
+            deleteAllForm.innerHTML = '<input type="hidden" name="_token" value="' + csrfToken + '"><input type="hidden" name="_method" value="DELETE"><input type="hidden" name="confirmation" value="HAPUS PERMANEN">';
             deleteAllForm.submit();
         });
 

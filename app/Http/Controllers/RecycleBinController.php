@@ -123,6 +123,12 @@ class RecycleBinController extends Controller
 
         $deletedCount = 0;
 
+        if ($items->isEmpty()) {
+            $request->validate([
+                'confirmation' => 'required|string|in:HAPUS PERMANEN',
+            ]);
+        }
+
         try {
             if ($items->isEmpty()) {
                 foreach (array_keys($this->typeMap()) as $type) {
