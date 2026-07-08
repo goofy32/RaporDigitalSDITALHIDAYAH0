@@ -431,6 +431,10 @@ class TestingToolsTest extends TestCase
         $this->artisan('staging:simulate-concurrent-score-saves')
             ->expectsOutput('Command ini hanya boleh dijalankan di local, testing, staging, atau saat STAGING_TEST_TOOLS_ENABLED=true.')
             ->assertFailed();
+
+        $this->artisan('staging:cleanup-school-data')
+            ->expectsOutput('Command ini hanya boleh dijalankan di local, testing, staging, atau saat STAGING_TEST_TOOLS_ENABLED=true.')
+            ->assertFailed();
     }
 
     public function test_staging_commands_are_allowed_by_config_in_production_like_environment(): void
@@ -463,6 +467,233 @@ class TestingToolsTest extends TestCase
             '--changed-values' => 1,
             '--dry-run' => true,
         ])->assertSuccessful();
+
+        $this->artisan('staging:cleanup-school-data')
+            ->assertSuccessful();
+    }
+
+    public function test_staging_cleanup_school_data_apply_requires_typed_confirmation(): void
+    {
+        $this->basicSetup();
+        config([
+            'app.env' => 'staging',
+            'staging_test_tools.enabled' => true,
+        ]);
+
+        $this->artisan('staging:create-multi-wali-load-data', [
+            '--wali' => 1,
+            '--students' => 1,
+        ])->assertSuccessful();
+
+        $this->artisan('staging:cleanup-school-data', [
+            '--apply' => true,
+            '--confirm' => 'SALAH',
+        ])
+            ->expectsOutput('Konfirmasi tidak valid. Gunakan --confirm="RESET DATA SEKOLAH STAGING" untuk menjalankan cleanup.')
+            ->assertFailed();
+
+        $this->assertSame(1, DB::table('kelas')->where('nama_kelas', 'like', 'Kelas Load Test%')->count());
+        $this->assertSame(1, DB::table('siswas')->where('nama', 'like', 'Siswa Load Test%')->count());
+    }
+
+    public function test_staging_cleanup_school_data_dry_run_does_not_delete_dummy_data(): void
+    {
+        $this->basicSetup();
+        config([
+            'app.env' => 'staging',
+            'staging_test_tools.enabled' => true,
+        ]);
+
+        $this->artisan('staging:create-multi-wali-load-data', [
+            '--wali' => 1,
+            '--students' => 2,
+        ])->assertSuccessful();
+
+        $countsBefore = [
+            'kelas' => DB::table('kelas')->where('nama_kelas', 'like', 'Kelas Load Test%')->count(),
+            'gurus' => DB::table('gurus')->where('nama', 'like', 'Wali Load Test%')->count(),
+            'siswas' => DB::table('siswas')->where('nama', 'like', 'Siswa Load Test%')->count(),
+            'nilais' => DB::table('nilais')->count(),
+        ];
+
+        $this->artisan('staging:cleanup-school-data')
+            ->assertSuccessful();
+
+        $this->assertSame($countsBefore['kelas'], DB::table('kelas')->where('nama_kelas', 'like', 'Kelas Load Test%')->count());
+        $this->assertSame($countsBefore['gurus'], DB::table('gurus')->where('nama', 'like', 'Wali Load Test%')->count());
+        $this->assertSame($countsBefore['siswas'], DB::table('siswas')->where('nama', 'like', 'Siswa Load Test%')->count());
+        $this->assertSame($countsBefore['nilais'], DB::table('nilais')->count());
+    }
+
+    public function test_staging_cleanup_school_data_dummy_apply_removes_dummy_data_and_preserves_real_data(): void
+    {
+        $tahunAjaranId = $this->basicSetup();
+        $realClassId = $this->createClass($tahunAjaranId, 'A');
+        $realGuruId = $this->createGuru($realClassId, [
+            'nama' => 'Guru Real Cleanup',
+            'username' => 'guru_real_cleanup',
+            'email' => 'guru.real.cleanup@example.test',
+            'nuptk' => 'REALCLEAN001',
+        ]);
+        $realSubjectId = DB::table('mata_pelajarans')->insertGetId([
+            'nama_pelajaran' => 'Matematika Real Cleanup',
+            'kelas_id' => $realClassId,
+            'semester' => 1,
+            'guru_id' => $realGuruId,
+            'tahun_ajaran_id' => $tahunAjaranId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $realSiswaId = Siswa::query()->insertGetId([
+            'nis' => 'REAL-CLEAN-001',
+            'nisn' => 'REAL-CLEANN-001',
+            'nama' => 'Siswa Real Cleanup',
+            'tanggal_lahir' => '2015-01-01',
+            'jenis_kelamin' => 'Laki-laki',
+            'agama' => 'Islam',
+            'alamat' => 'Alamat Real',
+            'kelas_id' => $realClassId,
+            'nama_ayah' => 'Ayah Real',
+            'nama_ibu' => 'Ibu Real',
+            'pekerjaan_ayah' => 'Wiraswasta',
+            'pekerjaan_ibu' => 'Ibu Rumah Tangga',
+            'alamat_orangtua' => 'Alamat Orang Tua Real',
+            'tahun_ajaran_id' => $tahunAjaranId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('nilais')->insert([
+            'siswa_id' => $realSiswaId,
+            'mata_pelajaran_id' => $realSubjectId,
+            'tahun_ajaran_id' => $tahunAjaranId,
+            'nilai_akhir_rapor' => 88,
+            'is_submitted' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $admin = User::factory()->create();
+
+        config([
+            'app.env' => 'staging',
+            'staging_test_tools.enabled' => true,
+        ]);
+
+        $this->artisan('staging:create-multi-wali-load-data', [
+            '--wali' => 1,
+            '--students' => 1,
+        ])->assertSuccessful();
+
+        $this->artisan('staging:cleanup-school-data', [
+            '--apply' => true,
+            '--confirm' => 'RESET DATA SEKOLAH STAGING',
+        ])->assertSuccessful();
+
+        $this->assertSame(0, DB::table('kelas')->where('nama_kelas', 'like', 'Kelas Load Test%')->count());
+        $this->assertSame(0, DB::table('gurus')->where('nama', 'like', 'Wali Load Test%')->count());
+        $this->assertSame(0, DB::table('siswas')->where('nama', 'like', 'Siswa Load Test%')->count());
+        $this->assertSame(0, DB::table('mata_pelajarans')->where('nama_pelajaran', 'like', 'Load Test%')->count());
+
+        $this->assertDatabaseHas('users', ['id' => $admin->id]);
+        $this->assertDatabaseHas('gurus', ['id' => $realGuruId, 'nama' => 'Guru Real Cleanup']);
+        $this->assertDatabaseHas('kelas', ['id' => $realClassId, 'nama_kelas' => 'A']);
+        $this->assertDatabaseHas('siswas', ['id' => $realSiswaId, 'nama' => 'Siswa Real Cleanup']);
+        $this->assertDatabaseHas('nilais', [
+            'siswa_id' => $realSiswaId,
+            'mata_pelajaran_id' => $realSubjectId,
+            'nilai_akhir_rapor' => 88,
+        ]);
+    }
+
+    public function test_staging_cleanup_school_data_academic_scope_preserves_accounts_and_keeps_templates(): void
+    {
+        $tahunAjaranId = $this->basicSetup();
+        $classId = $this->createClass($tahunAjaranId, 'A');
+        $guruId = $this->createGuru($classId, [
+            'nama' => 'Guru Preserved Cleanup',
+            'username' => 'guru_preserved_cleanup',
+            'email' => 'guru.preserved.cleanup@example.test',
+            'nuptk' => 'PRESCLEAN001',
+        ]);
+        $subjectId = DB::table('mata_pelajarans')->insertGetId([
+            'nama_pelajaran' => 'Bahasa Indonesia Cleanup',
+            'kelas_id' => $classId,
+            'semester' => 1,
+            'guru_id' => $guruId,
+            'tahun_ajaran_id' => $tahunAjaranId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $siswaId = Siswa::query()->insertGetId([
+            'nis' => 'ACAD-CLEAN-001',
+            'nisn' => 'ACAD-CLEANN-001',
+            'nama' => 'Siswa Academic Cleanup',
+            'tanggal_lahir' => '2015-01-01',
+            'jenis_kelamin' => 'Laki-laki',
+            'agama' => 'Islam',
+            'alamat' => 'Alamat Academic',
+            'kelas_id' => $classId,
+            'nama_ayah' => 'Ayah Academic',
+            'nama_ibu' => 'Ibu Academic',
+            'pekerjaan_ayah' => 'Wiraswasta',
+            'pekerjaan_ibu' => 'Ibu Rumah Tangga',
+            'alamat_orangtua' => 'Alamat Orang Tua Academic',
+            'tahun_ajaran_id' => $tahunAjaranId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('nilais')->insert([
+            'siswa_id' => $siswaId,
+            'mata_pelajaran_id' => $subjectId,
+            'tahun_ajaran_id' => $tahunAjaranId,
+            'nilai_akhir_rapor' => 87,
+            'is_submitted' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $templateId = DB::table('report_templates')->insertGetId([
+            'filename' => 'cleanup-template.docx',
+            'path' => 'templates/cleanup-template.docx',
+            'type' => 'UTS',
+            'is_active' => true,
+            'kelas_id' => $classId,
+            'tahun_ajaran_id' => $tahunAjaranId,
+            'semester' => 1,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('report_template_kelas')->insert([
+            'report_template_id' => $templateId,
+            'kelas_id' => $classId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $admin = User::factory()->create();
+
+        config([
+            'app.env' => 'staging',
+            'staging_test_tools.enabled' => true,
+        ]);
+
+        $this->artisan('staging:cleanup-school-data', [
+            '--scope' => 'academic',
+            '--apply' => true,
+            '--confirm' => 'RESET DATA SEKOLAH STAGING',
+        ])->assertSuccessful();
+
+        $this->assertDatabaseHas('users', ['id' => $admin->id]);
+        $this->assertDatabaseHas('gurus', ['id' => $guruId, 'nama' => 'Guru Preserved Cleanup']);
+        $this->assertDatabaseHas('tahun_ajarans', ['id' => $tahunAjaranId, 'tahun_ajaran' => '2025/2026']);
+        $this->assertDatabaseHas('profil_sekolah', ['nama_sekolah' => 'SD Test']);
+        $this->assertSame(0, DB::table('kelas')->count());
+        $this->assertSame(0, DB::table('siswas')->count());
+        $this->assertSame(0, DB::table('mata_pelajarans')->count());
+        $this->assertSame(0, DB::table('nilais')->count());
+        $this->assertDatabaseHas('report_templates', [
+            'id' => $templateId,
+            'filename' => 'cleanup-template.docx',
+            'kelas_id' => null,
+        ]);
+        $this->assertSame(0, DB::table('report_template_kelas')->count());
     }
 
     public function test_multi_wali_load_data_dry_run_does_not_write_data(): void
