@@ -96,8 +96,9 @@
 
                     <div>
                         <label class="block text-sm font-medium text-gray-700">Tanggal Lahir</label>
-                        <input type="date" name="tanggal_lahir" value="{{ old('tanggal_lahir') }}" max="{{ now()->subDay()->format('Y-m-d') }}" required
+                        <input type="date" name="tanggal_lahir" value="{{ old('tanggal_lahir') }}" max="{{ now()->subDay()->format('Y-m-d') }}"
                             class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500">
+                        <p class="mt-1 text-sm text-gray-500">Opsional. Jika diisi, tanggal harus sebelum hari ini.</p>
                         @error('tanggal_lahir')
                             <p class="mt-1 text-sm text-red-500">{{ $message }}</p>
                         @enderror
@@ -105,16 +106,17 @@
 
                     <div>
                         <label class="block text-sm font-medium text-gray-700">No. Handphone</label>
-                        <input type="number" name="no_handphone" id="no_handphone" value="{{ old('no_handphone') }}" required min="0" pattern="[0-9]+" inputmode="numeric"
+                        <input type="number" name="no_handphone" id="no_handphone" value="{{ old('no_handphone') }}" min="0" pattern="[0-9]+" inputmode="numeric"
                             class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500"
                             oninput="this.value = this.value.replace(/[^0-9]/g, ''); if(this.value.length > 15) this.value = this.value.slice(0, 15);">
-                        <p class="mt-1 text-sm text-gray-500">Masukkan hanya angka (10-15 digit)</p>
+                        <p class="mt-1 text-sm text-gray-500">Opsional. Jika diisi, masukkan hanya angka (10-15 digit).</p>
                     </div>
 
                     <div>
                         <label class="block text-sm font-medium text-gray-700">Email</label>
-                        <input type="email" name="email" value="{{ old('email') }}" required
+                        <input type="email" name="email" value="{{ old('email') }}"
                             class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500">
+                        <p class="mt-1 text-sm text-gray-500">Opsional. Jika diisi, gunakan format email yang valid.</p>
                     </div>
 
                     <div>

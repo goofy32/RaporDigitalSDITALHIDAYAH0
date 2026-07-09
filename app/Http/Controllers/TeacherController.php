@@ -243,9 +243,9 @@ class TeacherController extends Controller
                 'nuptk' => 'nullable|numeric|digits_between:9,15|unique:gurus,nuptk',
                 'nama' => 'required|string|max:255',
                 'jenis_kelamin' => 'required|in:Laki-laki,Perempuan',
-                'tanggal_lahir' => 'required|date|before:today',
-                'no_handphone' => 'required|numeric|digits_between:10,15',
-                'email' => 'required|email|max:255|unique:gurus,email',
+                'tanggal_lahir' => 'nullable|date|before:today',
+                'no_handphone' => 'nullable|numeric|digits_between:10,15',
+                'email' => 'nullable|email|max:255|unique:gurus,email',
                 'alamat' => 'required|string|max:500',
                 'jabatan' => 'required|in:guru,guru_wali',
                 'username' => 'required|string|max:255|unique:gurus,username',
@@ -270,12 +270,9 @@ class TeacherController extends Controller
                 'nuptk.unique' => 'NUPTK sudah digunakan',
                 'nama.required' => 'Nama wajib diisi',
                 'jenis_kelamin.required' => 'Jenis kelamin wajib diisi',
-                'tanggal_lahir.required' => 'Tanggal lahir wajib diisi',
                 'tanggal_lahir.before' => 'Tanggal lahir harus sebelum hari ini.',
-                'no_handphone.required' => 'Nomor handphone wajib diisi',
                 'no_handphone.numeric' => 'Nomor handphone harus berupa angka',
                 'no_handphone.digits_between' => 'Nomor handphone harus antara 10-15 digit',
-                'email.required' => 'Email wajib diisi',
                 'email.email' => 'Format email tidak valid',
                 'email.unique' => 'Email sudah digunakan',
                 'alamat.required' => 'Alamat wajib diisi',
@@ -293,6 +290,7 @@ class TeacherController extends Controller
             ]);
 
             $validated['nuptk'] = $request->filled('nuptk') ? $validated['nuptk'] : null;
+            $validated = $this->normalizeOptionalGuruProfileFields($request, $validated);
 
             if (
                 $request->jabatan === 'guru_wali'
@@ -463,9 +461,9 @@ class TeacherController extends Controller
                 'nuptk' => 'nullable|numeric|digits_between:9,15|unique:gurus,nuptk,'.$id,
                 'nama' => 'required|string|max:255',
                 'jenis_kelamin' => 'required|in:Laki-laki,Perempuan',
-                'tanggal_lahir' => 'required|date|before:today',
-                'no_handphone' => 'required|numeric|digits_between:10,15',
-                'email' => 'required|email|max:255|unique:gurus,email,'.$id,
+                'tanggal_lahir' => 'nullable|date|before:today',
+                'no_handphone' => 'nullable|numeric|digits_between:10,15',
+                'email' => 'nullable|email|max:255|unique:gurus,email,'.$id,
                 'alamat' => 'required|string|max:500',
                 'jabatan' => 'required|in:guru,guru_wali',
                 'username' => 'required|string|max:255|unique:gurus,username,'.$id,
@@ -509,12 +507,9 @@ class TeacherController extends Controller
                 'nuptk.unique' => 'NUPTK sudah digunakan',
                 'nama.required' => 'Nama wajib diisi',
                 'jenis_kelamin.required' => 'Jenis kelamin wajib diisi',
-                'tanggal_lahir.required' => 'Tanggal lahir wajib diisi',
                 'tanggal_lahir.before' => 'Tanggal lahir harus sebelum hari ini.',
-                'no_handphone.required' => 'Nomor handphone wajib diisi',
                 'no_handphone.numeric' => 'Nomor handphone harus berupa angka',
                 'no_handphone.digits_between' => 'Nomor handphone harus antara 10-15 digit',
-                'email.required' => 'Email wajib diisi',
                 'email.email' => 'Format email tidak valid',
                 'email.unique' => 'Email sudah digunakan',
                 'alamat.required' => 'Alamat wajib diisi',
@@ -548,6 +543,7 @@ class TeacherController extends Controller
                 ->except(['password', 'current_password', 'kelas_ids', 'wali_kelas_id'])
                 ->toArray();
             $dataToUpdate['nuptk'] = $request->filled('nuptk') ? $dataToUpdate['nuptk'] : null;
+            $dataToUpdate = $this->normalizeOptionalGuruProfileFields($request, $dataToUpdate);
 
             // Update password jika ada
             if ($request->filled('password')) {
@@ -763,6 +759,19 @@ class TeacherController extends Controller
             'photo.max' => 'Ukuran foto guru maksimal 2 MB.',
             'photo.uploaded' => 'Upload foto guru gagal. Pastikan ukuran file maksimal 2 MB dan formatnya JPG, JPEG, PNG, atau WebP.',
         ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    private function normalizeOptionalGuruProfileFields(Request $request, array $data): array
+    {
+        foreach (['tanggal_lahir', 'no_handphone', 'email'] as $field) {
+            $data[$field] = $request->filled($field) ? $data[$field] : null;
+        }
+
+        return $data;
     }
 
     private function waliClassHasOtherTeacher(int $kelasId, ?int $teacherId = null): bool

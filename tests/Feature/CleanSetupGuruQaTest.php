@@ -107,6 +107,143 @@ class CleanSetupGuruQaTest extends TestCase
             ->assertSee('Kelas 5B');
     }
 
+    public function test_admin_can_create_guru_without_private_profile_fields(): void
+    {
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->post(route('teacher.store'), $this->teacherPayload([
+                'username' => 'optional_profile_create',
+                'tanggal_lahir' => '',
+                'no_handphone' => '',
+                'email' => '',
+                'jabatan' => 'guru_wali',
+                'wali_kelas_id' => $this->kelas5AId,
+            ]))
+            ->assertRedirect(route('teacher'));
+
+        $guru = Guru::where('username', 'optional_profile_create')->firstOrFail();
+
+        $this->assertNull($guru->tanggal_lahir);
+        $this->assertNull($guru->no_handphone);
+        $this->assertNull($guru->email);
+    }
+
+    public function test_admin_can_update_guru_and_leave_private_profile_fields_empty(): void
+    {
+        $guruId = $this->insertGuru('Guru Optional Update', 'optional_profile_update', '900000002');
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->put(route('teacher.update', $guruId), $this->teacherPayload([
+                'nama' => 'Guru Optional Update',
+                'username' => 'optional_profile_update',
+                'tanggal_lahir' => '',
+                'no_handphone' => '',
+                'email' => '',
+                'jabatan' => 'guru',
+                'kelas_ids' => [$this->kelas5BId],
+                'password' => null,
+                'password_confirmation' => null,
+            ]))
+            ->assertRedirect(route('teacher'));
+
+        $guru = Guru::findOrFail($guruId);
+
+        $this->assertNull($guru->tanggal_lahir);
+        $this->assertNull($guru->no_handphone);
+        $this->assertNull($guru->email);
+    }
+
+    public function test_invalid_guru_email_is_rejected_when_filled(): void
+    {
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->from(route('teacher.create'))
+            ->post(route('teacher.store'), $this->teacherPayload([
+                'username' => 'invalid_email_teacher',
+                'email' => 'bukan-email',
+            ]))
+            ->assertRedirect(route('teacher.create'))
+            ->assertSessionHasErrors(['email' => 'Format email tidak valid']);
+
+        $this->assertDatabaseMissing('gurus', ['username' => 'invalid_email_teacher']);
+    }
+
+    public function test_duplicate_guru_email_is_rejected_when_filled(): void
+    {
+        $this->insertGuru('Guru Existing Email', 'existing_email_teacher', '900000003');
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->from(route('teacher.create'))
+            ->post(route('teacher.store'), $this->teacherPayload([
+                'username' => 'duplicate_email_teacher',
+                'email' => 'existing_email_teacher@example.test',
+            ]))
+            ->assertRedirect(route('teacher.create'))
+            ->assertSessionHasErrors(['email' => 'Email sudah digunakan']);
+
+        $this->assertDatabaseMissing('gurus', ['username' => 'duplicate_email_teacher']);
+    }
+
+    public function test_guru_update_email_unique_rule_ignores_current_guru_but_rejects_other_guru_email(): void
+    {
+        $currentGuruId = $this->insertGuru('Guru Current Email', 'current_email_teacher', '900000004');
+        $otherGuruId = $this->insertGuru('Guru Other Email', 'other_email_teacher', '900000005');
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->put(route('teacher.update', $currentGuruId), $this->teacherPayload([
+                'nama' => 'Guru Current Email',
+                'username' => 'current_email_teacher',
+                'email' => 'current_email_teacher@example.test',
+                'jabatan' => 'guru',
+                'kelas_ids' => [$this->kelas5BId],
+                'password' => null,
+                'password_confirmation' => null,
+            ]))
+            ->assertRedirect(route('teacher'));
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->from(route('teacher.edit', $currentGuruId))
+            ->put(route('teacher.update', $currentGuruId), $this->teacherPayload([
+                'nama' => 'Guru Current Email',
+                'username' => 'current_email_teacher',
+                'email' => 'other_email_teacher@example.test',
+                'jabatan' => 'guru',
+                'kelas_ids' => [$this->kelas5BId],
+                'password' => null,
+                'password_confirmation' => null,
+            ]))
+            ->assertRedirect(route('teacher.edit', $currentGuruId))
+            ->assertSessionHasErrors(['email' => 'Email sudah digunakan']);
+
+        $this->assertSame('current_email_teacher@example.test', DB::table('gurus')->where('id', $currentGuruId)->value('email'));
+        $this->assertSame('other_email_teacher@example.test', DB::table('gurus')->where('id', $otherGuruId)->value('email'));
+    }
+
+    public function test_guru_login_still_works_with_username_when_email_is_empty(): void
+    {
+        $guruId = $this->insertGuru('Guru Login Optional Email', 'login_optional_email', '900000006');
+        DB::table('gurus')->where('id', $guruId)->update(['email' => null]);
+        DB::table('guru_kelas')->insert([
+            'guru_id' => $guruId,
+            'kelas_id' => $this->kelas5BId,
+            'is_wali_kelas' => false,
+            'role' => 'pengajar',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->post(route('login.post'), [
+            'username' => 'login_optional_email',
+            'password' => 'password',
+        ])->assertRedirect(route('pengajar.dashboard'));
+
+        $this->assertAuthenticatedAs(Guru::findOrFail($guruId), 'guru');
+    }
+
     public function test_guru_birth_date_must_be_before_today_with_indonesian_message(): void
     {
         $this->actingAs($this->admin, 'web')
