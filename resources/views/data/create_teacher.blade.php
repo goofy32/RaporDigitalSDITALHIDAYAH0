@@ -121,8 +121,9 @@
 
                     <div>
                         <label class="block text-sm font-medium text-gray-700">Alamat</label>
-                        <textarea name="alamat" rows="3" required
+                        <textarea name="alamat" rows="3"
                             class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500">{{ old('alamat') }}</textarea>
+                        <p class="mt-1 text-sm text-gray-500">Opsional. Tidak digunakan pada rapor.</p>
                     </div>
                 </div>
 

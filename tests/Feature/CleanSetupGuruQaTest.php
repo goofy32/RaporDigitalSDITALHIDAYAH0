@@ -154,6 +154,45 @@ class CleanSetupGuruQaTest extends TestCase
         $this->assertNull($guru->email);
     }
 
+    public function test_admin_can_create_guru_without_alamat(): void
+    {
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->post(route('teacher.store'), $this->teacherPayload([
+                'username' => 'optional_address_create',
+                'alamat' => '',
+                'jabatan' => 'guru_wali',
+                'wali_kelas_id' => $this->kelas5AId,
+            ]))
+            ->assertRedirect(route('teacher'));
+
+        $guru = Guru::where('username', 'optional_address_create')->firstOrFail();
+
+        $this->assertNull($guru->alamat);
+    }
+
+    public function test_admin_can_update_guru_with_empty_alamat(): void
+    {
+        $guruId = $this->insertGuru('Guru Optional Address', 'optional_address_update', '900000007');
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->put(route('teacher.update', $guruId), $this->teacherPayload([
+                'nama' => 'Guru Optional Address',
+                'username' => 'optional_address_update',
+                'alamat' => '',
+                'jabatan' => 'guru',
+                'kelas_ids' => [$this->kelas5BId],
+                'password' => null,
+                'password_confirmation' => null,
+            ]))
+            ->assertRedirect(route('teacher'));
+
+        $guru = Guru::findOrFail($guruId);
+
+        $this->assertNull($guru->alamat);
+    }
+
     public function test_invalid_guru_email_is_rejected_when_filled(): void
     {
         $this->actingAs($this->admin, 'web')

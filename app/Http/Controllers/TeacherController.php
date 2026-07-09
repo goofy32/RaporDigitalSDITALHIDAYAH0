@@ -246,7 +246,7 @@ class TeacherController extends Controller
                 'tanggal_lahir' => 'nullable|date|before:today',
                 'no_handphone' => 'nullable|numeric|digits_between:10,15',
                 'email' => 'nullable|email|max:255|unique:gurus,email',
-                'alamat' => 'required|string|max:500',
+                'alamat' => 'nullable|string|max:500',
                 'jabatan' => 'required|in:guru,guru_wali',
                 'username' => 'required|string|max:255|unique:gurus,username',
                 'password' => 'required|string|min:6|confirmed',
@@ -275,7 +275,6 @@ class TeacherController extends Controller
                 'no_handphone.digits_between' => 'Nomor handphone harus antara 10-15 digit',
                 'email.email' => 'Format email tidak valid',
                 'email.unique' => 'Email sudah digunakan',
-                'alamat.required' => 'Alamat wajib diisi',
                 'jabatan.required' => 'Tanggung jawab guru wajib diisi',
                 'jabatan.in' => 'Tanggung jawab guru tidak valid',
                 'kelas_ids.required' => 'Kelas yang diajar wajib diisi untuk pengajar biasa',
@@ -464,7 +463,7 @@ class TeacherController extends Controller
                 'tanggal_lahir' => 'nullable|date|before:today',
                 'no_handphone' => 'nullable|numeric|digits_between:10,15',
                 'email' => 'nullable|email|max:255|unique:gurus,email,'.$id,
-                'alamat' => 'required|string|max:500',
+                'alamat' => 'nullable|string|max:500',
                 'jabatan' => 'required|in:guru,guru_wali',
                 'username' => 'required|string|max:255|unique:gurus,username,'.$id,
                 'photo' => $this->teacherPhotoRules(),
@@ -512,7 +511,6 @@ class TeacherController extends Controller
                 'no_handphone.digits_between' => 'Nomor handphone harus antara 10-15 digit',
                 'email.email' => 'Format email tidak valid',
                 'email.unique' => 'Email sudah digunakan',
-                'alamat.required' => 'Alamat wajib diisi',
                 'jabatan.required' => 'Tanggung jawab guru wajib diisi',
                 'jabatan.in' => 'Tanggung jawab guru tidak valid',
                 'kelas_ids.required' => 'Kelas yang diajar wajib diisi untuk pengajar biasa',
@@ -767,7 +765,7 @@ class TeacherController extends Controller
      */
     private function normalizeOptionalGuruProfileFields(Request $request, array $data): array
     {
-        foreach (['tanggal_lahir', 'no_handphone', 'email'] as $field) {
+        foreach (['tanggal_lahir', 'no_handphone', 'email', 'alamat'] as $field) {
             $data[$field] = $request->filled($field) ? $data[$field] : null;
         }
 
