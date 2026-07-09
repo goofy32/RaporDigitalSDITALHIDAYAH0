@@ -69,10 +69,10 @@
                 <div class="space-y-4">
                     <div>
                         <label class="block text-sm font-medium text-gray-700">NUPTK</label>
-                        <input type="number" name="nuptk" id="nuptk" value="{{ old('nuptk') }}" min="0" pattern="[0-9]+" inputmode="numeric" placeholder="Kosongkan jika belum ada"
+                        <input type="text" name="nuptk" id="nuptk" value="{{ old('nuptk') }}" pattern="[0-9]{16}" inputmode="numeric" maxlength="16" placeholder="Kosongkan jika belum ada"
                             class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500 @error('nuptk') border-red-500 @enderror"
-                            oninput="this.value = this.value.replace(/[^0-9]/g, '')">
-                        <p class="mt-1 text-sm text-gray-500">Kosongkan jika belum ada. Jika diisi, masukkan hanya angka (9-15 digit)</p>
+                            oninput="this.value = this.value.replace(/[^0-9]/g, '').slice(0, 16);">
+                        <p class="mt-1 text-sm text-gray-500">Kosongkan jika belum ada. Jika diisi, masukkan tepat 16 digit angka.</p>
                         @error('nuptk')
                             <p class="mt-1 text-sm text-red-500">{{ $message }}</p>
                         @enderror

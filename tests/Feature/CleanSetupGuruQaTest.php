@@ -107,6 +107,121 @@ class CleanSetupGuruQaTest extends TestCase
             ->assertSee('Kelas 5B');
     }
 
+    public function test_admin_can_create_guru_with_valid_16_digit_nuptk(): void
+    {
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->post(route('teacher.store'), $this->teacherPayload([
+                'username' => 'valid_nuptk_teacher',
+                'nuptk' => '1234567890123456',
+            ]))
+            ->assertRedirect(route('teacher'));
+
+        $this->assertDatabaseHas('gurus', [
+            'username' => 'valid_nuptk_teacher',
+            'nuptk' => '1234567890123456',
+        ]);
+    }
+
+    public function test_admin_cannot_create_guru_with_15_digit_nuptk(): void
+    {
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->from(route('teacher.create'))
+            ->post(route('teacher.store'), $this->teacherPayload([
+                'username' => 'short_nuptk_teacher',
+                'nuptk' => '123456789012345',
+            ]))
+            ->assertRedirect(route('teacher.create'))
+            ->assertSessionHasErrors(['nuptk' => 'NUPTK harus 16 digit angka']);
+
+        $this->assertDatabaseMissing('gurus', ['username' => 'short_nuptk_teacher']);
+    }
+
+    public function test_admin_cannot_create_guru_with_17_digit_nuptk(): void
+    {
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->from(route('teacher.create'))
+            ->post(route('teacher.store'), $this->teacherPayload([
+                'username' => 'long_nuptk_teacher',
+                'nuptk' => '12345678901234567',
+            ]))
+            ->assertRedirect(route('teacher.create'))
+            ->assertSessionHasErrors(['nuptk' => 'NUPTK harus 16 digit angka']);
+
+        $this->assertDatabaseMissing('gurus', ['username' => 'long_nuptk_teacher']);
+    }
+
+    public function test_admin_cannot_create_guru_with_non_numeric_nuptk(): void
+    {
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->from(route('teacher.create'))
+            ->post(route('teacher.store'), $this->teacherPayload([
+                'username' => 'non_numeric_nuptk_teacher',
+                'nuptk' => 'abcdefghijklmnop',
+            ]))
+            ->assertRedirect(route('teacher.create'))
+            ->assertSessionHasErrors(['nuptk' => 'NUPTK harus 16 digit angka']);
+
+        $this->assertDatabaseMissing('gurus', ['username' => 'non_numeric_nuptk_teacher']);
+    }
+
+    public function test_duplicate_guru_nuptk_is_rejected_when_filled(): void
+    {
+        $this->insertGuru('Guru Existing NUPTK', 'existing_nuptk_teacher', '2345678901234567');
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->from(route('teacher.create'))
+            ->post(route('teacher.store'), $this->teacherPayload([
+                'username' => 'duplicate_nuptk_teacher',
+                'nuptk' => '2345678901234567',
+            ]))
+            ->assertRedirect(route('teacher.create'))
+            ->assertSessionHasErrors(['nuptk' => 'NUPTK sudah digunakan']);
+
+        $this->assertDatabaseMissing('gurus', ['username' => 'duplicate_nuptk_teacher']);
+    }
+
+    public function test_guru_update_nuptk_unique_rule_ignores_current_guru_but_rejects_other_guru_nuptk(): void
+    {
+        $currentGuruId = $this->insertGuru('Guru Current NUPTK', 'current_nuptk_teacher', '3456789012345678');
+        $otherGuruId = $this->insertGuru('Guru Other NUPTK', 'other_nuptk_teacher', '4567890123456789');
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->put(route('teacher.update', $currentGuruId), $this->teacherPayload([
+                'nama' => 'Guru Current NUPTK',
+                'username' => 'current_nuptk_teacher',
+                'nuptk' => '3456789012345678',
+                'jabatan' => 'guru',
+                'kelas_ids' => [$this->kelas5BId],
+                'password' => null,
+                'password_confirmation' => null,
+            ]))
+            ->assertRedirect(route('teacher'));
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->from(route('teacher.edit', $currentGuruId))
+            ->put(route('teacher.update', $currentGuruId), $this->teacherPayload([
+                'nama' => 'Guru Current NUPTK',
+                'username' => 'current_nuptk_teacher',
+                'nuptk' => '4567890123456789',
+                'jabatan' => 'guru',
+                'kelas_ids' => [$this->kelas5BId],
+                'password' => null,
+                'password_confirmation' => null,
+            ]))
+            ->assertRedirect(route('teacher.edit', $currentGuruId))
+            ->assertSessionHasErrors(['nuptk' => 'NUPTK sudah digunakan']);
+
+        $this->assertSame('3456789012345678', DB::table('gurus')->where('id', $currentGuruId)->value('nuptk'));
+        $this->assertSame('4567890123456789', DB::table('gurus')->where('id', $otherGuruId)->value('nuptk'));
+    }
+
     public function test_admin_can_create_guru_without_private_profile_fields(): void
     {
         $this->actingAs($this->admin, 'web')

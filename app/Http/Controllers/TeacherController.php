@@ -240,7 +240,7 @@ class TeacherController extends Controller
 
             // Validasi dasar tetap sama
             $rules = [
-                'nuptk' => 'nullable|numeric|digits_between:9,15|unique:gurus,nuptk',
+                'nuptk' => 'nullable|digits:16|unique:gurus,nuptk',
                 'nama' => 'required|string|max:255',
                 'jenis_kelamin' => 'required|in:Laki-laki,Perempuan',
                 'tanggal_lahir' => 'nullable|date|before:today',
@@ -265,8 +265,7 @@ class TeacherController extends Controller
             }
 
             $validated = $request->validate($rules, [
-                'nuptk.numeric' => 'NUPTK harus berupa angka',
-                'nuptk.digits_between' => 'NUPTK harus antara 9-15 digit',
+                'nuptk.digits' => 'NUPTK harus 16 digit angka',
                 'nuptk.unique' => 'NUPTK sudah digunakan',
                 'nama.required' => 'Nama wajib diisi',
                 'jenis_kelamin.required' => 'Jenis kelamin wajib diisi',
@@ -457,7 +456,7 @@ class TeacherController extends Controller
 
             // Validasi dasar
             $rules = [
-                'nuptk' => 'nullable|numeric|digits_between:9,15|unique:gurus,nuptk,'.$id,
+                'nuptk' => 'nullable|digits:16|unique:gurus,nuptk,'.$id,
                 'nama' => 'required|string|max:255',
                 'jenis_kelamin' => 'required|in:Laki-laki,Perempuan',
                 'tanggal_lahir' => 'nullable|date|before:today',
@@ -501,8 +500,7 @@ class TeacherController extends Controller
             }
 
             $validated = $request->validate($rules, [
-                'nuptk.numeric' => 'NUPTK harus berupa angka',
-                'nuptk.digits_between' => 'NUPTK harus antara 9-15 digit',
+                'nuptk.digits' => 'NUPTK harus 16 digit angka',
                 'nuptk.unique' => 'NUPTK sudah digunakan',
                 'nama.required' => 'Nama wajib diisi',
                 'jenis_kelamin.required' => 'Jenis kelamin wajib diisi',

@@ -91,10 +91,10 @@
                        <!-- NUPTK -->
                        <div>
                            <label class="block text-sm font-medium text-gray-700">NUPTK</label>
-                           <input type="number" name="nuptk" value="{{ old('nuptk', $teacher->nuptk) }}" placeholder="Kosongkan jika belum ada"
+                           <input type="text" name="nuptk" value="{{ old('nuptk', $teacher->nuptk) }}" pattern="[0-9]{16}" inputmode="numeric" maxlength="16" placeholder="Kosongkan jika belum ada"
                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500"
-                               oninput="this.value = this.value.replace(/[^0-9]/g, '').slice(0, 15);">
-                          <p class="mt-1 text-sm text-gray-500">Kosongkan jika belum ada. Jika diisi, masukkan hanya angka (9-15 digit)</p>
+                               oninput="this.value = this.value.replace(/[^0-9]/g, '').slice(0, 16);">
+                          <p class="mt-1 text-sm text-gray-500">Kosongkan jika belum ada. Jika diisi, masukkan tepat 16 digit angka.</p>
                        </div>
 
                        <!-- Nama -->
