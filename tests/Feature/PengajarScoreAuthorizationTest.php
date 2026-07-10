@@ -293,8 +293,17 @@ class PengajarScoreAuthorizationTest extends TestCase
         $this->actingAsPengajar($this->budi)
             ->get(route('pengajar.score.index'))
             ->assertOk()
-            ->assertSee('Template Excel')
+            ->assertSee('Download Template Nilai')
+            ->assertSee('Kelas 5 A - Matematika')
             ->assertSee(route('pengajar.score.import_template', $this->subjectId), false);
+    }
+
+    public function test_score_import_template_action_is_not_rendered_in_each_table_row(): void
+    {
+        $this->actingAsPengajar($this->budi)
+            ->get(route('pengajar.score.index'))
+            ->assertOk()
+            ->assertDontSee('Template Excel');
     }
 
     public function test_score_import_template_contains_expected_students_for_class(): void

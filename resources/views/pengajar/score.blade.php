@@ -9,9 +9,81 @@
 @section('content')
 
 <div data-page="pengajar-score" class="p-4 bg-white mt-14 rounded-lg">
+    @php
+        $readyPembelajarans = $kelasData->flatMap(function ($kelas) {
+            return $kelas->mataPelajarans
+                ->filter(fn ($mapel) => !$mapel->requires_lm_tp_setup)
+                ->map(function ($mapel) use ($kelas) {
+                    return [
+                        'id' => $mapel->id,
+                        'label' => 'Kelas '.$kelas->nomor_kelas.' '.$kelas->nama_kelas.' - '.$mapel->nama_pelajaran,
+                        'url' => route('pengajar.score.import_template', $mapel->id),
+                    ];
+                });
+        })->values();
+    @endphp
+
     <!-- Header -->
     <div class="mb-6">
         <h2 class="text-2xl font-bold text-green-700 mb-4">Data Pembelajaran</h2>
+    </div>
+
+    <!-- Action Buttons -->
+    <div x-data="{ openTemplateModal: false, selectedTemplateUrl: @js($readyPembelajarans->first()['url'] ?? '') }" class="mb-6">
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div class="flex flex-wrap gap-2">
+                @if($readyPembelajarans->isNotEmpty())
+                    <button type="button"
+                            @click="openTemplateModal = true"
+                            class="text-white bg-green-700 hover:bg-green-800 focus:ring-4 focus:ring-green-300 font-medium rounded-lg text-sm px-4 py-2">
+                        Download Template Nilai
+                    </button>
+                @else
+                    <button type="button"
+                            disabled
+                            class="text-white bg-gray-400 font-medium rounded-lg text-sm px-4 py-2 cursor-not-allowed">
+                        Download Template Nilai
+                    </button>
+                    <span class="text-sm text-gray-500">Belum ada pembelajaran siap unduh template.</span>
+                @endif
+            </div>
+        </div>
+
+        @if($readyPembelajarans->isNotEmpty())
+            <div x-show="openTemplateModal"
+                 x-cloak
+                 class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+                 @keydown.escape.window="openTemplateModal = false">
+                <div class="w-full max-w-lg rounded-lg bg-white p-6 shadow-lg" @click.outside="openTemplateModal = false">
+                    <div class="mb-4">
+                        <h3 class="text-lg font-semibold text-green-700">Download Template Nilai</h3>
+                        <p class="mt-1 text-sm text-gray-600">Pilih kelas dan mata pelajaran untuk template nilai Excel.</p>
+                    </div>
+
+                    <label for="template_pembelajaran_url" class="mb-2 block text-sm font-medium text-gray-700">Pembelajaran</label>
+                    <select id="template_pembelajaran_url"
+                            x-model="selectedTemplateUrl"
+                            class="mb-5 block w-full rounded-lg border border-gray-300 bg-gray-50 p-2.5 text-sm text-gray-900 focus:border-green-500 focus:ring-green-500">
+                        @foreach($readyPembelajarans as $pembelajaran)
+                            <option value="{{ $pembelajaran['url'] }}">{{ $pembelajaran['label'] }}</option>
+                        @endforeach
+                    </select>
+
+                    <div class="flex justify-end gap-2">
+                        <button type="button"
+                                @click="openTemplateModal = false"
+                                class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
+                            Batal
+                        </button>
+                        <button type="button"
+                                @click="if (selectedTemplateUrl) window.location.href = selectedTemplateUrl"
+                                class="text-white bg-green-700 hover:bg-green-800 focus:ring-4 focus:ring-green-300 font-medium rounded-lg text-sm px-4 py-2">
+                            Download
+                        </button>
+                    </div>
+                </div>
+            </div>
+        @endif
     </div>
 
     <!-- Debug information -->
@@ -257,11 +329,6 @@
                                             <img src="{{ asset('images/icons/detail.png') }}" alt="View Icon" class="w-5 h-5">
                                         </a>
                                         @endif
-                                        <a href="{{ route('pengajar.score.import_template', $mapel->id) }}"
-                                           class="inline-flex items-center rounded-md border border-green-600 px-2 py-1 text-xs font-medium text-green-700 hover:bg-green-50"
-                                           title="Download Template Nilai Excel">
-                                            Template Excel
-                                        </a>
                                         @else
                                             <button type="button"
                                                     onclick='showLmTpWarning(@json($mapel->nama_pelajaran))'
