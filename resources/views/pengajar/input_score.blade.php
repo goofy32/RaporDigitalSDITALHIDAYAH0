@@ -76,6 +76,31 @@
         </div>
     </div>
 
+    <div class="mb-4 rounded-lg border border-green-100 bg-green-50/60 p-4">
+        <div class="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+                <h3 class="text-sm font-semibold text-green-800">Import Nilai Excel</h3>
+                <p class="mt-1 text-sm text-green-700">Unduh template khusus kelas dan mata pelajaran ini, lalu unggah kembali untuk preview validasi. Nilai belum disimpan pada tahap preview.</p>
+            </div>
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-center">
+                <a href="{{ route('pengajar.score.import_template', $subject['id']) }}"
+                   class="inline-flex items-center justify-center rounded-lg border border-green-700 px-4 py-2 text-sm font-medium text-green-700 hover:bg-green-100">
+                    Download Template Nilai Excel
+                </a>
+                <form method="POST" action="{{ route('pengajar.score.import_preview', $subject['id']) }}" enctype="multipart/form-data" class="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    @csrf
+                    <input type="file" name="file" accept=".xlsx,.xls" class="block w-full rounded-lg border border-green-200 bg-white text-sm text-gray-700 file:mr-3 file:border-0 file:bg-green-700 file:px-3 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-green-800 sm:w-64">
+                    <button type="submit" class="rounded-lg bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800">
+                        Preview Excel
+                    </button>
+                </form>
+            </div>
+        </div>
+        @error('file')
+            <p class="mt-2 text-sm text-red-600">{{ $message }}</p>
+        @enderror
+    </div>
+
     <form id="saveForm" method="POST" action="{{ route('pengajar.score.save_scores', $subject['id']) }}" data-delete-nilai-url="{{ route('pengajar.score.nilai.delete') }}" x-data="formProtection" >
         @csrf
 

@@ -7,11 +7,16 @@ use App\Jobs\AutoPreparePdfReportJob;
 use App\Models\Guru;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
+use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
+use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use Tests\TestCase;
 
 class PengajarScoreAuthorizationTest extends TestCase
@@ -36,6 +41,11 @@ class PengajarScoreAuthorizationTest extends TestCase
 
     private int $tujuanPembelajaranId;
 
+    /**
+     * @var array<int, string>
+     */
+    private array $workbooks = [];
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -52,6 +62,17 @@ class PengajarScoreAuthorizationTest extends TestCase
 
         $this->createSchema();
         $this->seedFixture();
+    }
+
+    protected function tearDown(): void
+    {
+        foreach ($this->workbooks as $workbook) {
+            if (is_file($workbook)) {
+                @unlink($workbook);
+            }
+        }
+
+        parent::tearDown();
     }
 
     public function test_authorized_pengajar_can_save_grades_for_assigned_subject(): void
@@ -257,6 +278,220 @@ class PengajarScoreAuthorizationTest extends TestCase
         $this->assertSame(0, DB::table('nilais')->count());
     }
 
+    public function test_authorized_pengajar_can_download_score_import_template(): void
+    {
+        $response = $this->actingAsPengajar($this->budi)
+            ->get(route('pengajar.score.import_template', $this->subjectId));
+
+        $response->assertOk();
+        $response->assertHeader('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    }
+
+    public function test_score_import_template_contains_expected_students_for_class(): void
+    {
+        $otherClassId = DB::table('kelas')->insertGetId([
+            'nomor_kelas' => 5,
+            'nama_kelas' => 'B',
+            'tahun_ajaran_id' => $this->activeYearId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        DB::table('siswas')->insert([
+            'nis' => '2001',
+            'nisn' => '2001000',
+            'nama' => 'Siswa Kelas Lain',
+            'kelas_id' => $otherClassId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $workbook = $this->workbookFromResponse(
+            $this->actingAsPengajar($this->budi)
+                ->get(route('pengajar.score.import_template', $this->subjectId))
+        );
+
+        $sheet = $workbook->getSheetByName('Nilai');
+        $names = collect($sheet->rangeToArray('D6:D20'))->flatten()->filter()->values()->all();
+
+        $this->assertContains('Ahmad Fauzan', $names);
+        $this->assertNotContains('Siswa Kelas Lain', $names);
+    }
+
+    public function test_unauthorized_guru_cannot_download_score_import_template(): void
+    {
+        $this->actingAsPengajar($this->ani)
+            ->get(route('pengajar.score.import_template', $this->subjectId))
+            ->assertForbidden();
+    }
+
+    public function test_score_import_preview_accepts_valid_template_and_writes_no_scores(): void
+    {
+        $uploadedFile = $this->validScoreImportUpload([
+            "tp_{$this->lingkupMateriId}_{$this->tujuanPembelajaranId}" => 80,
+            "lm_{$this->lingkupMateriId}" => 82,
+            'nilai_tes' => 84,
+            'nilai_non_tes' => 86,
+        ]);
+
+        $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_preview', $this->subjectId), ['file' => $uploadedFile])
+            ->assertOk()
+            ->assertSeeText('Ini baru preview. Nilai belum disimpan.')
+            ->assertSeeText('Ahmad Fauzan')
+            ->assertSeeText('Valid');
+
+        $this->assertSame(0, DB::table('nilais')->count());
+    }
+
+    public function test_score_import_preview_rejects_student_from_another_class(): void
+    {
+        $otherClassId = DB::table('kelas')->insertGetId([
+            'nomor_kelas' => 5,
+            'nama_kelas' => 'B',
+            'tahun_ajaran_id' => $this->activeYearId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $otherStudentId = DB::table('siswas')->insertGetId([
+            'nis' => '2001',
+            'nisn' => '2001000',
+            'nama' => 'Siswa Kelas Lain',
+            'kelas_id' => $otherClassId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $uploadedFile = $this->validScoreImportUpload([
+            'siswa_id' => $otherStudentId,
+            'nis' => '2001',
+            'nisn' => '2001000',
+            'nama_siswa' => 'Siswa Kelas Lain',
+            "tp_{$this->lingkupMateriId}_{$this->tujuanPembelajaranId}" => 80,
+        ]);
+
+        $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_preview', $this->subjectId), ['file' => $uploadedFile])
+            ->assertOk()
+            ->assertSeeText('Siswa tidak termasuk kelas/konteks mata pelajaran ini.');
+
+        $this->assertSame(0, DB::table('nilais')->count());
+    }
+
+    public function test_score_import_preview_rejects_duplicated_siswa_id(): void
+    {
+        $workbook = $this->templateWorkbook();
+        $sheet = $workbook->getSheetByName('Nilai');
+        $highestColumn = $sheet->getHighestDataColumn();
+        $sheet->fromArray($sheet->rangeToArray("A6:{$highestColumn}6")[0], null, 'A7');
+        $this->setValueByKey($sheet, "tp_{$this->lingkupMateriId}_{$this->tujuanPembelajaranId}", 6, 80);
+        $this->setValueByKey($sheet, "tp_{$this->lingkupMateriId}_{$this->tujuanPembelajaranId}", 7, 81);
+
+        $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_preview', $this->subjectId), [
+                'file' => $this->uploadedWorkbook($workbook),
+            ])
+            ->assertOk()
+            ->assertSeeText('siswa_id duplikat di file.');
+
+        $this->assertSame(0, DB::table('nilais')->count());
+    }
+
+    public function test_score_import_preview_rejects_invalid_score_values(): void
+    {
+        $uploadedFile = $this->validScoreImportUpload([
+            "tp_{$this->lingkupMateriId}_{$this->tujuanPembelajaranId}" => -1,
+            "lm_{$this->lingkupMateriId}" => 101,
+            'nilai_tes' => 'abc',
+        ]);
+
+        $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_preview', $this->subjectId), ['file' => $uploadedFile])
+            ->assertOk()
+            ->assertSeeText('TP 1 harus antara 0 sampai 100.')
+            ->assertSeeText('LM Bilangan harus antara 0 sampai 100.')
+            ->assertSeeText('Nilai Tes harus berupa angka.');
+
+        $this->assertSame(0, DB::table('nilais')->count());
+    }
+
+    private function validScoreImportUpload(array $values): UploadedFile
+    {
+        $workbook = $this->templateWorkbook();
+        $sheet = $workbook->getSheetByName('Nilai');
+
+        foreach ($values as $key => $value) {
+            $this->setValueByKey($sheet, $key, 6, $value);
+        }
+
+        return $this->uploadedWorkbook($workbook);
+    }
+
+    private function templateWorkbook()
+    {
+        return $this->workbookFromResponse(
+            $this->actingAsPengajar($this->budi)
+                ->get(route('pengajar.score.import_template', $this->subjectId))
+        );
+    }
+
+    private function workbookFromResponse($response)
+    {
+        $directory = storage_path('framework/testing');
+        File::ensureDirectoryExists($directory);
+        $path = $directory.'/score-template-'.uniqid('', true).'.xlsx';
+
+        file_put_contents($path, $response->streamedContent());
+        $this->workbooks[] = $path;
+
+        return IOFactory::load($path);
+    }
+
+    private function uploadedWorkbook($workbook): UploadedFile
+    {
+        $directory = storage_path('framework/testing');
+        File::ensureDirectoryExists($directory);
+        $path = $directory.'/score-import-'.uniqid('', true).'.xlsx';
+        (new Xlsx($workbook))->save($path);
+        $this->workbooks[] = $path;
+
+        return new UploadedFile(
+            $path,
+            'score-import.xlsx',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            null,
+            true
+        );
+    }
+
+    private function setValueByKey($sheet, string $key, int $row, mixed $value): void
+    {
+        $columnMap = $this->scoreTemplateColumnMap($sheet);
+
+        if (! isset($columnMap[$key])) {
+            $this->fail("Kolom {$key} tidak ditemukan di template.");
+        }
+
+        $sheet->setCellValue(Coordinate::stringFromColumnIndex($columnMap[$key]).$row, $value);
+    }
+
+    private function scoreTemplateColumnMap($sheet): array
+    {
+        $columnMap = [];
+        $highestColumnIndex = Coordinate::columnIndexFromString($sheet->getHighestDataColumn());
+
+        for ($columnIndex = 1; $columnIndex <= $highestColumnIndex; $columnIndex++) {
+            $key = trim((string) $sheet->getCell(Coordinate::stringFromColumnIndex($columnIndex).'5')->getValue());
+
+            if ($key !== '') {
+                $columnMap[$key] = $columnIndex;
+            }
+        }
+
+        return $columnMap;
+    }
+
     private function actingAsPengajar(Guru $guru): self
     {
         return $this->actingAs($guru, 'guru')
@@ -317,6 +552,7 @@ class PengajarScoreAuthorizationTest extends TestCase
             'nilais',
             'tujuan_pembelajarans',
             'lingkup_materis',
+            'kkms',
             'bobot_nilais',
             'mata_pelajarans',
             'siswa_kelas_semester',
@@ -415,6 +651,14 @@ class PengajarScoreAuthorizationTest extends TestCase
             $table->integer('bobot_tp')->default(1);
             $table->integer('bobot_lm')->default(1);
             $table->integer('bobot_as')->default(2);
+            $table->timestamps();
+        });
+
+        Schema::create('kkms', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('mata_pelajaran_id')->nullable();
+            $table->foreignId('tahun_ajaran_id')->nullable();
+            $table->integer('nilai')->default(70);
             $table->timestamps();
         });
 

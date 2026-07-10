@@ -498,6 +498,8 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
         Route::get('/', [ScoreController::class, 'index'])->name('index');
         Route::get('/{id}/input', [ScoreController::class, 'inputScore'])->name('input_score');
         Route::post('/{id}/save', [ScoreController::class, 'saveScore'])->name('save_scores');
+        Route::get('/{id}/import/template', [ScoreController::class, 'downloadImportTemplate'])->name('import_template');
+        Route::post('/{id}/import/preview', [ScoreController::class, 'previewImport'])->name('import_preview');
         Route::get('/{id}/preview', [ScoreController::class, 'previewScore'])->name('preview_score');
         Route::post('/score/nilai/delete', [ScoreController::class, 'deleteNilai'])->name('nilai.delete');
         Route::post('/validate', [ScoreController::class, 'validateScores'])->name('validate');

@@ -15,6 +15,8 @@ use App\Models\Kkm;
 use App\Models\BobotNilai;
 use App\Models\TahunAjaran;
 use App\Services\PdfCacheService;
+use App\Services\PengajarScoreExcelPreviewService;
+use App\Services\PengajarScoreExcelTemplateService;
 use App\Services\ReportPdfAutoPrepareService;
 use App\Services\SiswaKelasSemesterResolver;
 use Illuminate\Support\Facades\DB;
@@ -22,6 +24,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Cache;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
 class ScoreController extends Controller
 {
@@ -725,6 +728,120 @@ class ScoreController extends Controller
             });
     }
 
+    private function authorizedScoreImportContext(int $mataPelajaranId): array
+    {
+        $tahunAjaranId = $this->getValidTahunAjaranId();
+
+        if (! $tahunAjaranId) {
+            abort(422, 'Tahun ajaran belum aktif.');
+        }
+
+        $mataPelajaran = MataPelajaran::with([
+            'kelas',
+            'lingkupMateris.tujuanPembelajarans',
+        ])->findOrFail($mataPelajaranId);
+
+        if (! $this->isAuthorizedPengajarSubject($mataPelajaran, $tahunAjaranId)) {
+            abort(403);
+        }
+
+        $hasCompleteTp = $mataPelajaran->lingkupMateris->isNotEmpty()
+            && $mataPelajaran->lingkupMateris->every(
+                fn ($lingkupMateri) => $lingkupMateri->tujuanPembelajarans->isNotEmpty()
+            );
+
+        if (! $hasCompleteTp) {
+            abort(422, 'Mata pelajaran ini belum memiliki Lingkup Materi dan Tujuan Pembelajaran lengkap.');
+        }
+
+        $siswas = $this->studentsForSubjectRoster($mataPelajaran, $tahunAjaranId);
+        $tahunAjaran = TahunAjaran::findOrFail($tahunAjaranId);
+
+        return [
+            'tahunAjaranId' => $tahunAjaranId,
+            'tahunAjaran' => $tahunAjaran,
+            'mataPelajaran' => $mataPelajaran,
+            'siswas' => $siswas,
+            'students' => $this->studentOptionsForRoster($siswas),
+            'existingScores' => $this->existingScoresForRoster($mataPelajaran, $siswas, $tahunAjaranId),
+        ];
+    }
+
+    private function existingScoresForRoster(MataPelajaran $mataPelajaran, $siswas, int $tahunAjaranId): array
+    {
+        $existingScores = [];
+
+        foreach ($siswas as $siswa) {
+            $existingScores[$siswa->id] = [
+                'tp' => [],
+                'lm' => [],
+                'na_tp' => null,
+                'na_lm' => null,
+                'nilai_tes' => null,
+                'nilai_non_tes' => null,
+                'nilai_akhir_semester' => null,
+                'nilai_akhir_rapor' => null,
+                'is_submitted' => false,
+            ];
+
+            foreach ($mataPelajaran->lingkupMateris as $lingkupMateri) {
+                $existingScores[$siswa->id]['lm'][$lingkupMateri->id] = null;
+
+                foreach ($lingkupMateri->tujuanPembelajarans as $tujuanPembelajaran) {
+                    $existingScores[$siswa->id]['tp'][$lingkupMateri->id][$tujuanPembelajaran->id] = null;
+                }
+            }
+        }
+
+        $existingNilais = Nilai::where('mata_pelajaran_id', $mataPelajaran->id)
+            ->where('tahun_ajaran_id', $tahunAjaranId)
+            ->get();
+
+        foreach ($existingNilais as $nilai) {
+            if (! isset($existingScores[$nilai->siswa_id])) {
+                continue;
+            }
+
+            if ($nilai->nilai_tp !== null) {
+                $existingScores[$nilai->siswa_id]['tp'][$nilai->lingkup_materi_id][$nilai->tujuan_pembelajaran_id] = $nilai->nilai_tp;
+            }
+
+            if ($nilai->nilai_lm !== null) {
+                $existingScores[$nilai->siswa_id]['lm'][$nilai->lingkup_materi_id] = $nilai->nilai_lm;
+            }
+
+            if ($nilai->na_tp !== null) {
+                $existingScores[$nilai->siswa_id]['na_tp'] = $nilai->na_tp;
+            }
+
+            if ($nilai->na_lm !== null) {
+                $existingScores[$nilai->siswa_id]['na_lm'] = $nilai->na_lm;
+            }
+
+            if ($nilai->nilai_tes !== null) {
+                $existingScores[$nilai->siswa_id]['nilai_tes'] = $nilai->nilai_tes;
+            }
+
+            if ($nilai->nilai_non_tes !== null) {
+                $existingScores[$nilai->siswa_id]['nilai_non_tes'] = $nilai->nilai_non_tes;
+            }
+
+            if ($nilai->nilai_akhir_semester !== null) {
+                $existingScores[$nilai->siswa_id]['nilai_akhir_semester'] = $nilai->nilai_akhir_semester;
+            }
+
+            if ($nilai->nilai_akhir_rapor !== null) {
+                $existingScores[$nilai->siswa_id]['nilai_akhir_rapor'] = $nilai->nilai_akhir_rapor;
+            }
+
+            if ($nilai->is_submitted) {
+                $existingScores[$nilai->siswa_id]['is_submitted'] = true;
+            }
+        }
+
+        return $existingScores;
+    }
+
     private function authorizeDeleteNilaiRequest(Request $request, int $tahunAjaranId): array
     {
         $validated = $request->validate([
@@ -1162,6 +1279,80 @@ class ScoreController extends Controller
                 'success' => false,
                 'message' => 'Terjadi kesalahan. Silakan coba lagi.'
             ], 500);
+        }
+    }
+
+    public function downloadImportTemplate(int $id, PengajarScoreExcelTemplateService $templateService)
+    {
+        try {
+            $context = $this->authorizedScoreImportContext($id);
+            $spreadsheet = $templateService->createWorkbook(
+                $context['mataPelajaran'],
+                $context['siswas'],
+                $context['tahunAjaran']
+            );
+
+            $filename = sprintf(
+                'Template_Nilai_%s_%s_%s_Semester_%s.xlsx',
+                $context['mataPelajaran']->kelas?->label_kelas ?? 'Kelas',
+                $context['mataPelajaran']->nama_pelajaran,
+                $context['tahunAjaran']->tahun_ajaran,
+                $context['tahunAjaran']->semester
+            );
+            $filename = str_replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], '-', $filename);
+
+            return response()->streamDownload(function () use ($spreadsheet) {
+                (new Xlsx($spreadsheet))->save('php://output');
+                $spreadsheet->disconnectWorksheets();
+            }, $filename, [
+                'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            ]);
+        } catch (\Symfony\Component\HttpKernel\Exception\HttpExceptionInterface $exception) {
+            throw $exception;
+        } catch (\Throwable $exception) {
+            Log::error('[ScoreController] Failed to download score import template', [
+                'error' => $exception->getMessage(),
+                'guru_id' => Auth::guard('guru')->id(),
+                'mata_pelajaran_id' => $id,
+            ]);
+
+            return redirect()->route('pengajar.score.input_score', $id)
+                ->with('error', 'Terjadi kesalahan saat mengunduh template nilai.');
+        }
+    }
+
+    public function previewImport(Request $request, int $id, PengajarScoreExcelPreviewService $previewService)
+    {
+        $request->validate([
+            'file' => 'required|file|mimes:xlsx,xls|max:2048',
+        ]);
+
+        try {
+            $context = $this->authorizedScoreImportContext($id);
+            $preview = $previewService->preview(
+                $request->file('file'),
+                $context['mataPelajaran'],
+                $context['siswas'],
+                $context['tahunAjaran'],
+                $context['existingScores']
+            );
+
+            return view('pengajar.score_import_preview', [
+                'mataPelajaran' => $context['mataPelajaran'],
+                'tahunAjaran' => $context['tahunAjaran'],
+                'preview' => $preview,
+            ]);
+        } catch (\Symfony\Component\HttpKernel\Exception\HttpExceptionInterface $exception) {
+            throw $exception;
+        } catch (\Throwable $exception) {
+            Log::error('[ScoreController] Score import preview failed', [
+                'error' => $exception->getMessage(),
+                'guru_id' => Auth::guard('guru')->id(),
+                'mata_pelajaran_id' => $id,
+            ]);
+
+            return redirect()->route('pengajar.score.input_score', $id)
+                ->with('error', 'Gagal membaca file Excel nilai. Pastikan file berasal dari template yang diunduh dari halaman ini.');
         }
     }
 
