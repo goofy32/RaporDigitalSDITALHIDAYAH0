@@ -410,6 +410,13 @@ function highlightBelowKkm(row) {
 }
 
 function validateForm() {
+    const form = document.getElementById('saveForm');
+
+    if (form?.dataset.importBlockingErrors === 'true') {
+        alert('Import Excel masih memiliki error validasi. Perbaiki file Excel lalu unggah ulang sebelum menyimpan.');
+        return false;
+    }
+
     const rows = document.querySelectorAll('#students-table tbody tr');
     let hasIncompleteDrafts = false;
 

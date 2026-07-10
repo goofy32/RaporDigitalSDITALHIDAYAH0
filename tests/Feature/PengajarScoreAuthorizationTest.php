@@ -16,6 +16,7 @@ use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
 use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
 use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\Style\Protection;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use Tests\TestCase;
 
@@ -287,6 +288,15 @@ class PengajarScoreAuthorizationTest extends TestCase
         $response->assertHeader('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     }
 
+    public function test_score_import_template_download_is_available_from_pengajar_subject_list(): void
+    {
+        $this->actingAsPengajar($this->budi)
+            ->get(route('pengajar.score.index'))
+            ->assertOk()
+            ->assertSee('Template Excel')
+            ->assertSee(route('pengajar.score.import_template', $this->subjectId), false);
+    }
+
     public function test_score_import_template_contains_expected_students_for_class(): void
     {
         $otherClassId = DB::table('kelas')->insertGetId([
@@ -318,6 +328,28 @@ class PengajarScoreAuthorizationTest extends TestCase
         $this->assertNotContains('Siswa Kelas Lain', $names);
     }
 
+    public function test_score_import_template_protects_identifier_columns_and_unlocks_score_cells(): void
+    {
+        $workbook = $this->workbookFromResponse(
+            $this->actingAsPengajar($this->budi)
+                ->get(route('pengajar.score.import_template', $this->subjectId))
+        );
+
+        $sheet = $workbook->getSheetByName('Nilai');
+
+        $this->assertTrue((bool) $sheet->getProtection()->getSheet());
+        $this->assertFalse($sheet->getRowDimension(2)->getVisible());
+        $this->assertFalse($sheet->getRowDimension(3)->getVisible());
+        $this->assertFalse($sheet->getRowDimension(5)->getVisible());
+        $this->assertSame(Protection::PROTECTION_PROTECTED, $sheet->getStyle('A6')->getProtection()->getLocked());
+        $this->assertSame(Protection::PROTECTION_PROTECTED, $sheet->getStyle('D6')->getProtection()->getLocked());
+        $this->assertSame(Protection::PROTECTION_UNPROTECTED, $sheet->getStyle('G6')->getProtection()->getLocked());
+        $this->assertStringContainsString(
+            'Isi hanya kolom nilai. Jangan mengubah data siswa, kelas, atau mata pelajaran.',
+            collect($workbook->getSheetByName('Petunjuk')->rangeToArray('A1:A20'))->flatten()->filter()->implode("\n")
+        );
+    }
+
     public function test_unauthorized_guru_cannot_download_score_import_template(): void
     {
         $this->actingAsPengajar($this->ani)
@@ -337,9 +369,13 @@ class PengajarScoreAuthorizationTest extends TestCase
         $this->actingAsPengajar($this->budi)
             ->post(route('pengajar.score.import_preview', $this->subjectId), ['file' => $uploadedFile])
             ->assertOk()
-            ->assertSeeText('Ini baru preview. Nilai belum disimpan.')
+            ->assertSeeText('Data Excel berhasil dimuat. Nilai belum disimpan. Periksa kembali lalu klik Simpan.')
             ->assertSeeText('Ahmad Fauzan')
-            ->assertSeeText('Valid');
+            ->assertSee('value="80"', false)
+            ->assertSee('value="82"', false)
+            ->assertSee('value="84"', false)
+            ->assertSee('value="86"', false)
+            ->assertSee('data-import-blocking-errors="false"', false);
 
         $this->assertSame(0, DB::table('nilais')->count());
     }
@@ -374,7 +410,8 @@ class PengajarScoreAuthorizationTest extends TestCase
         $this->actingAsPengajar($this->budi)
             ->post(route('pengajar.score.import_preview', $this->subjectId), ['file' => $uploadedFile])
             ->assertOk()
-            ->assertSeeText('Siswa tidak termasuk kelas/konteks mata pelajaran ini.');
+            ->assertSeeText('Siswa tidak termasuk kelas/konteks mata pelajaran ini.')
+            ->assertSee('data-import-blocking-errors="true"', false);
 
         $this->assertSame(0, DB::table('nilais')->count());
     }
@@ -393,7 +430,8 @@ class PengajarScoreAuthorizationTest extends TestCase
                 'file' => $this->uploadedWorkbook($workbook),
             ])
             ->assertOk()
-            ->assertSeeText('siswa_id duplikat di file.');
+            ->assertSeeText('siswa_id duplikat di file.')
+            ->assertSee('data-import-blocking-errors="true"', false);
 
         $this->assertSame(0, DB::table('nilais')->count());
     }
@@ -411,7 +449,22 @@ class PengajarScoreAuthorizationTest extends TestCase
             ->assertOk()
             ->assertSeeText('TP 1 harus antara 0 sampai 100.')
             ->assertSeeText('LM Bilangan harus antara 0 sampai 100.')
-            ->assertSeeText('Nilai Tes harus berupa angka.');
+            ->assertSeeText('Nilai Tes harus berupa angka.')
+            ->assertSee('data-import-invalid="true"', false)
+            ->assertSee('data-import-blocking-errors="true"', false);
+
+        $this->assertSame(0, DB::table('nilais')->count());
+    }
+
+    public function test_unauthorized_guru_cannot_upload_score_import_template(): void
+    {
+        $uploadedFile = $this->validScoreImportUpload([
+            "tp_{$this->lingkupMateriId}_{$this->tujuanPembelajaranId}" => 80,
+        ]);
+
+        $this->actingAsPengajar($this->ani)
+            ->post(route('pengajar.score.import_preview', $this->subjectId), ['file' => $uploadedFile])
+            ->assertForbidden();
 
         $this->assertSame(0, DB::table('nilais')->count());
     }

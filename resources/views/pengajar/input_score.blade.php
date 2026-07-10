@@ -22,6 +22,9 @@
 
 <div data-page="pengajar-input-score" class="p-4 mt-16 bg-white shadow-md rounded-lg">
     @php
+        $excelImport = $excelImport ?? null;
+        $importFieldErrors = $excelImport['field_errors'] ?? [];
+        $importHasBlockingErrors = (bool) ($excelImport['blocking_errors'] ?? false);
         $completionCount = collect($students)->filter(function ($student) use ($existingScores) {
             return !empty($existingScores[$student['id']]['is_submitted']);
         })->count();
@@ -80,13 +83,9 @@
         <div class="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
                 <h3 class="text-sm font-semibold text-green-800">Import Nilai Excel</h3>
-                <p class="mt-1 text-sm text-green-700">Unduh template khusus kelas dan mata pelajaran ini, lalu unggah kembali untuk preview validasi. Nilai belum disimpan pada tahap preview.</p>
+                <p class="mt-1 text-sm text-green-700">Unggah template nilai dari halaman Data Pembelajaran untuk memuat draft nilai ke form ini. Nilai belum disimpan sampai tombol Simpan diklik.</p>
             </div>
             <div class="flex flex-col gap-3 sm:flex-row sm:items-center">
-                <a href="{{ route('pengajar.score.import_template', $subject['id']) }}"
-                   class="inline-flex items-center justify-center rounded-lg border border-green-700 px-4 py-2 text-sm font-medium text-green-700 hover:bg-green-100">
-                    Download Template Nilai Excel
-                </a>
                 <form method="POST" action="{{ route('pengajar.score.import_preview', $subject['id']) }}" enctype="multipart/form-data" class="flex flex-col gap-2 sm:flex-row sm:items-center">
                     @csrf
                     <input type="file" name="file" accept=".xlsx,.xls" class="block w-full rounded-lg border border-green-200 bg-white text-sm text-gray-700 file:mr-3 file:border-0 file:bg-green-700 file:px-3 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-green-800 sm:w-64">
@@ -101,7 +100,38 @@
         @enderror
     </div>
 
-    <form id="saveForm" method="POST" action="{{ route('pengajar.score.save_scores', $subject['id']) }}" data-delete-nilai-url="{{ route('pengajar.score.nilai.delete') }}" x-data="formProtection" >
+    @if($excelImport)
+        @if($excelImport['valid'])
+            <div class="mb-4 rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-800">
+                <p class="font-semibold">Data Excel berhasil dimuat. Nilai belum disimpan. Periksa kembali lalu klik Simpan.</p>
+                <p class="mt-1">{{ $excelImport['summary']['valid_rows'] }} baris valid dari {{ $excelImport['summary']['rows'] }} baris yang dibaca.</p>
+            </div>
+        @else
+            <div class="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                <p class="font-semibold">File Excel berhasil dibaca, tetapi masih ada error validasi. Nilai belum disimpan.</p>
+                <p class="mt-1">Perbaiki file Excel lalu unggah ulang sebelum menyimpan.</p>
+                <div class="mt-3 grid grid-cols-1 gap-2 md:grid-cols-3">
+                    <div>Baris dibaca: <span class="font-semibold">{{ $excelImport['summary']['rows'] }}</span></div>
+                    <div>Valid: <span class="font-semibold">{{ $excelImport['summary']['valid_rows'] }}</span></div>
+                    <div>Tidak valid: <span class="font-semibold">{{ $excelImport['summary']['invalid_rows'] }}</span></div>
+                </div>
+                @if(!empty($excelImport['context_errors']) || !empty($excelImport['row_errors']))
+                    <ul class="mt-3 list-disc space-y-1 pl-5">
+                        @foreach($excelImport['context_errors'] as $error)
+                            <li>{{ $error }}</li>
+                        @endforeach
+                        @foreach($excelImport['row_errors'] as $rowError)
+                            @foreach($rowError['errors'] as $error)
+                                <li>Baris {{ $rowError['row_number'] }} - {{ $rowError['student_name'] }}: {{ $error }}</li>
+                            @endforeach
+                        @endforeach
+                    </ul>
+                @endif
+            </div>
+        @endif
+    @endif
+
+    <form id="saveForm" method="POST" action="{{ route('pengajar.score.save_scores', $subject['id']) }}" data-delete-nilai-url="{{ route('pengajar.score.nilai.delete') }}" data-import-blocking-errors="{{ $importHasBlockingErrors ? 'true' : 'false' }}" x-data="formProtection" >
         @csrf
 
         <input type="hidden" name="tahun_ajaran_id" value="{{ session('tahun_ajaran_id') }}">
@@ -159,14 +189,22 @@
                             <!-- Nilai TP -->
                             @foreach($mataPelajaran->lingkupMateris as $lm)
                                 @foreach($lm->tujuanPembelajarans as $tp)
+                                    @php
+                                        $fieldKey = "tp_{$lm->id}_{$tp->id}";
+                                        $fieldErrors = $importFieldErrors[$student['id']][$fieldKey] ?? [];
+                                    @endphp
                                     <td class="px-4 py-2 border">
                                         <input type="number" 
                                                name="scores[{{ $student['id'] }}][tp][{{ $lm->id }}][{{ $tp->id }}]"
-                                               class="w-20 border border-gray-300 rounded px-2 py-1 tp-score"
+                                               class="w-20 border rounded px-2 py-1 tp-score {{ $fieldErrors ? 'border-red-500 bg-red-50 text-red-800' : 'border-gray-300' }}"
                                                data-lm="{{ $lm->id }}"
+                                               data-import-invalid="{{ $fieldErrors ? 'true' : 'false' }}"
                                                value="{{ $existingScores[$student['id']]['tp'][$lm->id][$tp->id] ?? '' }}"
                                                min="0"
                                                max="100">
+                                        @foreach($fieldErrors as $fieldError)
+                                            <p class="mt-1 text-xs text-red-600">{{ $fieldError }}</p>
+                                        @endforeach
                                     </td>
                                 @endforeach
                             @endforeach
@@ -174,13 +212,21 @@
 
                             <!-- Nilai LM -->
                             @foreach($mataPelajaran->lingkupMateris as $lm)
+                                @php
+                                    $fieldKey = "lm_{$lm->id}";
+                                    $fieldErrors = $importFieldErrors[$student['id']][$fieldKey] ?? [];
+                                @endphp
                                 <td class="px-4 py-2 border">
                                     <input type="number" 
                                            name="scores[{{ $student['id'] }}][lm][{{ $lm->id }}]"
-                                           class="w-20 border border-gray-300 rounded px-2 py-1 lm-score"
+                                           class="w-20 border rounded px-2 py-1 lm-score {{ $fieldErrors ? 'border-red-500 bg-red-50 text-red-800' : 'border-gray-300' }}"
+                                           data-import-invalid="{{ $fieldErrors ? 'true' : 'false' }}"
                                            value="{{ $existingScores[$student['id']]['lm'][$lm->id] ?? '' }}"
                                            min="0"
                                            max="100">
+                                    @foreach($fieldErrors as $fieldError)
+                                        <p class="mt-1 text-xs text-red-600">{{ $fieldError }}</p>
+                                    @endforeach
                                 </td>
                             @endforeach
                             
@@ -207,23 +253,37 @@
                             </td>
                             
                             <!-- Nilai Tes -->
+                            @php
+                                $fieldErrors = $importFieldErrors[$student['id']]['nilai_tes'] ?? [];
+                            @endphp
                             <td class="px-4 py-2 border">
                                 <input type="number" 
                                        name="scores[{{ $student['id'] }}][nilai_tes]"
-                                       class="w-20 border border-gray-300 rounded px-2 py-1 nilai-semester nilai-tes"
+                                       class="w-20 border rounded px-2 py-1 nilai-semester nilai-tes {{ $fieldErrors ? 'border-red-500 bg-red-50 text-red-800' : 'border-gray-300' }}"
+                                       data-import-invalid="{{ $fieldErrors ? 'true' : 'false' }}"
                                        value="{{ $existingScores[$student['id']]['nilai_tes'] ?? '' }}"
                                        min="0"
                                        max="100">
+                                @foreach($fieldErrors as $fieldError)
+                                    <p class="mt-1 text-xs text-red-600">{{ $fieldError }}</p>
+                                @endforeach
                             </td>
                             
                             <!-- Nilai Non-Tes -->
+                            @php
+                                $fieldErrors = $importFieldErrors[$student['id']]['nilai_non_tes'] ?? [];
+                            @endphp
                             <td class="px-4 py-2 border">
                                 <input type="number" 
                                        name="scores[{{ $student['id'] }}][nilai_non_tes]"
-                                       class="w-20 border border-gray-300 rounded px-2 py-1 nilai-semester nilai-non-tes"
+                                       class="w-20 border rounded px-2 py-1 nilai-semester nilai-non-tes {{ $fieldErrors ? 'border-red-500 bg-red-50 text-red-800' : 'border-gray-300' }}"
+                                       data-import-invalid="{{ $fieldErrors ? 'true' : 'false' }}"
                                        value="{{ $existingScores[$student['id']]['nilai_non_tes'] ?? '' }}"
                                        min="0"
                                        max="100">
+                                @foreach($fieldErrors as $fieldError)
+                                    <p class="mt-1 text-xs text-red-600">{{ $fieldError }}</p>
+                                @endforeach
                             </td>
                             
                             <!-- NA Sumatif Akhir Semester -->

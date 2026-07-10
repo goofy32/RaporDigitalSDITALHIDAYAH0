@@ -199,6 +199,7 @@ class PengajarScoreExcelPreviewService
 
         $uploadedValues = [];
         $existingValues = [];
+        $fieldErrors = [];
 
         foreach ($scoreColumns as $column) {
             $key = $column['key'];
@@ -209,7 +210,11 @@ class PengajarScoreExcelPreviewService
                 'key' => $key,
                 'label' => $column['label'],
                 'value' => $normalizedValue,
+                'raw_value' => $this->normalizeRawCellValue($value),
                 'editable' => (bool) ($column['editable'] ?? false),
+                'type' => $column['type'] ?? null,
+                'lingkup_materi_id' => $column['lingkup_materi_id'] ?? null,
+                'tujuan_pembelajaran_id' => $column['tujuan_pembelajaran_id'] ?? null,
             ];
 
             $existingValues[] = [
@@ -224,13 +229,17 @@ class PengajarScoreExcelPreviewService
             }
 
             if (! is_numeric($value)) {
-                $errors[] = "{$column['label']} harus berupa angka.";
+                $message = "{$column['label']} harus berupa angka.";
+                $errors[] = $message;
+                $fieldErrors[$key][] = $message;
                 continue;
             }
 
             $numericValue = (float) $value;
             if ($numericValue < 0 || $numericValue > 100) {
-                $errors[] = "{$column['label']} harus antara 0 sampai 100.";
+                $message = "{$column['label']} harus antara 0 sampai 100.";
+                $errors[] = $message;
+                $fieldErrors[$key][] = $message;
             }
         }
 
@@ -242,6 +251,7 @@ class PengajarScoreExcelPreviewService
             'uploaded_values' => $uploadedValues,
             'errors' => $errors,
             'warnings' => $warnings,
+            'field_errors' => $fieldErrors,
             'valid' => empty($errors),
             'status' => empty($errors) ? 'Valid' : 'Tidak valid',
         ];
@@ -319,5 +329,14 @@ class PengajarScoreExcelPreviewService
         }
 
         return is_numeric($value) ? (float) $value : null;
+    }
+
+    private function normalizeRawCellValue(mixed $value): ?string
+    {
+        if ($value === null || trim((string) $value) === '') {
+            return null;
+        }
+
+        return trim((string) $value);
     }
 }

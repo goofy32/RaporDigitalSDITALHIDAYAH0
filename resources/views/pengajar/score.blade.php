@@ -257,6 +257,11 @@
                                             <img src="{{ asset('images/icons/detail.png') }}" alt="View Icon" class="w-5 h-5">
                                         </a>
                                         @endif
+                                        <a href="{{ route('pengajar.score.import_template', $mapel->id) }}"
+                                           class="inline-flex items-center rounded-md border border-green-600 px-2 py-1 text-xs font-medium text-green-700 hover:bg-green-50"
+                                           title="Download Template Nilai Excel">
+                                            Template Excel
+                                        </a>
                                         @else
                                             <button type="button"
                                                     onclick='showLmTpWarning(@json($mapel->nama_pelajaran))'

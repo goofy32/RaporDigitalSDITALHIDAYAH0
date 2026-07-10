@@ -10,6 +10,7 @@ use PhpOffice\PhpSpreadsheet\Cell\DataType;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
+use PhpOffice\PhpSpreadsheet\Style\Protection;
 
 class PengajarScoreExcelTemplateService
 {
@@ -143,15 +144,33 @@ class PengajarScoreExcelTemplateService
             $sheet->getColumnDimension($columnLetter)->setWidth($columnIndex <= 6 ? 18 : 16);
         }
 
+        $lastDataRow = max(self::DATA_START_ROW, $row - 1);
+        $sheet->getStyle("A1:{$lastColumn}{$lastDataRow}")
+            ->getProtection()
+            ->setLocked(Protection::PROTECTION_PROTECTED);
+
         foreach ($scoreColumns as $index => $column) {
+            $columnLetter = $this->columnLetter(count($baseColumns) + $index + 1);
+
             if (($column['editable'] ?? false) === true) {
+                $sheet->getStyle("{$columnLetter}".self::DATA_START_ROW.":{$columnLetter}{$lastDataRow}")
+                    ->getProtection()
+                    ->setLocked(Protection::PROTECTION_UNPROTECTED);
+
                 continue;
             }
 
-            $columnLetter = $this->columnLetter(count($baseColumns) + $index + 1);
-            $sheet->getStyle("{$columnLetter}".self::DATA_START_ROW.":{$columnLetter}".max(self::DATA_START_ROW, $row - 1))
+            $sheet->getStyle("{$columnLetter}".self::DATA_START_ROW.":{$columnLetter}{$lastDataRow}")
                 ->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setARGB('FFF9FAFB');
         }
+
+        $sheet->getRowDimension(2)->setVisible(false);
+        $sheet->getRowDimension(3)->setVisible(false);
+        $sheet->getRowDimension(self::KEY_ROW)->setVisible(false);
+        $sheet->getProtection()->setSheet(true);
+        $sheet->getProtection()->setPassword('nilai');
+        $sheet->getProtection()->setSort(true);
+        $sheet->getProtection()->setAutoFilter(true);
     }
 
     private function buildInstructionSheet(Spreadsheet $spreadsheet, MataPelajaran $mataPelajaran, TahunAjaran $tahunAjaran): void
@@ -163,6 +182,7 @@ class PengajarScoreExcelTemplateService
             ['Template Import Nilai Pengajar'],
             ["Tahun ajaran: {$tahunAjaran->tahun_ajaran}, semester {$tahunAjaran->semester}."],
             ['Template ini khusus untuk kelas dan mata pelajaran yang tertera pada sheet Nilai.'],
+            ['Isi hanya kolom nilai. Jangan mengubah data siswa, kelas, atau mata pelajaran.'],
             ['Jangan mengubah siswa_id. Nama siswa hanya untuk verifikasi manusia.'],
             ['Isi nilai pada kolom TP, LM, Nilai Tes, dan Nilai Non-Tes.'],
             ['Kolom NA dan Nilai Akhir adalah referensi kalkulasi. Perhitungan final tetap dilakukan oleh aplikasi saat fase simpan nanti.'],
@@ -175,6 +195,7 @@ class PengajarScoreExcelTemplateService
         $sheet->getStyle('A1')->getFont()->setBold(true)->setSize(14);
         $sheet->getColumnDimension('A')->setWidth(120);
         $sheet->getStyle('A:A')->getAlignment()->setWrapText(true);
+        $sheet->getProtection()->setSheet(true);
     }
 
     private function setStringCell($sheet, string $cell, ?string $value): void

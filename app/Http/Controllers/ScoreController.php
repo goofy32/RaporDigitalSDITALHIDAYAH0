@@ -842,6 +842,106 @@ class ScoreController extends Controller
         return $existingScores;
     }
 
+    private function renderInputScoreView(array $context, ?array $excelImport = null)
+    {
+        $mataPelajaran = $context['mataPelajaran'];
+        $guru = Auth::guard('guru')->user();
+        $tahunAjaranId = $context['tahunAjaranId'];
+        $students = $context['students'];
+        $existingScores = $context['existingScores'];
+        $subject = [
+            'id' => $mataPelajaran->id,
+            'name' => $mataPelajaran->nama_pelajaran,
+            'class' => $mataPelajaran->kelas->nomor_kelas.' '.$mataPelajaran->kelas->nama_kelas,
+        ];
+
+        $mataPelajaranList = MataPelajaran::where('kelas_id', $mataPelajaran->kelas_id)
+            ->where('guru_id', $guru->id)
+            ->when($tahunAjaranId, function ($query) use ($tahunAjaranId) {
+                return $query->where('tahun_ajaran_id', $tahunAjaranId);
+            })
+            ->get();
+
+        $kkm = Kkm::where('mata_pelajaran_id', $mataPelajaran->id)
+            ->where('tahun_ajaran_id', $tahunAjaranId)
+            ->first();
+        $kkmValue = $kkm ? $kkm->nilai : 70;
+        $bobotNilai = BobotNilai::getDefault();
+
+        return view('pengajar.input_score', compact(
+            'subject',
+            'students',
+            'mataPelajaran',
+            'existingScores',
+            'mataPelajaranList',
+            'kkmValue',
+            'bobotNilai',
+            'excelImport'
+        ));
+    }
+
+    private function overlayImportedScores(array $existingScores, array $preview): array
+    {
+        foreach ($preview['rows'] as $row) {
+            $siswaId = (int) ($row['siswa_id'] ?? 0);
+
+            if (! $siswaId || ! isset($existingScores[$siswaId])) {
+                continue;
+            }
+
+            foreach ($row['uploaded_values'] as $value) {
+                if (! ($value['editable'] ?? false) || $value['value'] === null) {
+                    continue;
+                }
+
+                match ($value['type'] ?? null) {
+                    'tp' => $existingScores[$siswaId]['tp'][$value['lingkup_materi_id']][$value['tujuan_pembelajaran_id']] = $value['value'],
+                    'lm' => $existingScores[$siswaId]['lm'][$value['lingkup_materi_id']] = $value['value'],
+                    'semester' => $existingScores[$siswaId][$value['key']] = $value['value'],
+                    default => null,
+                };
+            }
+        }
+
+        return $existingScores;
+    }
+
+    private function excelImportStateFromPreview(array $preview): array
+    {
+        $fieldErrors = [];
+        $rowErrors = [];
+
+        foreach ($preview['rows'] as $row) {
+            $siswaId = (int) ($row['siswa_id'] ?? 0);
+
+            if (! empty($row['errors'])) {
+                $rowErrors[] = [
+                    'row_number' => $row['row_number'],
+                    'student_name' => $row['student_name'] ?: '-',
+                    'errors' => $row['errors'],
+                ];
+            }
+
+            if (! $siswaId) {
+                continue;
+            }
+
+            foreach (($row['field_errors'] ?? []) as $key => $errors) {
+                $fieldErrors[$siswaId][$key] = $errors;
+            }
+        }
+
+        return [
+            'attempted' => true,
+            'valid' => (bool) $preview['valid'],
+            'blocking_errors' => ! (bool) $preview['valid'],
+            'context_errors' => $preview['context_errors'],
+            'row_errors' => $rowErrors,
+            'field_errors' => $fieldErrors,
+            'summary' => $preview['summary'],
+        ];
+    }
+
     private function authorizeDeleteNilaiRequest(Request $request, int $tahunAjaranId): array
     {
         $validated = $request->validate([
@@ -1336,12 +1436,9 @@ class ScoreController extends Controller
                 $context['tahunAjaran'],
                 $context['existingScores']
             );
+            $context['existingScores'] = $this->overlayImportedScores($context['existingScores'], $preview);
 
-            return view('pengajar.score_import_preview', [
-                'mataPelajaran' => $context['mataPelajaran'],
-                'tahunAjaran' => $context['tahunAjaran'],
-                'preview' => $preview,
-            ]);
+            return $this->renderInputScoreView($context, $this->excelImportStateFromPreview($preview));
         } catch (\Symfony\Component\HttpKernel\Exception\HttpExceptionInterface $exception) {
             throw $exception;
         } catch (\Throwable $exception) {
