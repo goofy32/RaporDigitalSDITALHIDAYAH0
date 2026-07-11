@@ -306,6 +306,17 @@ class PengajarScoreAuthorizationTest extends TestCase
             ->assertDontSee('Template Excel');
     }
 
+    public function test_score_import_upload_uses_load_action_on_input_score_page(): void
+    {
+        $this->actingAsPengajar($this->budi)
+            ->get(route('pengajar.score.input_score', $this->subjectId))
+            ->assertOk()
+            ->assertSeeText('Import Nilai Excel')
+            ->assertSeeText('Unggah template nilai untuk memuat nilai ke form. Nilai belum disimpan sampai tombol Simpan diklik.')
+            ->assertSeeText('Muat Excel')
+            ->assertDontSeeText('Preview Excel');
+    }
+
     public function test_score_import_template_contains_expected_students_for_class(): void
     {
         $otherClassId = DB::table('kelas')->insertGetId([
@@ -331,7 +342,7 @@ class PengajarScoreAuthorizationTest extends TestCase
         );
 
         $sheet = $workbook->getSheetByName('Nilai');
-        $names = collect($sheet->rangeToArray('D6:D20'))->flatten()->filter()->values()->all();
+        $names = collect($sheet->rangeToArray('E6:E20'))->flatten()->filter()->values()->all();
 
         $this->assertContains('Ahmad Fauzan', $names);
         $this->assertNotContains('Siswa Kelas Lain', $names);
@@ -350,11 +361,22 @@ class PengajarScoreAuthorizationTest extends TestCase
         $this->assertFalse($sheet->getRowDimension(2)->getVisible());
         $this->assertFalse($sheet->getRowDimension(3)->getVisible());
         $this->assertFalse($sheet->getRowDimension(5)->getVisible());
+        $this->assertFalse($sheet->getColumnDimension('A')->getVisible());
+        $this->assertTrue($sheet->getColumnDimension('B')->getVisible());
+        $this->assertTrue($sheet->getColumnDimension('C')->getVisible());
+        $this->assertTrue($sheet->getColumnDimension('D')->getVisible());
+        $this->assertTrue($sheet->getColumnDimension('E')->getVisible());
+        $this->assertFalse($sheet->getColumnDimension('F')->getVisible());
+        $this->assertFalse($sheet->getColumnDimension('G')->getVisible());
+        $this->assertSame(['No', 'NIS', 'NISN', 'Nama Siswa'], $sheet->rangeToArray('B4:E4')[0]);
+        $this->assertSame('H6', $sheet->getFreezePane());
         $this->assertSame(Protection::PROTECTION_PROTECTED, $sheet->getStyle('A6')->getProtection()->getLocked());
-        $this->assertSame(Protection::PROTECTION_PROTECTED, $sheet->getStyle('D6')->getProtection()->getLocked());
-        $this->assertSame(Protection::PROTECTION_UNPROTECTED, $sheet->getStyle('G6')->getProtection()->getLocked());
+        $this->assertSame(Protection::PROTECTION_PROTECTED, $sheet->getStyle('E6')->getProtection()->getLocked());
+        $this->assertSame(Protection::PROTECTION_UNPROTECTED, $sheet->getStyle('H6')->getProtection()->getLocked());
+        $this->assertSame('FFF3F4F6', $sheet->getStyle('A6')->getFill()->getStartColor()->getARGB());
+        $this->assertSame('FFFFF2CC', $sheet->getStyle('H6')->getFill()->getStartColor()->getARGB());
         $this->assertStringContainsString(
-            'Isi hanya kolom nilai. Jangan mengubah data siswa, kelas, atau mata pelajaran.',
+            'Isi hanya kolom nilai. Kolom identitas siswa, kelas, dan mata pelajaran tidak perlu diubah.',
             collect($workbook->getSheetByName('Petunjuk')->rangeToArray('A1:A20'))->flatten()->filter()->implode("\n")
         );
     }

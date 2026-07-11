@@ -79,21 +79,19 @@
         </div>
     </div>
 
-    <div class="mb-4 rounded-lg border border-green-100 bg-green-50/60 p-4">
-        <div class="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-            <div>
-                <h3 class="text-sm font-semibold text-green-800">Import Nilai Excel</h3>
-                <p class="mt-1 text-sm text-green-700">Unggah template nilai dari halaman Data Pembelajaran untuk memuat draft nilai ke form ini. Nilai belum disimpan sampai tombol Simpan diklik.</p>
+    <div class="mb-4 rounded-lg border border-gray-200 bg-white px-3 py-3">
+        <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div class="min-w-0">
+                <h3 class="text-sm font-semibold text-gray-700">Import Nilai Excel</h3>
+                <p class="mt-1 text-sm text-gray-500">Unggah template nilai untuk memuat nilai ke form. Nilai belum disimpan sampai tombol Simpan diklik.</p>
             </div>
-            <div class="flex flex-col gap-3 sm:flex-row sm:items-center">
-                <form method="POST" action="{{ route('pengajar.score.import_preview', $subject['id']) }}" enctype="multipart/form-data" class="flex flex-col gap-2 sm:flex-row sm:items-center">
-                    @csrf
-                    <input type="file" name="file" accept=".xlsx,.xls" class="block w-full rounded-lg border border-green-200 bg-white text-sm text-gray-700 file:mr-3 file:border-0 file:bg-green-700 file:px-3 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-green-800 sm:w-64">
-                    <button type="submit" class="rounded-lg bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800">
-                        Preview Excel
-                    </button>
-                </form>
-            </div>
+            <form method="POST" action="{{ route('pengajar.score.import_preview', $subject['id']) }}" enctype="multipart/form-data" class="flex w-full flex-col gap-2 sm:flex-row sm:items-center md:w-auto">
+                @csrf
+                <input type="file" name="file" accept=".xlsx,.xls" class="block w-full rounded-lg border border-gray-300 bg-gray-50 text-sm text-gray-700 file:mr-3 file:border-0 file:bg-gray-100 file:px-3 file:py-2 file:text-sm file:font-medium file:text-gray-700 hover:file:bg-gray-200 sm:w-72">
+                <button type="submit" class="rounded-lg bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 focus:outline-none focus:ring-4 focus:ring-green-300">
+                    Muat Excel
+                </button>
+            </form>
         </div>
         @error('file')
             <p class="mt-2 text-sm text-red-600">{{ $message }}</p>

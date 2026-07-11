@@ -29,6 +29,10 @@ class PengajarScoreExcelTemplateService
         ['key' => 'mata_pelajaran', 'label' => 'Mata Pelajaran'],
     ];
 
+    private const LOCKED_FILL = 'FFF3F4F6';
+    private const EDITABLE_FILL = 'FFFFF2CC';
+    private const HEADER_FILL = 'FFE2F0D9';
+
     /**
      * @param Collection<int, Siswa> $siswas
      */
@@ -93,7 +97,7 @@ class PengajarScoreExcelTemplateService
         $sheet = $spreadsheet->getActiveSheet();
         $sheet->setTitle(self::SHEET_NILAI);
 
-        $baseColumns = self::BASE_COLUMNS;
+        $baseColumns = $this->templateBaseColumns();
         $scoreColumns = $this->scoreColumns($mataPelajaran);
         $allColumns = array_merge($baseColumns, $scoreColumns);
         $lastColumn = $this->columnLetter(count($allColumns));
@@ -120,34 +124,44 @@ class PengajarScoreExcelTemplateService
         foreach ($siswas->sortBy('nama')->values() as $siswa) {
             $kelasLabel = $mataPelajaran->kelas?->label_kelas ?? '';
             $mapelLabel = $mataPelajaran->nama_pelajaran;
+            $studentNumber = $row - self::DATA_START_ROW + 1;
 
             $sheet->setCellValue("A{$row}", $siswa->id);
-            $this->setStringCell($sheet, "B{$row}", $siswa->nis);
-            $this->setStringCell($sheet, "C{$row}", $siswa->nisn);
-            $sheet->setCellValue("D{$row}", $siswa->nama);
-            $sheet->setCellValue("E{$row}", $kelasLabel);
-            $sheet->setCellValue("F{$row}", $mapelLabel);
+            $sheet->setCellValue("B{$row}", $studentNumber);
+            $this->setStringCell($sheet, "C{$row}", $siswa->nis);
+            $this->setStringCell($sheet, "D{$row}", $siswa->nisn);
+            $sheet->setCellValue("E{$row}", $siswa->nama);
+            $sheet->setCellValue("F{$row}", $kelasLabel);
+            $sheet->setCellValue("G{$row}", $mapelLabel);
 
             $row++;
         }
 
-        $sheet->freezePane('G6');
+        $sheet->freezePane('H6');
         $sheet->getStyle("A".self::LABEL_ROW.":{$lastColumn}".self::KEY_ROW)->getFont()->setBold(true);
         $sheet->getStyle("A".self::LABEL_ROW.":{$lastColumn}".self::LABEL_ROW)
-            ->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setARGB('FFE2F0D9');
+            ->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setARGB(self::HEADER_FILL);
         $sheet->getStyle("A".self::KEY_ROW.":{$lastColumn}".self::KEY_ROW)
-            ->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setARGB('FFF3F4F6');
+            ->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setARGB(self::LOCKED_FILL);
         $sheet->getStyle("A:{$lastColumn}")->getAlignment()->setVertical(Alignment::VERTICAL_TOP);
 
         foreach (range(1, count($allColumns)) as $columnIndex) {
             $columnLetter = $this->columnLetter($columnIndex);
-            $sheet->getColumnDimension($columnLetter)->setWidth($columnIndex <= 6 ? 18 : 16);
+            $sheet->getColumnDimension($columnLetter)->setWidth(match ($columnIndex) {
+                1, 6, 7 => 16,
+                2 => 8,
+                3, 4 => 18,
+                5 => 28,
+                default => 16,
+            });
         }
 
         $lastDataRow = max(self::DATA_START_ROW, $row - 1);
         $sheet->getStyle("A1:{$lastColumn}{$lastDataRow}")
             ->getProtection()
             ->setLocked(Protection::PROTECTION_PROTECTED);
+        $sheet->getStyle("A".self::DATA_START_ROW.":G{$lastDataRow}")
+            ->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setARGB(self::LOCKED_FILL);
 
         foreach ($scoreColumns as $index => $column) {
             $columnLetter = $this->columnLetter(count($baseColumns) + $index + 1);
@@ -156,17 +170,22 @@ class PengajarScoreExcelTemplateService
                 $sheet->getStyle("{$columnLetter}".self::DATA_START_ROW.":{$columnLetter}{$lastDataRow}")
                     ->getProtection()
                     ->setLocked(Protection::PROTECTION_UNPROTECTED);
+                $sheet->getStyle("{$columnLetter}".self::DATA_START_ROW.":{$columnLetter}{$lastDataRow}")
+                    ->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setARGB(self::EDITABLE_FILL);
 
                 continue;
             }
 
             $sheet->getStyle("{$columnLetter}".self::DATA_START_ROW.":{$columnLetter}{$lastDataRow}")
-                ->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setARGB('FFF9FAFB');
+                ->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setARGB(self::LOCKED_FILL);
         }
 
         $sheet->getRowDimension(2)->setVisible(false);
         $sheet->getRowDimension(3)->setVisible(false);
         $sheet->getRowDimension(self::KEY_ROW)->setVisible(false);
+        foreach (['A', 'F', 'G'] as $hiddenColumn) {
+            $sheet->getColumnDimension($hiddenColumn)->setVisible(false);
+        }
         $sheet->getProtection()->setSheet(true);
         $sheet->getProtection()->setPassword('nilai');
         $sheet->getProtection()->setSort(true);
@@ -182,7 +201,7 @@ class PengajarScoreExcelTemplateService
             ['Template Import Nilai Pengajar'],
             ["Tahun ajaran: {$tahunAjaran->tahun_ajaran}, semester {$tahunAjaran->semester}."],
             ['Template ini khusus untuk kelas dan mata pelajaran yang tertera pada sheet Nilai.'],
-            ['Isi hanya kolom nilai. Jangan mengubah data siswa, kelas, atau mata pelajaran.'],
+            ['Isi hanya kolom nilai. Kolom identitas siswa, kelas, dan mata pelajaran tidak perlu diubah.'],
             ['Jangan mengubah siswa_id. Nama siswa hanya untuk verifikasi manusia.'],
             ['Isi nilai pada kolom TP, LM, Nilai Tes, dan Nilai Non-Tes.'],
             ['Kolom NA dan Nilai Akhir adalah referensi kalkulasi. Perhitungan final tetap dilakukan oleh aplikasi saat fase simpan nanti.'],
@@ -196,6 +215,22 @@ class PengajarScoreExcelTemplateService
         $sheet->getColumnDimension('A')->setWidth(120);
         $sheet->getStyle('A:A')->getAlignment()->setWrapText(true);
         $sheet->getProtection()->setSheet(true);
+    }
+
+    /**
+     * @return array<int, array<string, string>>
+     */
+    private function templateBaseColumns(): array
+    {
+        return [
+            ['key' => 'siswa_id', 'label' => 'siswa_id'],
+            ['key' => 'no', 'label' => 'No'],
+            ['key' => 'nis', 'label' => 'NIS'],
+            ['key' => 'nisn', 'label' => 'NISN'],
+            ['key' => 'nama_siswa', 'label' => 'Nama Siswa'],
+            ['key' => 'kelas', 'label' => 'Kelas'],
+            ['key' => 'mata_pelajaran', 'label' => 'Mata Pelajaran'],
+        ];
     }
 
     private function setStringCell($sheet, string $cell, ?string $value): void
