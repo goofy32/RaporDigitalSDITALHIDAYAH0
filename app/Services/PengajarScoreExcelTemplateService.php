@@ -5,12 +5,14 @@ namespace App\Services;
 use App\Models\MataPelajaran;
 use App\Models\Siswa;
 use App\Models\TahunAjaran;
+use App\Models\Guru;
 use Illuminate\Support\Collection;
 use PhpOffice\PhpSpreadsheet\Cell\DataType;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
 use PhpOffice\PhpSpreadsheet\Style\Protection;
+use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 
 class PengajarScoreExcelTemplateService
 {
@@ -40,9 +42,38 @@ class PengajarScoreExcelTemplateService
     {
         $spreadsheet = new Spreadsheet();
 
-        $this->buildScoreSheet($spreadsheet, $mataPelajaran, $siswas, $tahunAjaran);
+        $this->buildScoreSheet($spreadsheet->getActiveSheet(), $mataPelajaran, $siswas, $tahunAjaran);
         $this->buildInstructionSheet($spreadsheet, $mataPelajaran, $tahunAjaran);
 
+        $spreadsheet->setActiveSheetIndex(0);
+
+        return $spreadsheet;
+    }
+
+    /**
+     * @param Collection<int, array{mataPelajaran: MataPelajaran, siswas: Collection<int, Siswa>}> $contexts
+     */
+    public function createMultiSheetWorkbook(Collection $contexts, TahunAjaran $tahunAjaran): Spreadsheet
+    {
+        $spreadsheet = new Spreadsheet();
+        $usedTitles = [];
+
+        foreach ($contexts->values() as $index => $context) {
+            $sheet = $index === 0
+                ? $spreadsheet->getActiveSheet()
+                : $spreadsheet->createSheet();
+            $title = $this->uniqueMultiSheetTitle($context['mataPelajaran'], $usedTitles);
+
+            $this->buildScoreSheet(
+                $sheet,
+                $context['mataPelajaran'],
+                $context['siswas'],
+                $tahunAjaran,
+                $title
+            );
+        }
+
+        $this->buildMultiInstructionSheet($spreadsheet, $contexts, $tahunAjaran);
         $spreadsheet->setActiveSheetIndex(0);
 
         return $spreadsheet;
@@ -110,14 +141,29 @@ class PengajarScoreExcelTemplateService
         );
     }
 
+    public function multiDownloadFilename(TahunAjaran $tahunAjaran, ?Guru $guru = null): string
+    {
+        $owner = $guru
+            ? $this->filenameSegment($guru->nama, 'Pengajar')
+            : 'Semua_Pembelajaran';
+        $semester = ((int) $tahunAjaran->semester === 2) ? 'Genap' : 'Ganjil';
+
+        return sprintf(
+            'Template_Nilai_%s_%s_%s.xlsx',
+            $owner,
+            $this->filenameSegment($tahunAjaran->tahun_ajaran, 'Tahun_Ajaran'),
+            $semester
+        );
+    }
+
     private function buildScoreSheet(
-        Spreadsheet $spreadsheet,
+        Worksheet $sheet,
         MataPelajaran $mataPelajaran,
         Collection $siswas,
-        TahunAjaran $tahunAjaran
+        TahunAjaran $tahunAjaran,
+        ?string $sheetTitle = null
     ): void {
-        $sheet = $spreadsheet->getActiveSheet();
-        $sheet->setTitle($this->scoreSheetTitle($mataPelajaran));
+        $sheet->setTitle($sheetTitle ?? $this->scoreSheetTitle($mataPelajaran));
 
         $baseColumns = $this->templateBaseColumns();
         $scoreColumns = $this->scoreColumns($mataPelajaran);
@@ -251,6 +297,40 @@ class PengajarScoreExcelTemplateService
     }
 
     /**
+     * @param Collection<int, array{mataPelajaran: MataPelajaran, siswas: Collection<int, Siswa>}> $contexts
+     */
+    private function buildMultiInstructionSheet(Spreadsheet $spreadsheet, Collection $contexts, TahunAjaran $tahunAjaran): void
+    {
+        $sheet = $spreadsheet->createSheet();
+        $sheet->setTitle(self::SHEET_PETUNJUK);
+
+        $instructions = [
+            ['Template Nilai Komponen Pengajar'],
+            ["Tahun ajaran: {$tahunAjaran->tahun_ajaran}"],
+            ["Semester: {$tahunAjaran->semester}"],
+            ['Setiap sheet berisi satu kelas dan mata pelajaran yang sudah lengkap Lingkup Materi dan Tujuan Pembelajarannya.'],
+            ['Isi hanya kolom nilai. Kolom identitas siswa, kelas, dan mata pelajaran tidak perlu diubah.'],
+            ['Template ini untuk nilai komponen. Perhitungan nilai akhir tetap dilakukan oleh aplikasi saat guru menekan Simpan pada halaman input nilai.'],
+            ['Mode nilai akhir manual dari Excel belum diaktifkan pada template ini.'],
+            [''],
+            ['Daftar sheet:'],
+        ];
+
+        foreach ($contexts as $context) {
+            $mataPelajaran = $context['mataPelajaran'];
+            $instructions[] = [
+                $this->multiSheetTitle($mataPelajaran).' - '.$this->classContextLabel($mataPelajaran).' - '.$mataPelajaran->nama_pelajaran,
+            ];
+        }
+
+        $sheet->fromArray($instructions, null, 'A1');
+        $sheet->getStyle('A1')->getFont()->setBold(true)->setSize(14);
+        $sheet->getColumnDimension('A')->setWidth(120);
+        $sheet->getStyle('A:A')->getAlignment()->setWrapText(true);
+        $sheet->getProtection()->setSheet(true);
+    }
+
+    /**
      * @return array<int, array<string, string>>
      */
     private function templateBaseColumns(): array
@@ -318,6 +398,37 @@ class PengajarScoreExcelTemplateService
         }
 
         return $title !== '' ? $title : self::SHEET_NILAI;
+    }
+
+    private function multiSheetTitle(MataPelajaran $mataPelajaran): string
+    {
+        $title = $this->sanitizeSheetTitleCandidate(trim(
+            $this->shortClassLabel($mataPelajaran).' - '.$this->normalizeWhitespace($mataPelajaran->nama_pelajaran),
+            ' -'
+        ));
+
+        return $this->finalizeSheetTitle($title);
+    }
+
+    /**
+     * @param array<int, string> $usedTitles
+     */
+    private function uniqueMultiSheetTitle(MataPelajaran $mataPelajaran, array &$usedTitles): string
+    {
+        $baseTitle = $this->multiSheetTitle($mataPelajaran);
+        $candidate = $baseTitle;
+        $suffix = 2;
+
+        while (in_array(mb_strtolower($candidate, 'UTF-8'), $usedTitles, true)) {
+            $marker = " ({$suffix})";
+            $baseLength = 31 - mb_strlen($marker, 'UTF-8');
+            $candidate = rtrim(mb_substr($baseTitle, 0, $baseLength, 'UTF-8')).$marker;
+            $suffix++;
+        }
+
+        $usedTitles[] = mb_strtolower($candidate, 'UTF-8');
+
+        return $candidate;
     }
 
     private function filenameSegment(?string $value, string $fallback): string

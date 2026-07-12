@@ -496,6 +496,7 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
     // Score Management
     Route::prefix('score')->name('score.')->group(function () {
         Route::get('/', [ScoreController::class, 'index'])->name('index');
+        Route::get('/import/templates', [ScoreController::class, 'downloadAllImportTemplates'])->name('import_templates');
         Route::get('/{id}/input', [ScoreController::class, 'inputScore'])->name('input_score');
         Route::post('/{id}/save', [ScoreController::class, 'saveScore'])->name('save_scores');
         Route::get('/{id}/import/template', [ScoreController::class, 'downloadImportTemplate'])->name('import_template');

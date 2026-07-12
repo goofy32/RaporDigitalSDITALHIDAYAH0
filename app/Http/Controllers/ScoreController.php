@@ -764,6 +764,62 @@ class ScoreController extends Controller
         ];
     }
 
+    private function authorizedReadyScoreImportContexts(): array
+    {
+        $tahunAjaranId = $this->getValidTahunAjaranId();
+
+        if (! $tahunAjaranId) {
+            abort(422, 'Tahun ajaran belum aktif.');
+        }
+
+        $guru = Auth::guard('guru')->user();
+        $semester = $this->currentSemesterForTahunAjaran($tahunAjaranId);
+
+        if (! $guru || session('selected_role') !== 'pengajar' || ! $semester) {
+            abort(403);
+        }
+
+        $mataPelajarans = MataPelajaran::with([
+            'kelas',
+            'lingkupMateris.tujuanPembelajarans',
+        ])
+            ->where('guru_id', $guru->id)
+            ->where('tahun_ajaran_id', $tahunAjaranId)
+            ->where('semester', $semester)
+            ->whereHas('kelas', function ($query) use ($tahunAjaranId) {
+                $query->where('tahun_ajaran_id', $tahunAjaranId);
+            })
+            ->get()
+            ->filter(fn (MataPelajaran $mataPelajaran) => $this->isAuthorizedPengajarSubject(
+                $mataPelajaran,
+                $tahunAjaranId,
+                $semester
+            ))
+            ->filter(fn (MataPelajaran $mataPelajaran) => $mataPelajaran->scoreTemplateReadinessMessages() === [])
+            ->sortBy(fn (MataPelajaran $mataPelajaran) => sprintf(
+                '%03d|%s|%s',
+                $mataPelajaran->kelas?->nomor_kelas ?? 999,
+                $mataPelajaran->kelas?->nama_kelas ?? '',
+                $mataPelajaran->nama_pelajaran
+            ))
+            ->values();
+
+        if ($mataPelajarans->isEmpty()) {
+            abort(422, 'Belum ada pembelajaran lengkap yang siap diunduh template nilainya. Pastikan setiap Lingkup Materi memiliki Tujuan Pembelajaran.');
+        }
+
+        $contexts = $mataPelajarans->map(fn (MataPelajaran $mataPelajaran) => [
+            'mataPelajaran' => $mataPelajaran,
+            'siswas' => $this->studentsForSubjectRoster($mataPelajaran, $tahunAjaranId),
+        ]);
+
+        return [
+            'tahunAjaran' => TahunAjaran::findOrFail($tahunAjaranId),
+            'guru' => $guru,
+            'contexts' => $contexts,
+        ];
+    }
+
     private function existingScoresForRoster(MataPelajaran $mataPelajaran, $siswas, int $tahunAjaranId): array
     {
         $existingScores = [];
@@ -1407,6 +1463,35 @@ class ScoreController extends Controller
 
             return redirect()->route('pengajar.score.input_score', $id)
                 ->with('error', 'Terjadi kesalahan saat mengunduh template nilai.');
+        }
+    }
+
+    public function downloadAllImportTemplates(PengajarScoreExcelTemplateService $templateService)
+    {
+        try {
+            $context = $this->authorizedReadyScoreImportContexts();
+            $spreadsheet = $templateService->createMultiSheetWorkbook(
+                $context['contexts'],
+                $context['tahunAjaran']
+            );
+            $filename = $templateService->multiDownloadFilename($context['tahunAjaran'], $context['guru']);
+
+            return response()->streamDownload(function () use ($spreadsheet) {
+                (new Xlsx($spreadsheet))->save('php://output');
+                $spreadsheet->disconnectWorksheets();
+            }, $filename, [
+                'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            ]);
+        } catch (\Symfony\Component\HttpKernel\Exception\HttpExceptionInterface $exception) {
+            throw $exception;
+        } catch (\Throwable $exception) {
+            Log::error('[ScoreController] Failed to download multi-sheet score import template', [
+                'error' => $exception->getMessage(),
+                'guru_id' => Auth::guard('guru')->id(),
+            ]);
+
+            return redirect()->route('pengajar.score.index')
+                ->with('error', 'Terjadi kesalahan saat mengunduh semua template nilai.');
         }
     }
 

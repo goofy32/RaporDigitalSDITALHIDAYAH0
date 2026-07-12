@@ -292,14 +292,136 @@ class PengajarScoreAuthorizationTest extends TestCase
         );
     }
 
+    public function test_authorized_pengajar_can_download_multi_sheet_score_import_templates(): void
+    {
+        $secondClassId = $this->insertClass(6, 'B');
+        $this->insertStudentForClass($secondClassId, '2001', '2001000', 'Siti Aminah');
+        $secondSubjectId = $this->insertSubject('Bahasa Indonesia', $this->budi->id, 1, $secondClassId);
+        $this->insertLearningSetup($secondSubjectId, 'Teks Narasi', '1');
+
+        $response = $this->actingAsPengajar($this->budi)
+            ->get(route('pengajar.score.import_templates'));
+
+        $response->assertOk();
+        $response->assertHeader('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        $this->assertStringContainsString(
+            'Template_Nilai_Guru_Budi_2026_2027_Ganjil.xlsx',
+            (string) $response->headers->get('content-disposition')
+        );
+
+        $workbook = $this->workbookFromResponse($response);
+        $scoreSheetNames = $this->scoreSheetNames($workbook);
+
+        $this->assertCount(2, $scoreSheetNames);
+        $this->assertContains('5 A - Matematika', $scoreSheetNames);
+        $this->assertContains('6 B - Bahasa Indonesia', $scoreSheetNames);
+
+        $firstSheet = $workbook->getSheetByName('5 A - Matematika');
+        $secondSheet = $workbook->getSheetByName('6 B - Bahasa Indonesia');
+
+        $this->assertContains('Ahmad Fauzan', collect($firstSheet->rangeToArray('E6:E20'))->flatten()->filter()->values()->all());
+        $this->assertContains('Siti Aminah', collect($secondSheet->rangeToArray('E6:E20'))->flatten()->filter()->values()->all());
+        $this->assertStringContainsString('Kelas: Kelas 6 B', (string) $secondSheet->getCell('A1')->getValue());
+        $this->assertStringContainsString('Mata Pelajaran: Bahasa Indonesia', (string) $secondSheet->getCell('A1')->getValue());
+        $this->assertStringContainsString('Tahun Ajaran: 2026/2027', (string) $secondSheet->getCell('A1')->getValue());
+        $this->assertStringContainsString('Semester: 1', (string) $secondSheet->getCell('A1')->getValue());
+        $this->assertTrue((bool) $secondSheet->getProtection()->getSheet());
+        $this->assertFalse($secondSheet->getRowDimension(2)->getVisible());
+        $this->assertFalse($secondSheet->getRowDimension(3)->getVisible());
+        $this->assertFalse($secondSheet->getRowDimension(5)->getVisible());
+        $this->assertFalse($secondSheet->getColumnDimension('A')->getVisible());
+        $this->assertFalse($secondSheet->getColumnDimension('F')->getVisible());
+        $this->assertFalse($secondSheet->getColumnDimension('G')->getVisible());
+        $this->assertSame(['No', 'NIS', 'NISN', 'Nama Siswa'], $secondSheet->rangeToArray('B4:E4')[0]);
+        $this->assertSame(Protection::PROTECTION_PROTECTED, $secondSheet->getStyle('E6')->getProtection()->getLocked());
+        $this->assertSame(Protection::PROTECTION_UNPROTECTED, $secondSheet->getStyle('H6')->getProtection()->getLocked());
+    }
+
+    public function test_multi_sheet_score_import_template_excludes_incomplete_subjects(): void
+    {
+        $incompleteSubjectId = $this->insertSubject('IPA Belum Lengkap', $this->budi->id, 1);
+        DB::table('lingkup_materis')->insert([
+            'mata_pelajaran_id' => $incompleteSubjectId,
+            'judul_lingkup_materi' => 'Makhluk Hidup',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $workbook = $this->workbookFromResponse(
+            $this->actingAsPengajar($this->budi)
+                ->get(route('pengajar.score.import_templates'))
+        );
+
+        $scoreSheetNames = $this->scoreSheetNames($workbook);
+
+        $this->assertContains('5 A - Matematika', $scoreSheetNames);
+        $this->assertNotContains('5 A - IPA Belum Lengkap', $scoreSheetNames);
+    }
+
+    public function test_multi_sheet_score_import_template_returns_clear_error_when_no_subjects_are_ready(): void
+    {
+        DB::table('tujuan_pembelajarans')
+            ->where('lingkup_materi_id', $this->lingkupMateriId)
+            ->delete();
+
+        $this->actingAsPengajar($this->budi)
+            ->get(route('pengajar.score.import_templates'))
+            ->assertStatus(422)
+            ->assertSee('Belum ada pembelajaran lengkap yang siap diunduh template nilainya.');
+    }
+
+    public function test_multi_sheet_score_import_template_is_scoped_to_current_pengajar(): void
+    {
+        $aniSubjectId = $this->insertSubject('Bahasa Arab', $this->ani->id, 1);
+        $this->insertLearningSetup($aniSubjectId, 'Mufradat', '1');
+
+        $workbook = $this->workbookFromResponse(
+            $this->actingAsPengajar($this->ani)
+                ->get(route('pengajar.score.import_templates'))
+        );
+
+        $scoreSheetNames = $this->scoreSheetNames($workbook);
+
+        $this->assertSame(['5 A - Bahasa Arab'], $scoreSheetNames);
+        $this->assertNotContains('5 A - Matematika', $scoreSheetNames);
+    }
+
+    public function test_multi_sheet_score_import_template_sanitizes_and_uniquifies_sheet_names(): void
+    {
+        $firstSubjectId = $this->insertSubject('Mapel Panjang / Sama: Dengan Nama Ekstra Pertama', $this->budi->id, 1);
+        $secondSubjectId = $this->insertSubject('Mapel Panjang / Sama: Dengan Nama Ekstra Kedua', $this->budi->id, 1);
+        $this->insertLearningSetup($firstSubjectId, 'Topik Pertama', '1');
+        $this->insertLearningSetup($secondSubjectId, 'Topik Kedua', '1');
+
+        $workbook = $this->workbookFromResponse(
+            $this->actingAsPengajar($this->budi)
+                ->get(route('pengajar.score.import_templates'))
+        );
+
+        $longSubjectSheets = collect($this->scoreSheetNames($workbook))
+            ->filter(fn (string $sheetName) => str_contains($sheetName, 'Mapel Panjang'))
+            ->values();
+
+        $this->assertCount(2, $longSubjectSheets);
+        $this->assertCount(2, $longSubjectSheets->unique());
+        $this->assertTrue($longSubjectSheets->contains(fn (string $sheetName) => str_ends_with($sheetName, '(2)')));
+
+        foreach ($longSubjectSheets as $sheetName) {
+            $this->assertLessThanOrEqual(31, mb_strlen($sheetName, 'UTF-8'));
+            $this->assertDoesNotMatchRegularExpression('/[\\\\\\/\\?\\*\\[\\]\\:]/', $sheetName);
+        }
+    }
+
     public function test_score_import_template_download_is_available_from_pengajar_subject_list(): void
     {
         $this->actingAsPengajar($this->budi)
             ->get(route('pengajar.score.index'))
             ->assertOk()
             ->assertSee('Download Template Nilai')
+            ->assertSee('Download Semua Template Nilai')
             ->assertSee('Kelas 5 A - Matematika')
-            ->assertSee(route('pengajar.score.import_template', $this->subjectId), false);
+            ->assertSee(route('pengajar.score.import_template', $this->subjectId), false)
+            ->assertSee(route('pengajar.score.import_templates'), false);
     }
 
     public function test_score_import_template_action_is_not_rendered_in_each_table_row(): void
@@ -628,6 +750,21 @@ class PengajarScoreAuthorizationTest extends TestCase
         return $workbook->getActiveSheet();
     }
 
+    private function scoreSheetNames($workbook): array
+    {
+        $names = [];
+
+        foreach ($workbook->getWorksheetIterator() as $sheet) {
+            if ($sheet->getTitle() === 'Petunjuk') {
+                continue;
+            }
+
+            $names[] = $sheet->getTitle();
+        }
+
+        return $names;
+    }
+
     private function uploadedWorkbook($workbook): UploadedFile
     {
         $directory = storage_path('framework/testing');
@@ -722,6 +859,63 @@ class PengajarScoreAuthorizationTest extends TestCase
             'created_at' => now(),
             'updated_at' => now(),
         ]);
+    }
+
+    private function insertClass(int $nomorKelas, string $namaKelas): int
+    {
+        return DB::table('kelas')->insertGetId([
+            'nomor_kelas' => $nomorKelas,
+            'nama_kelas' => $namaKelas,
+            'tahun_ajaran_id' => $this->activeYearId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function insertStudentForClass(int $classId, string $nis, string $nisn, string $name): int
+    {
+        $studentId = DB::table('siswas')->insertGetId([
+            'nis' => $nis,
+            'nisn' => $nisn,
+            'nama' => $name,
+            'kelas_id' => $classId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        DB::table('siswa_kelas_semester')->insert([
+            'siswa_id' => $studentId,
+            'kelas_id' => $classId,
+            'tahun_ajaran_id' => $this->activeYearId,
+            'semester' => 1,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return $studentId;
+    }
+
+    private function insertLearningSetup(int $subjectId, string $lingkupMateriTitle, string $kodeTp): array
+    {
+        $lingkupMateriId = DB::table('lingkup_materis')->insertGetId([
+            'mata_pelajaran_id' => $subjectId,
+            'judul_lingkup_materi' => $lingkupMateriTitle,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $tujuanPembelajaranId = DB::table('tujuan_pembelajarans')->insertGetId([
+            'lingkup_materi_id' => $lingkupMateriId,
+            'kode_tp' => $kodeTp,
+            'deskripsi_tp' => "Tujuan {$lingkupMateriTitle}",
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return [
+            'lingkup_materi_id' => $lingkupMateriId,
+            'tujuan_pembelajaran_id' => $tujuanPembelajaranId,
+        ];
     }
 
     private function createSchema(): void
@@ -1033,11 +1227,11 @@ class PengajarScoreAuthorizationTest extends TestCase
         ]);
     }
 
-    private function insertSubject(string $name, int $guruId, int $semester): int
+    private function insertSubject(string $name, int $guruId, int $semester, ?int $classId = null): int
     {
         return DB::table('mata_pelajarans')->insertGetId([
             'nama_pelajaran' => $name,
-            'kelas_id' => $this->classId,
+            'kelas_id' => $classId ?? $this->classId,
             'guru_id' => $guruId,
             'semester' => $semester,
             'tahun_ajaran_id' => $this->activeYearId,

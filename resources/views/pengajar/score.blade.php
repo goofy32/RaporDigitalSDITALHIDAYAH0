@@ -38,11 +38,20 @@
                             class="text-white bg-green-700 hover:bg-green-800 focus:ring-4 focus:ring-green-300 font-medium rounded-lg text-sm px-4 py-2">
                         Download Template Nilai
                     </button>
+                    <a href="{{ route('pengajar.score.import_templates') }}"
+                       class="text-white bg-green-700 hover:bg-green-800 focus:ring-4 focus:ring-green-300 font-medium rounded-lg text-sm px-4 py-2">
+                        Download Semua Template Nilai
+                    </a>
                 @else
                     <button type="button"
                             disabled
                             class="text-white bg-gray-400 font-medium rounded-lg text-sm px-4 py-2 cursor-not-allowed">
                         Download Template Nilai
+                    </button>
+                    <button type="button"
+                            disabled
+                            class="text-white bg-gray-400 font-medium rounded-lg text-sm px-4 py-2 cursor-not-allowed">
+                        Download Semua Template Nilai
                     </button>
                 @endif
             </div>
