@@ -745,13 +745,10 @@ class ScoreController extends Controller
             abort(403);
         }
 
-        $hasCompleteTp = $mataPelajaran->lingkupMateris->isNotEmpty()
-            && $mataPelajaran->lingkupMateris->every(
-                fn ($lingkupMateri) => $lingkupMateri->tujuanPembelajarans->isNotEmpty()
-            );
+        $readinessMessages = $mataPelajaran->scoreTemplateReadinessMessages();
 
-        if (! $hasCompleteTp) {
-            abort(422, 'Mata pelajaran ini belum memiliki Lingkup Materi dan Tujuan Pembelajaran lengkap.');
+        if ($readinessMessages !== []) {
+            abort(422, implode(' ', $readinessMessages));
         }
 
         $siswas = $this->studentsForSubjectRoster($mataPelajaran, $tahunAjaranId);
@@ -1009,18 +1006,17 @@ class ScoreController extends Controller
         $kelasData->each(function ($kelas) {
             $kelas->mataPelajarans->each(function ($mapel) {
                 $hasLm = $mapel->lingkupMateris->isNotEmpty();
-                $hasCompleteTp = $hasLm && $mapel->lingkupMateris->every(function ($lm) {
-                    return $lm->tujuanPembelajarans->isNotEmpty();
-                });
+                $readinessMessages = $mapel->scoreTemplateReadinessMessages();
+                $hasCompleteTp = $hasLm && $readinessMessages === [];
 
                 $mapel->setAttribute('has_lm', $hasLm);
                 $mapel->setAttribute('has_complete_tp', $hasCompleteTp);
-                $mapel->setAttribute('requires_lm_tp_setup', !($hasLm && $hasCompleteTp));
+                $mapel->setAttribute('requires_lm_tp_setup', $readinessMessages !== []);
+                $mapel->setAttribute('readiness_messages', $readinessMessages);
+                $mapel->setAttribute('missing_tp_lingkup_materi_names', $mapel->missingTpLingkupMateriNames());
                 $mapel->setAttribute(
                     'lm_tp_warning_message',
-                    !$hasLm
-                        ? 'Mata pelajaran ini belum memiliki Lingkup Materi dan Tujuan Pembelajaran. Silakan lengkapi terlebih dahulu sebelum melakukan input nilai.'
-                        : 'Lengkapi Tujuan Pembelajaran pada setiap Lingkup Materi terlebih dahulu sebelum melakukan input nilai.'
+                    implode(' ', $readinessMessages)
                 );
                 $mapel->setAttribute('has_saved_scores', (int) ($mapel->nilais_count ?? 0) > 0);
             });

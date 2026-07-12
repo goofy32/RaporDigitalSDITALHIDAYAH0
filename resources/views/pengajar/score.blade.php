@@ -31,7 +31,7 @@
     <!-- Action Buttons -->
     <div x-data="{ openTemplateModal: false, selectedTemplateUrl: @js($readyPembelajarans->first()['url'] ?? '') }" class="mb-6">
         <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-            <div class="flex flex-wrap gap-2">
+            <div class="flex flex-col gap-2 sm:flex-row sm:items-start">
                 @if($readyPembelajarans->isNotEmpty())
                     <button type="button"
                             @click="openTemplateModal = true"
@@ -44,7 +44,12 @@
                             class="text-white bg-gray-400 font-medium rounded-lg text-sm px-4 py-2 cursor-not-allowed">
                         Download Template Nilai
                     </button>
-                    <span class="text-sm text-gray-500">Belum ada pembelajaran siap unduh template.</span>
+                    <div class="inline-flex max-w-2xl items-start gap-2 rounded-lg border border-yellow-200 bg-yellow-50 px-3 py-2 text-sm text-yellow-800">
+                        <svg class="mt-0.5 h-4 w-4 flex-shrink-0 text-yellow-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                            <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+                        </svg>
+                        <span>Template nilai belum bisa diunduh karena belum ada pembelajaran yang lengkap. Pastikan setiap Lingkup Materi memiliki Tujuan Pembelajaran.</span>
+                    </div>
                 @endif
             </div>
         </div>
@@ -311,6 +316,12 @@
                     @php $nomor = 1; @endphp <!-- Counter terpisah untuk nomor urut -->
                     @foreach($kelasData as $kelas)
                         @foreach($kelas->mataPelajarans as $mapel)
+                            @php
+                                $readinessMessages = $mapel->readiness_messages ?: [$mapel->lm_tp_warning_message];
+                                $readinessMessages = collect($readinessMessages)->filter()->values()->all();
+                                $readinessTitle = implode(' ', $readinessMessages);
+                                $tpSetupUrl = route('pengajar.tujuan_pembelajaran.create', $mapel->id);
+                            @endphp
                             <tr class="bg-white border-b hover:bg-gray-50">
                                 <td class="px-6 py-4">{{ $nomor++ }}</td> <!-- Increment counter di sini -->
                                 <td class="px-6 py-4">Kelas {{ $kelas->nomor_kelas }} {{ $kelas->nama_kelas }}</td>
@@ -331,9 +342,11 @@
                                         @endif
                                         @else
                                             <button type="button"
-                                                    onclick='showLmTpWarning(@json($mapel->nama_pelajaran))'
+                                                    onclick='showLmTpWarning(@js($mapel->nama_pelajaran), @js($readinessMessages), @js($tpSetupUrl))'
                                                     class="cursor-pointer text-gray-400 opacity-70 hover:text-yellow-600"
-                                                    title="{{ $mapel->lm_tp_warning_message }}">
+                                                    title="{{ $readinessTitle }}"
+                                                    data-tp-setup-url="{{ $tpSetupUrl }}"
+                                                    aria-label="{{ $readinessTitle }} Buka menu Data Mata Pelajaran, lalu klik ikon TP pada mata pelajaran ini untuk menambahkan Tujuan Pembelajaran.">
                                                 <img src="{{ asset('images/icons/warning.png') }}" alt="Warning Icon" class="w-5 h-5">
                                             </button>
                                         @endif
@@ -362,13 +375,37 @@
 
 @push('scripts')
 <script>
-    function showLmTpWarning(namaPelajaran) {
+    function escapeWarningHtml(value) {
+        return String(value ?? '').replace(/[&<>"']/g, function (character) {
+            return {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;'
+            }[character];
+        });
+    }
+
+    function showLmTpWarning(namaPelajaran, readinessMessages = [], tpSetupUrl = null) {
+        const messages = Array.isArray(readinessMessages) && readinessMessages.length > 0
+            ? readinessMessages
+            : ['Belum lengkap: Lingkup Materi dan Tujuan Pembelajaran belum lengkap.'];
+        const reasonList = messages
+            .map((message) => '<li>' + escapeWarningHtml(message) + '</li>')
+            .join('');
+        const setupLink = tpSetupUrl
+            ? '<div class="mt-4"><a href="' + escapeWarningHtml(tpSetupUrl) + '" class="inline-flex items-center rounded-lg bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800">Lengkapi TP</a></div>'
+            : '';
+
         window.Swal.fire({
-            title: 'Belum Ada LM & TP',
-            html: 'Mata pelajaran <strong>' +
-                namaPelajaran +
-                '</strong> belum memiliki Lingkup Materi dan Tujuan Pembelajaran.' +
-                '<br><br>Silahkan hubungi admin untuk menambahkan LM dan TP terlebih dahulu sebelum dapat mengisi nilai.',
+            title: 'Pembelajaran Belum Lengkap',
+            html: '<div class="text-left">' +
+                '<p class="mb-3">Mata pelajaran <strong>' + escapeWarningHtml(namaPelajaran) + '</strong> belum siap untuk input nilai atau unduh template.</p>' +
+                '<ul class="mb-3 list-disc space-y-1 pl-5">' + reasonList + '</ul>' +
+                '<p>Buka menu <strong>Data Mata Pelajaran</strong>, lalu klik ikon <strong>TP</strong> pada mata pelajaran ini untuk menambahkan Tujuan Pembelajaran.</p>' +
+                setupLink +
+                '</div>',
             icon: 'warning',
             confirmButtonText: 'Mengerti',
             confirmButtonColor: '#3F7858'

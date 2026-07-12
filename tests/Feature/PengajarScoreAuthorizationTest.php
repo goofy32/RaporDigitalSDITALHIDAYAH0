@@ -310,6 +310,50 @@ class PengajarScoreAuthorizationTest extends TestCase
             ->assertDontSee('Template Excel');
     }
 
+    public function test_score_import_template_disabled_state_explains_incomplete_lm_tp_setup(): void
+    {
+        DB::table('tujuan_pembelajarans')
+            ->where('lingkup_materi_id', $this->lingkupMateriId)
+            ->delete();
+
+        $this->actingAsPengajar($this->budi)
+            ->get(route('pengajar.score.index'))
+            ->assertOk()
+            ->assertSeeText('Template nilai belum bisa diunduh karena belum ada pembelajaran yang lengkap. Pastikan setiap Lingkup Materi memiliki Tujuan Pembelajaran.')
+            ->assertDontSee(route('pengajar.score.import_template', $this->subjectId), false);
+    }
+
+    public function test_score_readiness_warning_names_missing_lingkup_materi_and_guides_teacher(): void
+    {
+        DB::table('lingkup_materis')->insert([
+            'mata_pelajaran_id' => $this->subjectId,
+            'judul_lingkup_materi' => 'Bilangan Cacah',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->actingAsPengajar($this->budi)
+            ->get(route('pengajar.score.index'))
+            ->assertOk()
+            ->assertSee('Belum lengkap: Lingkup Materi "Bilangan Cacah" belum memiliki Tujuan Pembelajaran.')
+            ->assertSee('Buka menu Data Mata Pelajaran, lalu klik ikon TP pada mata pelajaran ini untuk menambahkan Tujuan Pembelajaran.')
+            ->assertSee('Lengkapi TP')
+            ->assertSee(route('pengajar.tujuan_pembelajaran.create', $this->subjectId), false)
+            ->assertDontSee(route('pengajar.score.import_template', $this->subjectId), false);
+    }
+
+    public function test_backend_rejects_score_import_template_for_incomplete_subject(): void
+    {
+        DB::table('tujuan_pembelajarans')
+            ->where('lingkup_materi_id', $this->lingkupMateriId)
+            ->delete();
+
+        $this->actingAsPengajar($this->budi)
+            ->get(route('pengajar.score.import_template', $this->subjectId))
+            ->assertStatus(422)
+            ->assertSee('Belum lengkap: Lingkup Materi "Bilangan" belum memiliki Tujuan Pembelajaran.');
+    }
+
     public function test_score_import_upload_uses_modal_action_on_input_score_page(): void
     {
         $response = $this->actingAsPengajar($this->budi)
