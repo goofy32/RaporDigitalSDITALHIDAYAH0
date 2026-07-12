@@ -310,14 +310,18 @@ class PengajarScoreAuthorizationTest extends TestCase
             ->assertDontSee('Template Excel');
     }
 
-    public function test_score_import_upload_uses_load_action_on_input_score_page(): void
+    public function test_score_import_upload_uses_modal_action_on_input_score_page(): void
     {
         $this->actingAsPengajar($this->budi)
             ->get(route('pengajar.score.input_score', $this->subjectId))
             ->assertOk()
             ->assertSeeText('Import Nilai Excel')
-            ->assertSeeText('Unggah template nilai untuk memuat nilai ke form. Nilai belum disimpan sampai tombol Simpan diklik.')
+            ->assertSee('x-show="openExcelImportModal"', false)
+            ->assertSee('id="excel_import_file"', false)
+            ->assertSeeText('Unggah template nilai Excel untuk memuat nilai ke form. Nilai belum disimpan sampai tombol Simpan diklik.')
+            ->assertSeeText('Batal')
             ->assertSeeText('Muat Excel')
+            ->assertDontSeeText('Unggah template nilai untuk memuat nilai ke form. Nilai belum disimpan sampai tombol Simpan diklik.')
             ->assertDontSeeText('Preview Excel');
     }
 
