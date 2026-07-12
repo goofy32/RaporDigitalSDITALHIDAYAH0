@@ -312,17 +312,36 @@ class PengajarScoreAuthorizationTest extends TestCase
 
     public function test_score_import_upload_uses_modal_action_on_input_score_page(): void
     {
-        $this->actingAsPengajar($this->budi)
-            ->get(route('pengajar.score.input_score', $this->subjectId))
-            ->assertOk()
+        $response = $this->actingAsPengajar($this->budi)
+            ->get(route('pengajar.score.input_score', $this->subjectId));
+
+        $response->assertOk()
             ->assertSeeText('Import Nilai Excel')
+            ->assertSeeText('Kelas: 5 A')
+            ->assertSeeText('Mata Pelajaran: Matematika')
             ->assertSee('x-show="openExcelImportModal"', false)
+            ->assertSee('id="excelImportForm"', false)
             ->assertSee('id="excel_import_file"', false)
             ->assertSeeText('Unggah template nilai Excel untuk memuat nilai ke form. Nilai belum disimpan sampai tombol Simpan diklik.')
             ->assertSeeText('Batal')
             ->assertSeeText('Muat Excel')
             ->assertDontSeeText('Unggah template nilai untuk memuat nilai ke form. Nilai belum disimpan sampai tombol Simpan diklik.')
             ->assertDontSeeText('Preview Excel');
+
+        $html = $response->getContent();
+        $pageStart = strpos($html, 'data-page="pengajar-input-score"');
+        $contextPosition = strpos($html, 'Kelas:', $pageStart);
+        $importPosition = strpos($html, 'Import Nilai Excel', $contextPosition);
+        $completionPosition = strpos($html, 'id="completion-counter"', $pageStart);
+        $kembaliPosition = strpos($html, 'Kembali', $completionPosition);
+
+        $this->assertNotFalse($pageStart);
+        $this->assertNotFalse($contextPosition);
+        $this->assertNotFalse($importPosition);
+        $this->assertNotFalse($completionPosition);
+        $this->assertNotFalse($kembaliPosition);
+        $this->assertLessThan($completionPosition, $importPosition);
+        $this->assertLessThan($kembaliPosition, $completionPosition);
     }
 
     public function test_score_import_template_contains_expected_students_for_class(): void
@@ -420,7 +439,8 @@ class PengajarScoreAuthorizationTest extends TestCase
             ->assertSee('value="82"', false)
             ->assertSee('value="84"', false)
             ->assertSee('value="86"', false)
-            ->assertSee('data-import-blocking-errors="false"', false);
+            ->assertSee('data-import-blocking-errors="false"', false)
+            ->assertSee('data-excel-import-loaded="true"', false);
 
         $this->assertSame(0, DB::table('nilais')->count());
     }

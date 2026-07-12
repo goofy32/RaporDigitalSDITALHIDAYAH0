@@ -5,6 +5,7 @@ export function initPengajarInputScorePage() {
 // Single source of truth for form change state
 let formChanged = false;
 let navigationListenersAttached = false;
+let intentionalNavigation = false;
 
 function isInputScorePage() {
     return Boolean(document.getElementById('saveForm') && document.getElementById('students-table'));
@@ -19,7 +20,19 @@ function getFormProtectionStore() {
 }
 
 function hasUnsavedChanges() {
-    return formChanged || Boolean(getFormProtectionStore()?.formChanged);
+    return formChanged || Boolean(window.formChanged) || Boolean(getFormProtectionStore()?.formChanged);
+}
+
+function clearUnsavedState() {
+    formChanged = false;
+    window.formChanged = false;
+    getFormProtectionStore()?.reset();
+}
+
+function beginIntentionalNavigation() {
+    intentionalNavigation = true;
+    window.formChanged = false;
+    getFormProtectionStore()?.startSubmitting?.();
 }
 
 function parseNumericInputValue(input) {
@@ -161,6 +174,7 @@ function updateCompletionCounter() {
 
 function bindInputScorePage() {
     if (!isInputScorePage()) return;
+    intentionalNavigation = false;
 
     // Remove any existing event listeners first to avoid duplicates
     document.querySelectorAll('input').forEach(input => {
@@ -186,6 +200,12 @@ function bindInputScorePage() {
     });
 
     updateCompletionCounter();
+    bindIntentionalSubmitForms();
+
+    const saveForm = document.getElementById('saveForm');
+    if (saveForm?.dataset.excelImportLoaded === 'true') {
+        markFormChanged();
+    }
     
     // Only add these event listeners once
     setupNavigationListeners();
@@ -194,6 +214,7 @@ function bindInputScorePage() {
 function markFormChanged() {
     // Set our local formChanged variable
     formChanged = true;
+    window.formChanged = true;
     
     // Try to access the Alpine store only if it exists
     try {
@@ -217,6 +238,7 @@ function updateCalculations(e) {
         
         // Mark form as changed without relying on Alpine.js
         formChanged = true;
+        window.formChanged = true;
         
         // Try to use Alpine store if available
         try {
@@ -409,6 +431,17 @@ function highlightBelowKkm(row) {
     }
 }
 
+function bindIntentionalSubmitForms() {
+    const importForm = document.getElementById('excelImportForm');
+
+    if (importForm && importForm.dataset.intentionalSubmitBound !== 'true') {
+        importForm.dataset.intentionalSubmitBound = 'true';
+        importForm.addEventListener('submit', () => {
+            beginIntentionalNavigation();
+        });
+    }
+}
+
 function validateForm() {
     const form = document.getElementById('saveForm');
 
@@ -443,6 +476,7 @@ function setupNavigationListeners() {
 }
 
 function handleBeforeUnload(event) {
+    if (intentionalNavigation) return;
     if (!isInputScorePage() || !hasUnsavedChanges()) return;
     event.preventDefault();
     event.returnValue = '';
@@ -450,13 +484,13 @@ function handleBeforeUnload(event) {
 }
 
 function handleTurboBeforeVisit(event) {
+    if (intentionalNavigation) return;
     if (!isInputScorePage() || !hasUnsavedChanges()) return;
-    if (!confirm('Perubahan belum disimpan. Yakin ingin keluar?')) {
+    if (!confirm('Nilai yang sudah diubah atau dimuat dari Excel belum disimpan. Yakin ingin kembali?')) {
         event.preventDefault();
         return;
     }
-    formChanged = false;
-    getFormProtectionStore()?.reset();
+    clearUnsavedState();
 }
 
 function cleanupInputScorePage() {
@@ -464,6 +498,7 @@ function cleanupInputScorePage() {
     document.removeEventListener('turbo:before-visit', handleTurboBeforeVisit);
     document.removeEventListener('turbo:before-cache', cleanupInputScorePage);
     navigationListenersAttached = false;
+    intentionalNavigation = false;
 }
 
 window.handleKembali = function() {
@@ -474,7 +509,7 @@ window.handleKembali = function() {
 
     Swal.fire({
         title: 'Perubahan belum disimpan',
-        text: 'Yakin ingin keluar? Nilai yang belum disimpan akan hilang.',
+        text: 'Nilai yang sudah diubah atau dimuat dari Excel belum disimpan. Yakin ingin kembali?',
         icon: 'warning',
         showCancelButton: true,
         confirmButtonText: 'Keluar tanpa simpan',
@@ -483,8 +518,8 @@ window.handleKembali = function() {
         cancelButtonColor: '#3F7858'
     }).then(result => {
         if (result.isConfirmed) {
-            formChanged = false;
-            getFormProtectionStore()?.reset();
+            beginIntentionalNavigation();
+            clearUnsavedState();
             window.history.back();
         }
     });
@@ -583,6 +618,8 @@ window.saveData = async function() {
             return;
         }
 
+        beginIntentionalNavigation();
+
         // Show loading indicator
         Swal.fire({
             title: 'Menyimpan Nilai...',
@@ -611,13 +648,11 @@ window.saveData = async function() {
         // Handle success
         if (data.success) {
             // Reset changed flags
-            formChanged = false;
+            clearUnsavedState();
             
             // Try to use Alpine store if available
             try {
-                if (window.Alpine && window.Alpine.store('formProtection')) {
-                    window.Alpine.store('formProtection').reset();
-                }
+                getFormProtectionStore()?.reset?.();
             } catch (e) {
                 console.warn('Could not access Alpine formProtection store', e);
             }
@@ -657,6 +692,8 @@ window.saveData = async function() {
             throw new Error(data.message || 'Terjadi kesalahan saat menyimpan nilai');
         }
     } catch (error) {
+        intentionalNavigation = false;
+        markFormChanged();
         console.error('Error:', error);
         
         // Try to reset Alpine store's submitting flag if available

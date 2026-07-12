@@ -31,9 +31,22 @@
     @endphp
 
     <div class="flex flex-col gap-4 mb-6 lg:flex-row lg:items-start lg:justify-between">
-        <h2 class="text-2xl font-bold text-green-700 flex items-center gap-2">
-            <span>{{ $subject['class'] }} - {{ $mataPelajaran->nama_pelajaran }}</span>
-        </h2>
+        <div>
+            <h2 class="text-2xl font-bold text-green-700 flex items-center gap-2">
+                <span>{{ $subject['class'] }} - {{ $mataPelajaran->nama_pelajaran }}</span>
+            </h2>
+            <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-gray-600">
+                <span>Kelas: <span class="font-medium text-gray-700">{{ $subject['class'] }}</span></span>
+                <span>Mata Pelajaran: <span class="font-medium text-gray-700">{{ $mataPelajaran->nama_pelajaran }}</span></span>
+            </div>
+            <div class="mt-3">
+                <button type="button"
+                        @click="openExcelImportModal = true"
+                        class="text-white bg-green-700 hover:bg-green-800 focus:ring-4 focus:ring-green-300 font-medium rounded-lg text-sm px-4 py-2">
+                    Import Nilai Excel
+                </button>
+            </div>
+        </div>
 
         <div class="flex flex-col gap-2 lg:items-end">
             <div id="completion-counter"
@@ -42,11 +55,6 @@
                 {{ $completionCount }} dari {{ count($students) }} siswa lengkap
             </div>
             <div class="flex flex-wrap gap-2">
-                <button type="button"
-                        @click="openExcelImportModal = true"
-                        class="text-white bg-green-700 hover:bg-green-800 focus:ring-4 focus:ring-green-300 font-medium rounded-lg text-sm px-4 py-2">
-                    Import Nilai Excel
-                </button>
                 <button type="button"
                         x-data
                         @click="window.handleKembali()"
@@ -125,7 +133,7 @@
                 <p class="mt-1 text-sm text-gray-600">Unggah template nilai Excel untuk memuat nilai ke form. Nilai belum disimpan sampai tombol Simpan diklik.</p>
             </div>
 
-            <form method="POST" action="{{ route('pengajar.score.import_preview', $subject['id']) }}" enctype="multipart/form-data" class="space-y-5">
+            <form id="excelImportForm" method="POST" action="{{ route('pengajar.score.import_preview', $subject['id']) }}" enctype="multipart/form-data" class="space-y-5">
                 @csrf
                 <div>
                     <label for="excel_import_file" class="mb-2 block text-sm font-medium text-gray-700">File Excel</label>
@@ -149,7 +157,7 @@
         </div>
     </div>
 
-    <form id="saveForm" method="POST" action="{{ route('pengajar.score.save_scores', $subject['id']) }}" data-delete-nilai-url="{{ route('pengajar.score.nilai.delete') }}" data-import-blocking-errors="{{ $importHasBlockingErrors ? 'true' : 'false' }}" x-data="formProtection" >
+    <form id="saveForm" method="POST" action="{{ route('pengajar.score.save_scores', $subject['id']) }}" data-delete-nilai-url="{{ route('pengajar.score.nilai.delete') }}" data-import-blocking-errors="{{ $importHasBlockingErrors ? 'true' : 'false' }}" data-excel-import-loaded="{{ $excelImport ? 'true' : 'false' }}" x-data="formProtection" >
         @csrf
 
         <input type="hidden" name="tahun_ajaran_id" value="{{ session('tahun_ajaran_id') }}">
