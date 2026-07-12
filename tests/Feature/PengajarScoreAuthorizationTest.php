@@ -316,11 +316,22 @@ class PengajarScoreAuthorizationTest extends TestCase
             ->where('lingkup_materi_id', $this->lingkupMateriId)
             ->delete();
 
-        $this->actingAsPengajar($this->budi)
-            ->get(route('pengajar.score.index'))
-            ->assertOk()
+        $response = $this->actingAsPengajar($this->budi)
+            ->get(route('pengajar.score.index'));
+
+        $response->assertOk()
             ->assertSeeText('Template nilai belum bisa diunduh karena belum ada pembelajaran yang lengkap. Pastikan setiap Lingkup Materi memiliki Tujuan Pembelajaran.')
             ->assertDontSee(route('pengajar.score.import_template', $this->subjectId), false);
+
+        $html = $response->getContent();
+        $buttonPosition = strpos($html, 'Download Template Nilai');
+        $buttonEndPosition = strpos($html, '</button>', $buttonPosition);
+        $messagePosition = strpos($html, 'Template nilai belum bisa diunduh karena belum ada pembelajaran yang lengkap.');
+
+        $this->assertNotFalse($buttonPosition);
+        $this->assertNotFalse($buttonEndPosition);
+        $this->assertNotFalse($messagePosition);
+        $this->assertGreaterThan($buttonEndPosition, $messagePosition);
     }
 
     public function test_score_readiness_warning_names_missing_lingkup_materi_and_guides_teacher(): void
@@ -338,6 +349,8 @@ class PengajarScoreAuthorizationTest extends TestCase
             ->assertSee('Belum lengkap: Lingkup Materi "Bilangan Cacah" belum memiliki Tujuan Pembelajaran.')
             ->assertSee('Buka menu Data Mata Pelajaran, lalu klik ikon TP pada mata pelajaran ini untuk menambahkan Tujuan Pembelajaran.')
             ->assertSee('Lengkapi TP')
+            ->assertSee('data-readiness-warning="true"', false)
+            ->assertSee('@click.prevent="showLmTpWarning(mapelName, readinessMessages, tpSetupUrl)"', false)
             ->assertSee(route('pengajar.tujuan_pembelajaran.create', $this->subjectId), false)
             ->assertDontSee(route('pengajar.score.import_template', $this->subjectId), false);
     }

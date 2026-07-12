@@ -141,6 +141,57 @@ class GuruRoleSwitchTest extends TestCase
         $this->assertStringContainsString(route('auth.switch.role', ['role' => 'wali_kelas']), $html);
     }
 
+    public function test_role_mismatch_warning_offers_valid_role_switch_without_useless_back_button(): void
+    {
+        $this->actingAs($this->multiRoleGuru, 'guru');
+        session([
+            'selected_role' => 'wali_kelas',
+            'tahun_ajaran_id' => $this->tahunAjaranId,
+            'selected_semester' => 1,
+            'no_tahun_ajaran' => false,
+        ]);
+
+        $response = $this->runRoleMiddleware('pengajar');
+        $content = $response->getContent();
+
+        $this->assertSame(403, $response->getStatusCode());
+        $this->assertStringContainsString('Akses halaman ini membutuhkan role Pengajar.', $content);
+        $this->assertStringContainsString('Pilih Role Pengajar', $content);
+        $this->assertStringContainsString(route('auth.switch.role', ['role' => 'pengajar']), $content);
+        $this->assertStringContainsString('Kembali ke Dashboard', $content);
+        $this->assertStringNotContainsString('>Kembali</a>', $content);
+        $this->assertStringNotContainsString('logout terlebih dahulu', $content);
+    }
+
+    public function test_role_mismatch_warning_explains_missing_role_access_without_switch_link(): void
+    {
+        DB::table('guru_kelas')
+            ->where('guru_id', $this->multiRoleGuru->id)
+            ->where('role', 'pengajar')
+            ->delete();
+
+        DB::table('mata_pelajarans')
+            ->where('guru_id', $this->multiRoleGuru->id)
+            ->update(['guru_id' => null]);
+
+        $this->actingAs($this->multiRoleGuru, 'guru');
+        session([
+            'selected_role' => 'wali_kelas',
+            'tahun_ajaran_id' => $this->tahunAjaranId,
+            'selected_semester' => 1,
+            'no_tahun_ajaran' => false,
+        ]);
+
+        $response = $this->runRoleMiddleware('pengajar');
+        $content = $response->getContent();
+
+        $this->assertSame(403, $response->getStatusCode());
+        $this->assertStringContainsString('Akun Anda belum memiliki akses sebagai Pengajar untuk halaman ini. Hubungi admin sekolah jika akses ini diperlukan.', $content);
+        $this->assertStringNotContainsString('Pilih Role Pengajar', $content);
+        $this->assertStringNotContainsString(route('auth.switch.role', ['role' => 'pengajar']), $content);
+        $this->assertStringNotContainsString('>Kembali</a>', $content);
+    }
+
     public function test_revoked_selected_pengajar_role_is_rejected_on_next_protected_request(): void
     {
         DB::table('guru_kelas')

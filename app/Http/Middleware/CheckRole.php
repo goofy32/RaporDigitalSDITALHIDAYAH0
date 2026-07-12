@@ -63,7 +63,8 @@ class CheckRole
                     $request,
                     $selectedRole,
                     $role,
-                    'Role guru sudah tidak tersedia. Silakan pilih role kembali atau hubungi admin.'
+                    'Role guru sudah tidak tersedia. Silakan pilih role kembali atau hubungi admin.',
+                    $availableRoles
                 );
             }
 
@@ -73,7 +74,7 @@ class CheckRole
             }
     
             // Jika mencoba akses role yang berbeda, tampilkan error
-            return $this->roleMismatchResponse($request, $selectedRole, $role);
+            return $this->roleMismatchResponse($request, $selectedRole, $role, availableRoles: $availableRoles);
         }
         
         // Jika role tidak dikenal
@@ -111,8 +112,12 @@ class CheckRole
         Request $request,
         ?string $selectedRole,
         string $attemptedRole,
-        string $message = 'Anda tidak memiliki akses ke role ini.'
+        string $message = 'Anda tidak memiliki akses ke role ini.',
+        array $availableRoles = []
     ) {
+        $normalizedAttemptedRole = $this->normalizeGuruRole($attemptedRole);
+        $normalizedSelectedRole = $this->normalizeGuruRole($selectedRole);
+
         if ($request->expectsJson()) {
             return response()->json([
                 'message' => $message,
@@ -120,8 +125,9 @@ class CheckRole
         }
 
         return response()->view('errors.role-mismatch', [
-            'current_role' => $selectedRole,
-            'attempted_role' => $attemptedRole,
+            'current_role' => $normalizedSelectedRole,
+            'attempted_role' => $normalizedAttemptedRole,
+            'available_roles' => $availableRoles,
             'message' => $message,
         ], 403);
     }

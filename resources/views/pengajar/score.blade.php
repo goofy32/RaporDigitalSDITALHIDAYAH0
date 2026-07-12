@@ -30,8 +30,8 @@
 
     <!-- Action Buttons -->
     <div x-data="{ openTemplateModal: false, selectedTemplateUrl: @js($readyPembelajarans->first()['url'] ?? '') }" class="mb-6">
-        <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-            <div class="flex flex-col gap-2 sm:flex-row sm:items-start">
+        <div class="flex flex-col gap-2">
+            <div class="flex flex-wrap gap-2">
                 @if($readyPembelajarans->isNotEmpty())
                     <button type="button"
                             @click="openTemplateModal = true"
@@ -44,14 +44,17 @@
                             class="text-white bg-gray-400 font-medium rounded-lg text-sm px-4 py-2 cursor-not-allowed">
                         Download Template Nilai
                     </button>
-                    <div class="inline-flex max-w-2xl items-start gap-2 rounded-lg border border-yellow-200 bg-yellow-50 px-3 py-2 text-sm text-yellow-800">
-                        <svg class="mt-0.5 h-4 w-4 flex-shrink-0 text-yellow-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                            <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
-                        </svg>
-                        <span>Template nilai belum bisa diunduh karena belum ada pembelajaran yang lengkap. Pastikan setiap Lingkup Materi memiliki Tujuan Pembelajaran.</span>
-                    </div>
                 @endif
             </div>
+
+            @if($readyPembelajarans->isEmpty())
+                <div class="inline-flex max-w-xl items-start gap-2 rounded-lg border border-yellow-200 bg-yellow-50 px-3 py-2 text-sm text-yellow-800">
+                    <svg class="mt-0.5 h-4 w-4 flex-shrink-0 text-yellow-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                        <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+                    </svg>
+                    <span>Template nilai belum bisa diunduh karena belum ada pembelajaran yang lengkap. Pastikan setiap Lingkup Materi memiliki Tujuan Pembelajaran.</span>
+                </div>
+            @endif
         </div>
 
         @if($readyPembelajarans->isNotEmpty())
@@ -342,12 +345,14 @@
                                         @endif
                                         @else
                                             <button type="button"
-                                                    onclick='showLmTpWarning(@js($mapel->nama_pelajaran), @js($readinessMessages), @js($tpSetupUrl))'
-                                                    class="cursor-pointer text-gray-400 opacity-70 hover:text-yellow-600"
+                                                    x-data="{ mapelName: @js($mapel->nama_pelajaran), readinessMessages: @js($readinessMessages), tpSetupUrl: @js($tpSetupUrl) }"
+                                                    @click.prevent="showLmTpWarning(mapelName, readinessMessages, tpSetupUrl)"
+                                                    class="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md border border-yellow-200 bg-yellow-50 text-yellow-700 transition hover:bg-yellow-100 hover:text-yellow-800 focus:outline-none focus:ring-2 focus:ring-yellow-300"
                                                     title="{{ $readinessTitle }}"
                                                     data-tp-setup-url="{{ $tpSetupUrl }}"
+                                                    data-readiness-warning="true"
                                                     aria-label="{{ $readinessTitle }} Buka menu Data Mata Pelajaran, lalu klik ikon TP pada mata pelajaran ini untuk menambahkan Tujuan Pembelajaran.">
-                                                <img src="{{ asset('images/icons/warning.png') }}" alt="Warning Icon" class="w-5 h-5">
+                                                <img src="{{ asset('images/icons/warning.png') }}" alt="Detail pembelajaran belum lengkap" class="w-5 h-5">
                                             </button>
                                         @endif
 
