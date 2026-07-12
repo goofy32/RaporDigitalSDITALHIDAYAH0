@@ -1392,14 +1392,7 @@ class ScoreController extends Controller
                 $context['tahunAjaran']
             );
 
-            $filename = sprintf(
-                'Template_Nilai_%s_%s_%s_Semester_%s.xlsx',
-                $context['mataPelajaran']->kelas?->label_kelas ?? 'Kelas',
-                $context['mataPelajaran']->nama_pelajaran,
-                $context['tahunAjaran']->tahun_ajaran,
-                $context['tahunAjaran']->semester
-            );
-            $filename = str_replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], '-', $filename);
+            $filename = $templateService->downloadFilename($context['mataPelajaran']);
 
             return response()->streamDownload(function () use ($spreadsheet) {
                 (new Xlsx($spreadsheet))->save('php://output');

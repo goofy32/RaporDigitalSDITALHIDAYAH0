@@ -286,6 +286,10 @@ class PengajarScoreAuthorizationTest extends TestCase
 
         $response->assertOk();
         $response->assertHeader('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        $this->assertStringContainsString(
+            'Template_Nilai_5_A_Matematika.xlsx',
+            (string) $response->headers->get('content-disposition')
+        );
     }
 
     public function test_score_import_template_download_is_available_from_pengajar_subject_list(): void
@@ -341,7 +345,7 @@ class PengajarScoreAuthorizationTest extends TestCase
                 ->get(route('pengajar.score.import_template', $this->subjectId))
         );
 
-        $sheet = $workbook->getSheetByName('Nilai');
+        $sheet = $this->scoreSheet($workbook);
         $names = collect($sheet->rangeToArray('E6:E20'))->flatten()->filter()->values()->all();
 
         $this->assertContains('Ahmad Fauzan', $names);
@@ -355,8 +359,14 @@ class PengajarScoreAuthorizationTest extends TestCase
                 ->get(route('pengajar.score.import_template', $this->subjectId))
         );
 
-        $sheet = $workbook->getSheetByName('Nilai');
+        $sheet = $this->scoreSheet($workbook);
+        $header = (string) $sheet->getCell('A1')->getValue();
 
+        $this->assertSame('5 A - Matematika', $sheet->getTitle());
+        $this->assertStringContainsString('Kelas: Kelas 5 A', $header);
+        $this->assertStringContainsString('Mata Pelajaran: Matematika', $header);
+        $this->assertStringContainsString('Tahun Ajaran: 2026/2027', $header);
+        $this->assertStringContainsString('Semester: 1', $header);
         $this->assertTrue((bool) $sheet->getProtection()->getSheet());
         $this->assertFalse($sheet->getRowDimension(2)->getVisible());
         $this->assertFalse($sheet->getRowDimension(3)->getVisible());
@@ -450,7 +460,7 @@ class PengajarScoreAuthorizationTest extends TestCase
     public function test_score_import_preview_rejects_duplicated_siswa_id(): void
     {
         $workbook = $this->templateWorkbook();
-        $sheet = $workbook->getSheetByName('Nilai');
+        $sheet = $this->scoreSheet($workbook);
         $highestColumn = $sheet->getHighestDataColumn();
         $sheet->fromArray($sheet->rangeToArray("A6:{$highestColumn}6")[0], null, 'A7');
         $this->setValueByKey($sheet, "tp_{$this->lingkupMateriId}_{$this->tujuanPembelajaranId}", 6, 80);
@@ -503,7 +513,7 @@ class PengajarScoreAuthorizationTest extends TestCase
     private function validScoreImportUpload(array $values): UploadedFile
     {
         $workbook = $this->templateWorkbook();
-        $sheet = $workbook->getSheetByName('Nilai');
+        $sheet = $this->scoreSheet($workbook);
 
         foreach ($values as $key => $value) {
             $this->setValueByKey($sheet, $key, 6, $value);
@@ -530,6 +540,11 @@ class PengajarScoreAuthorizationTest extends TestCase
         $this->workbooks[] = $path;
 
         return IOFactory::load($path);
+    }
+
+    private function scoreSheet($workbook)
+    {
+        return $workbook->getActiveSheet();
     }
 
     private function uploadedWorkbook($workbook): UploadedFile

@@ -88,6 +88,28 @@ class PengajarScoreExcelTemplateService
         ]);
     }
 
+    public function scoreSheetTitle(MataPelajaran $mataPelajaran): string
+    {
+        $classLabel = $this->shortClassLabel($mataPelajaran);
+        $subjectLabel = $this->normalizeWhitespace($mataPelajaran->nama_pelajaran);
+        $withSubject = $this->sanitizeSheetTitleCandidate(trim($classLabel.' - '.$subjectLabel, ' -'));
+
+        if ($withSubject !== '' && mb_strlen($withSubject, 'UTF-8') <= 31) {
+            return $this->finalizeSheetTitle($withSubject);
+        }
+
+        return $this->finalizeSheetTitle($this->sanitizeSheetTitleCandidate($classLabel));
+    }
+
+    public function downloadFilename(MataPelajaran $mataPelajaran): string
+    {
+        return sprintf(
+            'Template_Nilai_%s_%s.xlsx',
+            $this->filenameSegment($this->shortClassLabel($mataPelajaran), 'Kelas'),
+            $this->filenameSegment($mataPelajaran->nama_pelajaran, 'Mapel')
+        );
+    }
+
     private function buildScoreSheet(
         Spreadsheet $spreadsheet,
         MataPelajaran $mataPelajaran,
@@ -95,16 +117,25 @@ class PengajarScoreExcelTemplateService
         TahunAjaran $tahunAjaran
     ): void {
         $sheet = $spreadsheet->getActiveSheet();
-        $sheet->setTitle(self::SHEET_NILAI);
+        $sheet->setTitle($this->scoreSheetTitle($mataPelajaran));
 
         $baseColumns = $this->templateBaseColumns();
         $scoreColumns = $this->scoreColumns($mataPelajaran);
         $allColumns = array_merge($baseColumns, $scoreColumns);
         $lastColumn = $this->columnLetter(count($allColumns));
 
-        $sheet->setCellValue('A1', 'Template Import Nilai Pengajar');
+        $sheet->setCellValue('A1', implode("\n", [
+            'Template Nilai '.$this->shortClassLabel($mataPelajaran).' - '.$this->normalizeWhitespace($mataPelajaran->nama_pelajaran),
+            'Kelas: '.$this->classContextLabel($mataPelajaran),
+            'Mata Pelajaran: '.$this->normalizeWhitespace($mataPelajaran->nama_pelajaran),
+            'Tahun Ajaran: '.$tahunAjaran->tahun_ajaran,
+            'Semester: '.$tahunAjaran->semester,
+            'Isi hanya kolom nilai. Kolom identitas siswa, kelas, dan mata pelajaran tidak perlu diubah.',
+        ]));
         $sheet->mergeCells("A1:{$lastColumn}1");
         $sheet->getStyle('A1')->getFont()->setBold(true)->setSize(14);
+        $sheet->getStyle('A1')->getAlignment()->setWrapText(true);
+        $sheet->getRowDimension(1)->setRowHeight(112);
 
         $sheet->fromArray(['tahun_ajaran_id', 'semester', 'kelas_id', 'mata_pelajaran_id'], null, 'A2');
         $sheet->fromArray([
@@ -199,15 +230,17 @@ class PengajarScoreExcelTemplateService
 
         $instructions = [
             ['Template Import Nilai Pengajar'],
-            ["Tahun ajaran: {$tahunAjaran->tahun_ajaran}, semester {$tahunAjaran->semester}."],
-            ['Template ini khusus untuk kelas dan mata pelajaran yang tertera pada sheet Nilai.'],
+            ['Kelas: '.$this->classContextLabel($mataPelajaran)],
+            ["Mata pelajaran: {$mataPelajaran->nama_pelajaran}"],
+            ["Tahun ajaran: {$tahunAjaran->tahun_ajaran}"],
+            ["Semester: {$tahunAjaran->semester}"],
+            ['Sheet nilai: '.$this->scoreSheetTitle($mataPelajaran)],
+            ['Template ini khusus untuk kelas dan mata pelajaran yang tertera pada sheet nilai utama.'],
             ['Isi hanya kolom nilai. Kolom identitas siswa, kelas, dan mata pelajaran tidak perlu diubah.'],
             ['Jangan mengubah siswa_id. Nama siswa hanya untuk verifikasi manusia.'],
             ['Isi nilai pada kolom TP, LM, Nilai Tes, dan Nilai Non-Tes.'],
             ['Kolom NA dan Nilai Akhir adalah referensi kalkulasi. Perhitungan final tetap dilakukan oleh aplikasi saat fase simpan nanti.'],
             ['Nilai boleh dikosongkan. Jika diisi, nilai harus angka 0 sampai 100.'],
-            ["Kelas: ".($mataPelajaran->kelas?->label_kelas ?? '-')],
-            ["Mata pelajaran: {$mataPelajaran->nama_pelajaran}"],
         ];
 
         $sheet->fromArray($instructions, null, 'A1');
@@ -236,6 +269,72 @@ class PengajarScoreExcelTemplateService
     private function setStringCell($sheet, string $cell, ?string $value): void
     {
         $sheet->setCellValueExplicit($cell, (string) ($value ?? ''), DataType::TYPE_STRING);
+    }
+
+    private function shortClassLabel(MataPelajaran $mataPelajaran): string
+    {
+        $kelas = $mataPelajaran->kelas;
+
+        if (! $kelas) {
+            return 'Kelas';
+        }
+
+        $nomorKelas = $this->normalizeWhitespace((string) $kelas->nomor_kelas);
+        $namaKelas = $this->normalizeWhitespace((string) $kelas->nama_kelas);
+        $label = trim($nomorKelas.' '.$namaKelas);
+
+        return $label !== '' ? $label : 'Kelas';
+    }
+
+    private function classContextLabel(MataPelajaran $mataPelajaran): string
+    {
+        $label = $this->shortClassLabel($mataPelajaran);
+
+        if (str_starts_with(mb_strtolower($label, 'UTF-8'), 'kelas ')) {
+            return $label;
+        }
+
+        return 'Kelas '.$label;
+    }
+
+    private function sanitizeSheetTitleCandidate(string $title): string
+    {
+        $title = preg_replace('/[\\\\\\/\\?\\*\\[\\]\\:]+/u', ' ', $title) ?? '';
+        $title = $this->normalizeWhitespace($title);
+
+        return trim($title, " '");
+    }
+
+    private function finalizeSheetTitle(string $title): string
+    {
+        $title = $title !== '' ? $title : self::SHEET_NILAI;
+
+        if (mb_strtolower($title, 'UTF-8') === mb_strtolower(self::SHEET_PETUNJUK, 'UTF-8')) {
+            $title = self::SHEET_NILAI.' '.$title;
+        }
+
+        if (mb_strlen($title, 'UTF-8') > 31) {
+            $title = rtrim(mb_substr($title, 0, 31, 'UTF-8'));
+        }
+
+        return $title !== '' ? $title : self::SHEET_NILAI;
+    }
+
+    private function filenameSegment(?string $value, string $fallback): string
+    {
+        $segment = preg_replace('/[^\pL\pN]+/u', '_', (string) $value) ?? '';
+        $segment = trim($segment, '_');
+
+        if ($segment === '') {
+            return $fallback;
+        }
+
+        return mb_substr($segment, 0, 80, 'UTF-8');
+    }
+
+    private function normalizeWhitespace(?string $value): string
+    {
+        return trim(preg_replace('/\s+/u', ' ', (string) $value) ?? '');
     }
 
     private function columnLetter(int $columnIndex): string
