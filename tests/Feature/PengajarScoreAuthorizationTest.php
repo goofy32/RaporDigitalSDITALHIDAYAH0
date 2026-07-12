@@ -348,10 +348,10 @@ class PengajarScoreAuthorizationTest extends TestCase
             ->assertOk()
             ->assertSee('Belum lengkap: Lingkup Materi "Bilangan Cacah" belum memiliki Tujuan Pembelajaran.')
             ->assertSee('Buka menu Data Mata Pelajaran, lalu klik ikon TP pada mata pelajaran ini untuk menambahkan Tujuan Pembelajaran.')
-            ->assertSee('Lengkapi TP')
+            ->assertDontSee('Lengkapi TP')
             ->assertSee('data-readiness-warning="true"', false)
-            ->assertSee('@click.prevent="showLmTpWarning(mapelName, readinessMessages, tpSetupUrl)"', false)
-            ->assertSee(route('pengajar.tujuan_pembelajaran.create', $this->subjectId), false)
+            ->assertSee('@click.prevent="showLmTpWarning(mapelName, readinessMessages)"', false)
+            ->assertDontSee(route('pengajar.tujuan_pembelajaran.create', $this->subjectId), false)
             ->assertDontSee(route('pengajar.score.import_template', $this->subjectId), false);
     }
 

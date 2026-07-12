@@ -323,7 +323,6 @@
                                 $readinessMessages = $mapel->readiness_messages ?: [$mapel->lm_tp_warning_message];
                                 $readinessMessages = collect($readinessMessages)->filter()->values()->all();
                                 $readinessTitle = implode(' ', $readinessMessages);
-                                $tpSetupUrl = route('pengajar.tujuan_pembelajaran.create', $mapel->id);
                             @endphp
                             <tr class="bg-white border-b hover:bg-gray-50">
                                 <td class="px-6 py-4">{{ $nomor++ }}</td> <!-- Increment counter di sini -->
@@ -345,11 +344,10 @@
                                         @endif
                                         @else
                                             <button type="button"
-                                                    x-data="{ mapelName: @js($mapel->nama_pelajaran), readinessMessages: @js($readinessMessages), tpSetupUrl: @js($tpSetupUrl) }"
-                                                    @click.prevent="showLmTpWarning(mapelName, readinessMessages, tpSetupUrl)"
-                                                    class="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md border border-yellow-200 bg-yellow-50 text-yellow-700 transition hover:bg-yellow-100 hover:text-yellow-800 focus:outline-none focus:ring-2 focus:ring-yellow-300"
+                                                    x-data="{ mapelName: @js($mapel->nama_pelajaran), readinessMessages: @js($readinessMessages) }"
+                                                    @click.prevent="showLmTpWarning(mapelName, readinessMessages)"
+                                                    class="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-sm text-gray-400 opacity-80 transition hover:text-yellow-600 focus:outline-none focus:ring-2 focus:ring-yellow-300 focus:ring-offset-2"
                                                     title="{{ $readinessTitle }}"
-                                                    data-tp-setup-url="{{ $tpSetupUrl }}"
                                                     data-readiness-warning="true"
                                                     aria-label="{{ $readinessTitle }} Buka menu Data Mata Pelajaran, lalu klik ikon TP pada mata pelajaran ini untuk menambahkan Tujuan Pembelajaran.">
                                                 <img src="{{ asset('images/icons/warning.png') }}" alt="Detail pembelajaran belum lengkap" class="w-5 h-5">
@@ -392,16 +390,13 @@
         });
     }
 
-    function showLmTpWarning(namaPelajaran, readinessMessages = [], tpSetupUrl = null) {
+    function showLmTpWarning(namaPelajaran, readinessMessages = []) {
         const messages = Array.isArray(readinessMessages) && readinessMessages.length > 0
             ? readinessMessages
             : ['Belum lengkap: Lingkup Materi dan Tujuan Pembelajaran belum lengkap.'];
         const reasonList = messages
             .map((message) => '<li>' + escapeWarningHtml(message) + '</li>')
             .join('');
-        const setupLink = tpSetupUrl
-            ? '<div class="mt-4"><a href="' + escapeWarningHtml(tpSetupUrl) + '" class="inline-flex items-center rounded-lg bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800">Lengkapi TP</a></div>'
-            : '';
 
         window.Swal.fire({
             title: 'Pembelajaran Belum Lengkap',
@@ -409,7 +404,6 @@
                 '<p class="mb-3">Mata pelajaran <strong>' + escapeWarningHtml(namaPelajaran) + '</strong> belum siap untuk input nilai atau unduh template.</p>' +
                 '<ul class="mb-3 list-disc space-y-1 pl-5">' + reasonList + '</ul>' +
                 '<p>Buka menu <strong>Data Mata Pelajaran</strong>, lalu klik ikon <strong>TP</strong> pada mata pelajaran ini untuk menambahkan Tujuan Pembelajaran.</p>' +
-                setupLink +
                 '</div>',
             icon: 'warning',
             confirmButtonText: 'Mengerti',
