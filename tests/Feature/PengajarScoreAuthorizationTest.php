@@ -424,10 +424,12 @@ class PengajarScoreAuthorizationTest extends TestCase
             ->assertOk()
             ->assertSee('Download Template Nilai')
             ->assertSee('Download Semua Template Siap')
+            ->assertSee('Upload Semua Nilai Excel')
             ->assertSee('bg-gray-100 text-gray-700 hover:bg-gray-200', false)
             ->assertSee('Kelas 5 A - Matematika')
             ->assertSee(route('pengajar.score.import_template', $this->subjectId), false)
             ->assertSee(route('pengajar.score.import_templates'), false)
+            ->assertSee(route('pengajar.score.import_templates.preview'), false)
             ->assertSee('data-row-action="input"', false)
             ->assertSee('data-row-action="delete"', false)
             ->assertSee('flex items-center justify-center gap-1', false)
@@ -454,9 +456,11 @@ class PengajarScoreAuthorizationTest extends TestCase
         $response->assertOk()
             ->assertSeeText('Download Template Nilai')
             ->assertSeeText('Download Semua Template Siap')
+            ->assertSeeText('Upload Semua Nilai Excel')
             ->assertSeeText('Template nilai belum bisa diunduh karena belum ada pembelajaran yang lengkap. Pastikan setiap Lingkup Materi memiliki Tujuan Pembelajaran.')
             ->assertDontSee(route('pengajar.score.import_template', $this->subjectId), false)
-            ->assertDontSee(route('pengajar.score.import_templates'), false);
+            ->assertDontSee(route('pengajar.score.import_templates'), false)
+            ->assertDontSee(route('pengajar.score.import_templates.preview'), false);
 
         $html = $response->getContent();
         $buttonPosition = strpos($html, 'Download Template Nilai');
@@ -477,9 +481,11 @@ class PengajarScoreAuthorizationTest extends TestCase
         $response->assertOk()
             ->assertSeeText('Download Template Nilai')
             ->assertSeeText('Download Semua Template Siap')
+            ->assertSeeText('Upload Semua Nilai Excel')
             ->assertSeeText('1 pembelajaran siap diunduh melalui Download Template Nilai. 1 pembelajaran belum lengkap, sehingga Download Semua Template Siap belum bisa digunakan. Lengkapi Tujuan Pembelajaran terlebih dahulu.')
             ->assertSee(route('pengajar.score.import_template', $this->subjectId), false)
-            ->assertDontSee(route('pengajar.score.import_templates'), false);
+            ->assertDontSee(route('pengajar.score.import_templates'), false)
+            ->assertDontSee(route('pengajar.score.import_templates.preview'), false);
 
         $html = $response->getContent();
         $actionStart = strpos($html, '<!-- Action Buttons -->');
@@ -872,6 +878,160 @@ class PengajarScoreAuthorizationTest extends TestCase
         $this->assertSame(0, DB::table('nilais')->count());
     }
 
+    public function test_authorized_pengajar_can_upload_multi_sheet_workbook_and_preview_without_saving(): void
+    {
+        $second = $this->insertReadySecondSubjectForBudi();
+        $workbook = $this->validMultiSheetWorkbook($second);
+
+        $response = $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_templates.preview'), [
+                'file' => $this->uploadedWorkbook($workbook),
+            ]);
+
+        $response->assertRedirect();
+        $token = $this->tokenFromPreviewRedirect($response);
+
+        $this->actingAsPengajar($this->budi)
+            ->get(route('pengajar.score.import_templates.preview_sheet', ['token' => $token]))
+            ->assertOk()
+            ->assertSeeText('Preview Upload Semua Nilai Excel')
+            ->assertSeeText('Matematika')
+            ->assertSeeText('Bahasa Indonesia')
+            ->assertSeeText('Ahmad Fauzan')
+            ->assertSeeText('80')
+            ->assertSeeText('83')
+            ->assertSeeText('Simpan & Lanjut');
+
+        $this->assertSame(0, DB::table('nilais')->count());
+    }
+
+    public function test_multi_sheet_upload_rejects_single_template_file_with_friendly_message(): void
+    {
+        $this->insertReadySecondSubjectForBudi();
+
+        $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_templates.preview'), [
+                'file' => $this->downloadedTemplateUpload($this->subjectId),
+            ])
+            ->assertRedirect(route('pengajar.score.index'))
+            ->assertSessionHas('error', 'File Excel ini bukan template Upload Semua Nilai dari aplikasi. Silakan gunakan file dari tombol Download Semua Template Siap.');
+
+        $this->assertSame(0, DB::table('nilais')->count());
+    }
+
+    public function test_multi_sheet_upload_tampered_metadata_shows_friendly_sheet_error(): void
+    {
+        $second = $this->insertReadySecondSubjectForBudi();
+        $workbook = $this->validMultiSheetWorkbook($second);
+        $workbook->getSheetByName('5 A - Matematika')->setCellValue('D3', null);
+
+        $response = $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_templates.preview'), [
+                'file' => $this->uploadedWorkbook($workbook),
+            ]);
+
+        $token = $this->tokenFromPreviewRedirect($response);
+
+        $this->actingAsPengajar($this->budi)
+            ->get(route('pengajar.score.import_templates.preview_sheet', ['token' => $token]))
+            ->assertOk()
+            ->assertSeeText('Template Excel tidak dapat dibaca dengan benar. Pastikan file berasal dari tombol Download Semua Template Siap dan belum diubah strukturnya.')
+            ->assertSeeText('Template Upload Semua Nilai tidak lengkap. Silakan download ulang template terbaru dari Download Semua Template Siap.')
+            ->assertSeeText('Perlu diperbaiki');
+
+        $this->assertSame(0, DB::table('nilais')->count());
+    }
+
+    public function test_multi_sheet_upload_rejects_workbook_containing_another_gurus_sheet(): void
+    {
+        $this->insertReadySecondSubjectForBudi();
+        $aniSubjectId = $this->insertSubject('Bahasa Arab', $this->ani->id, 1);
+        $this->insertLearningSetup($aniSubjectId, 'Mufradat', '1');
+        $aniWorkbook = $this->workbookFromResponse(
+            $this->actingAsPengajar($this->ani)
+                ->get(route('pengajar.score.import_templates'))
+        );
+
+        $response = $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_templates.preview'), [
+                'file' => $this->uploadedWorkbook($aniWorkbook),
+            ]);
+
+        $token = $this->tokenFromPreviewRedirect($response);
+
+        $this->actingAsPengajar($this->budi)
+            ->get(route('pengajar.score.import_templates.preview_sheet', ['token' => $token]))
+            ->assertOk()
+            ->assertSeeText('tidak sesuai dengan pembelajaran yang tersedia')
+            ->assertSeeText('Template Upload Semua Nilai tidak lengkap. Silakan download ulang template terbaru dari Download Semua Template Siap.')
+            ->assertSeeText('Perlu diperbaiki');
+
+        $this->assertSame(0, DB::table('nilais')->count());
+    }
+
+    public function test_multi_sheet_upload_invalid_sheet_cannot_be_saved(): void
+    {
+        $second = $this->insertReadySecondSubjectForBudi();
+        $workbook = $this->validMultiSheetWorkbook($second);
+        $this->setValueByKey($workbook->getSheetByName('5 A - Matematika'), "tp_{$this->lingkupMateriId}_{$this->tujuanPembelajaranId}", 6, -1);
+
+        $response = $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_templates.preview'), [
+                'file' => $this->uploadedWorkbook($workbook),
+            ]);
+        $token = $this->tokenFromPreviewRedirect($response);
+
+        $this->actingAsPengajar($this->budi)
+            ->get(route('pengajar.score.import_templates.preview_sheet', ['token' => $token]))
+            ->assertOk()
+            ->assertSeeText('Baris 6, siswa Ahmad Fauzan: Nilai TP 1 tidak boleh kurang dari 0 atau lebih dari 100.');
+
+        $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_templates.save_sheet', ['token' => $token, 'sheet' => 1]))
+            ->assertRedirect(route('pengajar.score.import_templates.preview_sheet', ['token' => $token, 'sheet' => 1]))
+            ->assertSessionHas('error', 'Sheet ini belum bisa disimpan karena masih ada nilai yang perlu diperbaiki.');
+
+        $this->assertSame(0, DB::table('nilais')->count());
+    }
+
+    public function test_valid_multi_sheet_upload_saves_current_sheet_then_shows_next_and_final_summary(): void
+    {
+        $second = $this->insertReadySecondSubjectForBudi();
+        $workbook = $this->validMultiSheetWorkbook($second);
+
+        $response = $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_templates.preview'), [
+                'file' => $this->uploadedWorkbook($workbook),
+            ]);
+        $token = $this->tokenFromPreviewRedirect($response);
+
+        $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_templates.save_sheet', ['token' => $token, 'sheet' => 1]))
+            ->assertRedirect(route('pengajar.score.import_templates.preview_sheet', ['token' => $token, 'sheet' => 2]))
+            ->assertSessionHas('success');
+
+        $this->assertSame(3, DB::table('nilais')->where('mata_pelajaran_id', $this->subjectId)->count());
+
+        $this->actingAsPengajar($this->budi)
+            ->get(route('pengajar.score.import_templates.preview_sheet', ['token' => $token, 'sheet' => 2]))
+            ->assertOk()
+            ->assertSeeText('Bahasa Indonesia')
+            ->assertSeeText('Siti Aminah');
+
+        $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_templates.save_sheet', ['token' => $token, 'sheet' => 2]))
+            ->assertRedirect(route('pengajar.score.import_templates.preview_sheet', ['token' => $token]))
+            ->assertSessionHas('success');
+
+        $this->assertSame(3, DB::table('nilais')->where('mata_pelajaran_id', $second['subject_id'])->count());
+
+        $this->actingAsPengajar($this->budi)
+            ->get(route('pengajar.score.import_templates.preview_sheet', ['token' => $token]))
+            ->assertOk()
+            ->assertSeeText('Semua sheet berhasil disimpan')
+            ->assertSeeText('2 sheet nilai sudah diproses.');
+    }
+
     private function validScoreImportUpload(array $values): UploadedFile
     {
         $workbook = $this->templateWorkbook();
@@ -900,6 +1060,40 @@ class PengajarScoreAuthorizationTest extends TestCase
                     ->get(route('pengajar.score.import_template', $subjectId))
             )
         );
+    }
+
+    private function validMultiSheetWorkbook(array $second)
+    {
+        $workbook = $this->workbookFromResponse(
+            $this->actingAsPengajar($this->budi)
+                ->get(route('pengajar.score.import_templates'))
+        );
+
+        $firstSheet = $workbook->getSheetByName('5 A - Matematika');
+        $secondSheet = $workbook->getSheetByName('6 B - Bahasa Indonesia');
+
+        $this->setValueByKey($firstSheet, "tp_{$this->lingkupMateriId}_{$this->tujuanPembelajaranId}", 6, 80);
+        $this->setValueByKey($firstSheet, "lm_{$this->lingkupMateriId}", 6, 81);
+        $this->setValueByKey($firstSheet, 'nilai_tes', 6, 82);
+        $this->setValueByKey($firstSheet, 'nilai_non_tes', 6, 83);
+
+        $this->setValueByKey($secondSheet, "tp_{$second['lingkup_materi_id']}_{$second['tujuan_pembelajaran_id']}", 6, 84);
+        $this->setValueByKey($secondSheet, "lm_{$second['lingkup_materi_id']}", 6, 85);
+        $this->setValueByKey($secondSheet, 'nilai_tes', 6, 86);
+        $this->setValueByKey($secondSheet, 'nilai_non_tes', 6, 87);
+
+        return $workbook;
+    }
+
+    private function tokenFromPreviewRedirect($response): string
+    {
+        $location = (string) $response->headers->get('Location');
+
+        if (! preg_match('#/score/import/templates/preview/([^/?]+)#', $location, $matches)) {
+            $this->fail("Redirect tidak mengarah ke preview Upload Semua Nilai: {$location}");
+        }
+
+        return $matches[1];
     }
 
     private function workbookFromResponse($response)
@@ -1116,6 +1310,24 @@ class PengajarScoreAuthorizationTest extends TestCase
         return [
             'lingkup_materi_id' => $lingkupMateriId,
             'tujuan_pembelajaran_id' => $tujuanPembelajaranId,
+        ];
+    }
+
+    private function insertReadySecondSubjectForBudi(): array
+    {
+        $this->insertLearningSetup($this->wrongSemesterSubjectId, 'Materi Genap', '1');
+
+        $classId = $this->insertClass(6, 'B');
+        $studentId = $this->insertStudentForClass($classId, '2001', '2001000', 'Siti Aminah');
+        $subjectId = $this->insertSubject('Bahasa Indonesia', $this->budi->id, 1, $classId);
+        $setup = $this->insertLearningSetup($subjectId, 'Teks Narasi', '1');
+
+        return [
+            'class_id' => $classId,
+            'student_id' => $studentId,
+            'subject_id' => $subjectId,
+            'lingkup_materi_id' => $setup['lingkup_materi_id'],
+            'tujuan_pembelajaran_id' => $setup['tujuan_pembelajaran_id'],
         ];
     }
 

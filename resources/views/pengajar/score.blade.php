@@ -39,7 +39,7 @@
     </div>
 
     <!-- Action Buttons -->
-    <div x-data="{ openTemplateModal: false, selectedTemplateUrl: @js($readyPembelajarans->first()['url'] ?? '') }" class="mb-6">
+    <div x-data="{ openTemplateModal: false, openBulkUploadModal: false, selectedTemplateUrl: @js($readyPembelajarans->first()['url'] ?? '') }" class="mb-6">
         <div class="flex flex-col gap-2">
             <div class="flex flex-wrap gap-2">
                 @if($readyPembelajarans->isNotEmpty())
@@ -53,11 +53,21 @@
                            class="border border-gray-300 bg-gray-100 text-gray-700 hover:bg-gray-200 focus:ring-4 focus:ring-gray-200 font-medium rounded-lg text-sm px-4 py-2">
                             Download Semua Template Siap
                         </a>
+                        <button type="button"
+                                @click="openBulkUploadModal = true"
+                                class="border border-green-600 bg-white text-green-700 hover:bg-green-50 focus:ring-4 focus:ring-green-200 font-medium rounded-lg text-sm px-4 py-2">
+                            Upload Semua Nilai Excel
+                        </button>
                     @else
                         <button type="button"
                                 disabled
                                 class="text-white bg-gray-400 font-medium rounded-lg text-sm px-4 py-2 cursor-not-allowed">
                             Download Semua Template Siap
+                        </button>
+                        <button type="button"
+                                disabled
+                                class="text-white bg-gray-400 font-medium rounded-lg text-sm px-4 py-2 cursor-not-allowed">
+                            Upload Semua Nilai Excel
                         </button>
                     @endif
                 @else
@@ -70,6 +80,11 @@
                             disabled
                             class="text-white bg-gray-400 font-medium rounded-lg text-sm px-4 py-2 cursor-not-allowed">
                         Download Semua Template Siap
+                    </button>
+                    <button type="button"
+                            disabled
+                            class="text-white bg-gray-400 font-medium rounded-lg text-sm px-4 py-2 cursor-not-allowed">
+                        Upload Semua Nilai Excel
                     </button>
                 @endif
             </div>
@@ -123,6 +138,45 @@
                             Download
                         </button>
                     </div>
+                </div>
+            </div>
+        @endif
+
+        @if($bulkTemplateReady)
+            <div x-show="openBulkUploadModal"
+                 x-cloak
+                 class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+                 @keydown.escape.window="openBulkUploadModal = false">
+                <div class="w-full max-w-lg rounded-lg bg-white p-6 shadow-lg" @click.outside="openBulkUploadModal = false">
+                    <form action="{{ route('pengajar.score.import_templates.preview') }}"
+                          method="POST"
+                          enctype="multipart/form-data">
+                        @csrf
+                        <div class="mb-4">
+                            <h3 class="text-lg font-semibold text-green-700">Upload Semua Nilai Excel</h3>
+                            <p class="mt-1 text-sm text-gray-600">Unggah workbook dari tombol Download Semua Template Siap. Nilai belum disimpan sampai setiap sheet diperiksa dan tombol Simpan &amp; Lanjut diklik.</p>
+                        </div>
+
+                        <label for="bulk_score_import_file" class="mb-2 block text-sm font-medium text-gray-700">File Excel</label>
+                        <input id="bulk_score_import_file"
+                               name="file"
+                               type="file"
+                               accept=".xlsx,.xls"
+                               required
+                               class="mb-5 block w-full rounded-lg border border-gray-300 bg-gray-50 p-2 text-sm text-gray-900 focus:border-green-500 focus:ring-green-500">
+
+                        <div class="flex justify-end gap-2">
+                            <button type="button"
+                                    @click="openBulkUploadModal = false"
+                                    class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
+                                Batal
+                            </button>
+                            <button type="submit"
+                                    class="text-white bg-green-700 hover:bg-green-800 focus:ring-4 focus:ring-green-300 font-medium rounded-lg text-sm px-4 py-2">
+                                Upload &amp; Preview
+                            </button>
+                        </div>
+                    </form>
                 </div>
             </div>
         @endif

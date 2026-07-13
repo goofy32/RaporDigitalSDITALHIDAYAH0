@@ -15,15 +15,18 @@ use App\Models\Kkm;
 use App\Models\BobotNilai;
 use App\Models\TahunAjaran;
 use App\Services\PdfCacheService;
+use App\Services\PengajarScoreExcelMultiSheetPreviewService;
 use App\Services\PengajarScoreExcelPreviewService;
 use App\Services\PengajarScoreExcelTemplateService;
 use App\Services\ReportPdfAutoPrepareService;
 use App\Services\SiswaKelasSemesterResolver;
+use DomainException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Str;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
 class ScoreController extends Controller
@@ -822,10 +825,15 @@ class ScoreController extends Controller
             abort(422, 'Belum ada pembelajaran lengkap yang siap diunduh template nilainya. Pastikan setiap Lingkup Materi memiliki Tujuan Pembelajaran.');
         }
 
-        $contexts = $mataPelajarans->map(fn (MataPelajaran $mataPelajaran) => [
-            'mataPelajaran' => $mataPelajaran,
-            'siswas' => $this->studentsForSubjectRoster($mataPelajaran, $tahunAjaranId),
-        ]);
+        $contexts = $mataPelajarans->map(function (MataPelajaran $mataPelajaran) use ($tahunAjaranId) {
+            $siswas = $this->studentsForSubjectRoster($mataPelajaran, $tahunAjaranId);
+
+            return [
+                'mataPelajaran' => $mataPelajaran,
+                'siswas' => $siswas,
+                'existingScores' => $this->existingScoresForRoster($mataPelajaran, $siswas, $tahunAjaranId),
+            ];
+        });
 
         return [
             'tahunAjaran' => TahunAjaran::findOrFail($tahunAjaranId),
@@ -1539,6 +1547,231 @@ class ScoreController extends Controller
             return redirect()->route('pengajar.score.input_score', $id)
                 ->with('error', 'Template Excel tidak dapat dibaca dengan benar. Pastikan file berasal dari tombol Download Template Nilai pada aplikasi ini dan belum diubah strukturnya.');
         }
+    }
+
+    public function previewAllImportTemplates(Request $request, PengajarScoreExcelMultiSheetPreviewService $previewService)
+    {
+        $request->validate([
+            'file' => 'required|file|mimes:xlsx,xls|max:4096',
+        ]);
+
+        try {
+            $context = $this->authorizedReadyScoreImportContexts();
+            $preview = $previewService->preview(
+                $request->file('file'),
+                $context['contexts'],
+                $context['tahunAjaran']
+            );
+            $token = (string) Str::uuid();
+            $state = [
+                'token' => $token,
+                'guru_id' => (int) $context['guru']->id,
+                'tahun_ajaran_id' => (int) $context['tahunAjaran']->id,
+                'tahun_ajaran' => $context['tahunAjaran']->tahun_ajaran,
+                'semester' => (int) $context['tahunAjaran']->semester,
+                'uploaded_at' => now()->toIso8601String(),
+                'global_errors' => $preview['global_errors'],
+                'summary' => $preview['summary'],
+                'sheets' => $preview['sheets'],
+            ];
+
+            $this->putMultiSheetImportState($token, $state);
+
+            return redirect()
+                ->route('pengajar.score.import_templates.preview_sheet', ['token' => $token])
+                ->with('success', 'File Upload Semua Nilai berhasil dibaca. Nilai belum disimpan. Periksa setiap sheet lalu klik Simpan & Lanjut.');
+        } catch (DomainException $exception) {
+            return redirect()->route('pengajar.score.index')
+                ->with('error', $exception->getMessage());
+        } catch (\Symfony\Component\HttpKernel\Exception\HttpExceptionInterface $exception) {
+            throw $exception;
+        } catch (\Throwable $exception) {
+            Log::error('[ScoreController] Multi-sheet score import preview failed', [
+                'error' => $exception->getMessage(),
+                'guru_id' => Auth::guard('guru')->id(),
+            ]);
+
+            return redirect()->route('pengajar.score.index')
+                ->with('error', PengajarScoreExcelMultiSheetPreviewService::WRONG_WORKBOOK_MESSAGE);
+        }
+    }
+
+    public function showAllImportTemplatePreview(string $token, ?int $sheet = null)
+    {
+        $state = $this->multiSheetImportState($token);
+
+        if (! $state) {
+            return redirect()->route('pengajar.score.index')
+                ->with('error', 'Preview Upload Semua Nilai sudah kedaluwarsa. Silakan upload ulang workbook dari Download Semua Template Siap.');
+        }
+
+        $sheetCount = count($state['sheets'] ?? []);
+
+        if ($sheetCount === 0) {
+            return redirect()->route('pengajar.score.index')
+                ->with('error', PengajarScoreExcelMultiSheetPreviewService::WRONG_WORKBOOK_MESSAGE);
+        }
+
+        $firstUnsavedIndex = $this->firstUnsavedMultiSheetIndex($state);
+
+        if ($firstUnsavedIndex === null) {
+            return view('pengajar.score_import_multi_preview', [
+                'token' => $token,
+                'state' => $state,
+                'currentSheet' => null,
+                'currentIndex' => null,
+                'allSaved' => true,
+            ]);
+        }
+
+        $requestedIndex = $sheet ? max(0, $sheet - 1) : $firstUnsavedIndex;
+
+        if ($requestedIndex >= $sheetCount) {
+            return redirect()->route('pengajar.score.import_templates.preview_sheet', [
+                'token' => $token,
+                'sheet' => $firstUnsavedIndex + 1,
+            ]);
+        }
+
+        if ($requestedIndex > $firstUnsavedIndex && empty($state['sheets'][$requestedIndex]['saved'])) {
+            return redirect()
+                ->route('pengajar.score.import_templates.preview_sheet', [
+                    'token' => $token,
+                    'sheet' => $firstUnsavedIndex + 1,
+                ])
+                ->with('error', 'Simpan sheet saat ini terlebih dahulu sebelum lanjut ke sheet berikutnya.');
+        }
+
+        return view('pengajar.score_import_multi_preview', [
+            'token' => $token,
+            'state' => $state,
+            'currentSheet' => $state['sheets'][$requestedIndex],
+            'currentIndex' => $requestedIndex,
+            'allSaved' => false,
+        ]);
+    }
+
+    public function saveAllImportTemplateSheet(Request $request, string $token, int $sheet)
+    {
+        $state = $this->multiSheetImportState($token);
+
+        if (! $state) {
+            return redirect()->route('pengajar.score.index')
+                ->with('error', 'Preview Upload Semua Nilai sudah kedaluwarsa. Silakan upload ulang workbook dari Download Semua Template Siap.');
+        }
+
+        $sheetIndex = max(0, $sheet - 1);
+        $currentSheet = $state['sheets'][$sheetIndex] ?? null;
+        $firstUnsavedIndex = $this->firstUnsavedMultiSheetIndex($state);
+
+        if (! $currentSheet || ($firstUnsavedIndex !== null && $sheetIndex > $firstUnsavedIndex)) {
+            return redirect()
+                ->route('pengajar.score.import_templates.preview_sheet', [
+                    'token' => $token,
+                    'sheet' => ($firstUnsavedIndex ?? 0) + 1,
+                ])
+                ->with('error', 'Simpan sheet saat ini terlebih dahulu sebelum lanjut ke sheet berikutnya.');
+        }
+
+        if (! empty($state['global_errors'])) {
+            return redirect()
+                ->route('pengajar.score.import_templates.preview_sheet', ['token' => $token, 'sheet' => $sheet])
+                ->with('error', implode(' ', $state['global_errors']));
+        }
+
+        if (! ($currentSheet['valid'] ?? false)) {
+            return redirect()
+                ->route('pengajar.score.import_templates.preview_sheet', ['token' => $token, 'sheet' => $sheet])
+                ->with('error', 'Sheet ini belum bisa disimpan karena masih ada nilai yang perlu diperbaiki.');
+        }
+
+        try {
+            $saveRequest = Request::create('/', 'POST', [
+                'scores' => $currentSheet['scores_payload'] ?? [],
+            ]);
+            $saveRequest->setLaravelSession($request->session());
+            $saveRequest->setUserResolver($request->getUserResolver());
+
+            $response = $this->saveScore($saveRequest, (int) $currentSheet['mata_pelajaran_id']);
+            $statusCode = method_exists($response, 'getStatusCode') ? $response->getStatusCode() : 500;
+            $payload = method_exists($response, 'getData') ? $response->getData(true) : [];
+
+            if ($statusCode >= 400 || ! ($payload['success'] ?? false)) {
+                return redirect()
+                    ->route('pengajar.score.import_templates.preview_sheet', ['token' => $token, 'sheet' => $sheet])
+                    ->with('error', $payload['message'] ?? 'Nilai pada sheet ini belum berhasil disimpan. Silakan periksa kembali lalu coba lagi.');
+            }
+
+            $state['sheets'][$sheetIndex]['saved'] = true;
+            $state['sheets'][$sheetIndex]['saved_at'] = now()->toIso8601String();
+            $this->putMultiSheetImportState($token, $state);
+
+            $nextUnsavedIndex = $this->firstUnsavedMultiSheetIndex($state);
+            $message = sprintf(
+                'Nilai untuk %s - %s berhasil disimpan.',
+                $currentSheet['kelas'] ?: 'kelas ini',
+                $currentSheet['mata_pelajaran'] ?: 'mata pelajaran ini'
+            );
+
+            if ($nextUnsavedIndex === null) {
+                return redirect()
+                    ->route('pengajar.score.import_templates.preview_sheet', ['token' => $token])
+                    ->with('success', $message.' Semua sheet sudah selesai disimpan.');
+            }
+
+            return redirect()
+                ->route('pengajar.score.import_templates.preview_sheet', [
+                    'token' => $token,
+                    'sheet' => $nextUnsavedIndex + 1,
+                ])
+                ->with('success', $message.' Silakan lanjut ke sheet berikutnya.');
+        } catch (\Symfony\Component\HttpKernel\Exception\HttpExceptionInterface $exception) {
+            throw $exception;
+        } catch (\Throwable $exception) {
+            Log::error('[ScoreController] Multi-sheet score import save failed', [
+                'error' => $exception->getMessage(),
+                'guru_id' => Auth::guard('guru')->id(),
+                'token' => $token,
+                'sheet' => $sheet,
+                'mata_pelajaran_id' => $currentSheet['mata_pelajaran_id'] ?? null,
+            ]);
+
+            return redirect()
+                ->route('pengajar.score.import_templates.preview_sheet', ['token' => $token, 'sheet' => $sheet])
+                ->with('error', 'Nilai pada sheet ini belum berhasil disimpan. Silakan periksa kembali lalu coba lagi.');
+        }
+    }
+
+    private function multiSheetImportCacheKey(string $token): string
+    {
+        return sprintf('pengajar_score_multi_import:%s:%s', Auth::guard('guru')->id(), $token);
+    }
+
+    private function multiSheetImportState(string $token): ?array
+    {
+        $state = Cache::get($this->multiSheetImportCacheKey($token));
+
+        if (! is_array($state) || (int) ($state['guru_id'] ?? 0) !== (int) Auth::guard('guru')->id()) {
+            return null;
+        }
+
+        return $state;
+    }
+
+    private function putMultiSheetImportState(string $token, array $state): void
+    {
+        Cache::put($this->multiSheetImportCacheKey($token), $state, now()->addMinutes(60));
+    }
+
+    private function firstUnsavedMultiSheetIndex(array $state): ?int
+    {
+        foreach (($state['sheets'] ?? []) as $index => $sheet) {
+            if (empty($sheet['saved'])) {
+                return (int) $index;
+            }
+        }
+
+        return null;
     }
 
     public function inputScore($id)

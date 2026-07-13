@@ -39,7 +39,7 @@ class PengajarScoreExcelPreviewService
         try {
             $scoreColumns = $this->templateService->scoreColumns($mataPelajaran);
 
-            if ($this->hasMultipleScoreSheets($spreadsheet)) {
+            if ($this->isBulkWorkbook($spreadsheet) || $this->hasMultipleScoreSheets($spreadsheet)) {
                 return $this->invalidWorkbookPreview($scoreColumns, [self::MULTI_SHEET_MESSAGE]);
             }
 
@@ -149,6 +149,20 @@ class PengajarScoreExcelPreviewService
         }
 
         return $scoreSheetCount > 1;
+    }
+
+    private function isBulkWorkbook($spreadsheet): bool
+    {
+        $instructionSheet = $spreadsheet->getSheetByName(PengajarScoreExcelTemplateService::SHEET_PETUNJUK);
+
+        if (! $instructionSheet) {
+            return false;
+        }
+
+        $key = trim((string) $instructionSheet->getCell('A'.PengajarScoreExcelTemplateService::MULTI_METADATA_ROW)->getCalculatedValue());
+        $value = trim((string) $instructionSheet->getCell('B'.PengajarScoreExcelTemplateService::MULTI_METADATA_ROW)->getCalculatedValue());
+
+        return $key === 'workbook_type' && $value === PengajarScoreExcelTemplateService::MULTI_WORKBOOK_TYPE;
     }
 
     /**

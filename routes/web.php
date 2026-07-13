@@ -497,6 +497,13 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
     Route::prefix('score')->name('score.')->group(function () {
         Route::get('/', [ScoreController::class, 'index'])->name('index');
         Route::get('/import/templates', [ScoreController::class, 'downloadAllImportTemplates'])->name('import_templates');
+        Route::post('/import/templates/preview', [ScoreController::class, 'previewAllImportTemplates'])->name('import_templates.preview');
+        Route::get('/import/templates/preview/{token}/{sheet?}', [ScoreController::class, 'showAllImportTemplatePreview'])
+            ->whereNumber('sheet')
+            ->name('import_templates.preview_sheet');
+        Route::post('/import/templates/preview/{token}/{sheet}/save', [ScoreController::class, 'saveAllImportTemplateSheet'])
+            ->whereNumber('sheet')
+            ->name('import_templates.save_sheet');
         Route::get('/{id}/input', [ScoreController::class, 'inputScore'])->name('input_score');
         Route::post('/{id}/save', [ScoreController::class, 'saveScore'])->name('save_scores');
         Route::get('/{id}/import/template', [ScoreController::class, 'downloadImportTemplate'])->name('import_template');

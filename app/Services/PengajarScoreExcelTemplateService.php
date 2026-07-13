@@ -21,6 +21,8 @@ class PengajarScoreExcelTemplateService
     public const LABEL_ROW = 4;
     public const KEY_ROW = 5;
     public const DATA_START_ROW = 6;
+    public const MULTI_METADATA_ROW = 100;
+    public const MULTI_WORKBOOK_TYPE = 'pengajar_multi_component_score';
 
     public const BASE_COLUMNS = [
         ['key' => 'siswa_id', 'label' => 'siswa_id'],
@@ -324,6 +326,9 @@ class PengajarScoreExcelTemplateService
         }
 
         $sheet->fromArray($instructions, null, 'A1');
+        $sheet->setCellValue('A'.self::MULTI_METADATA_ROW, 'workbook_type');
+        $sheet->setCellValue('B'.self::MULTI_METADATA_ROW, self::MULTI_WORKBOOK_TYPE);
+        $sheet->getRowDimension(self::MULTI_METADATA_ROW)->setVisible(false);
         $sheet->getStyle('A1')->getFont()->setBold(true)->setSize(14);
         $sheet->getColumnDimension('A')->setWidth(120);
         $sheet->getStyle('A:A')->getAlignment()->setWrapText(true);
