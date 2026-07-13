@@ -207,9 +207,9 @@
                                     </form>
 
                                     @if($permanentDeleteProtectionMessage)
-                                        <div class="max-w-xs text-xs text-gray-600" title="{{ $permanentDeleteProtectionMessage }}">
-                                            <span class="inline-flex items-center rounded-full bg-yellow-100 px-2 py-1 font-semibold text-yellow-800">Dilindungi</span>
-                                            <p class="mt-1 leading-snug">{{ $permanentDeleteProtectionMessage }}</p>
+                                        <div class="flex w-40 flex-col gap-1 text-xs leading-tight text-gray-500" title="{{ $permanentDeleteProtectionMessage }}">
+                                            <span class="inline-flex w-fit items-center rounded-full bg-gray-100 px-2 py-0.5 font-semibold text-gray-700 ring-1 ring-gray-200">Dilindungi</span>
+                                            <span>Tidak dapat dihapus permanen karena terhubung alur akademik.</span>
                                         </div>
                                     @else
                                         <!-- Tombol Hapus Permanen untuk tahun ajaran yang diarsipkan dan aman dihapus -->

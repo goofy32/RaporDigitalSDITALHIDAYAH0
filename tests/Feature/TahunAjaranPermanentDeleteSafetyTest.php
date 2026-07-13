@@ -106,12 +106,13 @@ class TahunAjaranPermanentDeleteSafetyTest extends TestCase
             ->assertOk()
             ->assertSee('title="Pulihkan"', false)
             ->assertSeeText('Dilindungi')
-            ->assertSeeText('Data tahun ajaran ini tidak dapat dihapus permanen karena masih terhubung dengan alur akademik.')
+            ->assertSeeText('Tidak dapat dihapus permanen karena terhubung alur akademik.')
             ->assertDontSee('title="Hapus Permanen"', false);
 
         $this->actingAs($this->admin, 'web')
             ->get(route('tahun.ajaran.show', $archivedYearId))
             ->assertOk()
+            ->assertSeeText('Tindakan Arsip')
             ->assertSeeText('Pulihkan Tahun Ajaran')
             ->assertSeeText('Dilindungi')
             ->assertSeeText('Data tahun ajaran ini tidak dapat dihapus permanen karena masih terhubung dengan alur akademik.')

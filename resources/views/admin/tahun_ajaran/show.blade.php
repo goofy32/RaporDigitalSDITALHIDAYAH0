@@ -90,7 +90,7 @@
 
     <!-- Actions -->
     <div class="mb-8">
-        <h3 class="text-lg font-semibold text-gray-800 mb-4">Tindakan</h3>
+        <h3 class="text-lg font-semibold text-gray-800 mb-4">{{ $tahunAjaran->trashed() ? 'Tindakan Arsip' : 'Tindakan' }}</h3>
         
         <div class="flex flex-wrap gap-4">
             @if(!$tahunAjaran->trashed())
@@ -111,9 +111,9 @@
                 </form>
 
                 @if($permanentDeleteProtectionMessage)
-                    <div class="w-full rounded-lg border border-yellow-200 bg-yellow-50 p-3 text-sm text-yellow-800">
-                        <div class="mb-1">
-                            <span class="inline-flex items-center rounded-full bg-yellow-100 px-2 py-1 text-xs font-semibold text-yellow-800">Dilindungi</span>
+                    <div class="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600">
+                        <div class="mb-1.5">
+                            <span class="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-700 ring-1 ring-gray-200">Dilindungi</span>
                         </div>
                         <p>{{ $permanentDeleteProtectionMessage }}</p>
                     </div>
