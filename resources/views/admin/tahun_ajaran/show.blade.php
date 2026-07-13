@@ -109,6 +109,25 @@
                         <i class="fas fa-undo mr-2"></i>Pulihkan Tahun Ajaran
                     </button>
                 </form>
+
+                @if($permanentDeleteProtectionMessage)
+                    <div class="w-full rounded-lg border border-yellow-200 bg-yellow-50 p-3 text-sm text-yellow-800">
+                        <div class="mb-1">
+                            <span class="inline-flex items-center rounded-full bg-yellow-100 px-2 py-1 text-xs font-semibold text-yellow-800">Dilindungi</span>
+                        </div>
+                        <p>{{ $permanentDeleteProtectionMessage }}</p>
+                    </div>
+                @else
+                    <form action="{{ route('tahun.ajaran.force-delete', $tahunAjaran->id) }}" method="POST" class="inline">
+                        @csrf
+                        @method('DELETE')
+                        <button type="submit"
+                            class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
+                            onclick="return confirm('PERHATIAN: Tindakan ini tidak dapat dibatalkan. Tahun ajaran hanya dapat dihapus permanen jika tidak memiliki data siswa/enrollment atau riwayat terkait.\n\nApakah Anda benar-benar yakin?')">
+                            <i class="fas fa-trash mr-2"></i>Hapus Permanen
+                        </button>
+                    </form>
+                @endif
             @elseif(!$tahunAjaran->is_active)
                 <form action="{{ route('tahun.ajaran.set-active', $tahunAjaran->id) }}" method="POST" class="inline">
                     @csrf

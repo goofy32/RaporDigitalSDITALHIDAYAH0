@@ -88,12 +88,46 @@ class TahunAjaranPermanentDeleteSafetyTest extends TestCase
         $response->assertStatus(422)
             ->assertJsonPath('success', false)
             ->assertJsonFragment([
-                'message' => 'Tahun ajaran ini tidak dapat dihapus permanen karena masih memiliki data siswa/enrollment atau riwayat terkait. Arsipkan/nonaktifkan saja, atau lakukan pembersihan data melalui prosedur khusus. Data terkait: kelas (1), mata pelajaran (1).',
+                'message' => 'Tahun ajaran ini tidak dapat dihapus permanen karena masih terhubung dengan alur akademik, siswa, nilai, atau rapor. Gunakan arsip sebagai penyimpanan aman, atau pulihkan jika masih diperlukan. Data terkait: kelas (1), mata pelajaran (1).',
             ]);
 
         $this->assertNotNull(DB::table('tahun_ajarans')->where('id', $archivedYearId)->value('deleted_at'));
         $this->assertSame(1, DB::table('kelas')->where('tahun_ajaran_id', $archivedYearId)->count());
         $this->assertSame(1, DB::table('mata_pelajarans')->where('tahun_ajaran_id', $archivedYearId)->count());
+    }
+
+    public function test_protected_archived_year_renders_protected_notice_without_force_delete_action(): void
+    {
+        $archivedYearId = $this->insertYear('2023/2024', 1, false, true);
+        $this->insertClass($archivedYearId);
+
+        $this->actingAs($this->admin, 'web')
+            ->get(route('tahun.ajaran.index', ['showArchived' => 'true']))
+            ->assertOk()
+            ->assertSee('title="Pulihkan"', false)
+            ->assertSeeText('Dilindungi')
+            ->assertSeeText('Data tahun ajaran ini tidak dapat dihapus permanen karena masih terhubung dengan alur akademik.')
+            ->assertDontSee('title="Hapus Permanen"', false);
+
+        $this->actingAs($this->admin, 'web')
+            ->get(route('tahun.ajaran.show', $archivedYearId))
+            ->assertOk()
+            ->assertSeeText('Pulihkan Tahun Ajaran')
+            ->assertSeeText('Dilindungi')
+            ->assertSeeText('Data tahun ajaran ini tidak dapat dihapus permanen karena masih terhubung dengan alur akademik.')
+            ->assertDontSeeText('Hapus Permanen');
+    }
+
+    public function test_unprotected_archived_year_still_renders_force_delete_action(): void
+    {
+        $archivedYearId = $this->insertYear('2029/2030', 1, false, true);
+
+        $this->actingAs($this->admin, 'web')
+            ->get(route('tahun.ajaran.show', $archivedYearId))
+            ->assertOk()
+            ->assertSeeText('Pulihkan Tahun Ajaran')
+            ->assertSeeText('Hapus Permanen')
+            ->assertDontSeeText('Dilindungi');
     }
 
     public function test_archive_behavior_still_soft_deletes_inactive_year(): void

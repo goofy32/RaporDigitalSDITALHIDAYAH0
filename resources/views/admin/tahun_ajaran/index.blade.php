@@ -113,6 +113,9 @@
                 </thead>
                 <tbody class="divide-y divide-gray-200">
                     @forelse($tahunAjarans as $tahunAjaran)
+                    @php
+                        $permanentDeleteProtectionMessage = $permanentDeleteProtectionMessages[$tahunAjaran->id] ?? null;
+                    @endphp
                     <tr class="hover:bg-gray-50 {{ $tahunAjaran->trashed() ? 'bg-gray-100' : '' }}">
                         <td class="py-4 px-4 border-b">
                             <div class="font-medium text-gray-900">
@@ -179,32 +182,37 @@
                                 @endif
                             
 
-                                @if(!$tahunAjaran->is_active)
-                                    @if($tahunAjaran->trashed())
-                                        <!-- Tombol Restore untuk tahun ajaran yang diarsipkan -->
-                                        <form action="{{ route('tahun.ajaran.restore', $tahunAjaran->id) }}" method="POST" class="inline">
-                                            @csrf
-                                            <button type="submit"
-                                                    class="border-0 bg-transparent p-0"
-                                                    title="Pulihkan"
-                                                    onclick="return confirm('Apakah Anda yakin ingin memulihkan tahun ajaran ini?')">
+                                @if($tahunAjaran->trashed())
+                                    <!-- Tombol Restore untuk tahun ajaran yang diarsipkan -->
+                                    <form action="{{ route('tahun.ajaran.restore', $tahunAjaran->id) }}" method="POST" class="inline">
+                                        @csrf
+                                        <button type="submit"
+                                                class="border-0 bg-transparent p-0"
+                                                title="Pulihkan"
+                                                onclick="return confirm('Apakah Anda yakin ingin memulihkan tahun ajaran ini?')">
 
-                                                <svg xmlns="http://www.w3.org/2000/svg"
-                                                    class="w-5 h-5"
-                                                    viewBox="0 0 24 24"
-                                                    fill="none"
-                                                    stroke="currentColor"
-                                                    stroke-width="2"
-                                                    stroke-linecap="round"
-                                                    stroke-linejoin="round">
-                                                    <path d="M3 12a9 9 0 1 0 3-6.7" />
-                                                    <path d="M3 4v6h6" />
-                                                </svg>
+                                            <svg xmlns="http://www.w3.org/2000/svg"
+                                                class="w-5 h-5"
+                                                viewBox="0 0 24 24"
+                                                fill="none"
+                                                stroke="currentColor"
+                                                stroke-width="2"
+                                                stroke-linecap="round"
+                                                stroke-linejoin="round">
+                                                <path d="M3 12a9 9 0 1 0 3-6.7" />
+                                                <path d="M3 4v6h6" />
+                                            </svg>
 
-                                            </button>
-                                        </form>
-                                        
-                                        <!-- Tombol Hapus Permanen untuk tahun ajaran yang diarsipkan -->
+                                        </button>
+                                    </form>
+
+                                    @if($permanentDeleteProtectionMessage)
+                                        <div class="max-w-xs text-xs text-gray-600" title="{{ $permanentDeleteProtectionMessage }}">
+                                            <span class="inline-flex items-center rounded-full bg-yellow-100 px-2 py-1 font-semibold text-yellow-800">Dilindungi</span>
+                                            <p class="mt-1 leading-snug">{{ $permanentDeleteProtectionMessage }}</p>
+                                        </div>
+                                    @else
+                                        <!-- Tombol Hapus Permanen untuk tahun ajaran yang diarsipkan dan aman dihapus -->
                                         <form action="{{ route('tahun.ajaran.force-delete', $tahunAjaran->id) }}" method="POST" class="inline">
                                             @csrf
                                             @method('DELETE')
@@ -213,17 +221,17 @@
                                                 <img src="{{ asset('images/icons/delete.png') }}" alt="Hapus Permanen" class="w-5 h-5">
                                             </button>
                                         </form>
-                                    @else
-                                        <!-- Tombol Arsip untuk tahun ajaran yang tidak diarsipkan -->
-                                        <form action="{{ route('tahun.ajaran.destroy', $tahunAjaran->id) }}" method="POST" class="inline">
-                                            @csrf
-                                            @method('DELETE')
-                                            <button type="submit" class="border-0 bg-transparent p-0" title="Arsipkan" 
-                                                    onclick="return confirm('Apakah Anda yakin ingin mengarsipkan tahun ajaran {{ $tahunAjaran->tahun_ajaran }}?\n\nData terkait masih dapat diakses setelah diarsipkan dengan menampilkan tahun ajaran terarsip.')">
-                                                <img src="{{ asset('images/icons/delete.png') }}" alt="Arsipkan" class="w-5 h-5">
-                                            </button>
-                                        </form>
                                     @endif
+                                @elseif(!$tahunAjaran->is_active)
+                                    <!-- Tombol Arsip untuk tahun ajaran yang tidak diarsipkan -->
+                                    <form action="{{ route('tahun.ajaran.destroy', $tahunAjaran->id) }}" method="POST" class="inline">
+                                        @csrf
+                                        @method('DELETE')
+                                        <button type="submit" class="border-0 bg-transparent p-0" title="Arsipkan"
+                                                onclick="return confirm('Apakah Anda yakin ingin mengarsipkan tahun ajaran {{ $tahunAjaran->tahun_ajaran }}?\n\nData terkait masih dapat diakses setelah diarsipkan dengan menampilkan tahun ajaran terarsip.')">
+                                            <img src="{{ asset('images/icons/delete.png') }}" alt="Arsipkan" class="w-5 h-5">
+                                        </button>
+                                    </form>
                                 @endif
                             </div>
                         </td>

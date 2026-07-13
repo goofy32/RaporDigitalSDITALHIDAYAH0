@@ -24,7 +24,8 @@ use Throwable;
 
 class TahunAjaranController extends Controller
 {
-    private const PERMANENT_DELETE_BLOCKED_MESSAGE = 'Tahun ajaran ini tidak dapat dihapus permanen karena masih memiliki data siswa/enrollment atau riwayat terkait. Arsipkan/nonaktifkan saja, atau lakukan pembersihan data melalui prosedur khusus.';
+    private const PERMANENT_DELETE_BLOCKED_MESSAGE = 'Tahun ajaran ini tidak dapat dihapus permanen karena masih terhubung dengan alur akademik, siswa, nilai, atau rapor. Gunakan arsip sebagai penyimpanan aman, atau pulihkan jika masih diperlukan.';
+    private const PERMANENT_DELETE_PROTECTED_NOTICE = 'Data tahun ajaran ini tidak dapat dihapus permanen karena masih terhubung dengan alur akademik.';
 
     /**
      * Display a listing of tahun ajaran.
@@ -43,11 +44,12 @@ class TahunAjaranController extends Controller
         }
         
         $tahunAjarans = $query->get();
+        $permanentDeleteProtectionMessages = $this->permanentDeleteProtectionMessagesFor($tahunAjarans);
         
         // Hitung jumlah arsip secara terpisah
         $archivedCount = TahunAjaran::onlyTrashed()->count();
         
-        return view('admin.tahun_ajaran.index', compact('tahunAjarans', 'tampilkanArsip', 'archivedCount'));
+        return view('admin.tahun_ajaran.index', compact('tahunAjarans', 'tampilkanArsip', 'archivedCount', 'permanentDeleteProtectionMessages'));
     }
 
     /**
@@ -715,12 +717,14 @@ class TahunAjaranController extends Controller
             $query->where('tahun_ajaran_id', $id);
         })->count();
         $totalMataPelajaran = MataPelajaran::where('tahun_ajaran_id', $id)->count();
+        $permanentDeleteProtectionMessage = $this->permanentDeleteProtectionMessage($tahunAjaran);
         
         return view('admin.tahun_ajaran.show', compact(
             'tahunAjaran', 
             'totalKelas', 
             'totalSiswa', 
-            'totalMataPelajaran'
+            'totalMataPelajaran',
+            'permanentDeleteProtectionMessage'
         ));
     }
 
@@ -1124,11 +1128,37 @@ class TahunAjaranController extends Controller
         }
 
         return sprintf(
-            'Tahun ajaran %s semester %s tidak dapat dihapus permanen karena masih menjadi bagian dari alur tahun ajaran aktif semester %s. Pulihkan dari arsip atau biarkan tetap diarsipkan agar transisi semester tetap aman.',
-            $tahunAjaran->tahun_ajaran,
-            $tahunAjaran->semester == 1 ? 'Ganjil' : 'Genap',
+            'Tahun ajaran ini tidak dapat dihapus permanen karena masih terhubung dengan alur akademik aktif semester %s. Gunakan arsip sebagai penyimpanan aman, atau pulihkan jika masih diperlukan.',
             $activeCounterpart->semester == 1 ? 'Ganjil' : 'Genap'
         );
+    }
+
+    private function permanentDeleteProtectionMessage(TahunAjaran $tahunAjaran): ?string
+    {
+        if (! $tahunAjaran->trashed()) {
+            return null;
+        }
+
+        if ($this->activeAcademicYearFlowDeleteBlockMessage($tahunAjaran)) {
+            return self::PERMANENT_DELETE_PROTECTED_NOTICE;
+        }
+
+        if ($this->permanentDeleteBlockingDependencies((int) $tahunAjaran->id) !== []) {
+            return self::PERMANENT_DELETE_PROTECTED_NOTICE;
+        }
+
+        return null;
+    }
+
+    private function permanentDeleteProtectionMessagesFor($tahunAjarans): array
+    {
+        return $tahunAjarans
+            ->filter(fn (TahunAjaran $tahunAjaran) => $tahunAjaran->trashed())
+            ->mapWithKeys(function (TahunAjaran $tahunAjaran) {
+                return [$tahunAjaran->id => $this->permanentDeleteProtectionMessage($tahunAjaran)];
+            })
+            ->filter()
+            ->all();
     }
 
     private function permanentDeleteBlockingDependencies(int $tahunAjaranId): array

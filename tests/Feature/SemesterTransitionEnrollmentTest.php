@@ -318,7 +318,8 @@ class SemesterTransitionEnrollmentTest extends TestCase
 
         $message = session('error');
         $this->assertStringContainsString('tidak dapat dihapus permanen', $message);
-        $this->assertStringContainsString('alur tahun ajaran aktif', $message);
+        $this->assertStringContainsString('alur akademik aktif', $message);
+        $this->assertStringContainsString('Gunakan arsip sebagai penyimpanan aman', $message);
         $this->assertNotNull(DB::table('tahun_ajarans')->where('id', $archivedGenapId)->value('deleted_at'));
     }
 
