@@ -1702,6 +1702,12 @@ class ScoreController extends Controller
                     ->with('error', $payload['message'] ?? 'Nilai pada sheet ini belum berhasil disimpan. Silakan periksa kembali lalu coba lagi.');
             }
 
+            if (! $this->multiSheetImportedValuesPersisted($currentSheet, (int) $state['tahun_ajaran_id'])) {
+                return redirect()
+                    ->route('pengajar.score.import_templates.preview_sheet', ['token' => $token, 'sheet' => $sheet])
+                    ->with('error', 'Nilai pada sheet ini belum berhasil tersimpan dengan benar. Silakan coba klik Simpan & Lanjut lagi.');
+            }
+
             $state['sheets'][$sheetIndex]['saved'] = true;
             $state['sheets'][$sheetIndex]['saved_at'] = now()->toIso8601String();
             $this->putMultiSheetImportState($token, $state);
@@ -1772,6 +1778,66 @@ class ScoreController extends Controller
         }
 
         return null;
+    }
+
+    private function multiSheetImportedValuesPersisted(array $sheet, int $tahunAjaranId): bool
+    {
+        $mataPelajaranId = (int) ($sheet['mata_pelajaran_id'] ?? 0);
+
+        if (! $mataPelajaranId || ! $tahunAjaranId) {
+            return false;
+        }
+
+        foreach (($sheet['rows'] ?? []) as $row) {
+            $siswaId = (int) ($row['siswa_id'] ?? 0);
+
+            if (! $siswaId) {
+                continue;
+            }
+
+            foreach (($row['uploaded_values'] ?? []) as $value) {
+                if (! ($value['editable'] ?? false) || ($value['raw_value'] ?? null) === null) {
+                    continue;
+                }
+
+                $expected = $value['value'] ?? null;
+
+                if ($expected === null) {
+                    return false;
+                }
+
+                $query = Nilai::where('siswa_id', $siswaId)
+                    ->where('mata_pelajaran_id', $mataPelajaranId)
+                    ->where('tahun_ajaran_id', $tahunAjaranId);
+                $actual = null;
+
+                if (($value['type'] ?? null) === 'tp') {
+                    $nilai = $query
+                        ->where('lingkup_materi_id', (int) $value['lingkup_materi_id'])
+                        ->where('tujuan_pembelajaran_id', (int) $value['tujuan_pembelajaran_id'])
+                        ->first();
+                    $actual = $nilai?->nilai_tp;
+                } elseif (($value['type'] ?? null) === 'lm') {
+                    $nilai = $query
+                        ->where('lingkup_materi_id', (int) $value['lingkup_materi_id'])
+                        ->whereNull('tujuan_pembelajaran_id')
+                        ->first();
+                    $actual = $nilai?->nilai_lm;
+                } elseif (($value['type'] ?? null) === 'semester') {
+                    $nilai = $query
+                        ->whereNull('lingkup_materi_id')
+                        ->whereNull('tujuan_pembelajaran_id')
+                        ->first();
+                    $actual = $nilai?->{$value['key']};
+                }
+
+                if ($actual === null || abs((float) $actual - (float) $expected) > 0.01) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
     }
 
     public function inputScore($id)

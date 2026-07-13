@@ -895,12 +895,26 @@ class PengajarScoreAuthorizationTest extends TestCase
             ->get(route('pengajar.score.import_templates.preview_sheet', ['token' => $token]))
             ->assertOk()
             ->assertSeeText('Preview Upload Semua Nilai Excel')
+            ->assertSeeText('Nilai disimpan per sheet. Setelah klik Simpan & Lanjut, sheet ini langsung tersimpan, lalu Anda berpindah ke sheet berikutnya.')
+            ->assertSeeText('Sheet lain belum tersimpan sampai Anda membuka preview sheet tersebut dan klik Simpan & Lanjut.')
             ->assertSeeText('Matematika')
             ->assertSeeText('Bahasa Indonesia')
             ->assertSeeText('Ahmad Fauzan')
             ->assertSeeText('80')
             ->assertSeeText('83')
             ->assertSeeText('Simpan & Lanjut');
+
+        $html = $this->actingAsPengajar($this->budi)
+            ->get(route('pengajar.score.import_templates.preview_sheet', ['token' => $token]))
+            ->getContent();
+        $sheetHeaderPosition = strpos($html, 'Preview Sheet Saat Ini');
+        $savePosition = strpos($html, 'Simpan &amp; Lanjut', $sheetHeaderPosition);
+        $studentTablePosition = strpos($html, 'Siswa', $savePosition);
+
+        $this->assertNotFalse($sheetHeaderPosition);
+        $this->assertNotFalse($savePosition);
+        $this->assertNotFalse($studentTablePosition);
+        $this->assertLessThan($studentTablePosition, $savePosition);
 
         $this->assertSame(0, DB::table('nilais')->count());
     }
@@ -994,6 +1008,32 @@ class PengajarScoreAuthorizationTest extends TestCase
         $this->assertSame(0, DB::table('nilais')->count());
     }
 
+    public function test_multi_sheet_save_does_not_advance_or_mark_saved_when_database_persistence_fails(): void
+    {
+        $second = $this->insertReadySecondSubjectForBudi();
+        $workbook = $this->validMultiSheetWorkbook($second);
+
+        $response = $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_templates.preview'), [
+                'file' => $this->uploadedWorkbook($workbook),
+            ]);
+        $token = $this->tokenFromPreviewRedirect($response);
+        $state = $this->multiSheetImportState($token);
+        $state['sheets'][0]['scores_payload'] = [];
+        Cache::put($this->multiSheetImportCacheKey($token), $state, now()->addMinutes(60));
+
+        $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_templates.save_sheet', ['token' => $token, 'sheet' => 1]))
+            ->assertRedirect(route('pengajar.score.import_templates.preview_sheet', ['token' => $token, 'sheet' => 1]))
+            ->assertSessionHas('error', 'Nilai pada sheet ini belum berhasil tersimpan dengan benar. Silakan coba klik Simpan & Lanjut lagi.');
+
+        $stateAfterSave = $this->multiSheetImportState($token);
+
+        $this->assertEmpty($stateAfterSave['sheets'][0]['saved']);
+        $this->assertSame(0, DB::table('nilais')->where('mata_pelajaran_id', $this->subjectId)->count());
+        $this->assertSame(0, DB::table('nilais')->where('mata_pelajaran_id', $second['subject_id'])->count());
+    }
+
     public function test_valid_multi_sheet_upload_saves_current_sheet_then_shows_next_and_final_summary(): void
     {
         $second = $this->insertReadySecondSubjectForBudi();
@@ -1011,6 +1051,20 @@ class PengajarScoreAuthorizationTest extends TestCase
             ->assertSessionHas('success');
 
         $this->assertSame(3, DB::table('nilais')->where('mata_pelajaran_id', $this->subjectId)->count());
+        $this->assertSame(0, DB::table('nilais')->where('mata_pelajaran_id', $second['subject_id'])->count());
+        $this->assertPersistedImportedValues($this->subjectId, $this->studentId, $this->lingkupMateriId, $this->tujuanPembelajaranId, 80, 81, 82, 83);
+
+        $stateAfterFirstSave = $this->multiSheetImportState($token);
+        $this->assertTrue((bool) $stateAfterFirstSave['sheets'][0]['saved']);
+        $this->assertEmpty($stateAfterFirstSave['sheets'][1]['saved']);
+
+        $this->actingAsPengajar($this->budi)
+            ->get(route('pengajar.score.input_score', $this->subjectId))
+            ->assertOk()
+            ->assertSee('value="80', false)
+            ->assertSee('value="81', false)
+            ->assertSee('value="82', false)
+            ->assertSee('value="83', false);
 
         $this->actingAsPengajar($this->budi)
             ->get(route('pengajar.score.import_templates.preview_sheet', ['token' => $token, 'sheet' => 2]))
@@ -1024,6 +1078,7 @@ class PengajarScoreAuthorizationTest extends TestCase
             ->assertSessionHas('success');
 
         $this->assertSame(3, DB::table('nilais')->where('mata_pelajaran_id', $second['subject_id'])->count());
+        $this->assertPersistedImportedValues($second['subject_id'], $second['student_id'], $second['lingkup_materi_id'], $second['tujuan_pembelajaran_id'], 84, 85, 86, 87);
 
         $this->actingAsPengajar($this->budi)
             ->get(route('pengajar.score.import_templates.preview_sheet', ['token' => $token]))
@@ -1094,6 +1149,60 @@ class PengajarScoreAuthorizationTest extends TestCase
         }
 
         return $matches[1];
+    }
+
+    private function multiSheetImportCacheKey(string $token): string
+    {
+        return sprintf('pengajar_score_multi_import:%s:%s', $this->budi->id, $token);
+    }
+
+    private function multiSheetImportState(string $token): array
+    {
+        $state = Cache::get($this->multiSheetImportCacheKey($token));
+
+        if (! is_array($state)) {
+            $this->fail("State Upload Semua Nilai tidak ditemukan untuk token {$token}.");
+        }
+
+        return $state;
+    }
+
+    private function assertPersistedImportedValues(
+        int $subjectId,
+        int $studentId,
+        int $lingkupMateriId,
+        int $tujuanPembelajaranId,
+        int $tp,
+        int $lm,
+        int $nilaiTes,
+        int $nilaiNonTes
+    ): void {
+        $tpRow = DB::table('nilais')
+            ->where('mata_pelajaran_id', $subjectId)
+            ->where('siswa_id', $studentId)
+            ->where('lingkup_materi_id', $lingkupMateriId)
+            ->where('tujuan_pembelajaran_id', $tujuanPembelajaranId)
+            ->first();
+        $lmRow = DB::table('nilais')
+            ->where('mata_pelajaran_id', $subjectId)
+            ->where('siswa_id', $studentId)
+            ->where('lingkup_materi_id', $lingkupMateriId)
+            ->whereNull('tujuan_pembelajaran_id')
+            ->first();
+        $semesterRow = DB::table('nilais')
+            ->where('mata_pelajaran_id', $subjectId)
+            ->where('siswa_id', $studentId)
+            ->whereNull('lingkup_materi_id')
+            ->whereNull('tujuan_pembelajaran_id')
+            ->first();
+
+        $this->assertNotNull($tpRow);
+        $this->assertNotNull($lmRow);
+        $this->assertNotNull($semesterRow);
+        $this->assertSame((float) $tp, (float) $tpRow->nilai_tp);
+        $this->assertSame((float) $lm, (float) $lmRow->nilai_lm);
+        $this->assertSame((float) $nilaiTes, (float) $semesterRow->nilai_tes);
+        $this->assertSame((float) $nilaiNonTes, (float) $semesterRow->nilai_non_tes);
     }
 
     private function workbookFromResponse($response)

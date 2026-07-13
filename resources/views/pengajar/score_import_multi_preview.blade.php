@@ -118,7 +118,33 @@
         @endphp
 
         <div class="mb-4 rounded-lg border border-gray-200 p-4">
-            <div class="grid gap-3 text-sm sm:grid-cols-4">
+            <div class="mb-4 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                <div class="max-w-3xl">
+                    <h3 class="text-lg font-semibold text-gray-800">Preview Sheet Saat Ini</h3>
+                    <p class="mt-1 text-sm text-gray-600">
+                        Nilai disimpan per sheet. Setelah klik Simpan &amp; Lanjut, sheet ini langsung tersimpan, lalu Anda berpindah ke sheet berikutnya.
+                    </p>
+                    <p class="mt-1 text-sm text-gray-500">
+                        Sheet lain belum tersimpan sampai Anda membuka preview sheet tersebut dan klik Simpan &amp; Lanjut.
+                    </p>
+                </div>
+                <form action="{{ route('pengajar.score.import_templates.save_sheet', ['token' => $token, 'sheet' => $currentIndex + 1]) }}"
+                      method="POST"
+                      class="shrink-0">
+                    @csrf
+                    <button type="submit"
+                            @disabled($sheetHasErrors)
+                            @class([
+                                'w-full rounded-lg px-4 py-2 text-sm font-medium sm:w-auto',
+                                'bg-green-700 text-white hover:bg-green-800 focus:ring-4 focus:ring-green-300' => ! $sheetHasErrors,
+                                'cursor-not-allowed bg-gray-400 text-white' => $sheetHasErrors,
+                            ])>
+                        Simpan &amp; Lanjut
+                    </button>
+                </form>
+            </div>
+
+            <div class="grid gap-3 border-t border-gray-100 pt-4 text-sm sm:grid-cols-4">
                 <div>
                     <div class="text-xs uppercase text-gray-500">Kelas</div>
                     <div class="font-medium text-gray-800">{{ $currentSheet['kelas'] ?: '-' }}</div>
@@ -206,22 +232,6 @@
                     @endforelse
                 </tbody>
             </table>
-        </div>
-
-        <div class="mt-5 flex justify-end">
-            <form action="{{ route('pengajar.score.import_templates.save_sheet', ['token' => $token, 'sheet' => $currentIndex + 1]) }}"
-                  method="POST">
-                @csrf
-                <button type="submit"
-                        @disabled($sheetHasErrors)
-                        @class([
-                            'rounded-lg px-4 py-2 text-sm font-medium',
-                            'bg-green-700 text-white hover:bg-green-800 focus:ring-4 focus:ring-green-300' => ! $sheetHasErrors,
-                            'cursor-not-allowed bg-gray-400 text-white' => $sheetHasErrors,
-                        ])>
-                    Simpan &amp; Lanjut
-                </button>
-            </form>
         </div>
     @endif
 </div>
