@@ -779,23 +779,37 @@ class ScoreController extends Controller
             abort(403);
         }
 
-        $mataPelajarans = MataPelajaran::with([
+        $listedMataPelajarans = MataPelajaran::with([
             'kelas',
             'lingkupMateris.tujuanPembelajarans',
         ])
             ->where('guru_id', $guru->id)
             ->where('tahun_ajaran_id', $tahunAjaranId)
-            ->where('semester', $semester)
             ->whereHas('kelas', function ($query) use ($tahunAjaranId) {
                 $query->where('tahun_ajaran_id', $tahunAjaranId);
             })
-            ->get()
+            ->get();
+
+        $incompleteMataPelajarans = $listedMataPelajarans
+            ->filter(fn (MataPelajaran $mataPelajaran) => $mataPelajaran->scoreTemplateReadinessMessages() !== []);
+        $readyMataPelajarans = $listedMataPelajarans
+            ->filter(fn (MataPelajaran $mataPelajaran) => $mataPelajaran->scoreTemplateReadinessMessages() === []);
+
+        if ($readyMataPelajarans->isEmpty()) {
+            abort(422, 'Belum ada pembelajaran lengkap yang siap diunduh template nilainya. Pastikan setiap Lingkup Materi memiliki Tujuan Pembelajaran.');
+        }
+
+        if ($incompleteMataPelajarans->isNotEmpty()) {
+            abort(422, 'Download Semua Template Siap belum bisa digunakan karena masih ada pembelajaran yang belum lengkap. Lengkapi Tujuan Pembelajaran terlebih dahulu.');
+        }
+
+        $mataPelajarans = $listedMataPelajarans
+            ->filter(fn (MataPelajaran $mataPelajaran) => (int) $mataPelajaran->semester === (int) $semester)
             ->filter(fn (MataPelajaran $mataPelajaran) => $this->isAuthorizedPengajarSubject(
                 $mataPelajaran,
                 $tahunAjaranId,
                 $semester
             ))
-            ->filter(fn (MataPelajaran $mataPelajaran) => $mataPelajaran->scoreTemplateReadinessMessages() === [])
             ->sortBy(fn (MataPelajaran $mataPelajaran) => sprintf(
                 '%03d|%s|%s',
                 $mataPelajaran->kelas?->nomor_kelas ?? 999,

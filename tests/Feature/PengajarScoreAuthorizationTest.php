@@ -294,6 +294,7 @@ class PengajarScoreAuthorizationTest extends TestCase
 
     public function test_authorized_pengajar_can_download_multi_sheet_score_import_templates(): void
     {
+        $this->insertLearningSetup($this->wrongSemesterSubjectId, 'Materi Genap', '1');
         $secondClassId = $this->insertClass(6, 'B');
         $this->insertStudentForClass($secondClassId, '2001', '2001000', 'Siti Aminah');
         $secondSubjectId = $this->insertSubject('Bahasa Indonesia', $this->budi->id, 1, $secondClassId);
@@ -337,7 +338,7 @@ class PengajarScoreAuthorizationTest extends TestCase
         $this->assertSame(Protection::PROTECTION_UNPROTECTED, $secondSheet->getStyle('H6')->getProtection()->getLocked());
     }
 
-    public function test_multi_sheet_score_import_template_excludes_incomplete_subjects(): void
+    public function test_multi_sheet_score_import_template_rejects_partial_readiness(): void
     {
         $incompleteSubjectId = $this->insertSubject('IPA Belum Lengkap', $this->budi->id, 1);
         DB::table('lingkup_materis')->insert([
@@ -347,15 +348,15 @@ class PengajarScoreAuthorizationTest extends TestCase
             'updated_at' => now(),
         ]);
 
-        $workbook = $this->workbookFromResponse(
-            $this->actingAsPengajar($this->budi)
-                ->get(route('pengajar.score.import_templates'))
-        );
+        $this->actingAsPengajar($this->budi)
+            ->get(route('pengajar.score.import_templates'))
+            ->assertStatus(422)
+            ->assertSee('Download Semua Template Siap belum bisa digunakan karena masih ada pembelajaran yang belum lengkap.');
 
-        $scoreSheetNames = $this->scoreSheetNames($workbook);
-
-        $this->assertContains('5 A - Matematika', $scoreSheetNames);
-        $this->assertNotContains('5 A - IPA Belum Lengkap', $scoreSheetNames);
+        $this->actingAsPengajar($this->budi)
+            ->get(route('pengajar.score.import_template', $this->subjectId))
+            ->assertOk()
+            ->assertHeader('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     }
 
     public function test_multi_sheet_score_import_template_returns_clear_error_when_no_subjects_are_ready(): void
@@ -388,6 +389,7 @@ class PengajarScoreAuthorizationTest extends TestCase
 
     public function test_multi_sheet_score_import_template_sanitizes_and_uniquifies_sheet_names(): void
     {
+        $this->insertLearningSetup($this->wrongSemesterSubjectId, 'Materi Genap', '1');
         $firstSubjectId = $this->insertSubject('Mapel Panjang / Sama: Dengan Nama Ekstra Pertama', $this->budi->id, 1);
         $secondSubjectId = $this->insertSubject('Mapel Panjang / Sama: Dengan Nama Ekstra Kedua', $this->budi->id, 1);
         $this->insertLearningSetup($firstSubjectId, 'Topik Pertama', '1');
@@ -414,6 +416,8 @@ class PengajarScoreAuthorizationTest extends TestCase
 
     public function test_score_import_template_download_is_available_from_pengajar_subject_list(): void
     {
+        $this->insertLearningSetup($this->wrongSemesterSubjectId, 'Materi Genap', '1');
+
         $this->actingAsPengajar($this->budi)
             ->get(route('pengajar.score.index'))
             ->assertOk()
@@ -450,7 +454,8 @@ class PengajarScoreAuthorizationTest extends TestCase
             ->assertSeeText('Download Template Nilai')
             ->assertSeeText('Download Semua Template Siap')
             ->assertSeeText('Template nilai belum bisa diunduh karena belum ada pembelajaran yang lengkap. Pastikan setiap Lingkup Materi memiliki Tujuan Pembelajaran.')
-            ->assertDontSee(route('pengajar.score.import_template', $this->subjectId), false);
+            ->assertDontSee(route('pengajar.score.import_template', $this->subjectId), false)
+            ->assertDontSee(route('pengajar.score.import_templates'), false);
 
         $html = $response->getContent();
         $buttonPosition = strpos($html, 'Download Template Nilai');
@@ -463,25 +468,17 @@ class PengajarScoreAuthorizationTest extends TestCase
         $this->assertGreaterThan($buttonEndPosition, $messagePosition);
     }
 
-    public function test_score_import_template_buttons_stay_enabled_and_explain_partial_readiness(): void
+    public function test_score_import_template_single_stays_enabled_but_bulk_is_disabled_for_partial_readiness(): void
     {
-        $incompleteSubjectId = $this->insertSubject('IPA Belum Lengkap', $this->budi->id, 1);
-        DB::table('lingkup_materis')->insert([
-            'mata_pelajaran_id' => $incompleteSubjectId,
-            'judul_lingkup_materi' => 'Makhluk Hidup',
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
-
         $response = $this->actingAsPengajar($this->budi)
             ->get(route('pengajar.score.index'));
 
         $response->assertOk()
             ->assertSeeText('Download Template Nilai')
             ->assertSeeText('Download Semua Template Siap')
-            ->assertSeeText('1 pembelajaran siap diunduh. 2 pembelajaran belum lengkap dan tidak ikut diunduh. Template hanya tersedia untuk pembelajaran yang sudah lengkap.')
+            ->assertSeeText('1 pembelajaran siap diunduh melalui Download Template Nilai. 1 pembelajaran belum lengkap, sehingga Download Semua Template Siap belum bisa digunakan. Lengkapi Tujuan Pembelajaran terlebih dahulu.')
             ->assertSee(route('pengajar.score.import_template', $this->subjectId), false)
-            ->assertSee(route('pengajar.score.import_templates'), false);
+            ->assertDontSee(route('pengajar.score.import_templates'), false);
 
         $html = $response->getContent();
         $actionStart = strpos($html, '<!-- Action Buttons -->');
@@ -489,7 +486,7 @@ class PengajarScoreAuthorizationTest extends TestCase
 
         $this->assertNotFalse($actionStart);
         $this->assertNotFalse($actionEnd);
-        $this->assertStringNotContainsString('cursor-not-allowed', substr($html, $actionStart, $actionEnd - $actionStart));
+        $this->assertStringContainsString('cursor-not-allowed', substr($html, $actionStart, $actionEnd - $actionStart));
     }
 
     public function test_score_readiness_warning_names_missing_lingkup_materi_and_guides_teacher(): void
