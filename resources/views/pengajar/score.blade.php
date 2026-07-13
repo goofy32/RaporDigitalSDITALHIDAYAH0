@@ -21,6 +21,15 @@
                     ];
                 });
         })->values();
+        $totalPembelajarans = $kelasData->sum(fn ($kelas) => $kelas->mataPelajarans->count());
+        $readyPembelajaranCount = $readyPembelajarans->count();
+        $incompletePembelajaranCount = max(0, $totalPembelajarans - $readyPembelajaranCount);
+        $rowActionBaseClass = 'inline-flex h-8 w-8 items-center justify-center rounded-md transition focus:outline-none focus:ring-2 focus:ring-offset-2';
+        $inputActionClass = $rowActionBaseClass.' hover:bg-green-50 focus:ring-green-300';
+        $previewActionClass = $rowActionBaseClass.' hover:bg-blue-50 focus:ring-blue-300';
+        $warningActionClass = $rowActionBaseClass.' cursor-pointer opacity-90 hover:bg-yellow-50 focus:ring-yellow-300';
+        $deleteActionClass = $rowActionBaseClass.' hover:bg-red-50 focus:ring-red-300';
+        $rowActionIconClass = 'h-5 w-5 object-contain';
     @endphp
 
     <!-- Header -->
@@ -40,7 +49,7 @@
                     </button>
                     <a href="{{ route('pengajar.score.import_templates') }}"
                        class="text-white bg-green-700 hover:bg-green-800 focus:ring-4 focus:ring-green-300 font-medium rounded-lg text-sm px-4 py-2">
-                        Download Semua Template Nilai
+                        Download Semua Template Siap
                     </a>
                 @else
                     <button type="button"
@@ -51,7 +60,7 @@
                     <button type="button"
                             disabled
                             class="text-white bg-gray-400 font-medium rounded-lg text-sm px-4 py-2 cursor-not-allowed">
-                        Download Semua Template Nilai
+                        Download Semua Template Siap
                     </button>
                 @endif
             </div>
@@ -62,6 +71,13 @@
                         <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
                     </svg>
                     <span>Template nilai belum bisa diunduh karena belum ada pembelajaran yang lengkap. Pastikan setiap Lingkup Materi memiliki Tujuan Pembelajaran.</span>
+                </div>
+            @elseif($incompletePembelajaranCount > 0)
+                <div class="inline-flex max-w-2xl items-start gap-2 rounded-lg border border-yellow-200 bg-yellow-50 px-3 py-2 text-sm text-yellow-800">
+                    <svg class="mt-0.5 h-4 w-4 flex-shrink-0 text-yellow-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                        <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+                    </svg>
+                    <span>{{ $readyPembelajaranCount }} pembelajaran siap diunduh. {{ $incompletePembelajaranCount }} pembelajaran belum lengkap dan tidak ikut diunduh. Template hanya tersedia untuk pembelajaran yang sudah lengkap.</span>
                 </div>
             @endif
         </div>
@@ -314,7 +330,7 @@
                     <th scope="col" class="px-6 py-3">No</th>
                     <th scope="col" class="px-6 py-3">Kelas</th>
                     <th scope="col" class="px-6 py-3">Mata Pelajaran</th>
-                    <th scope="col" class="px-6 py-3">Aksi</th>
+                    <th scope="col" class="px-6 py-3 text-center">Aksi</th>
                 </tr>
             </thead>
             <tbody>
@@ -338,38 +354,50 @@
                                 <td class="px-6 py-4">Kelas {{ $kelas->nomor_kelas }} {{ $kelas->nama_kelas }}</td>
                                 <td class="px-6 py-4">{{ $mapel->nama_pelajaran }}</td>
                                 <td class="px-6 py-4">
-                                    <div class="flex gap-2">
+                                    <div class="flex items-center justify-center gap-2">
                                     @if(!$mapel->requires_lm_tp_setup)
                                         @if(!$mapel->has_saved_scores)
                                         <a href="{{ route('pengajar.score.input_score', $mapel->id) }}"
-                                        class="text-green-600 hover:text-green-800" title="Masukkan Nilai">
-                                                <img src="{{ asset('images/icons/edit.png') }}" alt="Input Icon" class="w-5 h-5">
+                                           class="{{ $inputActionClass }}"
+                                           title="Masukkan Nilai"
+                                           data-row-action="input"
+                                           aria-label="Masukkan nilai {{ $mapel->nama_pelajaran }}">
+                                                <img src="{{ asset('images/icons/edit.png') }}" alt="" class="{{ $rowActionIconClass }}">
                                             </a>
                                         @else
                                         <a href="{{ route('pengajar.score.preview_score', $mapel->id) }}" 
-                                        class="text-blue-600 hover:text-blue-800" title="Lihat atau Ubah Nilai">
-                                            <img src="{{ asset('images/icons/detail.png') }}" alt="View Icon" class="w-5 h-5">
+                                           class="{{ $previewActionClass }}"
+                                           title="Lihat atau Ubah Nilai"
+                                           data-row-action="preview"
+                                           aria-label="Lihat atau ubah nilai {{ $mapel->nama_pelajaran }}">
+                                            <img src="{{ asset('images/icons/detail.png') }}" alt="" class="{{ $rowActionIconClass }}">
                                         </a>
                                         @endif
                                         @else
                                             <button type="button"
                                                     x-data="{ mapelName: @js($mapel->nama_pelajaran), readinessMessages: @js($readinessMessages) }"
                                                     @click.prevent="showLmTpWarning(mapelName, readinessMessages)"
-                                                    class="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-sm text-gray-400 opacity-80 transition hover:text-yellow-600 focus:outline-none focus:ring-2 focus:ring-yellow-300 focus:ring-offset-2"
+                                                    class="{{ $warningActionClass }}"
                                                     title="{{ $readinessTitle }}"
+                                                    data-row-action="warning"
                                                     data-readiness-warning="true"
                                                     aria-label="{{ $readinessTitle }} Buka menu Data Mata Pelajaran, lalu klik ikon TP pada mata pelajaran ini untuk menambahkan Tujuan Pembelajaran.">
-                                                <img src="{{ asset('images/icons/warning.png') }}" alt="Detail pembelajaran belum lengkap" class="w-5 h-5">
+                                                <img src="{{ asset('images/icons/warning.png') }}" alt="" class="{{ $rowActionIconClass }}">
                                             </button>
                                         @endif
 
                                             <form action="{{ route('pengajar.subject.destroy', $mapel->id) }}" 
                                                 method="POST" 
+                                                class="inline-flex"
                                                 onsubmit="return confirm('Apakah Anda yakin ingin menghapus mata pelajaran ini?');">
                                                 @csrf
                                                 @method('DELETE')
-                                                <button type="submit" class="text-red-600 hover:text-red-800" title="Hapus Data">
-                                                    <img src="{{ asset('images/icons/delete.png') }}" alt="Delete Icon" class="w-5 h-5">
+                                                <button type="submit"
+                                                        class="{{ $deleteActionClass }}"
+                                                        title="Hapus Data"
+                                                        data-row-action="delete"
+                                                        aria-label="Hapus {{ $mapel->nama_pelajaran }}">
+                                                    <img src="{{ asset('images/icons/delete.png') }}" alt="" class="{{ $rowActionIconClass }}">
                                                 </button>
                                             </form>
                                         </div>

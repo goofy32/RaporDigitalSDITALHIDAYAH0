@@ -418,10 +418,13 @@ class PengajarScoreAuthorizationTest extends TestCase
             ->get(route('pengajar.score.index'))
             ->assertOk()
             ->assertSee('Download Template Nilai')
-            ->assertSee('Download Semua Template Nilai')
+            ->assertSee('Download Semua Template Siap')
             ->assertSee('Kelas 5 A - Matematika')
             ->assertSee(route('pengajar.score.import_template', $this->subjectId), false)
-            ->assertSee(route('pengajar.score.import_templates'), false);
+            ->assertSee(route('pengajar.score.import_templates'), false)
+            ->assertSee('data-row-action="input"', false)
+            ->assertSee('data-row-action="delete"', false)
+            ->assertSee('aria-label="Masukkan nilai Matematika"', false);
     }
 
     public function test_score_import_template_action_is_not_rendered_in_each_table_row(): void
@@ -442,6 +445,8 @@ class PengajarScoreAuthorizationTest extends TestCase
             ->get(route('pengajar.score.index'));
 
         $response->assertOk()
+            ->assertSeeText('Download Template Nilai')
+            ->assertSeeText('Download Semua Template Siap')
             ->assertSeeText('Template nilai belum bisa diunduh karena belum ada pembelajaran yang lengkap. Pastikan setiap Lingkup Materi memiliki Tujuan Pembelajaran.')
             ->assertDontSee(route('pengajar.score.import_template', $this->subjectId), false);
 
@@ -454,6 +459,35 @@ class PengajarScoreAuthorizationTest extends TestCase
         $this->assertNotFalse($buttonEndPosition);
         $this->assertNotFalse($messagePosition);
         $this->assertGreaterThan($buttonEndPosition, $messagePosition);
+    }
+
+    public function test_score_import_template_buttons_stay_enabled_and_explain_partial_readiness(): void
+    {
+        $incompleteSubjectId = $this->insertSubject('IPA Belum Lengkap', $this->budi->id, 1);
+        DB::table('lingkup_materis')->insert([
+            'mata_pelajaran_id' => $incompleteSubjectId,
+            'judul_lingkup_materi' => 'Makhluk Hidup',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $response = $this->actingAsPengajar($this->budi)
+            ->get(route('pengajar.score.index'));
+
+        $response->assertOk()
+            ->assertSeeText('Download Template Nilai')
+            ->assertSeeText('Download Semua Template Siap')
+            ->assertSeeText('1 pembelajaran siap diunduh. 2 pembelajaran belum lengkap dan tidak ikut diunduh. Template hanya tersedia untuk pembelajaran yang sudah lengkap.')
+            ->assertSee(route('pengajar.score.import_template', $this->subjectId), false)
+            ->assertSee(route('pengajar.score.import_templates'), false);
+
+        $html = $response->getContent();
+        $actionStart = strpos($html, '<!-- Action Buttons -->');
+        $actionEnd = strpos($html, '<!-- Debug information -->');
+
+        $this->assertNotFalse($actionStart);
+        $this->assertNotFalse($actionEnd);
+        $this->assertStringNotContainsString('cursor-not-allowed', substr($html, $actionStart, $actionEnd - $actionStart));
     }
 
     public function test_score_readiness_warning_names_missing_lingkup_materi_and_guides_teacher(): void
@@ -472,6 +506,8 @@ class PengajarScoreAuthorizationTest extends TestCase
             ->assertSee('Buka menu Data Mata Pelajaran, lalu klik ikon TP pada mata pelajaran ini untuk menambahkan Tujuan Pembelajaran.')
             ->assertDontSee('Lengkapi TP')
             ->assertSee('data-readiness-warning="true"', false)
+            ->assertSee('data-row-action="warning"', false)
+            ->assertSee('inline-flex h-8 w-8 items-center justify-center', false)
             ->assertSee('@click.prevent="showLmTpWarning(mapelName, readinessMessages)"', false)
             ->assertDontSee(route('pengajar.tujuan_pembelajaran.create', $this->subjectId), false)
             ->assertDontSee(route('pengajar.score.import_template', $this->subjectId), false);
