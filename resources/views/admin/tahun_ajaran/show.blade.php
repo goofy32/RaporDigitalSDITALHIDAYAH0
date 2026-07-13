@@ -121,7 +121,7 @@
             @endif
 
             <!-- Button to advance semester (only shown for active academic year with odd semester) -->
-            @if($tahunAjaran->is_active && $tahunAjaran->semester == 1)
+            @if(!$tahunAjaran->trashed() && $tahunAjaran->is_active && $tahunAjaran->semester == 1)
                 <form action="{{ route('tahun.ajaran.advance-semester', $tahunAjaran->id) }}" method="POST" class="inline">
                     @csrf
                     <input type="hidden" name="tahun_ajaran" value="{{ $tahunAjaran->tahun_ajaran }}">
@@ -140,7 +140,7 @@
             @endif
 
             <!-- Tombol untuk membuat tahun ajaran baru - HANYA muncul di semester genap -->
-            @if($tahunAjaran->semester == 2)
+            @if(!$tahunAjaran->trashed() && $tahunAjaran->semester == 2)
                 <a href="{{ route('tahun.ajaran.copy', $tahunAjaran->id) }}" 
                     class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center">
                     <i class="fas fa-graduation-cap mr-2"></i>Buat Tahun Ajaran Berikutnya

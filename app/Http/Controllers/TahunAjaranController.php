@@ -403,9 +403,14 @@ class TahunAjaranController extends Controller
         
         try {
             // Find the source academic year
-            $sourceTahunAjaran = TahunAjaran::whereKey($id)
+            $sourceTahunAjaran = TahunAjaran::withTrashed()
+                ->whereKey($id)
                 ->lockForUpdate()
                 ->firstOrFail();
+
+            if ($sourceTahunAjaran->trashed()) {
+                throw new DomainException('Tahun ajaran yang berada di arsip harus dipulihkan terlebih dahulu sebelum dapat dilanjutkan ke semester berikutnya.');
+            }
             
             if (! $sourceTahunAjaran->is_active) {
                 throw new DomainException('Only the active semester ganjil academic year can be advanced.');

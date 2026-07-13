@@ -237,6 +237,47 @@ class SemesterTransitionEnrollmentTest extends TestCase
         $this->assertSame($this->sourceYearId, DB::table('tahun_ajarans')->where('is_active', true)->value('id'));
     }
 
+    public function test_archive_ui_does_not_render_active_semester_transition_actions(): void
+    {
+        $archivedActiveGanjilId = $this->insertArchivedSameAcademicYear(1, true);
+        $archivedGenapId = $this->insertArchivedSameAcademicYear(2);
+
+        $this->actingAs($this->admin)
+            ->get(route('tahun.ajaran.index', ['showArchived' => 'true']))
+            ->assertOk()
+            ->assertDontSeeText('Lanjutkan ke Semester Selanjutnya')
+            ->assertDontSeeText('Lanjutkan ke Semester Genap');
+
+        $this->actingAs($this->admin)
+            ->get(route('tahun.ajaran.show', $archivedActiveGanjilId))
+            ->assertOk()
+            ->assertSeeText('Diarsipkan')
+            ->assertSeeText('Pulihkan Tahun Ajaran')
+            ->assertDontSeeText('Lanjutkan ke Semester Genap');
+
+        $this->actingAs($this->admin)
+            ->get(route('tahun.ajaran.show', $archivedGenapId))
+            ->assertOk()
+            ->assertSeeText('Diarsipkan')
+            ->assertSeeText('Pulihkan Tahun Ajaran')
+            ->assertDontSeeText('Buat Tahun Ajaran Berikutnya');
+    }
+
+    public function test_transition_action_rejects_archived_tahun_ajaran_with_friendly_message(): void
+    {
+        $archivedActiveGanjilId = $this->insertArchivedSameAcademicYear(1, true);
+        $counts = $this->coreCounts();
+
+        $this->actingAs($this->admin)
+            ->post(route('tahun.ajaran.advance-semester', $archivedActiveGanjilId))
+            ->assertRedirect()
+            ->assertSessionHas('error', 'Tahun ajaran yang berada di arsip harus dipulihkan terlebih dahulu sebelum dapat dilanjutkan ke semester berikutnya.');
+
+        $this->assertSame($counts, $this->coreCounts());
+        $this->assertNotNull(DB::table('tahun_ajarans')->where('id', $archivedActiveGanjilId)->value('deleted_at'));
+        $this->assertSame($this->sourceYearId, DB::table('tahun_ajarans')->where('is_active', true)->whereNull('deleted_at')->value('id'));
+    }
+
     public function test_archived_genap_can_be_restored_while_ganjil_is_active(): void
     {
         $archivedGenapId = $this->insertArchivedSameAcademicYear(2);
