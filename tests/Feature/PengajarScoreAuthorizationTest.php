@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Http\Controllers\ScoreController;
 use App\Jobs\AutoPreparePdfReportJob;
 use App\Models\Guru;
+use App\Services\PengajarScoreExcelTemplateService;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
 use Illuminate\Http\UploadedFile;
@@ -689,7 +690,130 @@ class PengajarScoreAuthorizationTest extends TestCase
         $this->actingAsPengajar($this->budi)
             ->post(route('pengajar.score.import_preview', $this->subjectId), ['file' => $uploadedFile])
             ->assertOk()
-            ->assertSeeText('Siswa tidak termasuk kelas/konteks mata pelajaran ini.')
+            ->assertSeeText('Baris 6, siswa Siswa Kelas Lain: Siswa tidak ditemukan pada kelas ini.')
+            ->assertSee('data-import-blocking-errors="true"', false);
+
+        $this->assertSame(0, DB::table('nilais')->count());
+    }
+
+    public function test_score_import_preview_wrong_subject_template_shows_friendly_context_message(): void
+    {
+        $otherSubjectId = $this->insertSubject('IPA', $this->budi->id, 1);
+        $this->insertLearningSetup($otherSubjectId, 'Makhluk Hidup', '1');
+
+        $response = $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_preview', $this->subjectId), [
+                'file' => $this->downloadedTemplateUpload($otherSubjectId),
+            ]);
+
+        $response->assertOk()
+            ->assertSeeText('Template Excel tidak sesuai dengan kelas atau mata pelajaran yang sedang dibuka. Silakan download ulang template dari Data Pembelajaran untuk kelas dan mata pelajaran ini.')
+            ->assertSeeText('Anda sedang membuka Kelas: Kelas 5A, Mata Pelajaran: Matematika. Silakan upload template yang sesuai dengan halaman ini.')
+            ->assertSeeText('File yang diupload tampaknya berasal dari Kelas: Kelas 5A, Mata Pelajaran: IPA. Silakan gunakan template yang sesuai.')
+            ->assertSee('data-import-blocking-errors="true"', false);
+        $this->assertStringNotContainsString('mata_pelajaran_id', $this->excelImportFeedbackHtml($response));
+
+        $this->assertSame(0, DB::table('nilais')->count());
+    }
+
+    public function test_score_import_preview_wrong_class_template_shows_friendly_context_message(): void
+    {
+        $otherClassId = $this->insertClass(6, 'B');
+        $this->insertStudentForClass($otherClassId, '2001', '2001000', 'Siti Aminah');
+        $otherSubjectId = $this->insertSubject('Matematika', $this->budi->id, 1, $otherClassId);
+        $this->insertLearningSetup($otherSubjectId, 'Bilangan Kelas 6', '1');
+
+        $response = $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_preview', $this->subjectId), [
+                'file' => $this->downloadedTemplateUpload($otherSubjectId),
+            ]);
+
+        $response->assertOk()
+            ->assertSeeText('Template Excel tidak sesuai dengan kelas atau mata pelajaran yang sedang dibuka.')
+            ->assertSeeText('File yang diupload tampaknya berasal dari Kelas: Kelas 6B, Mata Pelajaran: Matematika. Silakan gunakan template yang sesuai.')
+            ->assertSee('data-import-blocking-errors="true"', false);
+        $this->assertStringNotContainsString('kelas_id', $this->excelImportFeedbackHtml($response));
+
+        $this->assertSame(0, DB::table('nilais')->count());
+    }
+
+    public function test_score_import_preview_missing_tp_column_shows_friendly_template_message(): void
+    {
+        $workbook = $this->templateWorkbook();
+        $sheet = $this->scoreSheet($workbook);
+        $technicalKey = "tp_{$this->lingkupMateriId}_{$this->tujuanPembelajaranId}";
+        $this->clearTemplateColumnKey($sheet, $technicalKey);
+
+        $response = $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_preview', $this->subjectId), [
+                'file' => $this->uploadedWorkbook($workbook),
+            ]);
+
+        $response->assertOk()
+            ->assertSeeText('Format template Excel tidak sesuai atau sudah berubah. Silakan download ulang template terbaru dari Data Pembelajaran, isi nilainya kembali, lalu upload ulang.')
+            ->assertSeeText('Jangan mengubah judul kolom, sheet, atau bagian yang dikunci pada template.')
+            ->assertSee('data-import-blocking-errors="true"', false);
+        $this->assertStringNotContainsString($technicalKey, $this->excelImportFeedbackHtml($response));
+
+        $this->assertSame(0, DB::table('nilais')->count());
+    }
+
+    public function test_score_import_preview_missing_lm_column_shows_friendly_template_message(): void
+    {
+        $workbook = $this->templateWorkbook();
+        $sheet = $this->scoreSheet($workbook);
+        $technicalKey = "lm_{$this->lingkupMateriId}";
+        $this->clearTemplateColumnKey($sheet, $technicalKey);
+
+        $response = $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_preview', $this->subjectId), [
+                'file' => $this->uploadedWorkbook($workbook),
+            ]);
+
+        $response->assertOk()
+            ->assertSeeText('Format template Excel tidak sesuai atau sudah berubah.')
+            ->assertSee('data-import-blocking-errors="true"', false);
+        $this->assertStringNotContainsString($technicalKey, $this->excelImportFeedbackHtml($response));
+
+        $this->assertSame(0, DB::table('nilais')->count());
+    }
+
+    public function test_score_import_preview_tampered_metadata_shows_friendly_message(): void
+    {
+        $workbook = $this->templateWorkbook();
+        $this->scoreSheet($workbook)->setCellValue('D3', null);
+
+        $response = $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_preview', $this->subjectId), [
+                'file' => $this->uploadedWorkbook($workbook),
+            ]);
+
+        $response->assertOk()
+            ->assertSeeText('Template Excel tidak dapat dibaca dengan benar. Pastikan file berasal dari tombol Download Template Nilai pada aplikasi ini dan belum diubah strukturnya.')
+            ->assertSee('data-import-blocking-errors="true"', false);
+        $this->assertStringNotContainsString('mata_pelajaran_id', $this->excelImportFeedbackHtml($response));
+
+        $this->assertSame(0, DB::table('nilais')->count());
+    }
+
+    public function test_score_import_preview_rejects_multi_sheet_workbook_with_friendly_message(): void
+    {
+        $this->insertLearningSetup($this->wrongSemesterSubjectId, 'Materi Genap', '1');
+        $secondClassId = $this->insertClass(6, 'B');
+        $this->insertStudentForClass($secondClassId, '2001', '2001000', 'Siti Aminah');
+        $secondSubjectId = $this->insertSubject('Bahasa Indonesia', $this->budi->id, 1, $secondClassId);
+        $this->insertLearningSetup($secondSubjectId, 'Teks Narasi', '1');
+        $workbook = $this->workbookFromResponse(
+            $this->actingAsPengajar($this->budi)
+                ->get(route('pengajar.score.import_templates'))
+        );
+
+        $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_preview', $this->subjectId), [
+                'file' => $this->uploadedWorkbook($workbook),
+            ])
+            ->assertOk()
+            ->assertSeeText('Untuk saat ini, import nilai hanya menerima template satu kelas dan satu mata pelajaran. Silakan gunakan file dari tombol Download Template Nilai, bukan Download Semua Template Siap.')
             ->assertSee('data-import-blocking-errors="true"', false);
 
         $this->assertSame(0, DB::table('nilais')->count());
@@ -709,7 +833,7 @@ class PengajarScoreAuthorizationTest extends TestCase
                 'file' => $this->uploadedWorkbook($workbook),
             ])
             ->assertOk()
-            ->assertSeeText('siswa_id duplikat di file.')
+            ->assertSeeText('Siswa ini muncul lebih dari satu kali di file Excel.')
             ->assertSee('data-import-blocking-errors="true"', false);
 
         $this->assertSame(0, DB::table('nilais')->count());
@@ -726,9 +850,9 @@ class PengajarScoreAuthorizationTest extends TestCase
         $this->actingAsPengajar($this->budi)
             ->post(route('pengajar.score.import_preview', $this->subjectId), ['file' => $uploadedFile])
             ->assertOk()
-            ->assertSeeText('TP 1 harus antara 0 sampai 100.')
-            ->assertSeeText('LM Bilangan harus antara 0 sampai 100.')
-            ->assertSeeText('Nilai Tes harus berupa angka.')
+            ->assertSeeText('Baris 6, siswa Ahmad Fauzan: Nilai TP 1 tidak boleh kurang dari 0 atau lebih dari 100.')
+            ->assertSeeText('Nilai LM Bilangan tidak boleh kurang dari 0 atau lebih dari 100.')
+            ->assertSeeText('Nilai Tes harus berupa angka 0 sampai 100.')
             ->assertSee('data-import-invalid="true"', false)
             ->assertSee('data-import-blocking-errors="true"', false);
 
@@ -765,6 +889,16 @@ class PengajarScoreAuthorizationTest extends TestCase
         return $this->workbookFromResponse(
             $this->actingAsPengajar($this->budi)
                 ->get(route('pengajar.score.import_template', $this->subjectId))
+        );
+    }
+
+    private function downloadedTemplateUpload(int $subjectId): UploadedFile
+    {
+        return $this->uploadedWorkbook(
+            $this->workbookFromResponse(
+                $this->actingAsPengajar($this->budi)
+                    ->get(route('pengajar.score.import_template', $subjectId))
+            )
         );
     }
 
@@ -817,6 +951,24 @@ class PengajarScoreAuthorizationTest extends TestCase
         );
     }
 
+    private function excelImportFeedbackHtml($response): string
+    {
+        $html = $response->getContent();
+        $start = strpos($html, 'File Excel berhasil dibaca, tetapi masih ada error validasi.');
+
+        if ($start === false) {
+            return '';
+        }
+
+        $end = strpos($html, 'id="excelImportForm"', $start);
+
+        if ($end === false) {
+            return substr($html, $start);
+        }
+
+        return substr($html, $start, $end - $start);
+    }
+
     private function setValueByKey($sheet, string $key, int $row, mixed $value): void
     {
         $columnMap = $this->scoreTemplateColumnMap($sheet);
@@ -826,6 +978,20 @@ class PengajarScoreAuthorizationTest extends TestCase
         }
 
         $sheet->setCellValue(Coordinate::stringFromColumnIndex($columnMap[$key]).$row, $value);
+    }
+
+    private function clearTemplateColumnKey($sheet, string $key): void
+    {
+        $columnMap = $this->scoreTemplateColumnMap($sheet);
+
+        if (! isset($columnMap[$key])) {
+            $this->fail("Kolom {$key} tidak ditemukan di template.");
+        }
+
+        $sheet->setCellValue(
+            Coordinate::stringFromColumnIndex($columnMap[$key]).PengajarScoreExcelTemplateService::KEY_ROW,
+            ''
+        );
     }
 
     private function scoreTemplateColumnMap($sheet): array

@@ -12,6 +12,11 @@ use PhpOffice\PhpSpreadsheet\IOFactory;
 
 class PengajarScoreExcelPreviewService
 {
+    private const CONTEXT_MISMATCH_MESSAGE = 'Template Excel tidak sesuai dengan kelas atau mata pelajaran yang sedang dibuka. Silakan download ulang template dari Data Pembelajaran untuk kelas dan mata pelajaran ini.';
+    private const STRUCTURE_CHANGED_MESSAGE = 'Format template Excel tidak sesuai atau sudah berubah. Silakan download ulang template terbaru dari Data Pembelajaran, isi nilainya kembali, lalu upload ulang. Jangan mengubah judul kolom, sheet, atau bagian yang dikunci pada template.';
+    private const UNREADABLE_TEMPLATE_MESSAGE = 'Template Excel tidak dapat dibaca dengan benar. Pastikan file berasal dari tombol Download Template Nilai pada aplikasi ini dan belum diubah strukturnya.';
+    private const MULTI_SHEET_MESSAGE = 'Untuk saat ini, import nilai hanya menerima template satu kelas dan satu mata pelajaran. Silakan gunakan file dari tombol Download Template Nilai, bukan Download Semua Template Siap.';
+
     public function __construct(
         private readonly PengajarScoreExcelTemplateService $templateService
     ) {
@@ -32,10 +37,15 @@ class PengajarScoreExcelPreviewService
         $spreadsheet = IOFactory::load($file->getRealPath());
 
         try {
+            $scoreColumns = $this->templateService->scoreColumns($mataPelajaran);
+
+            if ($this->hasMultipleScoreSheets($spreadsheet)) {
+                return $this->invalidWorkbookPreview($scoreColumns, [self::MULTI_SHEET_MESSAGE]);
+            }
+
             $sheet = $spreadsheet->getSheetByName(PengajarScoreExcelTemplateService::SHEET_NILAI)
                 ?? $spreadsheet->getActiveSheet();
 
-            $scoreColumns = $this->templateService->scoreColumns($mataPelajaran);
             $requiredKeys = collect(PengajarScoreExcelTemplateService::BASE_COLUMNS)
                 ->merge($scoreColumns)
                 ->pluck('key')
@@ -44,10 +54,19 @@ class PengajarScoreExcelPreviewService
             $columnMap = $this->readColumnMap($sheet);
             $contextErrors = $this->validateWorkbookContext($sheet, $mataPelajaran, $tahunAjaran);
 
+            if (! empty($contextErrors)) {
+                return $this->invalidWorkbookPreview($scoreColumns, $contextErrors);
+            }
+
             foreach ($requiredKeys as $requiredKey) {
                 if (! array_key_exists($requiredKey, $columnMap)) {
-                    $contextErrors[] = "Kolom {$requiredKey} tidak ditemukan pada template.";
+                    $contextErrors[] = self::STRUCTURE_CHANGED_MESSAGE;
+                    break;
                 }
+            }
+
+            if (! empty($contextErrors)) {
+                return $this->invalidWorkbookPreview($scoreColumns, $contextErrors);
             }
 
             $allowedStudents = $siswas->keyBy('id');
@@ -98,6 +117,41 @@ class PengajarScoreExcelPreviewService
     }
 
     /**
+     * @param array<int, array<string, mixed>> $scoreColumns
+     * @param array<int, string> $contextErrors
+     * @return array<string, mixed>
+     */
+    private function invalidWorkbookPreview(array $scoreColumns, array $contextErrors): array
+    {
+        return [
+            'valid' => false,
+            'context_errors' => array_values(array_unique($contextErrors)),
+            'rows' => [],
+            'columns' => $scoreColumns,
+            'summary' => [
+                'rows' => 0,
+                'valid_rows' => 0,
+                'invalid_rows' => 0,
+            ],
+        ];
+    }
+
+    private function hasMultipleScoreSheets($spreadsheet): bool
+    {
+        $scoreSheetCount = 0;
+
+        foreach ($spreadsheet->getWorksheetIterator() as $sheet) {
+            if ($sheet->getTitle() === PengajarScoreExcelTemplateService::SHEET_PETUNJUK) {
+                continue;
+            }
+
+            $scoreSheetCount++;
+        }
+
+        return $scoreSheetCount > 1;
+    }
+
+    /**
      * @return array<string, int>
      */
     private function readColumnMap($sheet): array
@@ -121,27 +175,73 @@ class PengajarScoreExcelPreviewService
      */
     private function validateWorkbookContext($sheet, MataPelajaran $mataPelajaran, TahunAjaran $tahunAjaran): array
     {
-        $errors = [];
         $expected = [
             'tahun_ajaran_id' => (int) $tahunAjaran->id,
             'semester' => (int) $tahunAjaran->semester,
             'kelas_id' => (int) $mataPelajaran->kelas_id,
             'mata_pelajaran_id' => (int) $mataPelajaran->id,
         ];
-        $actual = [
-            'tahun_ajaran_id' => (int) $this->cellValue($sheet, 1, 3),
-            'semester' => (int) $this->cellValue($sheet, 2, 3),
-            'kelas_id' => (int) $this->cellValue($sheet, 3, 3),
-            'mata_pelajaran_id' => (int) $this->cellValue($sheet, 4, 3),
+        $actualRaw = [
+            'tahun_ajaran_id' => $this->cellValue($sheet, 1, 3),
+            'semester' => $this->cellValue($sheet, 2, 3),
+            'kelas_id' => $this->cellValue($sheet, 3, 3),
+            'mata_pelajaran_id' => $this->cellValue($sheet, 4, 3),
         ];
 
-        foreach ($expected as $key => $value) {
-            if (($actual[$key] ?? null) !== $value) {
-                $errors[] = "Template tidak sesuai konteks {$key}.";
+        foreach ($actualRaw as $value) {
+            if (! $this->metadataValueIsReadable($value)) {
+                return [self::UNREADABLE_TEMPLATE_MESSAGE];
             }
         }
 
-        return $errors;
+        $actual = array_map(fn ($value) => (int) $value, $actualRaw);
+
+        foreach ($expected as $key => $value) {
+            if (($actual[$key] ?? null) !== $value) {
+                return $this->contextMismatchMessages($sheet, $mataPelajaran);
+            }
+        }
+
+        return [];
+    }
+
+    private function metadataValueIsReadable(mixed $value): bool
+    {
+        if ($value === null || trim((string) $value) === '') {
+            return false;
+        }
+
+        return is_numeric($value);
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function contextMismatchMessages($sheet, MataPelajaran $mataPelajaran): array
+    {
+        $messages = [
+            self::CONTEXT_MISMATCH_MESSAGE,
+            sprintf(
+                'Anda sedang membuka Kelas: %s, Mata Pelajaran: %s. Silakan upload template yang sesuai dengan halaman ini.',
+                $mataPelajaran->kelas?->label_kelas ?? '-',
+                $mataPelajaran->nama_pelajaran
+            ),
+        ];
+
+        $columnMap = $this->readColumnMap($sheet);
+        $templateClass = trim((string) $this->valueForKey($sheet, $columnMap, 'kelas', PengajarScoreExcelTemplateService::DATA_START_ROW));
+        $templateSubject = trim((string) $this->valueForKey($sheet, $columnMap, 'mata_pelajaran', PengajarScoreExcelTemplateService::DATA_START_ROW));
+
+        if ($templateClass !== '' && $templateSubject !== ''
+            && ($templateClass !== ($mataPelajaran->kelas?->label_kelas ?? '') || $templateSubject !== $mataPelajaran->nama_pelajaran)) {
+            $messages[] = sprintf(
+                'File yang diupload tampaknya berasal dari Kelas: %s, Mata Pelajaran: %s. Silakan gunakan template yang sesuai.',
+                $templateClass,
+                $templateSubject
+            );
+        }
+
+        return $messages;
     }
 
     private function isBlankRow($sheet, int $rowNumber, array $columnMap, array $keys): bool
@@ -184,13 +284,13 @@ class PengajarScoreExcelPreviewService
         $siswa = $siswaId ? $allowedStudents->get($siswaId) : null;
 
         if ($rawSiswaId === '') {
-            $errors[] = 'siswa_id wajib diisi.';
+            $errors[] = 'Data siswa pada baris ini tidak terbaca. Jangan mengubah kolom identitas siswa pada template.';
         } elseif (! ctype_digit($rawSiswaId)) {
-            $errors[] = 'siswa_id harus berupa angka.';
+            $errors[] = 'Data siswa pada baris ini tidak terbaca. Jangan mengubah kolom identitas siswa pada template.';
         } elseif (in_array($siswaId, $seenStudentIds, true)) {
-            $errors[] = 'siswa_id duplikat di file.';
+            $errors[] = 'Siswa ini muncul lebih dari satu kali di file Excel.';
         } elseif (! $siswa) {
-            $errors[] = 'Siswa tidak termasuk kelas/konteks mata pelajaran ini.';
+            $errors[] = 'Siswa tidak ditemukan pada kelas ini.';
         }
 
         if ($siswa) {
@@ -228,8 +328,10 @@ class PengajarScoreExcelPreviewService
                 continue;
             }
 
+            $label = $this->scoreLabelForMessage((string) $column['label']);
+
             if (! is_numeric($value)) {
-                $message = "{$column['label']} harus berupa angka.";
+                $message = "{$label} harus berupa angka 0 sampai 100.";
                 $errors[] = $message;
                 $fieldErrors[$key][] = $message;
                 continue;
@@ -237,7 +339,7 @@ class PengajarScoreExcelPreviewService
 
             $numericValue = (float) $value;
             if ($numericValue < 0 || $numericValue > 100) {
-                $message = "{$column['label']} harus antara 0 sampai 100.";
+                $message = "{$label} tidak boleh kurang dari 0 atau lebih dari 100.";
                 $errors[] = $message;
                 $fieldErrors[$key][] = $message;
             }
@@ -255,6 +357,11 @@ class PengajarScoreExcelPreviewService
             'valid' => empty($errors),
             'status' => empty($errors) ? 'Valid' : 'Tidak valid',
         ];
+    }
+
+    private function scoreLabelForMessage(string $label): string
+    {
+        return str_starts_with($label, 'Nilai ') ? $label : "Nilai {$label}";
     }
 
     /**
@@ -277,11 +384,11 @@ class PengajarScoreExcelPreviewService
         $mataPelajaranLabel = trim((string) $this->valueForKey($sheet, $columnMap, 'mata_pelajaran', $rowNumber));
 
         if ($nis !== '' && (string) $siswa->nis !== $nis) {
-            $errors[] = 'NIS tidak sesuai dengan siswa_id.';
+            $errors[] = 'NIS tidak sesuai dengan data siswa pada template.';
         }
 
         if ($nisn !== '' && (string) $siswa->nisn !== $nisn) {
-            $errors[] = 'NISN tidak sesuai dengan siswa_id.';
+            $errors[] = 'NISN tidak sesuai dengan data siswa pada template.';
         }
 
         if ($nama !== '' && $siswa->nama !== $nama) {

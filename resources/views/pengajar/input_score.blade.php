@@ -114,7 +114,11 @@
                         @endforeach
                         @foreach($excelImport['row_errors'] as $rowError)
                             @foreach($rowError['errors'] as $error)
-                                <li>Baris {{ $rowError['row_number'] }} - {{ $rowError['student_name'] }}: {{ $error }}</li>
+                                @if(($rowError['student_name'] ?? '-') !== '-')
+                                    <li>Baris {{ $rowError['row_number'] }}, siswa {{ $rowError['student_name'] }}: {{ $error }}</li>
+                                @else
+                                    <li>Baris {{ $rowError['row_number'] }}: {{ $error }}</li>
+                                @endif
                             @endforeach
                         @endforeach
                     </ul>

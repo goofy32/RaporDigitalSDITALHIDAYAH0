@@ -1537,7 +1537,7 @@ class ScoreController extends Controller
             ]);
 
             return redirect()->route('pengajar.score.input_score', $id)
-                ->with('error', 'Gagal membaca file Excel nilai. Pastikan file berasal dari template yang diunduh dari halaman ini.');
+                ->with('error', 'Template Excel tidak dapat dibaca dengan benar. Pastikan file berasal dari tombol Download Template Nilai pada aplikasi ini dan belum diubah strukturnya.');
         }
     }
 
