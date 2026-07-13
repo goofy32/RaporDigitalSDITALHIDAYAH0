@@ -48,7 +48,7 @@
                         Download Template Nilai
                     </button>
                     <a href="{{ route('pengajar.score.import_templates') }}"
-                       class="text-white bg-green-700 hover:bg-green-800 focus:ring-4 focus:ring-green-300 font-medium rounded-lg text-sm px-4 py-2">
+                       class="border border-gray-300 bg-gray-100 text-gray-700 hover:bg-gray-200 focus:ring-4 focus:ring-gray-200 font-medium rounded-lg text-sm px-4 py-2">
                         Download Semua Template Siap
                     </a>
                 @else
@@ -354,7 +354,7 @@
                                 <td class="px-6 py-4">Kelas {{ $kelas->nomor_kelas }} {{ $kelas->nama_kelas }}</td>
                                 <td class="px-6 py-4">{{ $mapel->nama_pelajaran }}</td>
                                 <td class="px-6 py-4">
-                                    <div class="flex items-center justify-center gap-2">
+                                    <div class="flex items-center justify-center gap-1">
                                     @if(!$mapel->requires_lm_tp_setup)
                                         @if(!$mapel->has_saved_scores)
                                         <a href="{{ route('pengajar.score.input_score', $mapel->id) }}"

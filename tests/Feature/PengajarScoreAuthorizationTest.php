@@ -419,11 +419,13 @@ class PengajarScoreAuthorizationTest extends TestCase
             ->assertOk()
             ->assertSee('Download Template Nilai')
             ->assertSee('Download Semua Template Siap')
+            ->assertSee('bg-gray-100 text-gray-700 hover:bg-gray-200', false)
             ->assertSee('Kelas 5 A - Matematika')
             ->assertSee(route('pengajar.score.import_template', $this->subjectId), false)
             ->assertSee(route('pengajar.score.import_templates'), false)
             ->assertSee('data-row-action="input"', false)
             ->assertSee('data-row-action="delete"', false)
+            ->assertSee('flex items-center justify-center gap-1', false)
             ->assertSee('aria-label="Masukkan nilai Matematika"', false);
     }
 
