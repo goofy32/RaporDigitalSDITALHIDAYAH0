@@ -128,6 +128,7 @@ class StudentImportSafetyTest extends TestCase
 
         $response->assertRedirect();
         $response->assertSessionHas('import_errors');
+        $this->assertStringContainsString('Baris 2, Siswa Aman: NIS 2601001 sudah digunakan siswa lain.', $this->importErrorText());
         $this->assertSame(1, DB::table('siswas')->count());
         $this->assertSame(0, DB::table('siswa_kelas_semester')->count());
     }
@@ -140,6 +141,7 @@ class StudentImportSafetyTest extends TestCase
 
         $response->assertRedirect();
         $response->assertSessionHas('import_errors');
+        $this->assertStringContainsString('Baris 2, Siswa Aman: NISN 9900000001 sudah digunakan siswa lain.', $this->importErrorText());
         $this->assertSame(1, DB::table('siswas')->count());
         $this->assertSame(0, DB::table('siswa_kelas_semester')->count());
     }
@@ -153,6 +155,7 @@ class StudentImportSafetyTest extends TestCase
 
         $response->assertRedirect();
         $response->assertSessionHas('import_errors');
+        $this->assertStringContainsString('Baris 3, Siswa Dua: NIS 2601001 muncul lebih dari satu kali dalam file.', $this->importErrorText());
         $this->assertSame(0, DB::table('siswas')->count());
         $this->assertSame(0, DB::table('siswa_kelas_semester')->count());
     }
@@ -166,6 +169,7 @@ class StudentImportSafetyTest extends TestCase
 
         $response->assertRedirect();
         $response->assertSessionHas('import_errors');
+        $this->assertStringContainsString('Baris 3, Invalid Class: kelas "Format Salah" tidak ditemukan. Gunakan nama kelas sesuai template.', $this->importErrorText());
         $this->assertSame(0, DB::table('siswas')->count());
         $this->assertSame(0, DB::table('siswa_kelas_semester')->count());
     }
@@ -187,6 +191,9 @@ class StudentImportSafetyTest extends TestCase
 
         $response->assertRedirect();
         $response->assertSessionHas('import_errors');
+        $this->assertSame('Format template tidak sesuai atau sudah berubah. Silakan download ulang template siswa terbaru.', $this->importErrorText());
+        $this->assertStringNotContainsString('Kolom wajib tidak ditemukan', $this->importErrorText());
+        $this->assertStringNotContainsString('kelas_id', $this->importErrorText());
         $this->assertSame(0, DB::table('siswas')->count());
     }
 
@@ -198,6 +205,33 @@ class StudentImportSafetyTest extends TestCase
 
         $response->assertRedirect();
         $response->assertSessionHas('import_errors');
+        $this->assertStringContainsString('Baris 2, Siswa Aman: tanggal lahir harus menggunakan format YYYY-MM-DD, contoh 2017-05-21.', $this->importErrorText());
+        $this->assertStringNotContainsString('tanggal_lahir', $this->importErrorText());
+        $this->assertSame(0, DB::table('siswas')->count());
+        $this->assertSame(0, DB::table('siswa_kelas_semester')->count());
+    }
+
+    public function test_import_errors_use_friendly_row_field_messages_without_raw_columns(): void
+    {
+        $response = $this->postImport([
+            $this->validRow([
+                'nis' => null,
+                'nama' => 'Ahmad Fajar',
+                'tanggal_lahir' => 'bukan tanggal',
+                'kelas' => '1 Ubayy',
+            ]),
+        ]);
+
+        $response->assertRedirect();
+        $response->assertSessionHas('import_errors');
+
+        $errors = $this->importErrorText();
+        $this->assertStringContainsString('Baris 2, Ahmad Fajar: NIS belum diisi.', $errors);
+        $this->assertStringContainsString('Baris 2, Ahmad Fajar: kelas "1 Ubayy" tidak ditemukan. Gunakan nama kelas sesuai template.', $errors);
+        $this->assertStringContainsString('Baris 2, Ahmad Fajar: tanggal lahir harus menggunakan format YYYY-MM-DD, contoh 2017-05-21.', $errors);
+        $this->assertStringNotContainsString('kolom nis', strtolower($errors));
+        $this->assertStringNotContainsString('tanggal_lahir', $errors);
+        $this->assertStringNotContainsString('kelas_id', $errors);
         $this->assertSame(0, DB::table('siswas')->count());
         $this->assertSame(0, DB::table('siswa_kelas_semester')->count());
     }
@@ -240,6 +274,7 @@ class StudentImportSafetyTest extends TestCase
 
         $response->assertRedirect();
         $response->assertSessionHas('import_errors');
+        $this->assertStringContainsString('Baris 3, Missing Class: Kelas belum diisi.', $this->importErrorText());
         $this->assertSame(0, DB::table('siswas')->count());
         $this->assertSame(0, DB::table('siswa_kelas_semester')->count());
     }
@@ -349,6 +384,26 @@ class StudentImportSafetyTest extends TestCase
         $response->assertSee('Upload');
     }
 
+    public function test_student_index_displays_friendly_import_error_details(): void
+    {
+        $response = $this->actingAs($this->admin, 'web')
+            ->withSession([
+                'tahun_ajaran_id' => $this->activeYearId,
+                'selected_semester' => 1,
+                'error' => 'Import siswa dibatalkan. Periksa daftar kesalahan pada file Excel.',
+                'import_errors' => [
+                    'Baris 8: NIS belum diisi.',
+                    'Baris 10, Ahmad Fajar: kelas "1 Ubayy" tidak ditemukan. Gunakan nama kelas sesuai template.',
+                ],
+            ])
+            ->get(route('student'));
+
+        $response->assertOk();
+        $response->assertSeeText('Kesalahan import:');
+        $response->assertSeeText('Baris 8: NIS belum diisi.');
+        $response->assertSeeText('Baris 10, Ahmad Fajar: kelas "1 Ubayy" tidak ditemukan. Gunakan nama kelas sesuai template.');
+    }
+
     /**
      * @param  array<int, array<string, mixed>>  $rows
      */
@@ -378,6 +433,11 @@ class StudentImportSafetyTest extends TestCase
                     true
                 ),
             ]);
+    }
+
+    private function importErrorText(): string
+    {
+        return collect(session('import_errors', []))->implode("\n");
     }
 
     /**

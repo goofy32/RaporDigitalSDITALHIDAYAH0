@@ -223,6 +223,64 @@ class SemesterTransitionEnrollmentTest extends TestCase
         $this->assertSame($targetYearId, DB::table('tahun_ajarans')->where('is_active', true)->value('id'));
     }
 
+    public function test_transition_with_archived_genap_returns_clear_restore_message(): void
+    {
+        $archivedGenapId = $this->insertArchivedSameAcademicYear(2);
+        $counts = $this->coreCounts();
+
+        $this->runTransition()
+            ->assertRedirect()
+            ->assertSessionHas('error', 'Semester Genap untuk tahun ajaran ini sudah ada di arsip. Pulihkan Semester Genap dari arsip terlebih dahulu, lalu aktifkan semester tersebut jika ingin melanjutkan.');
+
+        $this->assertSame($counts, $this->coreCounts());
+        $this->assertNotNull(DB::table('tahun_ajarans')->where('id', $archivedGenapId)->value('deleted_at'));
+        $this->assertSame($this->sourceYearId, DB::table('tahun_ajarans')->where('is_active', true)->value('id'));
+    }
+
+    public function test_archived_genap_can_be_restored_while_ganjil_is_active(): void
+    {
+        $archivedGenapId = $this->insertArchivedSameAcademicYear(2);
+
+        $this->actingAs($this->admin)
+            ->post(route('tahun.ajaran.restore', $archivedGenapId))
+            ->assertRedirect(route('tahun.ajaran.index', ['showArchived' => true]))
+            ->assertSessionHas('success');
+
+        $restored = DB::table('tahun_ajarans')->where('id', $archivedGenapId)->first();
+
+        $this->assertNull($restored->deleted_at);
+        $this->assertFalse((bool) $restored->is_active);
+        $this->assertSame($this->sourceYearId, DB::table('tahun_ajarans')->where('is_active', true)->value('id'));
+    }
+
+    public function test_restore_is_blocked_when_same_semester_record_exists(): void
+    {
+        $archivedDuplicateGanjilId = $this->insertArchivedSameAcademicYear(1);
+
+        $this->actingAs($this->admin)
+            ->post(route('tahun.ajaran.restore', $archivedDuplicateGanjilId))
+            ->assertRedirect()
+            ->assertSessionHas('error', 'Tidak dapat memulihkan tahun ajaran ini karena semester yang sama sudah ada. Periksa daftar tahun ajaran sebelum memulihkan.');
+
+        $this->assertNotNull(DB::table('tahun_ajarans')->where('id', $archivedDuplicateGanjilId)->value('deleted_at'));
+        $this->assertSame($this->sourceYearId, DB::table('tahun_ajarans')->where('is_active', true)->value('id'));
+    }
+
+    public function test_archived_genap_in_active_year_flow_cannot_be_permanently_deleted(): void
+    {
+        $archivedGenapId = $this->insertArchivedSameAcademicYear(2);
+
+        $this->actingAs($this->admin)
+            ->delete(route('tahun.ajaran.force-delete', $archivedGenapId))
+            ->assertRedirect()
+            ->assertSessionHas('error');
+
+        $message = session('error');
+        $this->assertStringContainsString('tidak dapat dihapus permanen', $message);
+        $this->assertStringContainsString('alur tahun ajaran aktif', $message);
+        $this->assertNotNull(DB::table('tahun_ajarans')->where('id', $archivedGenapId)->value('deleted_at'));
+    }
+
     public function test_mid_transition_failure_rolls_back_database_changes(): void
     {
         DB::statement("
@@ -334,6 +392,21 @@ class SemesterTransitionEnrollmentTest extends TestCase
             'subjects' => DB::table('mata_pelajarans')->count(),
             'absensi' => DB::table('absensis')->count(),
         ];
+    }
+
+    private function insertArchivedSameAcademicYear(int $semester, bool $isActive = false): int
+    {
+        return DB::table('tahun_ajarans')->insertGetId([
+            'tahun_ajaran' => '2026/2027',
+            'is_active' => $isActive,
+            'tanggal_mulai' => $semester === 1 ? '2026-07-01' : '2027-01-01',
+            'tanggal_selesai' => '2027-06-30',
+            'semester' => $semester,
+            'deskripsi' => 'Archived fixture',
+            'created_at' => now(),
+            'updated_at' => now(),
+            'deleted_at' => now(),
+        ]);
     }
 
     private function createSchema(): void

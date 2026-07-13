@@ -419,14 +419,18 @@ class TahunAjaranController extends Controller
                 throw new DomainException('Another active academic year exists; semester transition cannot proceed safely.');
             }
 
-            $semesterGenapExists = TahunAjaran::withTrashed()
+            $existingSemesterGenap = TahunAjaran::withTrashed()
                 ->where('tahun_ajaran', $sourceTahunAjaran->tahun_ajaran)
                 ->where('semester', 2)
                 ->where('id', '!=', $sourceTahunAjaran->id)
-                ->exists();
+                ->first();
 
-            if ($semesterGenapExists) {
-                throw new DomainException('Semester Genap untuk tahun ajaran ini sudah ada. Transisi tidak dijalankan ulang.');
+            if ($existingSemesterGenap) {
+                if ($existingSemesterGenap->trashed()) {
+                    throw new DomainException('Semester Genap untuk tahun ajaran ini sudah ada di arsip. Pulihkan Semester Genap dari arsip terlebih dahulu, lalu aktifkan semester tersebut jika ingin melanjutkan.');
+                }
+
+                throw new DomainException('Semester Genap untuk tahun ajaran ini sudah ada. Aktifkan Semester Genap tersebut dari daftar tahun ajaran; transisi tidak dibuat ulang.');
             }
             
             // Create a new academic year record with semester 2
@@ -1012,6 +1016,23 @@ class TahunAjaranController extends Controller
                     ->with('error', 'Hanya tahun ajaran yang sudah diarsipkan yang dapat dihapus permanen.');
             }
 
+            $activeFlowMessage = $this->activeAcademicYearFlowDeleteBlockMessage($tahunAjaran);
+            if ($activeFlowMessage) {
+                Log::info('[TahunAjaranController] Permanent delete blocked because academic year belongs to active semester flow', [
+                    'tahun_ajaran_id' => $tahunAjaran->id,
+                    'user_id' => auth()->id(),
+                ]);
+
+                if (request()->expectsJson()) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => $activeFlowMessage,
+                    ], 422);
+                }
+
+                return redirect()->back()->with('error', $activeFlowMessage);
+            }
+
             $blockingDependencies = $this->permanentDeleteBlockingDependencies((int) $tahunAjaran->id);
 
             if (! empty($blockingDependencies)) {
@@ -1083,6 +1104,26 @@ class TahunAjaranController extends Controller
             return redirect()->back()
                 ->with('error', 'Terjadi kesalahan saat menghapus permanen tahun ajaran. Silakan coba lagi.');
         }
+    }
+
+    private function activeAcademicYearFlowDeleteBlockMessage(TahunAjaran $tahunAjaran): ?string
+    {
+        $activeCounterpart = TahunAjaran::query()
+            ->where('tahun_ajaran', $tahunAjaran->tahun_ajaran)
+            ->where('id', '!=', $tahunAjaran->id)
+            ->where('is_active', true)
+            ->first();
+
+        if (! $activeCounterpart) {
+            return null;
+        }
+
+        return sprintf(
+            'Tahun ajaran %s semester %s tidak dapat dihapus permanen karena masih menjadi bagian dari alur tahun ajaran aktif semester %s. Pulihkan dari arsip atau biarkan tetap diarsipkan agar transisi semester tetap aman.',
+            $tahunAjaran->tahun_ajaran,
+            $tahunAjaran->semester == 1 ? 'Ganjil' : 'Genap',
+            $activeCounterpart->semester == 1 ? 'Ganjil' : 'Genap'
+        );
     }
 
     private function permanentDeleteBlockingDependencies(int $tahunAjaranId): array
@@ -1880,14 +1921,19 @@ class TahunAjaranController extends Controller
                     ->with('error', 'Tahun ajaran ini tidak dalam status diarsipkan.');
             }
             
-            // Cek apakah ada tahun ajaran dengan nama yang sama yang sudah aktif
-            $existingActive = TahunAjaran::where('tahun_ajaran', $tahunAjaran->tahun_ajaran)
-                                        ->where('id', '!=', $id)
-                                        ->exists();
-            
-            if ($existingActive) {
+            $sameSemesterExists = TahunAjaran::where('tahun_ajaran', $tahunAjaran->tahun_ajaran)
+                ->where('semester', $tahunAjaran->semester)
+                ->where('id', '!=', $id)
+                ->exists();
+
+            if ($sameSemesterExists) {
                 return redirect()->back()
-                    ->with('error', 'Tidak dapat memulihkan tahun ajaran ini karena sudah ada tahun ajaran aktif dengan nama yang sama. Hapus permanen atau ubah nama salah satunya terlebih dahulu.');
+                    ->with('error', 'Tidak dapat memulihkan tahun ajaran ini karena semester yang sama sudah ada. Periksa daftar tahun ajaran sebelum memulihkan.');
+            }
+
+            if ($tahunAjaran->is_active && TahunAjaran::where('is_active', true)->where('id', '!=', $id)->exists()) {
+                return redirect()->back()
+                    ->with('error', 'Tidak dapat memulihkan tahun ajaran ini sebagai aktif karena sudah ada tahun ajaran aktif lain. Nonaktifkan salah satunya terlebih dahulu.');
             }
             
             $tahunAjaran->restore();

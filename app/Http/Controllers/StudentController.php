@@ -617,6 +617,10 @@ class StudentController extends Controller
     {
         $request->validate([
             'file' => 'required|mimes:xlsx,xls|max:2048',
+        ], [
+            'file.required' => 'File Excel siswa wajib dipilih.',
+            'file.mimes' => 'File harus berformat Excel (.xlsx atau .xls).',
+            'file.max' => 'Ukuran file Excel maksimal 2 MB.',
         ]);
 
         $activeTahunAjaran = TahunAjaran::where('is_active', true)->first();
@@ -642,7 +646,7 @@ class StudentController extends Controller
                 'user_id' => auth()->id(),
             ]);
 
-            return back()->with('error', 'Gagal mengimpor data siswa. Tidak ada data yang disimpan.');
+            return back()->with('error', 'File Excel tidak dapat dibaca. Pastikan menggunakan template dari aplikasi ini.');
         }
     }
     

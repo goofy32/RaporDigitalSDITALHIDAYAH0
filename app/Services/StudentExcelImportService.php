@@ -9,12 +9,15 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Shared\Date as ExcelDate;
 use Throwable;
 
 class StudentExcelImportService
 {
+    private const TEMPLATE_FORMAT_MESSAGE = 'Format template tidak sesuai atau sudah berubah. Silakan download ulang template siswa terbaru.';
+
     private const REQUIRED_COLUMNS = [
         'nis',
         'nisn',
@@ -24,6 +27,23 @@ class StudentExcelImportService
         'agama',
         'alamat',
         'kelas',
+    ];
+
+    private const FIELD_LABELS = [
+        'nis' => 'NIS',
+        'nisn' => 'NISN',
+        'nama' => 'Nama siswa',
+        'tanggal_lahir' => 'Tanggal lahir',
+        'jenis_kelamin' => 'Jenis kelamin',
+        'agama' => 'Agama',
+        'alamat' => 'Alamat',
+        'kelas' => 'Kelas',
+        'nama_ayah' => 'Nama ayah',
+        'nama_ibu' => 'Nama ibu',
+        'pekerjaan_ayah' => 'Pekerjaan ayah',
+        'pekerjaan_ibu' => 'Pekerjaan ibu',
+        'alamat_orangtua' => 'Alamat orang tua',
+        'photo' => 'Foto',
     ];
 
     /**
@@ -181,8 +201,8 @@ class StudentExcelImportService
         $validRows = [];
         $skippedCount = 0;
 
-        foreach (array_diff(self::REQUIRED_COLUMNS, array_values($headers)) as $missingColumn) {
-            $errors[] = "Kolom wajib tidak ditemukan: {$missingColumn}.";
+        if (array_diff(self::REQUIRED_COLUMNS, array_values($headers)) !== []) {
+            $errors[] = self::TEMPLATE_FORMAT_MESSAGE;
         }
 
         if ($errors !== []) {
@@ -201,12 +221,8 @@ class StudentExcelImportService
 
             foreach (self::REQUIRED_COLUMNS as $column) {
                 if ($this->blank($row[$column] ?? null)) {
-                    $errors[] = "Baris {$rowNumber}: kolom {$column} wajib diisi.";
+                    $errors[] = $this->rowMessage($rowNumber, $row, "{$this->fieldLabel($column)} belum diisi.");
                 }
-            }
-
-            if ($errors !== [] && ! isset($row['nis'], $row['nisn'], $row['kelas'], $row['tanggal_lahir'])) {
-                continue;
             }
 
             $nis = trim((string) ($row['nis'] ?? ''));
@@ -214,36 +230,37 @@ class StudentExcelImportService
 
             if ($nis !== '') {
                 if (isset($seenNis[$nis])) {
-                    $errors[] = "Baris {$rowNumber}: NIS duplikat dalam file.";
+                    $errors[] = $this->rowMessage($rowNumber, $row, "NIS {$nis} muncul lebih dari satu kali dalam file.");
                 }
 
                 $seenNis[$nis] = true;
 
                 if (DB::table('siswas')->where('nis', $nis)->exists()) {
-                    $errors[] = "Baris {$rowNumber}: NIS sudah digunakan.";
+                    $errors[] = $this->rowMessage($rowNumber, $row, "NIS {$nis} sudah digunakan siswa lain.");
                 }
             }
 
             if ($nisn !== '') {
                 if (isset($seenNisn[$nisn])) {
-                    $errors[] = "Baris {$rowNumber}: NISN duplikat dalam file.";
+                    $errors[] = $this->rowMessage($rowNumber, $row, "NISN {$nisn} muncul lebih dari satu kali dalam file.");
                 }
 
                 $seenNisn[$nisn] = true;
 
                 if (DB::table('siswas')->where('nisn', $nisn)->exists()) {
-                    $errors[] = "Baris {$rowNumber}: NISN sudah digunakan.";
+                    $errors[] = $this->rowMessage($rowNumber, $row, "NISN {$nisn} sudah digunakan siswa lain.");
                 }
             }
 
-            $kelas = $this->resolveClass((string) ($row['kelas'] ?? ''), $tahunAjaran);
-            if (! $kelas) {
-                $errors[] = "Baris {$rowNumber}: kelas tidak ditemukan pada tahun ajaran aktif.";
+            $kelasLabel = trim((string) ($row['kelas'] ?? ''));
+            $kelas = $this->resolveClass($kelasLabel, $tahunAjaran);
+            if ($kelasLabel !== '' && ! $kelas) {
+                $errors[] = $this->rowMessage($rowNumber, $row, 'kelas "'.$kelasLabel.'" tidak ditemukan. Gunakan nama kelas sesuai template.');
             }
 
             $birthDate = $this->parseDate($row['tanggal_lahir'] ?? null);
-            if (! $birthDate) {
-                $errors[] = "Baris {$rowNumber}: tanggal lahir tidak valid.";
+            if (! $this->blank($row['tanggal_lahir'] ?? null) && ! $birthDate) {
+                $errors[] = $this->rowMessage($rowNumber, $row, 'tanggal lahir harus menggunakan format YYYY-MM-DD, contoh 2017-05-21.');
             }
 
             if ($kelas && $birthDate && $this->hasRequiredValues($row)) {
@@ -271,6 +288,25 @@ class StudentExcelImportService
         }
 
         return ['rows' => $validRows, 'errors' => [], 'skipped_count' => $skippedCount];
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     */
+    private function rowMessage(int $rowNumber, array $row, string $message): string
+    {
+        $studentName = trim((string) ($row['nama'] ?? ''));
+
+        if ($studentName !== '') {
+            return "Baris {$rowNumber}, {$studentName}: {$message}";
+        }
+
+        return "Baris {$rowNumber}: {$message}";
+    }
+
+    private function fieldLabel(string $field): string
+    {
+        return self::FIELD_LABELS[$field] ?? Str::headline(str_replace('_', ' ', $field));
     }
 
     /**
