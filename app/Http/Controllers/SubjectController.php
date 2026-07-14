@@ -79,9 +79,10 @@ class SubjectController extends Controller
         return view('admin.subject', compact('subjects', 'activeTahunAjaran'));
     }
 
-    public function create()
+    public function create(LearningStructureCopyService $copyService)
     {
         $tahunAjaranId = session('tahun_ajaran_id');
+        $semester = $tahunAjaranId ? $this->copySemesterContext((int) $tahunAjaranId) : null;
 
         $classes = Kelas::when($tahunAjaranId, function ($query) use ($tahunAjaranId) {
             return $query->where('tahun_ajaran_id', $tahunAjaranId);
@@ -103,8 +104,11 @@ class SubjectController extends Controller
 
         // Kode ini akan dimanfaatkan oleh JavaScript
         $waliKelasMap = Kelas::getWaliKelasMap($tahunAjaranId);
+        $lmTpCopyCandidates = $tahunAjaranId && $semester
+            ? $this->learningCopyCandidatePayload($copyService->copyableSourceCandidates((int) $tahunAjaranId, (int) $semester))
+            : [];
 
-        return view('data.add_subject', compact('classes', 'teachers', 'teacherWaliClassIds', 'teacherTeachingClassIds', 'waliKelasMap', 'mataPelajaranList'));
+        return view('data.add_subject', compact('classes', 'teachers', 'teacherWaliClassIds', 'teacherTeachingClassIds', 'waliKelasMap', 'mataPelajaranList', 'lmTpCopyCandidates'));
     }
 
     public function show($id)
@@ -114,7 +118,7 @@ class SubjectController extends Controller
         return redirect()->route('subject.edit', $subject->id);
     }
 
-    public function store(Request $request)
+    public function store(Request $request, LearningStructureCopyService $copyService)
     {
         \Log::info('Subject store method called with data:', $request->all());
 
@@ -131,6 +135,8 @@ class SubjectController extends Controller
                 'subjects.*.teaching_type' => 'nullable|in:regular,muatan_lokal,specialist',
                 'subjects.*.lingkup_materi' => 'required|array',
                 'subjects.*.lingkup_materi.*' => 'required|string|max:255',
+                'subjects.*.copy_lm_tp' => 'nullable|boolean',
+                'subjects.*.copy_lm_tp_source_id' => 'nullable|integer',
             ], [
                 'subjects.*.guru_pengampu.required' => 'Harap pilih guru pengampu untuk mata pelajaran',
                 'subjects.*.kelas.required' => 'Harap pilih kelas untuk mata pelajaran',
@@ -141,6 +147,7 @@ class SubjectController extends Controller
 
             $errorBag = new MessageBag;
             $seenSubjects = [];
+            $copySourceIds = [];
 
             foreach ($request->subjects as $index => $subjectData) {
                 // Get data for this entry
@@ -185,6 +192,26 @@ class SubjectController extends Controller
 
                     continue;
                 }
+
+                try {
+                    $copySource = $this->resolveInlineCopySource(
+                        $copyService,
+                        $subjectData['mata_pelajaran'],
+                        (int) $kelasId,
+                        (int) $tahunAjaranId,
+                        (int) $subjectData['semester'],
+                        null,
+                        null,
+                        (int) ($subjectData['copy_lm_tp_source_id'] ?? 0),
+                        $this->inlineCopyRequested($subjectData)
+                    );
+
+                    if ($copySource) {
+                        $copySourceIds[$index] = $copySource->id;
+                    }
+                } catch (InvalidArgumentException $exception) {
+                    $errorBag->add("subjects.$index.copy_lm_tp_source_id", $exception->getMessage());
+                }
             }
 
             if ($errorBag->any()) {
@@ -193,8 +220,9 @@ class SubjectController extends Controller
 
             DB::beginTransaction();
             $successCount = 0;
+            $copySummaries = [];
 
-            foreach ($request->subjects as $subjectData) {
+            foreach ($request->subjects as $index => $subjectData) {
                 $flags = $this->subjectFlags($subjectData);
                 $kelasId = $subjectData['kelas'];
                 $guruId = $subjectData['guru_pengampu'];
@@ -217,15 +245,31 @@ class SubjectController extends Controller
                     ]);
                 }
 
+                if (isset($copySourceIds[$index])) {
+                    $copySummaries[] = $this->copyInlineLearningStructure(
+                        $copyService,
+                        (int) $copySourceIds[$index],
+                        $mataPelajaran
+                    );
+                }
+
                 $successCount++;
             }
 
             DB::commit();
 
+            $copyMessage = $this->aggregateCopyLmTpMessage($copySummaries);
+
             return redirect()->route('subject.index')
-                ->with('success', "Berhasil menambahkan {$successCount} mata pelajaran!");
+                ->with('success', trim("Berhasil menambahkan {$successCount} mata pelajaran! {$copyMessage}"));
         } catch (ValidationException $e) {
             throw $e;
+        } catch (InvalidArgumentException $e) {
+            if (DB::transactionLevel() > 0) {
+                DB::rollBack();
+            }
+
+            return back()->withInput()->with('error', $e->getMessage());
         } catch (\Exception $e) {
             if (DB::transactionLevel() > 0) {
                 DB::rollBack();
@@ -327,7 +371,7 @@ class SubjectController extends Controller
         }
     }
 
-    public function edit($id)
+    public function edit($id, LearningStructureCopyService $copyService)
     {
         $tahunAjaranId = session('tahun_ajaran_id');
         $subject = MataPelajaran::with('lingkupMateris')->findOrFail($id);
@@ -352,130 +396,18 @@ class SubjectController extends Controller
 
         // Panggil getWaliKelasMap sebagai method statis dengan parameter tahun ajaran
         $waliKelasMap = Kelas::getWaliKelasMap($tahunAjaranId);
+        $lmTpCopyCandidates = $this->learningCopyCandidatePayload(
+            $copyService->sourceCandidatesForContext(
+                $subject->nama_pelajaran,
+                (int) $subject->kelas_id,
+                (int) $tahunAjaranId,
+                (int) $subject->semester,
+                null,
+                (int) $subject->id
+            )
+        );
 
-        return view('data.edit_subject', compact('subject', 'classes', 'teachers', 'teacherWaliClassIds', 'teacherTeachingClassIds', 'waliKelasMap', 'mataPelajaranList'));
-    }
-
-    public function copyLmTp(Request $request, int $id, LearningStructureCopyService $copyService)
-    {
-        $target = $this->adminCopyTarget($id);
-        $sources = $copyService->sourceCandidates($target);
-        $selectedSource = null;
-        $preview = null;
-
-        if ($request->filled('source_id')) {
-            $selectedSource = $sources->firstWhere('id', (int) $request->query('source_id'));
-
-            if (! $selectedSource) {
-                return redirect()->route('subject.copy_lm_tp', $target->id)
-                    ->with('error', 'LM/TP hanya dapat disalin dari mata pelajaran yang sama pada tahun ajaran dan semester yang sama.');
-            }
-
-            try {
-                $preview = $copyService->preview($selectedSource, $target);
-            } catch (InvalidArgumentException $exception) {
-                return redirect()->route('subject.copy_lm_tp', $target->id)
-                    ->with('error', $exception->getMessage());
-            }
-        }
-
-        return view('data.copy_lm_tp', [
-            'mode' => 'admin',
-            'target' => $target,
-            'sources' => $sources,
-            'selectedSource' => $selectedSource,
-            'preview' => $preview,
-            'previewRoute' => route('subject.copy_lm_tp', $target->id),
-            'applyRoute' => route('subject.copy_lm_tp.apply', $target->id),
-            'backRoute' => route('tujuan_pembelajaran.create', $target->id),
-        ]);
-    }
-
-    public function applyCopyLmTp(Request $request, int $id, LearningStructureCopyService $copyService)
-    {
-        $target = $this->adminCopyTarget($id);
-        $validated = $request->validate([
-            'source_id' => 'required|integer',
-        ]);
-        $source = $copyService->sourceCandidates($target)
-            ->firstWhere('id', (int) $validated['source_id']);
-
-        if (! $source) {
-            return redirect()->route('subject.copy_lm_tp', $target->id)
-                ->with('error', 'LM/TP hanya dapat disalin dari mata pelajaran yang sama pada tahun ajaran dan semester yang sama.');
-        }
-
-        try {
-            $summary = $copyService->copy($source, $target);
-        } catch (InvalidArgumentException $exception) {
-            return redirect()->route('subject.copy_lm_tp', $target->id)
-                ->with('error', $exception->getMessage());
-        }
-
-        return redirect()->route('tujuan_pembelajaran.create', $target->id)
-            ->with('success', $this->copyLmTpSuccessMessage($summary));
-    }
-
-    public function teacherCopyLmTp(Request $request, int $id, LearningStructureCopyService $copyService)
-    {
-        $guru = auth()->guard('guru')->user();
-        $target = $this->teacherCopyTarget($id, $guru->id);
-        $sources = $copyService->sourceCandidates($target, $guru);
-        $selectedSource = null;
-        $preview = null;
-
-        if ($request->filled('source_id')) {
-            $selectedSource = $sources->firstWhere('id', (int) $request->query('source_id'));
-
-            if (! $selectedSource) {
-                return redirect()->route('pengajar.subject.copy_lm_tp', $target->id)
-                    ->with('error', 'Anda tidak memiliki akses untuk menyalin LM/TP dari pembelajaran tersebut.');
-            }
-
-            try {
-                $preview = $copyService->preview($selectedSource, $target);
-            } catch (InvalidArgumentException $exception) {
-                return redirect()->route('pengajar.subject.copy_lm_tp', $target->id)
-                    ->with('error', $exception->getMessage());
-            }
-        }
-
-        return view('pengajar.copy_lm_tp', [
-            'mode' => 'pengajar',
-            'target' => $target,
-            'sources' => $sources,
-            'selectedSource' => $selectedSource,
-            'preview' => $preview,
-            'previewRoute' => route('pengajar.subject.copy_lm_tp', $target->id),
-            'applyRoute' => route('pengajar.subject.copy_lm_tp.apply', $target->id),
-            'backRoute' => route('pengajar.tujuan_pembelajaran.create', $target->id),
-        ]);
-    }
-
-    public function teacherApplyCopyLmTp(Request $request, int $id, LearningStructureCopyService $copyService)
-    {
-        $guru = auth()->guard('guru')->user();
-        $target = $this->teacherCopyTarget($id, $guru->id);
-        $validated = $request->validate([
-            'source_id' => 'required|integer',
-        ]);
-        $source = $copyService->sourceCandidates($target, $guru)
-            ->firstWhere('id', (int) $validated['source_id']);
-
-        if (! $source) {
-            return redirect()->route('pengajar.subject.copy_lm_tp', $target->id)
-                ->with('error', 'Anda tidak memiliki akses untuk menyalin LM/TP dari pembelajaran tersebut.');
-        }
-
-        try {
-            $summary = $copyService->copy($source, $target);
-        } catch (InvalidArgumentException $exception) {
-            return redirect()->route('pengajar.subject.copy_lm_tp', $target->id)
-                ->with('error', $exception->getMessage());
-        }
-
-        return redirect()->route('pengajar.tujuan_pembelajaran.create', $target->id)
-            ->with('success', $this->copyLmTpSuccessMessage($summary));
+        return view('data.edit_subject', compact('subject', 'classes', 'teachers', 'teacherWaliClassIds', 'teacherTeachingClassIds', 'waliKelasMap', 'mataPelajaranList', 'lmTpCopyCandidates'));
     }
 
     public function updateLingkupMateri(Request $request, $id)
@@ -525,7 +457,7 @@ class SubjectController extends Controller
         }
     }
 
-    public function update(Request $request, $id)
+    public function update(Request $request, $id, LearningStructureCopyService $copyService)
     {
         try {
             $subject = MataPelajaran::findOrFail($id);
@@ -541,6 +473,8 @@ class SubjectController extends Controller
                 'lingkup_materi.*' => 'required|string|max:255',
                 'delete_ids' => 'nullable|array',
                 'delete_ids.*' => 'integer|exists:lingkup_materis,id',
+                'copy_lm_tp' => 'nullable|boolean',
+                'copy_lm_tp_source_id' => 'nullable|integer',
             ]);
 
             // Ambil data kelas dan guru
@@ -567,6 +501,24 @@ class SubjectController extends Controller
             if ($exists) {
                 return back()->withErrors([
                     'mata_pelajaran' => 'Mata pelajaran dengan nama yang sama sudah ada di kelas ini untuk semester yang sama.',
+                ])->withInput();
+            }
+
+            try {
+                $copySource = $this->resolveInlineCopySource(
+                    $copyService,
+                    $validated['mata_pelajaran'],
+                    (int) $validated['kelas'],
+                    (int) $tahunAjaranId,
+                    (int) $validated['semester'],
+                    null,
+                    (int) $subject->id,
+                    (int) $request->input('copy_lm_tp_source_id', 0),
+                    $request->boolean('copy_lm_tp')
+                );
+            } catch (InvalidArgumentException $exception) {
+                return back()->withErrors([
+                    'copy_lm_tp_source_id' => $exception->getMessage(),
                 ])->withInput();
             }
 
@@ -623,12 +575,29 @@ class SubjectController extends Controller
                 }
             }
 
+            $copySummary = null;
+            if ($copySource) {
+                $copySummary = $this->copyInlineLearningStructure(
+                    $copyService,
+                    (int) $copySource->id,
+                    $subject->fresh(['kelas', 'lingkupMateris.tujuanPembelajarans'])
+                );
+            }
+
             DB::commit();
 
-            return redirect()->route('subject.index')->with('success', 'Mata Pelajaran berhasil diperbarui!');
+            $copyMessage = $copySummary ? $this->aggregateCopyLmTpMessage([$copySummary]) : '';
+
+            return redirect()->route('subject.index')->with('success', trim("Mata Pelajaran berhasil diperbarui! {$copyMessage}"));
 
         } catch (ValidationException $e) {
             throw $e;
+        } catch (InvalidArgumentException $e) {
+            if (DB::transactionLevel() > 0) {
+                DB::rollBack();
+            }
+
+            return back()->with('error', $e->getMessage())->withInput();
         } catch (\Exception $e) {
             if (DB::transactionLevel() > 0) {
                 DB::rollBack();
@@ -652,39 +621,6 @@ class SubjectController extends Controller
         return redirect()->route('subject.index')->with('success', 'Mata Pelajaran berhasil dihapus!');
     }
 
-    private function adminCopyTarget(int $id): MataPelajaran
-    {
-        $tahunAjaranId = session('tahun_ajaran_id');
-
-        if (! $tahunAjaranId) {
-            abort(422, 'Tahun ajaran belum aktif. Aktifkan tahun ajaran terlebih dahulu sebelum menyalin LM/TP.');
-        }
-
-        $semester = $this->copySemesterContext((int) $tahunAjaranId);
-
-        return MataPelajaran::with(['kelas', 'lingkupMateris.tujuanPembelajarans'])
-            ->where('tahun_ajaran_id', $tahunAjaranId)
-            ->where('semester', $semester)
-            ->findOrFail($id);
-    }
-
-    private function teacherCopyTarget(int $id, int $guruId): MataPelajaran
-    {
-        $tahunAjaranId = session('tahun_ajaran_id');
-
-        if (! $tahunAjaranId) {
-            abort(422, 'Tahun ajaran belum aktif. Aktifkan tahun ajaran terlebih dahulu sebelum menyalin LM/TP.');
-        }
-
-        $semester = $this->copySemesterContext((int) $tahunAjaranId);
-
-        return MataPelajaran::with(['kelas', 'lingkupMateris.tujuanPembelajarans'])
-            ->where('guru_id', $guruId)
-            ->where('tahun_ajaran_id', $tahunAjaranId)
-            ->where('semester', $semester)
-            ->findOrFail($id);
-    }
-
     private function copySemesterContext(int $tahunAjaranId): int
     {
         return (int) (session('selected_semester')
@@ -692,24 +628,113 @@ class SubjectController extends Controller
             ?: 1);
     }
 
-    private function copyLmTpSuccessMessage(array $summary): string
+    private function inlineCopyRequested(array $subjectData): bool
     {
-        if (($summary['copied_lm_count'] ?? 0) === 0 && ($summary['copied_tp_count'] ?? 0) === 0) {
-            return 'Tidak ada LM/TP baru yang disalin karena kelas tujuan sudah memiliki data yang sama.';
+        return filter_var($subjectData['copy_lm_tp'] ?? false, FILTER_VALIDATE_BOOLEAN);
+    }
+
+    private function resolveInlineCopySource(
+        LearningStructureCopyService $copyService,
+        string $subjectName,
+        int $kelasId,
+        int $tahunAjaranId,
+        int $semester,
+        ?Guru $guru,
+        ?int $excludeSubjectId,
+        int $sourceId,
+        bool $requested
+    ): ?MataPelajaran {
+        if (! $requested) {
+            return null;
         }
 
-        $message = sprintf(
-            '%d Lingkup Materi dan %d Tujuan Pembelajaran berhasil disalin.',
-            (int) ($summary['copied_lm_count'] ?? 0),
-            (int) ($summary['copied_tp_count'] ?? 0)
-        );
+        if (! $sourceId) {
+            throw new InvalidArgumentException('Sumber LM/TP tidak valid atau tidak dapat digunakan. Silakan pilih sumber yang tersedia.');
+        }
 
-        $skipped = (int) ($summary['skipped_lm_count'] ?? 0) + (int) ($summary['skipped_tp_count'] ?? 0);
+        $source = $copyService->sourceCandidatesForContext(
+            $subjectName,
+            $kelasId,
+            $tahunAjaranId,
+            $semester,
+            $guru,
+            $excludeSubjectId
+        )->firstWhere('id', $sourceId);
+
+        if (! $source) {
+            throw new InvalidArgumentException('Sumber LM/TP tidak valid atau tidak dapat digunakan. Silakan pilih sumber yang tersedia.');
+        }
+
+        return $source;
+    }
+
+    private function copyInlineLearningStructure(
+        LearningStructureCopyService $copyService,
+        int $sourceId,
+        MataPelajaran $target,
+        ?Guru $guru = null
+    ): array {
+        $source = $copyService->sourceCandidates($target, $guru)->firstWhere('id', $sourceId);
+
+        if (! $source) {
+            throw new InvalidArgumentException('Sumber LM/TP tidak valid atau tidak dapat digunakan. Silakan pilih sumber yang tersedia.');
+        }
+
+        return $copyService->copy($source, $target);
+    }
+
+    private function aggregateCopyLmTpMessage(array $summaries): string
+    {
+        $summaries = collect($summaries)->filter();
+
+        if ($summaries->isEmpty()) {
+            return '';
+        }
+
+        $copiedLm = $summaries->sum(fn ($summary) => (int) ($summary['copied_lm_count'] ?? 0));
+        $copiedTp = $summaries->sum(fn ($summary) => (int) ($summary['copied_tp_count'] ?? 0));
+        $skipped = $summaries->sum(fn ($summary) => (int) ($summary['skipped_lm_count'] ?? 0) + (int) ($summary['skipped_tp_count'] ?? 0));
+
+        if ($copiedLm === 0 && $copiedTp === 0) {
+            return 'Tidak ada LM/TP baru yang disalin karena data tujuan sudah lengkap.';
+        }
+
+        $message = sprintf('%d Lingkup Materi dan %d Tujuan Pembelajaran berhasil disalin.', $copiedLm, $copiedTp);
+
         if ($skipped > 0) {
-            $message .= sprintf(' %d data dilewati karena sudah ada di kelas tujuan.', $skipped);
+            $message .= ' Beberapa LM/TP dilewati karena sudah ada.';
         }
 
         return $message;
+    }
+
+    private function learningCopyCandidatePayload($candidates): array
+    {
+        return collect($candidates)
+            ->map(function (MataPelajaran $candidate) {
+                $candidate->loadMissing(['kelas', 'lingkupMateris.tujuanPembelajarans']);
+
+                return [
+                    'id' => (int) $candidate->id,
+                    'subject' => $candidate->nama_pelajaran,
+                    'subject_key' => mb_strtolower(trim(preg_replace('/\s+/u', ' ', (string) $candidate->nama_pelajaran) ?? ''), 'UTF-8'),
+                    'kelas_id' => (int) $candidate->kelas_id,
+                    'kelas_nomor' => (int) ($candidate->kelas?->nomor_kelas ?? 0),
+                    'kelas_nama' => (string) ($candidate->kelas?->nama_kelas ?? ''),
+                    'semester' => (int) $candidate->semester,
+                    'tahun_ajaran_id' => (int) $candidate->tahun_ajaran_id,
+                    'label' => sprintf(
+                        'Kelas %s %s - %s',
+                        $candidate->kelas?->nomor_kelas,
+                        $candidate->kelas?->nama_kelas,
+                        $candidate->nama_pelajaran
+                    ),
+                    'lm_count' => $candidate->lingkupMateris->count(),
+                    'tp_count' => $candidate->lingkupMateris->sum(fn ($lm) => $lm->tujuanPembelajarans->count()),
+                ];
+            })
+            ->values()
+            ->all();
     }
 
     public function teacherIndex()
@@ -733,7 +758,7 @@ class SubjectController extends Controller
         return view('pengajar.subject', compact('subjects'));
     }
 
-    public function teacherCreate()
+    public function teacherCreate(LearningStructureCopyService $copyService)
     {
         // Ambil ID guru yang sedang login
         $guruId = Auth::guard('guru')->id();
@@ -776,11 +801,15 @@ class SubjectController extends Controller
         $classes = $classesQuery->orderBy('nomor_kelas')
             ->orderBy('nama_kelas')
             ->get();
+        $semester = $tahunAjaranId ? $this->copySemesterContext((int) $tahunAjaranId) : null;
+        $lmTpCopyCandidates = $tahunAjaranId && $semester
+            ? $this->learningCopyCandidatePayload($copyService->copyableSourceCandidates((int) $tahunAjaranId, (int) $semester, $guru))
+            : [];
 
-        return view('pengajar.add_subject', compact('classes'));
+        return view('pengajar.add_subject', compact('classes', 'lmTpCopyCandidates'));
     }
 
-    public function teacherStore(Request $request)
+    public function teacherStore(Request $request, LearningStructureCopyService $copyService)
     {
         $guru = auth()->guard('guru')->user();
 
@@ -794,10 +823,14 @@ class SubjectController extends Controller
                 'subjects.*.teaching_type' => 'nullable|in:regular,muatan_lokal,specialist',
                 'subjects.*.lingkup_materi' => 'required|array',
                 'subjects.*.lingkup_materi.*' => 'required|string|max:255',
+                'subjects.*.copy_lm_tp' => 'nullable|boolean',
+                'subjects.*.copy_lm_tp_source_id' => 'nullable|integer',
             ]);
 
             $errorBag = new MessageBag;
             $seenSubjects = [];
+            $copySourceIds = [];
+            $tahunAjaranId = session('tahun_ajaran_id');
 
             foreach ($request->subjects as $index => $subjectData) {
                 $kelasId = $subjectData['kelas'];
@@ -845,6 +878,26 @@ class SubjectController extends Controller
 
                     continue;
                 }
+
+                try {
+                    $copySource = $this->resolveInlineCopySource(
+                        $copyService,
+                        $subjectData['mata_pelajaran'],
+                        (int) $kelasId,
+                        (int) $tahunAjaranId,
+                        (int) $subjectData['semester'],
+                        $guru,
+                        null,
+                        (int) ($subjectData['copy_lm_tp_source_id'] ?? 0),
+                        $this->inlineCopyRequested($subjectData)
+                    );
+
+                    if ($copySource) {
+                        $copySourceIds[$index] = $copySource->id;
+                    }
+                } catch (InvalidArgumentException $exception) {
+                    $errorBag->add("subjects.$index.copy_lm_tp_source_id", $exception->getMessage());
+                }
             }
 
             if ($errorBag->any()) {
@@ -855,8 +908,9 @@ class SubjectController extends Controller
 
             DB::beginTransaction();
             $successCount = 0;
+            $copySummaries = [];
 
-            foreach ($request->subjects as $subjectData) {
+            foreach ($request->subjects as $index => $subjectData) {
                 $kelasId = $subjectData['kelas'];
                 $flags = $this->subjectFlags($subjectData);
 
@@ -878,15 +932,34 @@ class SubjectController extends Controller
                     ]);
                 }
 
+                if (isset($copySourceIds[$index])) {
+                    $copySummaries[] = $this->copyInlineLearningStructure(
+                        $copyService,
+                        (int) $copySourceIds[$index],
+                        $mataPelajaran,
+                        $guru
+                    );
+                }
+
                 $successCount++;
             }
 
             DB::commit();
 
+            $copyMessage = $this->aggregateCopyLmTpMessage($copySummaries);
+
             return redirect()->route('pengajar.subject.index')
-                ->with('success', "Berhasil menambahkan {$successCount} mata pelajaran!");
+                ->with('success', trim("Berhasil menambahkan {$successCount} mata pelajaran! {$copyMessage}"));
         } catch (ValidationException $e) {
             throw $e;
+        } catch (InvalidArgumentException $e) {
+            if (DB::transactionLevel() > 0) {
+                DB::rollBack();
+            }
+
+            return redirect()->back()
+                ->with('error', $e->getMessage())
+                ->withInput();
         } catch (\Exception $e) {
             if (DB::transactionLevel() > 0) {
                 DB::rollBack();
@@ -903,7 +976,7 @@ class SubjectController extends Controller
         }
     }
 
-    public function teacherEdit($id)
+    public function teacherEdit($id, LearningStructureCopyService $copyService)
     {
         // Ambil data mata pelajaran yang akan diedit
         $subject = MataPelajaran::with('lingkupMateris')->findOrFail($id);
@@ -954,11 +1027,21 @@ class SubjectController extends Controller
         $classes = $classesQuery->orderBy('nomor_kelas')
             ->orderBy('nama_kelas')
             ->get();
+        $lmTpCopyCandidates = $this->learningCopyCandidatePayload(
+            $copyService->sourceCandidatesForContext(
+                $subject->nama_pelajaran,
+                (int) $subject->kelas_id,
+                (int) $tahunAjaranId,
+                (int) $subject->semester,
+                $guru,
+                (int) $subject->id
+            )
+        );
 
-        return view('pengajar.edit_subject', compact('subject', 'classes', 'disableKelasDropdown'));
+        return view('pengajar.edit_subject', compact('subject', 'classes', 'disableKelasDropdown', 'lmTpCopyCandidates'));
     }
 
-    public function teacherUpdate(Request $request, $id)
+    public function teacherUpdate(Request $request, $id, LearningStructureCopyService $copyService)
     {
         $guru = auth()->guard('guru')->user();
         $subject = MataPelajaran::where('guru_id', $guru->id)
@@ -973,6 +1056,8 @@ class SubjectController extends Controller
             'lingkup_materi.*' => 'required|string|max:255',
             'delete_ids' => 'nullable|array',
             'delete_ids.*' => 'integer|exists:lingkup_materis,id',
+            'copy_lm_tp' => 'nullable|boolean',
+            'copy_lm_tp_source_id' => 'nullable|integer',
         ]);
 
         $kelasId = $validated['kelas'];
@@ -1006,6 +1091,24 @@ class SubjectController extends Controller
         $assignmentErrors = $this->validateSubjectAssignment($guru, $kelas, $flags);
         if (! empty($assignmentErrors)) {
             return back()->withErrors($assignmentErrors)->withInput();
+        }
+
+        try {
+            $copySource = $this->resolveInlineCopySource(
+                $copyService,
+                $validated['mata_pelajaran'],
+                (int) $validated['kelas'],
+                (int) $subject->tahun_ajaran_id,
+                (int) $validated['semester'],
+                $guru,
+                (int) $subject->id,
+                (int) $request->input('copy_lm_tp_source_id', 0),
+                $request->boolean('copy_lm_tp')
+            );
+        } catch (InvalidArgumentException $exception) {
+            return back()->withErrors([
+                'copy_lm_tp_source_id' => $exception->getMessage(),
+            ])->withInput();
         }
 
         try {
@@ -1060,12 +1163,30 @@ class SubjectController extends Controller
                 ]);
             }
 
+            $copySummary = null;
+            if ($copySource) {
+                $copySummary = $this->copyInlineLearningStructure(
+                    $copyService,
+                    (int) $copySource->id,
+                    $subject->fresh(['kelas', 'lingkupMateris.tujuanPembelajarans']),
+                    $guru
+                );
+            }
+
             DB::commit();
 
+            $copyMessage = $copySummary ? $this->aggregateCopyLmTpMessage([$copySummary]) : '';
+
             return redirect()->route('pengajar.subject.index')
-                ->with('success', 'Mata Pelajaran berhasil diperbarui!');
+                ->with('success', trim("Mata Pelajaran berhasil diperbarui! {$copyMessage}"));
         } catch (ValidationException $e) {
             throw $e;
+        } catch (InvalidArgumentException $e) {
+            if (DB::transactionLevel() > 0) {
+                DB::rollBack();
+            }
+
+            return back()->with('error', $e->getMessage())->withInput();
         } catch (\Exception $e) {
             if (DB::transactionLevel() > 0) {
                 DB::rollBack();

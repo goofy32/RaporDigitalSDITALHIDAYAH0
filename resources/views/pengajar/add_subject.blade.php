@@ -64,7 +64,15 @@
         @endif
 
         <!-- Form -->
-        <form id="addSubjectForm" action="{{ route('pengajar.subject.store') }}" method="POST" data-turbo="false" @submit="handleSubmit" x-data="formProtection" class="space-y-6" data-needs-protection>
+        <form id="addSubjectForm"
+              action="{{ route('pengajar.subject.store') }}"
+              method="POST"
+              data-turbo="false"
+              @submit="handleSubmit"
+              x-data="formProtection"
+              class="space-y-6"
+              data-needs-protection
+              data-learning-copy-candidates='{!! e(json_encode($lmTpCopyCandidates ?? [])) !!}'>
             @csrf
 
             <input type="hidden" name="tahun_ajaran_id" value="{{ session('tahun_ajaran_id') }}">
@@ -159,11 +167,11 @@
                             @else
                                 @foreach($classes as $class)
                                     @if($isGuruWali && $kelasWaliId == $class->id)
-                                        <option value="{{ $class->id }}" data-is-wali-kelas="true">
+                                        <option value="{{ $class->id }}" data-class-number="{{ $class->nomor_kelas }}" data-is-wali-kelas="true">
                                             {{ $class->label_kelas }} (Wali Kelas)
                                         </option>
                                     @else
-                                        <option value="{{ $class->id }}">
+                                        <option value="{{ $class->id }}" data-class-number="{{ $class->nomor_kelas }}">
                                             {{ $class->label_kelas }}
                                         </option>
                                     @endif
@@ -205,6 +213,14 @@
                                 </button>
                             </div>
                         </div>
+
+                        @if(!empty($lmTpCopyCandidates ?? []))
+                            @include('shared.lm_tp_inline_copy_option', [
+                                'fieldPrefix' => 'subjects[0]',
+                                'checkboxId' => 'copy_lm_tp_0',
+                                'sourceId' => 'copy_lm_tp_source_id_0',
+                            ])
+                        @endif
                     </div>
                 </div>
             </div>

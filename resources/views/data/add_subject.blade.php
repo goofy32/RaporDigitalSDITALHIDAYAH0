@@ -61,6 +61,7 @@
               data-current-semester="{{ App\Models\TahunAjaran::find(session('tahun_ajaran_id'))->semester }}"
               data-wali-kelas-map='{!! e($waliKelasMap) !!}'
               data-mapel-data='{!! e($mataPelajaranList->toJson()) !!}'
+              data-learning-copy-candidates='{!! e(json_encode($lmTpCopyCandidates ?? [])) !!}'
               data-old-subjects='{!! e(json_encode(old("subjects", []))) !!}'>
             @csrf
 
@@ -124,7 +125,7 @@
                             onchange="updateGuruOptions(this.closest('.subject-entry'))">
                             <option value="">Pilih Kelas</option>
                             @foreach($classes as $class)
-                            <option value="{{ $class->id }}" data-has-wali="{{ $class->hasWaliKelas() ? 'true' : 'false' }}" data-wali-id="{{ $class->getWaliKelasId() }}" {{ old('subjects.0.kelas') == $class->id ? 'selected' : '' }}>
+                            <option value="{{ $class->id }}" data-class-number="{{ $class->nomor_kelas }}" data-has-wali="{{ $class->hasWaliKelas() ? 'true' : 'false' }}" data-wali-id="{{ $class->getWaliKelasId() }}" {{ old('subjects.0.kelas') == $class->id ? 'selected' : '' }}>
                                 {{ $class->label_kelas }}
                                 {{ $class->hasWaliKelas() ? '(Ada Wali Kelas)' : '(Belum Ada Wali Kelas)' }}
                             </option>
@@ -189,6 +190,14 @@
                                 <p class="mt-1 text-sm text-red-500">{{ $message }}</p>
                             @enderror
                         </div>
+
+                        @if(!empty($lmTpCopyCandidates ?? []))
+                            @include('shared.lm_tp_inline_copy_option', [
+                                'fieldPrefix' => 'subjects[0]',
+                                'checkboxId' => 'copy_lm_tp_0',
+                                'sourceId' => 'copy_lm_tp_source_id_0',
+                            ])
+                        @endif
                     </div>
                 </div>
             </div>

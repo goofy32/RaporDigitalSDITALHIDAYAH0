@@ -10,6 +10,7 @@ use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
 
@@ -49,10 +50,34 @@ class LearningStructureCopyPembelajaranTest extends TestCase
         $this->seedFixture();
     }
 
-    public function test_admin_can_preview_and_copy_lm_tp_between_same_subject_parallel_classes(): void
+    public function test_admin_create_subject_shows_inline_copy_checkbox_when_safe_parallel_source_exists(): void
     {
         $sourceSubjectId = $this->insertSubject('Matematika', $this->budi->id, $this->kelas1UbayId);
-        $targetSubjectId = $this->insertSubject('Matematika', $this->budi->id, $this->kelas1ZaidId);
+        $this->insertLmWithTp($sourceSubjectId, 'Bilangan Cacah', [
+            ['TP 1', 'Mengenal bilangan sampai 20'],
+        ]);
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->get(route('subject.create'))
+            ->assertOk()
+            ->assertSeeText('Salin LM dan TP dari mata pelajaran yang sama di kelas paralel')
+            ->assertSeeText('Yang disalin hanya Lingkup Materi dan Tujuan Pembelajaran.')
+            ->assertSee('Kelas 1 Ubay - Matematika', false);
+    }
+
+    public function test_admin_create_subject_hides_inline_copy_checkbox_when_no_source_exists(): void
+    {
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->get(route('subject.create'))
+            ->assertOk()
+            ->assertDontSeeText('Salin LM dan TP dari mata pelajaran yang sama di kelas paralel');
+    }
+
+    public function test_admin_create_subject_with_inline_checkbox_copies_lm_tp_after_save(): void
+    {
+        $sourceSubjectId = $this->insertSubject('Matematika', $this->budi->id, $this->kelas1UbayId);
         $this->insertLmWithTp($sourceSubjectId, 'Bilangan Cacah', [
             ['TP 1', 'Mengenal bilangan sampai 20'],
             ['TP 2', 'Membandingkan bilangan sampai 20'],
@@ -64,91 +89,39 @@ class LearningStructureCopyPembelajaranTest extends TestCase
 
         $this->actingAs($this->admin, 'web')
             ->withSession($this->adminSession())
-            ->get(route('subject.copy_lm_tp', [
-                'id' => $targetSubjectId,
-                'source_id' => $sourceSubjectId,
-            ]))
-            ->assertOk()
-            ->assertSeeText('Preview Salin LM/TP')
-            ->assertSeeText('Bilangan Cacah')
-            ->assertSeeText('Pengukuran')
-            ->assertSeeText('Nilai, rapor, absensi, dan catatan siswa tidak ikut disalin.');
-
-        $this->assertSame(0, $this->lmCountForSubject($targetSubjectId), 'Preview must not mutate target LM data.');
-        $this->assertSame(1, DB::table('nilais')->count(), 'Preview must not touch Nilai rows.');
-
-        $this->actingAs($this->admin, 'web')
-            ->withSession($this->adminSession())
-            ->post(route('subject.copy_lm_tp.apply', $targetSubjectId), [
-                'source_id' => $sourceSubjectId,
+            ->post(route('subject.store'), [
+                'subjects' => [
+                    [
+                        'mata_pelajaran' => 'Matematika',
+                        'kelas' => $this->kelas1ZaidId,
+                        'guru_pengampu' => $this->budi->id,
+                        'semester' => 1,
+                        'teaching_type' => 'specialist',
+                        'lingkup_materi' => ['Bilangan Cacah'],
+                        'copy_lm_tp' => '1',
+                        'copy_lm_tp_source_id' => $sourceSubjectId,
+                    ],
+                ],
             ])
-            ->assertRedirect(route('tujuan_pembelajaran.create', $targetSubjectId))
-            ->assertSessionHas('success', '2 Lingkup Materi dan 3 Tujuan Pembelajaran berhasil disalin.');
+            ->assertRedirect(route('subject.index'))
+            ->assertSessionHas('success');
+
+        $targetSubjectId = $this->subjectId('Matematika', $this->kelas1ZaidId);
 
         $this->assertSame(2, $this->lmCountForSubject($targetSubjectId));
         $this->assertSame(3, $this->tpCountForSubject($targetSubjectId));
-        $this->assertSame(1, DB::table('nilais')->count(), 'Copy must not copy or mutate Nilai rows.');
         $this->assertDatabaseHas('lingkup_materis', [
             'mata_pelajaran_id' => $targetSubjectId,
-            'judul_lingkup_materi' => 'Bilangan Cacah',
+            'judul_lingkup_materi' => 'Pengukuran',
         ]);
         $this->assertDatabaseHas('tujuan_pembelajarans', [
             'deskripsi_tp' => 'Membandingkan bilangan sampai 20',
         ]);
-
-        $target = MataPelajaran::with('lingkupMateris.tujuanPembelajarans')->findOrFail($targetSubjectId);
-        $this->assertSame([], $target->scoreTemplateReadinessMessages());
+        $this->assertSame(1, DB::table('nilais')->count(), 'Copy must not duplicate or mutate Nilai rows.');
+        $this->assertFalse(DB::table('nilais')->where('mata_pelajaran_id', $targetSubjectId)->exists());
     }
 
-    public function test_pengajar_can_copy_only_between_authorized_assigned_classes(): void
-    {
-        $sourceSubjectId = $this->insertSubject('Matematika', $this->budi->id, $this->kelas1UbayId);
-        $targetSubjectId = $this->insertSubject('Matematika', $this->budi->id, $this->kelas1ZaidId);
-        $otherTeacherSubjectId = $this->insertSubject('Matematika', $this->ani->id, $this->kelas1ZaidId);
-        $this->insertLmWithTp($sourceSubjectId, 'Bilangan', [
-            ['TP 1', 'Menjelaskan bilangan'],
-        ]);
-        $this->insertLmWithTp($otherTeacherSubjectId, 'Geometri', [
-            ['TP 1', 'Mengenal bangun datar'],
-        ]);
-
-        $this->actingAs($this->budi, 'guru')
-            ->withSession($this->pengajarSession())
-            ->get(route('pengajar.subject.copy_lm_tp', [
-                'id' => $targetSubjectId,
-                'source_id' => $sourceSubjectId,
-            ]))
-            ->assertOk()
-            ->assertSeeText('Preview Salin LM/TP')
-            ->assertSeeText('Bilangan');
-
-        $this->actingAs($this->budi, 'guru')
-            ->withSession($this->pengajarSession())
-            ->post(route('pengajar.subject.copy_lm_tp.apply', $targetSubjectId), [
-                'source_id' => $sourceSubjectId,
-            ])
-            ->assertRedirect(route('pengajar.tujuan_pembelajaran.create', $targetSubjectId))
-            ->assertSessionHas('success', '1 Lingkup Materi dan 1 Tujuan Pembelajaran berhasil disalin.');
-
-        $this->assertSame(1, $this->lmCountForSubject($targetSubjectId));
-
-        $this->actingAs($this->budi, 'guru')
-            ->withSession($this->pengajarSession())
-            ->post(route('pengajar.subject.copy_lm_tp.apply', $targetSubjectId), [
-                'source_id' => $otherTeacherSubjectId,
-            ])
-            ->assertRedirect(route('pengajar.subject.copy_lm_tp', $targetSubjectId))
-            ->assertSessionHas('error', 'Anda tidak memiliki akses untuk menyalin LM/TP dari pembelajaran tersebut.');
-
-        $this->assertSame(1, $this->lmCountForSubject($targetSubjectId));
-
-        $this->actingAs($this->budi, 'guru')
-            ->withSession($this->pengajarSession())
-            ->get(route('pengajar.subject.copy_lm_tp', $otherTeacherSubjectId))
-            ->assertNotFound();
-    }
-
-    public function test_copy_skips_duplicates_without_overwriting_target_lm_tp(): void
+    public function test_admin_edit_subject_with_inline_checkbox_copies_only_missing_lm_tp(): void
     {
         $sourceSubjectId = $this->insertSubject('Matematika', $this->budi->id, $this->kelas1UbayId);
         $targetSubjectId = $this->insertSubject('Matematika', $this->budi->id, $this->kelas1ZaidId);
@@ -159,27 +132,31 @@ class LearningStructureCopyPembelajaranTest extends TestCase
         $this->insertLmWithTp($sourceSubjectId, 'Pengukuran', [
             ['TP 1', 'Mengenal panjang'],
         ]);
-        $this->insertLmWithTp($targetSubjectId, '  bilangan  ', [
+        $this->insertLmWithTp($targetSubjectId, 'Bilangan', [
             ['TP 1', 'Deskripsi target tetap dipertahankan'],
         ]);
 
         $this->actingAs($this->admin, 'web')
             ->withSession($this->adminSession())
-            ->get(route('subject.copy_lm_tp', [
-                'id' => $targetSubjectId,
-                'source_id' => $sourceSubjectId,
-            ]))
+            ->get(route('subject.edit', $targetSubjectId))
             ->assertOk()
-            ->assertSeeText('Sudah ada, tidak dibuat ulang')
-            ->assertSeeText('dilewati karena sudah ada');
+            ->assertSeeText('Salin LM dan TP dari mata pelajaran yang sama di kelas paralel')
+            ->assertSee('Kelas 1 Ubay - Matematika', false);
 
         $this->actingAs($this->admin, 'web')
             ->withSession($this->adminSession())
-            ->post(route('subject.copy_lm_tp.apply', $targetSubjectId), [
-                'source_id' => $sourceSubjectId,
+            ->put(route('subject.update', $targetSubjectId), [
+                'mata_pelajaran' => 'Matematika',
+                'kelas' => $this->kelas1ZaidId,
+                'guru_pengampu' => $this->budi->id,
+                'semester' => 1,
+                'teaching_type' => 'specialist',
+                'lingkup_materi' => ['Bilangan'],
+                'copy_lm_tp' => '1',
+                'copy_lm_tp_source_id' => $sourceSubjectId,
             ])
-            ->assertRedirect(route('tujuan_pembelajaran.create', $targetSubjectId))
-            ->assertSessionHas('success', '1 Lingkup Materi dan 2 Tujuan Pembelajaran berhasil disalin. 2 data dilewati karena sudah ada di kelas tujuan.');
+            ->assertRedirect(route('subject.index'))
+            ->assertSessionHas('success');
 
         $this->assertSame(2, $this->lmCountForSubject($targetSubjectId));
         $this->assertSame(3, $this->tpCountForSubject($targetSubjectId));
@@ -189,62 +166,133 @@ class LearningStructureCopyPembelajaranTest extends TestCase
         ]);
         $this->assertFalse(
             $this->targetSubjectHasTpDescription($targetSubjectId, 'Mengenal bilangan sumber'),
-            'Duplicate TP from source should not be copied into the target subject.'
+            'Duplicate TP from source should not overwrite or duplicate existing target TP.'
         );
+        $this->assertTrue($this->targetSubjectHasTpDescription($targetSubjectId, 'Membandingkan bilangan'));
+    }
+
+    public function test_pengajar_edit_subject_shows_and_applies_inline_copy_only_for_authorized_parallel_source(): void
+    {
+        $sourceSubjectId = $this->insertSubject('Matematika', $this->budi->id, $this->kelas1UbayId);
+        $targetSubjectId = $this->insertSubject('Matematika', $this->budi->id, $this->kelas1ZaidId);
+        $this->insertLmWithTp($sourceSubjectId, 'Bilangan', [
+            ['TP 1', 'Menjelaskan bilangan'],
+        ]);
+        $this->insertLmWithTp($targetSubjectId, 'Bilangan', []);
+
+        $this->actingAs($this->budi, 'guru')
+            ->withSession($this->pengajarSession())
+            ->get(route('pengajar.subject.edit', $targetSubjectId))
+            ->assertOk()
+            ->assertSeeText('Salin LM dan TP dari mata pelajaran yang sama di kelas paralel')
+            ->assertSee('Kelas 1 Ubay - Matematika', false);
+
+        $this->actingAs($this->budi, 'guru')
+            ->withSession($this->pengajarSession())
+            ->put(route('pengajar.subject.update', $targetSubjectId), [
+                'mata_pelajaran' => 'Matematika',
+                'kelas' => $this->kelas1ZaidId,
+                'semester' => 1,
+                'teaching_type' => 'specialist',
+                'lingkup_materi' => ['Bilangan'],
+                'copy_lm_tp' => '1',
+                'copy_lm_tp_source_id' => $sourceSubjectId,
+            ])
+            ->assertRedirect(route('pengajar.subject.index'))
+            ->assertSessionHas('success');
+
+        $this->assertSame(1, $this->lmCountForSubject($targetSubjectId));
+        $this->assertSame(1, $this->tpCountForSubject($targetSubjectId));
+    }
+
+    public function test_pengajar_cannot_copy_from_another_teacher_subject(): void
+    {
+        $targetSubjectId = $this->insertSubject('Matematika', $this->budi->id, $this->kelas1ZaidId);
+        $otherTeacherSourceId = $this->insertSubject('Matematika', $this->ani->id, $this->kelas1UbayId);
+        $this->insertLmWithTp($targetSubjectId, 'Target', []);
+        $this->insertLmWithTp($otherTeacherSourceId, 'Geometri', [
+            ['TP 1', 'Mengenal bangun datar'],
+        ]);
+
+        $this->actingAs($this->budi, 'guru')
+            ->withSession($this->pengajarSession())
+            ->from(route('pengajar.subject.edit', $targetSubjectId))
+            ->put(route('pengajar.subject.update', $targetSubjectId), [
+                'mata_pelajaran' => 'Matematika',
+                'kelas' => $this->kelas1ZaidId,
+                'semester' => 1,
+                'teaching_type' => 'specialist',
+                'lingkup_materi' => ['Target'],
+                'copy_lm_tp' => '1',
+                'copy_lm_tp_source_id' => $otherTeacherSourceId,
+            ])
+            ->assertRedirect(route('pengajar.subject.edit', $targetSubjectId))
+            ->assertSessionHasErrors(['copy_lm_tp_source_id']);
+
+        $this->assertSame(1, $this->lmCountForSubject($targetSubjectId));
+        $this->assertSame(0, $this->tpCountForSubject($targetSubjectId));
     }
 
     public function test_copy_is_blocked_for_different_subject_year_semester_or_grade_contexts(): void
     {
         $targetSubjectId = $this->insertSubject('Matematika', $this->budi->id, $this->kelas1ZaidId);
-        $inactiveSemesterTargetId = $this->insertSubject('Matematika', $this->budi->id, $this->kelas1ZaidId, 2);
-        $differentSubjectId = $this->insertSubject('Bahasa Indonesia', $this->budi->id, $this->kelas1UbayId);
-        $differentSemesterId = $this->insertSubject('Matematika', $this->budi->id, $this->kelas1UbayId, 2);
-        $differentGradeId = $this->insertSubject('Matematika', $this->budi->id, $this->kelas2UbayId);
+        $this->insertLmWithTp($targetSubjectId, 'Target', []);
+
         $differentYearClassId = $this->insertClass(1, 'Ubay', $this->oldYearId);
-        $differentYearId = $this->insertSubject('Matematika', $this->budi->id, $differentYearClassId, 1, $this->oldYearId);
+        $blockedSourceIds = [
+            $this->insertSubjectWithStructure('Bahasa Indonesia', $this->kelas1UbayId, 1, $this->yearId),
+            $this->insertSubjectWithStructure('Matematika', $this->kelas1UbayId, 2, $this->yearId),
+            $this->insertSubjectWithStructure('Matematika', $this->kelas2UbayId, 1, $this->yearId),
+            $this->insertSubjectWithStructure('Matematika', $differentYearClassId, 1, $this->oldYearId),
+        ];
 
-        $this->actingAs($this->admin, 'web')
-            ->withSession($this->adminSession())
-            ->get(route('subject.copy_lm_tp', $inactiveSemesterTargetId))
-            ->assertNotFound();
-
-        foreach ([$differentSubjectId, $differentSemesterId, $differentGradeId, $differentYearId] as $sourceSubjectId) {
-            $this->insertLmWithTp($sourceSubjectId, 'Materi Sumber', [
-                ['TP 1', 'Tidak boleh tersalin'],
-            ]);
-
+        foreach ($blockedSourceIds as $sourceSubjectId) {
             $this->actingAs($this->admin, 'web')
                 ->withSession($this->adminSession())
-                ->post(route('subject.copy_lm_tp.apply', $targetSubjectId), [
-                    'source_id' => $sourceSubjectId,
+                ->from(route('subject.edit', $targetSubjectId))
+                ->put(route('subject.update', $targetSubjectId), [
+                    'mata_pelajaran' => 'Matematika',
+                    'kelas' => $this->kelas1ZaidId,
+                    'guru_pengampu' => $this->budi->id,
+                    'semester' => 1,
+                    'teaching_type' => 'specialist',
+                    'lingkup_materi' => ['Target'],
+                    'copy_lm_tp' => '1',
+                    'copy_lm_tp_source_id' => $sourceSubjectId,
                 ])
-                ->assertRedirect(route('subject.copy_lm_tp', $targetSubjectId))
-                ->assertSessionHas('error');
+                ->assertRedirect(route('subject.edit', $targetSubjectId))
+                ->assertSessionHasErrors(['copy_lm_tp_source_id']);
 
-            $this->assertSame(0, $this->lmCountForSubject($targetSubjectId));
+            $this->assertSame(1, $this->lmCountForSubject($targetSubjectId));
+            $this->assertSame(0, $this->tpCountForSubject($targetSubjectId));
         }
     }
 
-    public function test_copy_actions_are_visible_in_admin_and_pengajar_subject_pages(): void
+    public function test_old_separate_copy_buttons_and_routes_are_not_exposed(): void
     {
         $subjectId = $this->insertSubject('Matematika', $this->budi->id, $this->kelas1UbayId);
         $this->insertLmWithTp($subjectId, 'Bilangan', [
             ['TP 1', 'Mengenal bilangan'],
         ]);
 
+        $this->assertFalse(Route::has('subject.copy_lm_tp'));
+        $this->assertFalse(Route::has('subject.copy_lm_tp.apply'));
+        $this->assertFalse(Route::has('pengajar.subject.copy_lm_tp'));
+        $this->assertFalse(Route::has('pengajar.subject.copy_lm_tp.apply'));
+
         $this->actingAs($this->admin, 'web')
             ->withSession($this->adminSession())
             ->get(route('subject.index'))
             ->assertOk()
-            ->assertSee('Salin')
-            ->assertSee(route('subject.copy_lm_tp', $subjectId), false);
+            ->assertDontSee('copy-lm-tp', false)
+            ->assertDontSeeText('Salin LM/TP');
 
         $this->actingAs($this->budi, 'guru')
             ->withSession($this->pengajarSession())
             ->get(route('pengajar.subject.index'))
             ->assertOk()
-            ->assertSee('Salin')
-            ->assertSee(route('pengajar.subject.copy_lm_tp', $subjectId), false);
+            ->assertDontSee('copy-lm-tp', false)
+            ->assertDontSeeText('Salin LM/TP');
     }
 
     /**
@@ -325,6 +373,8 @@ class LearningStructureCopyPembelajaranTest extends TestCase
             $table->string('email')->nullable()->unique();
             $table->string('username')->nullable()->unique();
             $table->string('password');
+            $table->string('jabatan')->nullable();
+            $table->string('status')->nullable();
             $table->boolean('must_change_password')->default(false);
             $table->timestamps();
             $table->softDeletes();
@@ -478,12 +528,16 @@ class LearningStructureCopyPembelajaranTest extends TestCase
             'email' => 'budi@example.test',
             'username' => 'budi',
             'password' => Hash::make('password'),
+            'jabatan' => 'guru',
+            'status' => 'aktif',
         ]);
         $this->ani = Guru::create([
             'nama' => 'Ani Pengajar',
             'email' => 'ani@example.test',
             'username' => 'ani',
             'password' => Hash::make('password'),
+            'jabatan' => 'guru',
+            'status' => 'aktif',
         ]);
 
         DB::table('guru_kelas')->insert([
@@ -491,6 +545,7 @@ class LearningStructureCopyPembelajaranTest extends TestCase
             $this->pivot($this->budi->id, $this->kelas1ZaidId),
             $this->pivot($this->budi->id, $this->kelas2UbayId),
             $this->pivot($this->ani->id, $this->kelas1ZaidId),
+            $this->pivot($this->ani->id, $this->kelas1UbayId),
         ]);
 
         DB::table('profil_sekolah')->insert([
@@ -532,11 +587,21 @@ class LearningStructureCopyPembelajaranTest extends TestCase
             'guru_id' => $guruId,
             'semester' => $semester,
             'is_muatan_lokal' => false,
-            'allow_non_wali' => false,
+            'allow_non_wali' => true,
             'tahun_ajaran_id' => $yearId ?? $this->yearId,
             'created_at' => now(),
             'updated_at' => now(),
         ]);
+    }
+
+    private function insertSubjectWithStructure(string $name, int $classId, int $semester, int $yearId): int
+    {
+        $subjectId = $this->insertSubject($name, $this->budi->id, $classId, $semester, $yearId);
+        $this->insertLmWithTp($subjectId, 'Materi Sumber', [
+            ['TP 1', 'Tidak boleh tersalin'],
+        ]);
+
+        return $subjectId;
     }
 
     /**
@@ -584,6 +649,15 @@ class LearningStructureCopyPembelajaranTest extends TestCase
             'created_at' => now(),
             'updated_at' => now(),
         ]);
+    }
+
+    private function subjectId(string $subjectName, int $classId): int
+    {
+        return (int) DB::table('mata_pelajarans')
+            ->where('nama_pelajaran', $subjectName)
+            ->where('kelas_id', $classId)
+            ->whereNull('deleted_at')
+            ->value('id');
     }
 
     private function lmCountForSubject(int $subjectId): int

@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Guru;
+use App\Models\Kelas;
 use App\Models\LingkupMateri;
 use App\Models\MataPelajaran;
 use App\Models\TujuanPembelajaran;
@@ -12,6 +13,52 @@ use InvalidArgumentException;
 
 class LearningStructureCopyService
 {
+    public function copyableSourceCandidates(int $tahunAjaranId, int $semester, ?Guru $guru = null): Collection
+    {
+        return MataPelajaran::with(['kelas', 'lingkupMateris.tujuanPembelajarans'])
+            ->where('tahun_ajaran_id', $tahunAjaranId)
+            ->where('semester', $semester)
+            ->whereHas('kelas')
+            ->whereHas('lingkupMateris.tujuanPembelajarans')
+            ->when($guru, fn ($query) => $query->where('guru_id', $guru->id))
+            ->get()
+            ->filter(fn (MataPelajaran $candidate) => $candidate->kelas && $candidate->scoreTemplateReadinessMessages() === [])
+            ->sortBy(fn (MataPelajaran $candidate) => sprintf(
+                '%06d|%s|%s|%010d',
+                (int) ($candidate->kelas?->nomor_kelas ?? 999999),
+                $this->normalize((string) ($candidate->kelas?->nama_kelas ?? '')),
+                $this->normalize($candidate->nama_pelajaran),
+                (int) $candidate->id
+            ))
+            ->values();
+    }
+
+    public function sourceCandidatesForContext(
+        string $subjectName,
+        int $kelasId,
+        int $tahunAjaranId,
+        int $semester,
+        ?Guru $guru = null,
+        ?int $excludeSubjectId = null
+    ): Collection {
+        $targetClass = Kelas::where('id', $kelasId)
+            ->where('tahun_ajaran_id', $tahunAjaranId)
+            ->first();
+
+        if (! $targetClass || trim($subjectName) === '') {
+            return collect();
+        }
+
+        return $this->copyableSourceCandidates($tahunAjaranId, $semester, $guru)
+            ->reject(fn (MataPelajaran $candidate) => $excludeSubjectId && (int) $candidate->id === (int) $excludeSubjectId)
+            ->filter(function (MataPelajaran $candidate) use ($subjectName, $targetClass) {
+                return (int) $candidate->kelas_id !== (int) $targetClass->id
+                    && (int) $candidate->kelas?->nomor_kelas === (int) $targetClass->nomor_kelas
+                    && $this->normalize($candidate->nama_pelajaran) === $this->normalize($subjectName);
+            })
+            ->values();
+    }
+
     public function sourceCandidates(MataPelajaran $target, ?Guru $guru = null): Collection
     {
         $target->loadMissing('kelas');
@@ -26,9 +73,10 @@ class LearningStructureCopyService
             ->where('semester', $target->semester)
             ->where('nama_pelajaran', $target->nama_pelajaran)
             ->whereHas('kelas', fn ($query) => $query->where('nomor_kelas', $target->kelas->nomor_kelas))
+            ->whereHas('lingkupMateris.tujuanPembelajarans')
             ->when($guru, fn ($query) => $query->where('guru_id', $guru->id))
             ->get()
-            ->filter(fn (MataPelajaran $candidate) => $this->isSameCopyContext($candidate, $target))
+            ->filter(fn (MataPelajaran $candidate) => $candidate->scoreTemplateReadinessMessages() === [] && $this->isSameCopyContext($candidate, $target))
             ->sortBy(fn (MataPelajaran $candidate) => sprintf(
                 '%06d|%s|%s|%010d',
                 (int) ($candidate->kelas?->nomor_kelas ?? 999999),

@@ -3,6 +3,7 @@ import {
     initializeSubjectEntry,
     markSubjectFormChanged,
     markSubjectFormSubmitting,
+    refreshLearningCopyOption,
     setSubjectPageReady,
 } from '../features/subject-form';
 
@@ -187,6 +188,7 @@ function updateFormState() {
         mode: form.dataset.subjectMode || undefined,
         resetSelection: false,
     });
+    refreshLearningCopyOption(form);
 }
 
 function registerEditSubjectGlobals() {
@@ -265,9 +267,10 @@ function bindEditSubjectPage() {
 
     document.getElementById('mata_pelajaran')?.addEventListener('input', () => {
         validateMataPelajaran();
+        refreshLearningCopyOption(form);
         markSubjectFormChanged();
     });
-    bindChangeListener(document.getElementById('semester'), validateMataPelajaran);
+    bindChangeListener(document.getElementById('semester'), () => { validateMataPelajaran(); refreshLearningCopyOption(form); });
     bindChangeListener(document.getElementById('kelas'), () => { validateMataPelajaran(); updateFormState(); });
     bindChangeListener(document.getElementById('is_muatan_lokal'), () => handleCheckboxChange(document.getElementById('is_muatan_lokal')));
     bindChangeListener(document.getElementById('allow_non_wali'), () => handleCheckboxChange(document.getElementById('allow_non_wali')));
@@ -284,6 +287,7 @@ function bindEditSubjectPage() {
     });
     validateMataPelajaran();
     updateFormState();
+    refreshLearningCopyOption(form);
     syncPendingDeleteInputs();
     setSubjectPageReady(pageRoot, form);
     form.addEventListener('submit', event => {

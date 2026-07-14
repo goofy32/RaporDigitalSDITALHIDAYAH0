@@ -4,6 +4,7 @@ import {
     markPengajarSubjectChanged,
     syncPengajarCheckboxes,
 } from '../features/pengajar-subject-form';
+import { refreshLearningCopyOption } from '../features/subject-form';
 
 var subjectCount = 1;
 
@@ -28,6 +29,7 @@ function updateKelasSelection(subjectEntry) {
     }
 
     markPengajarSubjectChanged();
+    refreshLearningCopyOption(subjectEntry);
 }
 
 function fixSubjectNumbering() {
@@ -101,6 +103,7 @@ function addSubjectEntry() {
 
     updateEntryStyles();
     updateKelasSelection(template);
+    refreshLearningCopyOption(template);
 }
 
 function removeSubjectEntry(button) {
@@ -147,6 +150,24 @@ function validateForm() {
     return formValid;
 }
 
+function bindLearningCopyRefresh(pageRoot) {
+    const form = pageRoot.querySelector('form');
+    if (!form || form.dataset.learningCopyBound === 'true') return;
+
+    form.dataset.learningCopyBound = 'true';
+    form.addEventListener('input', event => {
+        if (!event.target.matches('input[name$="[mata_pelajaran]"]')) return;
+
+        refreshLearningCopyOption(event.target.closest('.subject-entry'));
+    });
+
+    form.addEventListener('change', event => {
+        if (!event.target.matches('.kelas-select, select[name$="[semester]"], input[name$="[semester]"]')) return;
+
+        refreshLearningCopyOption(event.target.closest('.subject-entry'));
+    });
+}
+
 export function initPengajarAddSubjectPage() {
     var pageRoot = getPageRoot();
     if (!pageRoot) return;
@@ -162,7 +183,11 @@ export function initPengajarAddSubjectPage() {
     window.removeLingkupMateri = removeLingkupMateri;
     window.validateForm = validateForm;
 
-    document.querySelectorAll('.subject-entry').forEach(entry => updateKelasSelection(entry));
+    bindLearningCopyRefresh(pageRoot);
+    document.querySelectorAll('.subject-entry').forEach(entry => {
+        updateKelasSelection(entry);
+        refreshLearningCopyOption(entry);
+    });
     document.querySelector('.subject-entry .remove-btn')?.classList.add('hidden');
     updateEntryStyles();
     subjectCount = document.querySelectorAll('.subject-entry').length;

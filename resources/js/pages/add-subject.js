@@ -2,6 +2,7 @@ import {
     getSubjectFormConfig,
     initializeSubjectEntry,
     markSubjectFormChanged,
+    refreshLearningCopyOption,
     setSubjectPageReady,
 } from '../features/subject-form';
 
@@ -121,6 +122,7 @@ function addSubjectEntry() {
     });
 
     initializeSubjectEntry(template, { mode: 'default', resetSelection: true });
+    refreshLearningCopyOption(template);
     updateEntryStyles();
     markSubjectFormChanged();
 }
@@ -258,6 +260,7 @@ function populateSubjectEntry(entry, index, subjectData) {
         mode: teachingType === 'muatan_lokal' ? 'muatan_lokal' : (teachingType === 'specialist' ? 'guru_mapel' : 'default'),
         resetSelection: false,
     });
+    refreshLearningCopyOption(entry);
 }
 
 function hydrateOldSubjects(form) {
@@ -293,6 +296,20 @@ function registerAddSubjectGlobals() {
     window.handleCheckboxChange = handleCheckboxChange;
     window.handleTeachingTypeChange = handleTeachingTypeChange;
     window.updateGuruOptions = updateGuruOptions;
+}
+
+function bindLearningCopyRefresh(form) {
+    form.addEventListener('input', event => {
+        if (!event.target.matches('input[name$="[mata_pelajaran]"]')) return;
+
+        refreshLearningCopyOption(event.target.closest('.subject-entry'));
+    });
+
+    form.addEventListener('change', event => {
+        if (!event.target.matches('.kelas-select, select[name$="[semester]"], input[name$="[semester]"]')) return;
+
+        refreshLearningCopyOption(event.target.closest('.subject-entry'));
+    });
 }
 
 function validateForm() {
@@ -382,12 +399,16 @@ export function initAddSubjectPage() {
     subjectCount = 1;
     registerAddSubjectGlobals();
     form.dataset.subjectFormBound = 'true';
+    bindLearningCopyRefresh(form);
     form.addEventListener('submit', event => {
         if (!validateForm()) event.preventDefault();
     });
 
     hydrateOldSubjects(form);
-    document.querySelectorAll('.subject-entry').forEach(entry => initializeSubjectEntry(entry, { resetSelection: false }));
+    document.querySelectorAll('.subject-entry').forEach(entry => {
+        initializeSubjectEntry(entry, { resetSelection: false });
+        refreshLearningCopyOption(entry);
+    });
     updateEntryStyles();
     setSubjectPageReady(pageRoot, form);
 }

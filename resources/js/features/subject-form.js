@@ -12,11 +12,136 @@ function parseJsonDataset(element, key, fallback = []) {
 }
 
 export function getSubjectFormConfig(form) {
+    const pageRoot = form?.closest?.('[data-page]');
+
     return {
         currentSemester: parseInt(form?.dataset.currentSemester || '1'),
         mapelData: parseJsonDataset(form, 'mapelData'),
         waliKelasMap: parseJsonDataset(form, 'waliKelasMap', {}),
+        learningCopyCandidates: parseJsonDataset(form, 'learningCopyCandidates', parseJsonDataset(pageRoot, 'learningCopyCandidates')),
     };
+}
+
+function normalizeSubjectName(value) {
+    return String(value ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function fieldValue(container, selectors) {
+    for (const selector of selectors) {
+        const field = container.querySelector(selector);
+        if (field) return field.value;
+    }
+
+    return '';
+}
+
+function classState(container) {
+    const classField = container.querySelector('.kelas-select, select[name$="[kelas]"], select[name="kelas"], input[name="kelas"]');
+    const selectedOption = classField?.tagName === 'SELECT' ? classField.options[classField.selectedIndex] : null;
+    const kelasId = parseInt(classField?.value || '');
+    const classNumber = parseInt(selectedOption?.dataset?.classNumber || classField?.dataset?.classNumber || '');
+
+    return {
+        kelasId,
+        classNumber,
+    };
+}
+
+function currentSubjectId(container, form) {
+    return parseInt(container?.dataset?.subjectId || form?.dataset?.subjectId || '');
+}
+
+export function matchingLearningCopyCandidates(container) {
+    const form = container?.closest('form') || container;
+    const { learningCopyCandidates } = getSubjectFormConfig(form);
+    const subjectName = normalizeSubjectName(fieldValue(container, [
+        'input[name$="[mata_pelajaran]"]',
+        'input[name="mata_pelajaran"]',
+        '#mata_pelajaran',
+    ]));
+    const semester = parseInt(fieldValue(container, [
+        'select[name$="[semester]"]',
+        'input[name$="[semester]"]',
+        'select[name="semester"]',
+        'input[name="semester"]',
+        '#semester',
+    ]));
+    const { kelasId, classNumber } = classState(container);
+    const excludedSubjectId = currentSubjectId(container, form);
+
+    if (!subjectName || !Number.isInteger(kelasId) || !Number.isInteger(classNumber) || !Number.isInteger(semester)) {
+        return [];
+    }
+
+    return learningCopyCandidates.filter(candidate => {
+        return candidate.subject_key === subjectName
+            && parseInt(candidate.semester) === semester
+            && parseInt(candidate.kelas_nomor) === classNumber
+            && parseInt(candidate.kelas_id) !== kelasId
+            && parseInt(candidate.id) !== excludedSubjectId;
+    });
+}
+
+export function refreshLearningCopyOption(container) {
+    if (!container) return;
+
+    const wrapper = container.querySelector('[data-lm-tp-copy-option]');
+    if (!wrapper) return;
+
+    const checkbox = wrapper.querySelector('[data-lm-tp-copy-checkbox]');
+    const sourceSelect = wrapper.querySelector('[data-lm-tp-copy-source]');
+    const sourceWrap = wrapper.querySelector('[data-lm-tp-copy-source-wrap]');
+    const sourceLabel = wrapper.querySelector('[data-lm-tp-copy-source-label]');
+    const candidates = matchingLearningCopyCandidates(container);
+    const previousValue = sourceSelect?.value || wrapper.dataset.initialSourceId || '';
+    const shouldCheck = wrapper.dataset.initialChecked === 'true';
+
+    if (sourceSelect) {
+        sourceSelect.innerHTML = '<option value="">Pilih sumber LM/TP</option>';
+        candidates.forEach(candidate => {
+            const option = document.createElement('option');
+            option.value = String(candidate.id);
+            option.textContent = `${candidate.label} (${candidate.lm_count} LM, ${candidate.tp_count} TP)`;
+            sourceSelect.appendChild(option);
+        });
+    }
+
+    if (candidates.length === 0) {
+        wrapper.classList.add('hidden');
+        if (checkbox) {
+            checkbox.checked = false;
+            checkbox.disabled = true;
+        }
+        if (sourceSelect) {
+            sourceSelect.value = '';
+            sourceSelect.disabled = true;
+        }
+        return;
+    }
+
+    wrapper.classList.remove('hidden');
+    if (checkbox) checkbox.disabled = false;
+    if (sourceSelect) {
+        sourceSelect.disabled = false;
+        const candidateIds = candidates.map(candidate => String(candidate.id));
+        sourceSelect.value = candidateIds.includes(String(previousValue)) ? String(previousValue) : String(candidates[0].id);
+    }
+
+    if (candidates.length === 1) {
+        sourceWrap?.classList.add('hidden');
+        if (sourceLabel) {
+            sourceLabel.textContent = `Sumber: ${candidates[0].label}`;
+            sourceLabel.classList.remove('hidden');
+        }
+    } else {
+        sourceWrap?.classList.remove('hidden');
+        sourceLabel?.classList.add('hidden');
+    }
+
+    if (checkbox && shouldCheck) {
+        checkbox.checked = true;
+        wrapper.dataset.initialChecked = 'false';
+    }
 }
 
 export function markSubjectFormChanged() {

@@ -60,7 +60,8 @@
               data-subject-id="{{ $subject->id }}"
               data-current-semester="{{ App\Models\TahunAjaran::find(session('tahun_ajaran_id'))->semester }}"
               data-wali-kelas-map='{!! e($waliKelasMap) !!}'
-              data-mapel-data='{!! e($mataPelajaranList->toJson()) !!}'>
+              data-mapel-data='{!! e($mataPelajaranList->toJson()) !!}'
+              data-learning-copy-candidates='{!! e(json_encode($lmTpCopyCandidates ?? [])) !!}'>
             @csrf
             @method('PUT')
 
@@ -111,6 +112,7 @@
                     <option value="">Pilih Kelas</option>
                     @foreach($classes as $class)
                     <option value="{{ $class->id }}" 
+                        data-class-number="{{ $class->nomor_kelas }}"
                         data-has-wali="{{ $class->hasWaliKelas() ? 'true' : 'false' }}" 
                         data-wali-id="{{ $class->getWaliKelasId() }}"
                         {{ old('kelas', $subject->kelas_id) == $class->id ? 'selected' : '' }}>
@@ -193,6 +195,13 @@
                 @error('lingkup_materi')
                     <p class="mt-1 text-sm text-red-500">{{ $message }}</p>
                 @enderror
+
+                @if(!empty($lmTpCopyCandidates ?? []))
+                    @include('shared.lm_tp_inline_copy_option', [
+                        'checkboxId' => 'copy_lm_tp',
+                        'sourceId' => 'copy_lm_tp_source_id',
+                    ])
+                @endif
             </div>
         </form>
     </div>

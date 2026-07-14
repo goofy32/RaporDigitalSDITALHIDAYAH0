@@ -5,6 +5,7 @@ import {
     setPengajarDeleteButtonState,
     syncPengajarCheckboxes,
 } from '../features/pengajar-subject-form';
+import { refreshLearningCopyOption } from '../features/subject-form';
 
 var pendingDeleteIds = [];
 
@@ -87,7 +88,10 @@ function updateKelasSelection() {
     var isWaliKelas = selectedOption?.getAttribute('data-is-wali-kelas') === 'true';
     var isMuatanLokal = isMuatanLokalElement ? isMuatanLokalElement.checked : false;
 
-    if (!config.isGuruWali || !waliInfo || !muatanLokalContainer) return;
+    if (!config.isGuruWali || !waliInfo || !muatanLokalContainer) {
+        refreshLearningCopyOption(getForm());
+        return;
+    }
 
     if (isWaliKelas) {
         waliInfo.style.display = 'block';
@@ -101,6 +105,7 @@ function updateKelasSelection() {
             allowNonWaliElement.disabled = true;
         }
         if (nonMuatanOptions) nonMuatanOptions.style.display = 'none';
+        refreshLearningCopyOption(getForm());
         return;
     }
 
@@ -110,6 +115,7 @@ function updateKelasSelection() {
     if (allowNonWaliElement) allowNonWaliElement.disabled = false;
     if (nonMuatanOptions) nonMuatanOptions.style.display = isMuatanLokal ? 'none' : 'block';
     if (!isMuatanLokal && allowNonWaliElement) allowNonWaliElement.checked = true;
+    refreshLearningCopyOption(getForm());
 }
 
 function checkDuplication() {
@@ -164,6 +170,7 @@ export function initPengajarEditSubjectPage() {
 
     document.getElementById('mata_pelajaran')?.addEventListener('input', function () {
         validateMataPelajaran();
+        refreshLearningCopyOption(form);
         markPengajarSubjectChanged();
     });
     document.getElementById('kelas')?.addEventListener('change', function () {
@@ -212,6 +219,7 @@ export function initPengajarEditSubjectPage() {
     document.querySelector('.p-4.sm\\:ml-64')?.style.setProperty('margin-left', '16rem');
     updateKelasSelection();
     validateMataPelajaran();
+    refreshLearningCopyOption(form);
 
     if (pageRoot.dataset.sessionError && pageRoot.dataset.sessionErrorShown !== 'true' && typeof Swal !== 'undefined') {
         pageRoot.dataset.sessionErrorShown = 'true';
