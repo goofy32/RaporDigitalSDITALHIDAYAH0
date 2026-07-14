@@ -26,6 +26,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
@@ -806,20 +807,13 @@ class ScoreController extends Controller
             abort(422, 'Download Semua Template Siap belum bisa digunakan karena masih ada pembelajaran yang belum lengkap. Lengkapi Tujuan Pembelajaran terlebih dahulu.');
         }
 
-        $mataPelajarans = $listedMataPelajarans
+        $mataPelajarans = $this->orderedPengajarScoreSubjects($listedMataPelajarans
             ->filter(fn (MataPelajaran $mataPelajaran) => (int) $mataPelajaran->semester === (int) $semester)
             ->filter(fn (MataPelajaran $mataPelajaran) => $this->isAuthorizedPengajarSubject(
                 $mataPelajaran,
                 $tahunAjaranId,
                 $semester
-            ))
-            ->sortBy(fn (MataPelajaran $mataPelajaran) => sprintf(
-                '%03d|%s|%s',
-                $mataPelajaran->kelas?->nomor_kelas ?? 999,
-                $mataPelajaran->kelas?->nama_kelas ?? '',
-                $mataPelajaran->nama_pelajaran
-            ))
-            ->values();
+            )));
 
         if ($mataPelajarans->isEmpty()) {
             abort(422, 'Belum ada pembelajaran lengkap yang siap diunduh template nilainya. Pastikan setiap Lingkup Materi memiliki Tujuan Pembelajaran.');
@@ -1081,6 +1075,8 @@ class ScoreController extends Controller
         })
         ->get();
 
+        $kelasData = $this->orderedPengajarScoreKelasData($kelasData);
+
         $kelasData->each(function ($kelas) {
             $kelas->mataPelajarans->each(function ($mapel) {
                 $hasLm = $mapel->lingkupMateris->isNotEmpty();
@@ -1101,6 +1097,60 @@ class ScoreController extends Controller
         });
         
         return view('pengajar.score', ['kelasData' => $kelasData]);
+    }
+
+    private function orderedPengajarScoreKelasData(Collection $kelasData): Collection
+    {
+        return $kelasData
+            ->sortBy(fn (Kelas $kelas) => $this->pengajarScoreClassOrderKey($kelas))
+            ->values()
+            ->map(function (Kelas $kelas) {
+                $kelas->setRelation(
+                    'mataPelajarans',
+                    $this->orderedPengajarScoreSubjects($kelas->mataPelajarans)
+                );
+
+                return $kelas;
+            });
+    }
+
+    private function orderedPengajarScoreSubjects(Collection $mataPelajarans): Collection
+    {
+        return $mataPelajarans
+            ->sortBy(fn (MataPelajaran $mataPelajaran) => $this->pengajarScoreSubjectOrderKey($mataPelajaran))
+            ->values();
+    }
+
+    private function pengajarScoreSubjectOrderKey(MataPelajaran $mataPelajaran): string
+    {
+        return implode('|', [
+            $this->pengajarScoreClassOrderKey($mataPelajaran->kelas),
+            Str::lower($this->normalizedOrderText($mataPelajaran->nama_pelajaran)),
+            sprintf('%010d', (int) $mataPelajaran->id),
+        ]);
+    }
+
+    private function pengajarScoreClassOrderKey(?Kelas $kelas): string
+    {
+        if (! $kelas) {
+            return '999999|||0000000000';
+        }
+
+        $nomorKelas = trim((string) $kelas->nomor_kelas);
+        $nomorKey = ctype_digit($nomorKelas)
+            ? sprintf('%06d', (int) $nomorKelas)
+            : '999999'.$this->normalizedOrderText($nomorKelas);
+
+        return implode('|', [
+            $nomorKey,
+            Str::lower($this->normalizedOrderText($kelas->nama_kelas)),
+            sprintf('%010d', (int) $kelas->id),
+        ]);
+    }
+
+    private function normalizedOrderText(?string $value): string
+    {
+        return trim(preg_replace('/\s+/u', ' ', (string) $value) ?? '');
     }
 
 

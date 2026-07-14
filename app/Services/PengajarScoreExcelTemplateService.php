@@ -244,18 +244,23 @@ class PengajarScoreExcelTemplateService
 
         foreach ($scoreColumns as $index => $column) {
             $columnLetter = $this->columnLetter(count($baseColumns) + $index + 1);
+            $scoreDataRange = "{$columnLetter}".self::DATA_START_ROW.":{$columnLetter}{$lastDataRow}";
+
+            $sheet->getStyle($scoreDataRange)
+                ->getAlignment()
+                ->setHorizontal(Alignment::HORIZONTAL_CENTER);
 
             if (($column['editable'] ?? false) === true) {
-                $sheet->getStyle("{$columnLetter}".self::DATA_START_ROW.":{$columnLetter}{$lastDataRow}")
+                $sheet->getStyle($scoreDataRange)
                     ->getProtection()
                     ->setLocked(Protection::PROTECTION_UNPROTECTED);
-                $sheet->getStyle("{$columnLetter}".self::DATA_START_ROW.":{$columnLetter}{$lastDataRow}")
+                $sheet->getStyle($scoreDataRange)
                     ->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setARGB(self::EDITABLE_FILL);
 
                 continue;
             }
 
-            $sheet->getStyle("{$columnLetter}".self::DATA_START_ROW.":{$columnLetter}{$lastDataRow}")
+            $sheet->getStyle($scoreDataRange)
                 ->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setARGB(self::LOCKED_FILL);
         }
 

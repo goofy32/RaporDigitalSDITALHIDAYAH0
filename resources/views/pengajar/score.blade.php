@@ -46,12 +46,12 @@
                     <button type="button"
                             @click="openTemplateModal = true"
                             class="text-white bg-green-700 hover:bg-green-800 focus:ring-4 focus:ring-green-300 font-medium rounded-lg text-sm px-4 py-2">
-                        Download Template Nilai
+                        Download Template Excel Satu Kelas
                     </button>
                     @if($bulkTemplateReady)
                         <a href="{{ route('pengajar.score.import_templates') }}"
                            class="border border-gray-300 bg-gray-100 text-gray-700 hover:bg-gray-200 focus:ring-4 focus:ring-gray-200 font-medium rounded-lg text-sm px-4 py-2">
-                            Download Semua Template Siap
+                            Download Template Excel Semua Kelas
                         </a>
                         <button type="button"
                                 @click="openBulkUploadModal = true"
@@ -62,7 +62,7 @@
                         <button type="button"
                                 disabled
                                 class="text-white bg-gray-400 font-medium rounded-lg text-sm px-4 py-2 cursor-not-allowed">
-                            Download Semua Template Siap
+                            Download Template Excel Semua Kelas
                         </button>
                         <button type="button"
                                 disabled

@@ -17,6 +17,7 @@ use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
 use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
 use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use PhpOffice\PhpSpreadsheet\Style\Protection;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use Tests\TestCase;
@@ -299,7 +300,7 @@ class PengajarScoreAuthorizationTest extends TestCase
         $secondClassId = $this->insertClass(6, 'B');
         $this->insertStudentForClass($secondClassId, '2001', '2001000', 'Siti Aminah');
         $secondSubjectId = $this->insertSubject('Bahasa Indonesia', $this->budi->id, 1, $secondClassId);
-        $this->insertLearningSetup($secondSubjectId, 'Teks Narasi', '1');
+        $secondSetup = $this->insertLearningSetup($secondSubjectId, 'Teks Narasi', '1');
 
         $response = $this->actingAsPengajar($this->budi)
             ->get(route('pengajar.score.import_templates'));
@@ -337,6 +338,64 @@ class PengajarScoreAuthorizationTest extends TestCase
         $this->assertSame(['No', 'NIS', 'NISN', 'Nama Siswa'], $secondSheet->rangeToArray('B4:E4')[0]);
         $this->assertSame(Protection::PROTECTION_PROTECTED, $secondSheet->getStyle('E6')->getProtection()->getLocked());
         $this->assertSame(Protection::PROTECTION_UNPROTECTED, $secondSheet->getStyle('H6')->getProtection()->getLocked());
+        $this->assertSame(Alignment::HORIZONTAL_CENTER, $secondSheet->getStyle('H6')->getAlignment()->getHorizontal());
+        $this->assertSame(
+            Alignment::HORIZONTAL_CENTER,
+            $secondSheet->getStyle($this->cellAddressByKey($secondSheet, "lm_{$secondSetup['lingkup_materi_id']}", 6))->getAlignment()->getHorizontal()
+        );
+        $this->assertSame(
+            Alignment::HORIZONTAL_CENTER,
+            $secondSheet->getStyle($this->cellAddressByKey($secondSheet, 'nilai_tes', 6))->getAlignment()->getHorizontal()
+        );
+    }
+
+    public function test_multi_sheet_template_order_matches_data_pembelajaran_order_and_preview_order(): void
+    {
+        DB::table('mata_pelajarans')->where('id', $this->wrongSemesterSubjectId)->delete();
+
+        $earlyClassId = $this->insertClass(4, 'C');
+        $this->insertStudentForClass($earlyClassId, '2001', '2001000', 'Siti Aminah');
+        $earlySubjectId = $this->insertSubject('IPA', $this->budi->id, 1, $earlyClassId);
+        $this->insertLearningSetup($earlySubjectId, 'Makhluk Hidup', '1');
+
+        $laterClassId = $this->insertClass(6, 'B');
+        $this->insertStudentForClass($laterClassId, '3001', '3001000', 'Rafi Maulana');
+        $laterSubjectId = $this->insertSubject('Bahasa Indonesia', $this->budi->id, 1, $laterClassId);
+        $this->insertLearningSetup($laterSubjectId, 'Teks Narasi', '1');
+
+        $expectedOptionOrder = [
+            'Kelas 4 C - IPA',
+            'Kelas 5 A - Matematika',
+            'Kelas 6 B - Bahasa Indonesia',
+        ];
+        $expectedSheetOrder = [
+            '4 C - IPA',
+            '5 A - Matematika',
+            '6 B - Bahasa Indonesia',
+        ];
+
+        $page = $this->actingAsPengajar($this->budi)
+            ->get(route('pengajar.score.index'))
+            ->assertOk()
+            ->getContent();
+
+        $this->assertTextAppearsInOrder($expectedOptionOrder, $page);
+
+        $workbook = $this->workbookFromResponse(
+            $this->actingAsPengajar($this->budi)
+                ->get(route('pengajar.score.import_templates'))
+        );
+
+        $this->assertSame($expectedSheetOrder, $this->scoreSheetNames($workbook));
+
+        $response = $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_templates.preview'), [
+                'file' => $this->uploadedWorkbook($workbook),
+            ]);
+        $token = $this->tokenFromPreviewRedirect($response);
+        $state = $this->multiSheetImportState($token);
+
+        $this->assertSame($expectedSheetOrder, collect($state['sheets'])->pluck('sheet_name')->all());
     }
 
     public function test_multi_sheet_score_import_template_rejects_partial_readiness(): void
@@ -627,6 +686,9 @@ class PengajarScoreAuthorizationTest extends TestCase
         $this->assertSame(Protection::PROTECTION_PROTECTED, $sheet->getStyle('A6')->getProtection()->getLocked());
         $this->assertSame(Protection::PROTECTION_PROTECTED, $sheet->getStyle('E6')->getProtection()->getLocked());
         $this->assertSame(Protection::PROTECTION_UNPROTECTED, $sheet->getStyle('H6')->getProtection()->getLocked());
+        $this->assertSame(Alignment::HORIZONTAL_CENTER, $sheet->getStyle('H6')->getAlignment()->getHorizontal());
+        $this->assertSame(Alignment::HORIZONTAL_CENTER, $sheet->getStyle($this->cellAddressByKey($sheet, "lm_{$this->lingkupMateriId}", 6))->getAlignment()->getHorizontal());
+        $this->assertSame(Alignment::HORIZONTAL_CENTER, $sheet->getStyle($this->cellAddressByKey($sheet, 'nilai_non_tes', 6))->getAlignment()->getHorizontal());
         $this->assertSame('FFF3F4F6', $sheet->getStyle('A6')->getFill()->getStartColor()->getARGB());
         $this->assertSame('FFFFF2CC', $sheet->getStyle('H6')->getFill()->getStartColor()->getARGB());
         $this->assertStringContainsString(
@@ -1346,6 +1408,34 @@ class PengajarScoreAuthorizationTest extends TestCase
         }
 
         $sheet->setCellValue(Coordinate::stringFromColumnIndex($columnMap[$key]).$row, $value);
+    }
+
+    private function cellAddressByKey($sheet, string $key, int $row): string
+    {
+        $columnMap = $this->scoreTemplateColumnMap($sheet);
+
+        if (! isset($columnMap[$key])) {
+            $this->fail("Kolom {$key} tidak ditemukan di template.");
+        }
+
+        return Coordinate::stringFromColumnIndex($columnMap[$key]).$row;
+    }
+
+    /**
+     * @param array<int, string> $needles
+     */
+    private function assertTextAppearsInOrder(array $needles, string $haystack): void
+    {
+        $previousPosition = -1;
+
+        foreach ($needles as $needle) {
+            $position = strpos($haystack, $needle);
+
+            $this->assertNotFalse($position, "Expected to find [{$needle}] in response.");
+            $this->assertGreaterThan($previousPosition, $position, "Expected [{$needle}] to appear after the previous item.");
+
+            $previousPosition = $position;
+        }
     }
 
     private function clearTemplateColumnKey($sheet, string $key): void
