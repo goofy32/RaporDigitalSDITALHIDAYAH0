@@ -75,7 +75,7 @@ class LearningStructureCopyPembelajaranTest extends TestCase
             ->assertDontSeeText('Salin LM dan TP dari mata pelajaran yang sama di kelas paralel');
     }
 
-    public function test_admin_create_subject_with_inline_checkbox_copies_lm_tp_after_save(): void
+    public function test_admin_create_subject_with_inline_checkbox_copies_lm_tp_after_save_without_manual_lm(): void
     {
         $sourceSubjectId = $this->insertSubject('Matematika', $this->budi->id, $this->kelas1UbayId);
         $this->insertLmWithTp($sourceSubjectId, 'Bilangan Cacah', [
@@ -97,7 +97,7 @@ class LearningStructureCopyPembelajaranTest extends TestCase
                         'guru_pengampu' => $this->budi->id,
                         'semester' => 1,
                         'teaching_type' => 'specialist',
-                        'lingkup_materi' => ['Bilangan Cacah'],
+                        'lingkup_materi' => [''],
                         'copy_lm_tp' => '1',
                         'copy_lm_tp_source_id' => $sourceSubjectId,
                     ],
@@ -119,6 +119,32 @@ class LearningStructureCopyPembelajaranTest extends TestCase
         ]);
         $this->assertSame(1, DB::table('nilais')->count(), 'Copy must not duplicate or mutate Nilai rows.');
         $this->assertFalse(DB::table('nilais')->where('mata_pelajaran_id', $targetSubjectId)->exists());
+    }
+
+    public function test_admin_cannot_create_subject_with_empty_manual_lm_when_copy_is_not_checked(): void
+    {
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->from(route('subject.create'))
+            ->post(route('subject.store'), [
+                'subjects' => [
+                    [
+                        'mata_pelajaran' => 'Matematika',
+                        'kelas' => $this->kelas1ZaidId,
+                        'guru_pengampu' => $this->budi->id,
+                        'semester' => 1,
+                        'teaching_type' => 'specialist',
+                        'lingkup_materi' => [''],
+                    ],
+                ],
+            ])
+            ->assertRedirect(route('subject.create'))
+            ->assertSessionHasErrors(['subjects.0.lingkup_materi']);
+
+        $this->assertFalse(DB::table('mata_pelajarans')
+            ->where('nama_pelajaran', 'Matematika')
+            ->where('kelas_id', $this->kelas1ZaidId)
+            ->exists());
     }
 
     public function test_admin_edit_subject_with_inline_checkbox_copies_only_missing_lm_tp(): void
@@ -178,7 +204,6 @@ class LearningStructureCopyPembelajaranTest extends TestCase
         $this->insertLmWithTp($sourceSubjectId, 'Bilangan', [
             ['TP 1', 'Menjelaskan bilangan'],
         ]);
-        $this->insertLmWithTp($targetSubjectId, 'Bilangan', []);
 
         $this->actingAs($this->budi, 'guru')
             ->withSession($this->pengajarSession())
@@ -194,7 +219,7 @@ class LearningStructureCopyPembelajaranTest extends TestCase
                 'kelas' => $this->kelas1ZaidId,
                 'semester' => 1,
                 'teaching_type' => 'specialist',
-                'lingkup_materi' => ['Bilangan'],
+                'lingkup_materi' => [''],
                 'copy_lm_tp' => '1',
                 'copy_lm_tp_source_id' => $sourceSubjectId,
             ])
@@ -222,7 +247,7 @@ class LearningStructureCopyPembelajaranTest extends TestCase
                 'kelas' => $this->kelas1ZaidId,
                 'semester' => 1,
                 'teaching_type' => 'specialist',
-                'lingkup_materi' => ['Target'],
+                'lingkup_materi' => [''],
                 'copy_lm_tp' => '1',
                 'copy_lm_tp_source_id' => $otherTeacherSourceId,
             ])

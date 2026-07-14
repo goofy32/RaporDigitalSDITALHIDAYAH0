@@ -31,6 +31,9 @@
             <p class="mt-1 text-xs text-gray-600">
                 Yang disalin hanya Lingkup Materi dan Tujuan Pembelajaran. Nilai, siswa, rapor, absensi, dan catatan tidak ikut disalin.
             </p>
+            <p class="mt-1 text-xs text-gray-600">
+                Jika opsi ini dicentang, kolom Lingkup Materi manual boleh dikosongkan.
+            </p>
 
             <p class="mt-2 hidden text-xs font-medium text-blue-800" data-lm-tp-copy-source-label></p>
 

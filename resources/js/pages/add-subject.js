@@ -150,7 +150,8 @@ function removeSubjectEntry(button) {
 
 function addLingkupMateri(button) {
     const container = button.closest('.lingkup-materi-container');
-    const entryIndex = button.closest('.subject-entry').querySelector('input[type="text"]').name.match(/subjects\[(\d+)\]/)[1];
+    const entry = button.closest('.subject-entry');
+    const entryIndex = entry.querySelector('input[type="text"]').name.match(/subjects\[(\d+)\]/)[1];
     const div = document.createElement('div');
     div.className = 'flex items-center mb-2';
     div.innerHTML = `
@@ -160,11 +161,14 @@ function addLingkupMateri(button) {
             <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
         </button>`;
     container.appendChild(div);
+    refreshLearningCopyOption(entry);
     markSubjectFormChanged();
 }
 
 function removeLingkupMateri(button) {
+    const entry = button.closest('.subject-entry');
     button.parentElement.remove();
+    refreshLearningCopyOption(entry);
     markSubjectFormChanged();
 }
 
@@ -359,17 +363,20 @@ function validateForm() {
             formValid = false;
         }
 
-        let hasEmptyLingkupMateri = false;
-        entry.querySelectorAll(`input[name^="subjects[${index}][lingkup_materi]"]`).forEach(input => {
-            if (!input.value.trim()) {
-                input.classList.add('border-red-500');
-                hasEmptyLingkupMateri = true;
-                formValid = false;
-            }
-        });
+        const copyChecked = entry.querySelector('[data-lm-tp-copy-checkbox]')?.checked;
+        if (!copyChecked) {
+            let hasEmptyLingkupMateri = false;
+            entry.querySelectorAll(`input[name^="subjects[${index}][lingkup_materi]"]`).forEach(input => {
+                if (!input.value.trim()) {
+                    input.classList.add('border-red-500');
+                    hasEmptyLingkupMateri = true;
+                    formValid = false;
+                }
+            });
 
-        if (hasEmptyLingkupMateri) {
-            showContainerError(entry.querySelector('.lingkup-materi-container'), 'Semua lingkup materi harus diisi');
+            if (hasEmptyLingkupMateri) {
+                showContainerError(entry.querySelector('.lingkup-materi-container'), 'Semua lingkup materi harus diisi');
+            }
         }
     });
 

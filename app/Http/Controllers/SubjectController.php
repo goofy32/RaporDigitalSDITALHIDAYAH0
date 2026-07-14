@@ -133,8 +133,8 @@ class SubjectController extends Controller
                 'subjects.*.guru_pengampu' => 'required|exists:gurus,id',
                 'subjects.*.semester' => 'required|integer|min:1|max:2',
                 'subjects.*.teaching_type' => 'nullable|in:regular,muatan_lokal,specialist',
-                'subjects.*.lingkup_materi' => 'required|array',
-                'subjects.*.lingkup_materi.*' => 'required|string|max:255',
+                'subjects.*.lingkup_materi' => 'nullable|array',
+                'subjects.*.lingkup_materi.*' => 'nullable|string|max:255',
                 'subjects.*.copy_lm_tp' => 'nullable|boolean',
                 'subjects.*.copy_lm_tp_source_id' => 'nullable|integer',
             ], [
@@ -148,6 +148,7 @@ class SubjectController extends Controller
             $errorBag = new MessageBag;
             $seenSubjects = [];
             $copySourceIds = [];
+            $manualLingkupMateriByIndex = [];
 
             foreach ($request->subjects as $index => $subjectData) {
                 // Get data for this entry
@@ -211,6 +212,17 @@ class SubjectController extends Controller
                     }
                 } catch (InvalidArgumentException $exception) {
                     $errorBag->add("subjects.$index.copy_lm_tp_source_id", $exception->getMessage());
+
+                    continue;
+                }
+
+                $manualLingkupMateri = $this->manualLingkupMateriInput($subjectData['lingkup_materi'] ?? []);
+                $manualLingkupMateriByIndex[$index] = $manualLingkupMateri;
+
+                if (! $copySource && $manualLingkupMateri === []) {
+                    $errorBag->add("subjects.$index.lingkup_materi", 'Lingkup materi harus diisi jika tidak menyalin LM/TP dari kelas paralel.');
+                } elseif (! $copySource && $this->hasBlankLingkupMateriInput($subjectData['lingkup_materi'] ?? [])) {
+                    $errorBag->add("subjects.$index.lingkup_materi", 'Semua lingkup materi harus diisi.');
                 }
             }
 
@@ -238,7 +250,7 @@ class SubjectController extends Controller
                 ]);
 
                 // Simpan Lingkup Materi
-                foreach ($subjectData['lingkup_materi'] as $judulLingkupMateri) {
+                foreach ($manualLingkupMateriByIndex[$index] ?? [] as $judulLingkupMateri) {
                     LingkupMateri::create([
                         'mata_pelajaran_id' => $mataPelajaran->id,
                         'judul_lingkup_materi' => $judulLingkupMateri,
@@ -469,8 +481,8 @@ class SubjectController extends Controller
                 'guru_pengampu' => 'required|exists:gurus,id',
                 'semester' => 'required|integer|min:1|max:2',
                 'teaching_type' => 'nullable|in:regular,muatan_lokal,specialist',
-                'lingkup_materi' => 'required|array',
-                'lingkup_materi.*' => 'required|string|max:255',
+                'lingkup_materi' => 'nullable|array',
+                'lingkup_materi.*' => 'nullable|string|max:255',
                 'delete_ids' => 'nullable|array',
                 'delete_ids.*' => 'integer|exists:lingkup_materis,id',
                 'copy_lm_tp' => 'nullable|boolean',
@@ -522,6 +534,19 @@ class SubjectController extends Controller
                 ])->withInput();
             }
 
+            $manualLingkupMateri = $this->manualLingkupMateriInput($validated['lingkup_materi'] ?? []);
+            if (! $copySource && $manualLingkupMateri === []) {
+                return back()->withErrors([
+                    'lingkup_materi' => 'Lingkup materi harus diisi jika tidak menyalin LM/TP dari kelas paralel.',
+                ])->withInput();
+            }
+
+            if (! $copySource && $this->hasBlankLingkupMateriInput($validated['lingkup_materi'] ?? [])) {
+                return back()->withErrors([
+                    'lingkup_materi' => 'Semua lingkup materi harus diisi.',
+                ])->withInput();
+            }
+
             DB::beginTransaction();
 
             // Update data mata pelajaran
@@ -548,30 +573,32 @@ class SubjectController extends Controller
                     });
             }
 
-            // Dapatkan lingkup materi yang sudah ada
-            $existingLingkupMateriTitles = $subject->lingkupMateris()->pluck('judul_lingkup_materi')->toArray();
-            $newLingkupMateriTitles = $validated['lingkup_materi'];
+            if ($manualLingkupMateri !== [] || ! $copySource) {
+                // Dapatkan lingkup materi yang sudah ada
+                $existingLingkupMateriTitles = $subject->lingkupMateris()->pluck('judul_lingkup_materi')->toArray();
+                $newLingkupMateriTitles = $manualLingkupMateri;
 
-            // Lingkup materi yang akan dihapus (ada di existing tapi tidak ada di input baru)
-            $toBeDeletedTitles = array_diff($existingLingkupMateriTitles, $newLingkupMateriTitles);
+                // Lingkup materi yang akan dihapus (ada di existing tapi tidak ada di input baru)
+                $toBeDeletedTitles = array_diff($existingLingkupMateriTitles, $newLingkupMateriTitles);
 
-            // Hapus lingkup materi yang tidak ada lagi
-            if (! empty($toBeDeletedTitles)) {
-                $subject->lingkupMateris()
-                    ->whereIn('judul_lingkup_materi', $toBeDeletedTitles)
-                    ->get()
-                    ->each(function ($lingkupMateri) {
-                        $lingkupMateri->delete();
-                    });
-            }
+                // Hapus lingkup materi yang tidak ada lagi
+                if (! empty($toBeDeletedTitles)) {
+                    $subject->lingkupMateris()
+                        ->whereIn('judul_lingkup_materi', $toBeDeletedTitles)
+                        ->get()
+                        ->each(function ($lingkupMateri) {
+                            $lingkupMateri->delete();
+                        });
+                }
 
-            // Tambahkan lingkup materi baru yang belum ada
-            foreach ($newLingkupMateriTitles as $judulLingkupMateri) {
-                if (! in_array($judulLingkupMateri, $existingLingkupMateriTitles)) {
-                    LingkupMateri::create([
-                        'mata_pelajaran_id' => $subject->id,
-                        'judul_lingkup_materi' => $judulLingkupMateri,
-                    ]);
+                // Tambahkan lingkup materi baru yang belum ada
+                foreach ($newLingkupMateriTitles as $judulLingkupMateri) {
+                    if (! in_array($judulLingkupMateri, $existingLingkupMateriTitles)) {
+                        LingkupMateri::create([
+                            'mata_pelajaran_id' => $subject->id,
+                            'judul_lingkup_materi' => $judulLingkupMateri,
+                        ]);
+                    }
                 }
             }
 
@@ -631,6 +658,21 @@ class SubjectController extends Controller
     private function inlineCopyRequested(array $subjectData): bool
     {
         return filter_var($subjectData['copy_lm_tp'] ?? false, FILTER_VALIDATE_BOOLEAN);
+    }
+
+    private function manualLingkupMateriInput(mixed $values): array
+    {
+        return collect(is_array($values) ? $values : [])
+            ->map(fn ($value) => trim((string) $value))
+            ->filter(fn ($value) => $value !== '')
+            ->values()
+            ->all();
+    }
+
+    private function hasBlankLingkupMateriInput(mixed $values): bool
+    {
+        return collect(is_array($values) ? $values : [])
+            ->contains(fn ($value) => trim((string) $value) === '');
     }
 
     private function resolveInlineCopySource(
@@ -821,8 +863,8 @@ class SubjectController extends Controller
                 'subjects.*.kelas' => 'required|exists:kelas,id',
                 'subjects.*.semester' => 'required|integer|min:1|max:2',
                 'subjects.*.teaching_type' => 'nullable|in:regular,muatan_lokal,specialist',
-                'subjects.*.lingkup_materi' => 'required|array',
-                'subjects.*.lingkup_materi.*' => 'required|string|max:255',
+                'subjects.*.lingkup_materi' => 'nullable|array',
+                'subjects.*.lingkup_materi.*' => 'nullable|string|max:255',
                 'subjects.*.copy_lm_tp' => 'nullable|boolean',
                 'subjects.*.copy_lm_tp_source_id' => 'nullable|integer',
             ]);
@@ -830,6 +872,7 @@ class SubjectController extends Controller
             $errorBag = new MessageBag;
             $seenSubjects = [];
             $copySourceIds = [];
+            $manualLingkupMateriByIndex = [];
             $tahunAjaranId = session('tahun_ajaran_id');
 
             foreach ($request->subjects as $index => $subjectData) {
@@ -897,6 +940,17 @@ class SubjectController extends Controller
                     }
                 } catch (InvalidArgumentException $exception) {
                     $errorBag->add("subjects.$index.copy_lm_tp_source_id", $exception->getMessage());
+
+                    continue;
+                }
+
+                $manualLingkupMateri = $this->manualLingkupMateriInput($subjectData['lingkup_materi'] ?? []);
+                $manualLingkupMateriByIndex[$index] = $manualLingkupMateri;
+
+                if (! $copySource && $manualLingkupMateri === []) {
+                    $errorBag->add("subjects.$index.lingkup_materi", 'Lingkup materi harus diisi jika tidak menyalin LM/TP dari kelas paralel.');
+                } elseif (! $copySource && $this->hasBlankLingkupMateriInput($subjectData['lingkup_materi'] ?? [])) {
+                    $errorBag->add("subjects.$index.lingkup_materi", 'Semua lingkup materi harus diisi.');
                 }
             }
 
@@ -925,7 +979,7 @@ class SubjectController extends Controller
                 ]);
 
                 // Simpan Lingkup Materi
-                foreach ($subjectData['lingkup_materi'] as $judulLingkupMateri) {
+                foreach ($manualLingkupMateriByIndex[$index] ?? [] as $judulLingkupMateri) {
                     LingkupMateri::create([
                         'mata_pelajaran_id' => $mataPelajaran->id,
                         'judul_lingkup_materi' => $judulLingkupMateri,
@@ -1052,8 +1106,8 @@ class SubjectController extends Controller
             'kelas' => 'required|exists:kelas,id',
             'semester' => 'required|integer|min:1|max:2',
             'teaching_type' => 'nullable|in:regular,muatan_lokal,specialist',
-            'lingkup_materi' => 'required|array',
-            'lingkup_materi.*' => 'required|string|max:255',
+            'lingkup_materi' => 'nullable|array',
+            'lingkup_materi.*' => 'nullable|string|max:255',
             'delete_ids' => 'nullable|array',
             'delete_ids.*' => 'integer|exists:lingkup_materis,id',
             'copy_lm_tp' => 'nullable|boolean',
@@ -1111,6 +1165,19 @@ class SubjectController extends Controller
             ])->withInput();
         }
 
+        $manualLingkupMateri = $this->manualLingkupMateriInput($validated['lingkup_materi'] ?? []);
+        if (! $copySource && $manualLingkupMateri === []) {
+            return back()->withErrors([
+                'lingkup_materi' => 'Lingkup materi harus diisi jika tidak menyalin LM/TP dari kelas paralel.',
+            ])->withInput();
+        }
+
+        if (! $copySource && $this->hasBlankLingkupMateriInput($validated['lingkup_materi'] ?? [])) {
+            return back()->withErrors([
+                'lingkup_materi' => 'Semua lingkup materi harus diisi.',
+            ])->withInput();
+        }
+
         try {
             DB::beginTransaction();
 
@@ -1137,30 +1204,32 @@ class SubjectController extends Controller
                     });
             }
 
-            // Handle lingkup materi updates
-            $existingLingkupMateris = $subject->lingkupMateris()->get();
-            $existingTitles = $existingLingkupMateris->pluck('judul_lingkup_materi')->toArray();
-            $newTitles = $validated['lingkup_materi'];
+            if ($manualLingkupMateri !== [] || ! $copySource) {
+                // Handle lingkup materi updates
+                $existingLingkupMateris = $subject->lingkupMateris()->get();
+                $existingTitles = $existingLingkupMateris->pluck('judul_lingkup_materi')->toArray();
+                $newTitles = $manualLingkupMateri;
 
-            // Process existing entries
-            foreach ($existingLingkupMateris as $existingLM) {
-                $newTitleIndex = array_search($existingLM->judul_lingkup_materi, $newTitles);
+                // Process existing entries
+                foreach ($existingLingkupMateris as $existingLM) {
+                    $newTitleIndex = array_search($existingLM->judul_lingkup_materi, $newTitles);
 
-                if ($newTitleIndex !== false) {
-                    // Keep and remove from new titles list
-                    unset($newTitles[$newTitleIndex]);
-                } else {
-                    // Delete if not in new list
-                    $existingLM->delete();
+                    if ($newTitleIndex !== false) {
+                        // Keep and remove from new titles list
+                        unset($newTitles[$newTitleIndex]);
+                    } else {
+                        // Delete if not in new list
+                        $existingLM->delete();
+                    }
                 }
-            }
 
-            // Add new entries
-            foreach ($newTitles as $newTitle) {
-                LingkupMateri::create([
-                    'mata_pelajaran_id' => $subject->id,
-                    'judul_lingkup_materi' => $newTitle,
-                ]);
+                // Add new entries
+                foreach ($newTitles as $newTitle) {
+                    LingkupMateri::create([
+                        'mata_pelajaran_id' => $subject->id,
+                        'judul_lingkup_materi' => $newTitle,
+                    ]);
+                }
             }
 
             $copySummary = null;

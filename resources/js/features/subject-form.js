@@ -82,11 +82,37 @@ export function matchingLearningCopyCandidates(container) {
     });
 }
 
+function setManualLingkupMateriRequired(container, required) {
+    container.querySelectorAll('input[name*="[lingkup_materi]"], input[name="lingkup_materi[]"]').forEach(input => {
+        input.required = required;
+        input.dataset.copyOptional = required ? 'false' : 'true';
+    });
+}
+
+export function refreshManualLingkupMateriRequirement(container) {
+    if (!container) return;
+
+    const wrapper = container.querySelector('[data-lm-tp-copy-option]');
+    const checkbox = wrapper?.querySelector('[data-lm-tp-copy-checkbox]');
+    const copyIsActive = Boolean(
+        wrapper
+        && !wrapper.classList.contains('hidden')
+        && checkbox
+        && !checkbox.disabled
+        && checkbox.checked
+    );
+
+    setManualLingkupMateriRequired(container, !copyIsActive);
+}
+
 export function refreshLearningCopyOption(container) {
     if (!container) return;
 
     const wrapper = container.querySelector('[data-lm-tp-copy-option]');
-    if (!wrapper) return;
+    if (!wrapper) {
+        refreshManualLingkupMateriRequirement(container);
+        return;
+    }
 
     const checkbox = wrapper.querySelector('[data-lm-tp-copy-checkbox]');
     const sourceSelect = wrapper.querySelector('[data-lm-tp-copy-source]');
@@ -95,6 +121,11 @@ export function refreshLearningCopyOption(container) {
     const candidates = matchingLearningCopyCandidates(container);
     const previousValue = sourceSelect?.value || wrapper.dataset.initialSourceId || '';
     const shouldCheck = wrapper.dataset.initialChecked === 'true';
+
+    if (checkbox && checkbox.dataset.lmTpCopyToggleBound !== 'true') {
+        checkbox.dataset.lmTpCopyToggleBound = 'true';
+        checkbox.addEventListener('change', () => refreshManualLingkupMateriRequirement(container));
+    }
 
     if (sourceSelect) {
         sourceSelect.innerHTML = '<option value="">Pilih sumber LM/TP</option>';
@@ -116,6 +147,7 @@ export function refreshLearningCopyOption(container) {
             sourceSelect.value = '';
             sourceSelect.disabled = true;
         }
+        refreshManualLingkupMateriRequirement(container);
         return;
     }
 
@@ -142,6 +174,8 @@ export function refreshLearningCopyOption(container) {
         checkbox.checked = true;
         wrapper.dataset.initialChecked = 'false';
     }
+
+    refreshManualLingkupMateriRequirement(container);
 }
 
 export function markSubjectFormChanged() {
