@@ -2,6 +2,10 @@
 
 @section('title', 'Preview Upload Semua Nilai Excel')
 
+@push('meta')
+<meta name="turbo-cache-control" content="no-cache">
+@endpush
+
 @section('content')
 <div data-page="pengajar-score-multi-import-preview" class="p-4 bg-white mt-14 rounded-lg">
     @php
@@ -20,6 +24,7 @@
             </p>
         </div>
         <a href="{{ route('pengajar.score.index') }}"
+           data-turbo="false"
            class="inline-flex items-center justify-center rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
             Kembali ke Data Pembelajaran
         </a>
@@ -130,6 +135,7 @@
                 </div>
                 <form action="{{ route('pengajar.score.import_templates.save_sheet', ['token' => $token, 'sheet' => $currentIndex + 1]) }}"
                       method="POST"
+                      data-turbo="false"
                       class="shrink-0">
                     @csrf
                     <button type="submit"

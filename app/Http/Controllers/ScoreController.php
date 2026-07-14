@@ -1686,11 +1686,7 @@ class ScoreController extends Controller
         }
 
         try {
-            $saveRequest = Request::create('/', 'POST', [
-                'scores' => $currentSheet['scores_payload'] ?? [],
-            ]);
-            $saveRequest->setLaravelSession($request->session());
-            $saveRequest->setUserResolver($request->getUserResolver());
+            $saveRequest = $this->multiSheetSaveRequest($request, $currentSheet, (int) $state['tahun_ajaran_id']);
 
             $response = $this->saveScore($saveRequest, (int) $currentSheet['mata_pelajaran_id']);
             $statusCode = method_exists($response, 'getStatusCode') ? $response->getStatusCode() : 500;
@@ -1778,6 +1774,31 @@ class ScoreController extends Controller
         }
 
         return null;
+    }
+
+    private function multiSheetSaveRequest(Request $request, array $sheet, int $tahunAjaranId): Request
+    {
+        $saveRequest = Request::create(
+            $request->fullUrl(),
+            'POST',
+            [
+                '_token' => $request->session()->token(),
+                'tahun_ajaran_id' => $tahunAjaranId,
+                'mata_pelajaran_id' => (int) ($sheet['mata_pelajaran_id'] ?? 0),
+                'scores' => $sheet['scores_payload'] ?? [],
+            ],
+            $request->cookies->all(),
+            [],
+            [
+                'HTTP_ACCEPT' => 'application/json',
+                'HTTP_X_REQUESTED_WITH' => 'XMLHttpRequest',
+            ]
+        );
+
+        $saveRequest->setLaravelSession($request->session());
+        $saveRequest->setUserResolver($request->getUserResolver());
+
+        return $saveRequest;
     }
 
     private function multiSheetImportedValuesPersisted(array $sheet, int $tahunAjaranId): bool

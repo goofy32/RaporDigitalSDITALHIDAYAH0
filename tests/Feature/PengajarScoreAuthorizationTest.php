@@ -902,7 +902,9 @@ class PengajarScoreAuthorizationTest extends TestCase
             ->assertSeeText('Ahmad Fauzan')
             ->assertSeeText('80')
             ->assertSeeText('83')
-            ->assertSeeText('Simpan & Lanjut');
+            ->assertSeeText('Simpan & Lanjut')
+            ->assertSee('name="turbo-cache-control"', false)
+            ->assertSee('data-turbo="false"', false);
 
         $html = $this->actingAsPengajar($this->budi)
             ->get(route('pengajar.score.import_templates.preview_sheet', ['token' => $token]))
@@ -1085,6 +1087,69 @@ class PengajarScoreAuthorizationTest extends TestCase
             ->assertOk()
             ->assertSeeText('Semua sheet berhasil disimpan')
             ->assertSeeText('2 sheet nilai sudah diproses.');
+    }
+
+    public function test_multi_sheet_save_persists_only_current_sheet_when_exiting_before_next_sheet(): void
+    {
+        $second = $this->insertReadySecondSubjectForBudi();
+
+        $this->actingAsPengajar($this->budi)
+            ->postJson(route('pengajar.score.save_scores', $this->subjectId), [
+                'scores' => $this->validScoresPayload(70),
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+        $this->actingAsPengajar($this->budi)
+            ->postJson(route('pengajar.score.save_scores', $second['subject_id']), [
+                'scores' => $this->validScoresPayloadForSpecificSetup(
+                    $second['student_id'],
+                    $second['lingkup_materi_id'],
+                    $second['tujuan_pembelajaran_id'],
+                    71
+                ),
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $workbook = $this->validMultiSheetWorkbook($second);
+        $response = $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_templates.preview'), [
+                'file' => $this->uploadedWorkbook($workbook),
+            ]);
+        $token = $this->tokenFromPreviewRedirect($response);
+
+        $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_templates.save_sheet', ['token' => $token, 'sheet' => 1]))
+            ->assertRedirect(route('pengajar.score.import_templates.preview_sheet', ['token' => $token, 'sheet' => 2]))
+            ->assertSessionHas('success');
+
+        $this->actingAsPengajar($this->budi)
+            ->get(route('pengajar.score.index'))
+            ->assertOk();
+
+        $this->assertPersistedImportedValues($this->subjectId, $this->studentId, $this->lingkupMateriId, $this->tujuanPembelajaranId, 80, 81, 82, 83);
+        $this->assertPersistedImportedValues($second['subject_id'], $second['student_id'], $second['lingkup_materi_id'], $second['tujuan_pembelajaran_id'], 71, 71, 71, 71);
+
+        $this->actingAsPengajar($this->budi)
+            ->get(route('pengajar.score.input_score', $this->subjectId))
+            ->assertOk()
+            ->assertSee('value="80', false)
+            ->assertSee('value="81', false)
+            ->assertSee('value="82', false)
+            ->assertSee('value="83', false);
+
+        $this->actingAsPengajar($this->budi)
+            ->get(route('pengajar.score.input_score', $second['subject_id']))
+            ->assertOk()
+            ->assertSee('value="71', false)
+            ->assertDontSee('value="84', false)
+            ->assertDontSee('value="85', false)
+            ->assertDontSee('value="86', false)
+            ->assertDontSee('value="87', false);
+
+        $stateAfterExit = $this->multiSheetImportState($token);
+        $this->assertTrue((bool) $stateAfterExit['sheets'][0]['saved']);
+        $this->assertEmpty($stateAfterExit['sheets'][1]['saved']);
     }
 
     private function validScoreImportUpload(array $values): UploadedFile
@@ -1345,6 +1410,24 @@ class PengajarScoreAuthorizationTest extends TestCase
                 ],
                 'lm' => [
                     $this->lingkupMateriId => $score,
+                ],
+                'nilai_tes' => $score,
+                'nilai_non_tes' => $score,
+            ],
+        ];
+    }
+
+    private function validScoresPayloadForSpecificSetup(int $studentId, int $lingkupMateriId, int $tujuanPembelajaranId, int $score): array
+    {
+        return [
+            $studentId => [
+                'tp' => [
+                    $lingkupMateriId => [
+                        $tujuanPembelajaranId => $score,
+                    ],
+                ],
+                'lm' => [
+                    $lingkupMateriId => $score,
                 ],
                 'nilai_tes' => $score,
                 'nilai_non_tes' => $score,
