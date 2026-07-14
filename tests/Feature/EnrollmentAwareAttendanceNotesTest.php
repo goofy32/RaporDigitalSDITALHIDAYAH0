@@ -305,6 +305,23 @@ class EnrollmentAwareAttendanceNotesTest extends TestCase
             });
     }
 
+    public function test_wali_student_note_page_renders_header_save_action(): void
+    {
+        $response = $this->actingAsWali($this->ganjilYearId, 1)
+            ->get(route('wali_kelas.catatan.siswa.show', $this->ahmadId));
+
+        $response->assertOk()
+            ->assertSeeText('Catatan Siswa')
+            ->assertSeeText('Simpan Catatan')
+            ->assertSeeText('Maksimal 1000 karakter');
+
+        $content = $response->getContent();
+
+        $this->assertStringContainsString('id="catatanSiswaForm"', $content);
+        $this->assertStringContainsString('form="catatanSiswaForm"', $content);
+        $this->assertSame(1, substr_count($content, 'Simpan Catatan'));
+    }
+
     public function test_wali_can_create_and_update_student_notes_for_enrolled_student(): void
     {
         $this->actingAsWali($this->ganjilYearId, 1)
