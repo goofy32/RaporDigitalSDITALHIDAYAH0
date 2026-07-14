@@ -178,9 +178,10 @@ window.handleActivateToggle = async function (event) {
     const checkbox = event.target.type === 'checkbox' ? event.target : event.target.querySelector('input[type="checkbox"]');
     const form = checkbox.closest('form');
     const isActive = checkbox.checked;
-    const actionWord = isActive ? 'mengaktifkah' : 'menonaktifkan';
+    const originalChecked = !isActive;
+    const actionWord = isActive ? 'mengaktifkan' : 'menonaktifkan';
     if (!confirm(`Apakah Anda yakin ingin ${actionWord} template ini?`)) {
-        checkbox.checked = !checkbox.checked;
+        checkbox.checked = originalChecked;
         return false;
     }
     checkbox.disabled = true;
@@ -190,12 +191,12 @@ window.handleActivateToggle = async function (event) {
             headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content }
         });
         const result = await response.json();
-        result.success ? window.location.reload() : (alert(result.message || `Gagal ${actionWord} template`), checkbox.disabled = false, checkbox.checked = !checkbox.checked);
+        result.success ? window.location.reload() : (alert(result.message || `Gagal ${actionWord} template`), checkbox.disabled = false, checkbox.checked = originalChecked);
     } catch (error) {
         console.error('Error:', error);
         alert(`Terjadi kesalahan saat ${actionWord} template`);
         checkbox.disabled = false;
-        checkbox.checked = !checkbox.checked;
+        checkbox.checked = originalChecked;
     }
     return false;
 };

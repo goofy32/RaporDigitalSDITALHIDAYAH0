@@ -19,6 +19,7 @@ use App\Services\PengajarScoreExcelMultiSheetPreviewService;
 use App\Services\PengajarScoreExcelPreviewService;
 use App\Services\PengajarScoreExcelTemplateService;
 use App\Services\ReportPdfAutoPrepareService;
+use App\Services\ReportPeriodService;
 use App\Services\SiswaKelasSemesterResolver;
 use DomainException;
 use Illuminate\Support\Facades\DB;
@@ -134,8 +135,10 @@ class ScoreController extends Controller
 
         $cacheStartedAt = microtime(true);
 
+        $reportTypes = app(ReportPeriodService::class)->filterOpenedTypes(['UTS', 'UAS'], null, $tahunAjaranId);
+
         foreach ($students as $siswa) {
-            foreach (['UTS', 'UAS'] as $type) {
+            foreach ($reportTypes as $type) {
                 PdfCacheService::removeCachedPdf($siswa, $type, $tahunAjaranId);
                 PdfCacheService::removeCachedDocx($siswa, $type, $tahunAjaranId);
             }
@@ -154,7 +157,7 @@ class ScoreController extends Controller
                 $jobsScheduled += $autoPrepare->scheduleForStudent(
                     $siswa,
                     $tahunAjaranId,
-                    ['UTS', 'UAS'],
+                    $reportTypes,
                     'pdf_cache_invalidated'
                 );
             }

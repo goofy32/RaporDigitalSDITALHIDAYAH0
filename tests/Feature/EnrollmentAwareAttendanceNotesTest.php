@@ -198,6 +198,7 @@ class EnrollmentAwareAttendanceNotesTest extends TestCase
                 && abs($job->delay->getTimestamp() - now()->addSeconds(10)->getTimestamp()) <= 2;
         });
         Queue::assertNotPushed(AutoPreparePdfReportJob::class, fn (AutoPreparePdfReportJob $job) => $job->siswaId === $this->sitiId);
+        Queue::assertNotPushed(AutoPreparePdfReportJob::class, fn (AutoPreparePdfReportJob $job) => $job->type === 'UAS');
     }
 
     public function test_attendance_student_from_another_class_is_rejected(): void
@@ -366,6 +367,28 @@ class EnrollmentAwareAttendanceNotesTest extends TestCase
 
         $this->assertFalse(Cache::has($ahmadCacheKey));
         $this->assertTrue(Cache::has($sitiCacheKey));
+    }
+
+    public function test_student_note_change_warms_opened_report_period_only(): void
+    {
+        config()->set('report.pdf_auto_prepare.enabled', true);
+        config()->set('report.pdf_auto_prepare.late_stage_delay_seconds', 10);
+        config()->set('report.pdf_auto_prepare.queue', 'pdf-warm');
+        Queue::fake();
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->post(route('wali_kelas.catatan.siswa.store', $this->ahmadId), [
+                'catatan_umum' => 'Catatan untuk periode dibuka.',
+            ])
+            ->assertRedirect();
+
+        Queue::assertPushedOn('pdf-warm', AutoPreparePdfReportJob::class);
+        Queue::assertPushed(AutoPreparePdfReportJob::class, function (AutoPreparePdfReportJob $job) {
+            return $job->siswaId === $this->ahmadId
+                && $job->type === 'UTS'
+                && $job->reason === 'pdf_cache_invalidated';
+        });
+        Queue::assertNotPushed(AutoPreparePdfReportJob::class, fn (AutoPreparePdfReportJob $job) => $job->type === 'UAS');
     }
 
     public function test_note_student_from_another_class_is_rejected(): void

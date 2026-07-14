@@ -1,6 +1,7 @@
 export const raporManagerCore = {
     init() {
         this.activeTab = this.$el.dataset.activeTab || 'UTS';
+        this.openedReportType = this.$el.dataset.openedReportType || this.activeTab;
         this.tahunAjaranId = this.$el.dataset.tahunAjaranId || '';
         this.semester = parseInt(this.$el.dataset.semester || '0', 10);
         this.pdfStatusUrl = this.$el.dataset.pdfStatusUrl || '';
@@ -30,6 +31,7 @@ export const raporManagerCore = {
             const data = await this.checkActiveTemplates();
             this.templateUTSActive = data.UTS_active || false;
             this.templateUASActive = data.UAS_active || false;
+            this.openedReportType = data.opened_report_type || this.openedReportType || this.activeTab;
 
             if (this.activeTab === 'UTS' && !this.templateUTSActive) {
                 this.activeTab = this.templateUASActive ? 'UAS' : 'UTS';
@@ -38,7 +40,7 @@ export const raporManagerCore = {
             }
 
             const savedTab = localStorage.getItem('activeRaporTab');
-            if (savedTab && ((savedTab === 'UAS' && this.templateUASActive) || (savedTab === 'UTS' && this.templateUTSActive))) {
+            if (savedTab && savedTab === this.openedReportType && ((savedTab === 'UAS' && this.templateUASActive) || (savedTab === 'UTS' && this.templateUTSActive))) {
                 this.activeTab = savedTab;
             }
 
@@ -72,7 +74,8 @@ export const raporManagerCore = {
             const data = await response.json();
             return {
                 UTS_active: data.UTS_active || false,
-                UAS_active: data.UAS_active || false
+                UAS_active: data.UAS_active || false,
+                opened_report_type: data.opened_report_type || this.openedReportType
             };
         } catch (error) {
             console.error('Error checking templates:', error);
@@ -81,13 +84,18 @@ export const raporManagerCore = {
     },
 
     setActiveTab(tab) {
+        if (tab !== this.openedReportType) {
+            Swal.fire({ icon: 'info', title: `Rapor ${tab} Belum Dibuka`, text: `Rapor ${tab} belum dibuka oleh admin.` });
+            return;
+        }
+
         if (tab === 'UAS' && !this.templateUASActive) {
-            Swal.fire({ icon: 'info', title: 'Rapor UAS Belum Aktif', text: 'Admin belum mengaktifkan template rapor UAS.' });
+            Swal.fire({ icon: 'info', title: 'Template UAS Belum Aktif', text: 'Admin belum mengaktifkan template rapor UAS.' });
             return;
         }
 
         if (tab === 'UTS' && !this.templateUTSActive) {
-            Swal.fire({ icon: 'info', title: 'Rapor UTS Belum Aktif', text: 'Admin belum mengaktifkan template rapor UTS.' });
+            Swal.fire({ icon: 'info', title: 'Template UTS Belum Aktif', text: 'Admin belum mengaktifkan template rapor UTS.' });
             return;
         }
 
@@ -258,6 +266,10 @@ export const raporManagerCore = {
     },
 
     pdfActionTitle(siswaId, availableTitle) {
+        if (this.activeTab !== this.openedReportType) {
+            return `Rapor ${this.activeTab} belum dibuka oleh admin.`;
+        }
+
         if (this.hasPdfTemplate(siswaId)) {
             return availableTitle;
         }
@@ -266,6 +278,16 @@ export const raporManagerCore = {
     },
 
     validatePdfTemplate(siswaId) {
+        if (this.activeTab !== this.openedReportType) {
+            Swal.fire({
+                icon: 'info',
+                title: `Rapor ${this.activeTab} Belum Dibuka`,
+                text: `Rapor ${this.activeTab} belum dibuka oleh admin.`,
+                confirmButtonText: 'Mengerti'
+            });
+            return false;
+        }
+
         if (this.hasPdfTemplate(siswaId)) {
             return true;
         }

@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Jobs\AutoPreparePdfReportJob;
 use App\Jobs\GeneratePdfReportJob;
 use App\Models\Guru;
+use App\Models\Setting;
 use App\Models\Siswa;
 use App\Models\User;
 use App\Services\DocumentConversionService;
@@ -555,6 +556,69 @@ class ReportCardAuthorizationTest extends TestCase
             ->assertSee('"UTS":true', false);
     }
 
+    public function test_wali_template_visibility_respects_opened_report_period(): void
+    {
+        Setting::set('active_wali_report_period', 'UTS');
+
+        $this->insertReportTemplate($this->currentClassId, 'UTS', $this->activeYearId, 1);
+        $this->insertReportTemplate($this->currentClassId, 'UAS', $this->activeYearId, null);
+
+        $this->actingAsWali()
+            ->getJson(route('wali_kelas.rapor.check-templates', [
+                'tahun_ajaran_id' => $this->activeYearId,
+            ]))
+            ->assertOk()
+            ->assertJsonPath('opened_report_type', 'UTS')
+            ->assertJsonPath('UTS_active', true)
+            ->assertJsonPath('UAS_active', false)
+            ->assertJsonPath('UAS_template_active', true);
+    }
+
+    public function test_direct_unopened_uas_pdf_access_is_blocked_when_uts_is_opened(): void
+    {
+        Setting::set('active_wali_report_period', 'UTS');
+
+        $this->insertReportTemplate($this->currentClassId, 'UAS', $this->activeYearId, null);
+
+        $this->actingAsWali()
+            ->getJson(route('wali_kelas.rapor.preview-pdf', [
+                'siswa' => $this->authorizedStudentId,
+                'type' => 'UAS',
+                'tahun_ajaran_id' => $this->activeYearId,
+            ]))
+            ->assertUnprocessable()
+            ->assertJsonPath('error_type', 'report_period_unopened')
+            ->assertJsonFragment(['message' => 'Rapor UAS belum dibuka oleh admin.']);
+    }
+
+    public function test_wali_report_page_schedules_opened_period_warmup_without_dashboard_visit(): void
+    {
+        config()->set('report.pdf_auto_prepare.enabled', true);
+        config()->set('report.pdf_auto_prepare.delay_seconds', 60);
+        config()->set('report.pdf_auto_prepare.queue', 'pdf-warm');
+        Setting::set('active_wali_report_period', 'UTS');
+        Queue::fake();
+
+        $this->insertReportTemplate($this->currentClassId, 'UTS', $this->activeYearId, 1);
+        $this->insertReportTemplate($this->currentClassId, 'UAS', $this->activeYearId, null);
+
+        $this->actingAsWali()
+            ->get(route('wali_kelas.rapor.index', [
+                'type' => 'UTS',
+                'tahun_ajaran_id' => $this->activeYearId,
+            ]))
+            ->assertOk();
+
+        Queue::assertPushedOn('pdf-warm', AutoPreparePdfReportJob::class);
+        Queue::assertPushed(AutoPreparePdfReportJob::class, function (AutoPreparePdfReportJob $job) {
+            return $job->siswaId === $this->authorizedStudentId
+                && $job->type === 'UTS'
+                && $job->tahunAjaranId === $this->activeYearId
+                && $job->reason === 'report_page_warmup';
+        });
+        Queue::assertNotPushed(AutoPreparePdfReportJob::class, fn (AutoPreparePdfReportJob $job) => $job->type === 'UAS');
+    }
+
     public function test_report_index_js_encodes_student_names_in_report_actions(): void
     {
         $this->fakeLibreOfficeAvailability();
@@ -1038,6 +1102,7 @@ class ReportCardAuthorizationTest extends TestCase
             'report_generations',
             'report_template_kelas',
             'report_templates',
+            'settings',
             'notifications',
             'capaian_custom',
             'nilai_ekstrakurikuler',
@@ -1217,6 +1282,13 @@ class ReportCardAuthorizationTest extends TestCase
             $table->id();
             $table->foreignId('report_template_id');
             $table->foreignId('kelas_id');
+            $table->timestamps();
+        });
+
+        Schema::create('settings', function (Blueprint $table) {
+            $table->id();
+            $table->string('key')->unique();
+            $table->text('value')->nullable();
             $table->timestamps();
         });
 

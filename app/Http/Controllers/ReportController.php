@@ -22,6 +22,8 @@ use App\Models\TahunAjaran;
 use App\Jobs\GeneratePdfReportJob;
 use App\Services\DocumentConversionService;
 use App\Services\PdfCacheService;
+use App\Services\ReportPdfAutoPrepareService;
+use App\Services\ReportPeriodService;
 use App\Services\SiswaKelasSemesterResolver;
 use App\Services\ReportPerformanceTracker;
 use Illuminate\Support\Str;
@@ -38,6 +40,7 @@ class ReportController extends Controller
     public function index()
     {
         $tahunAjaranId = session('tahun_ajaran_id');
+        $openedReportType = app(ReportPeriodService::class)->openedType(null, $tahunAjaranId ? (int) $tahunAjaranId : null);
         
         $templates = ReportTemplate::when($tahunAjaranId, function($query) use ($tahunAjaranId) {
                 return $query->where('tahun_ajaran_id', $tahunAjaranId);
@@ -48,7 +51,20 @@ class ReportController extends Controller
         
         $schoolProfile = \App\Models\ProfilSekolah::first();
         
-        return view('admin.report.index', compact('templates', 'schoolProfile'));
+        return view('admin.report.index', compact('templates', 'schoolProfile', 'openedReportType'));
+    }
+
+    public function updateOpenedReportPeriod(Request $request)
+    {
+        $validated = $request->validate([
+            'opened_report_type' => 'required|in:UTS,UAS',
+        ]);
+
+        app(ReportPeriodService::class)->setOpenedType($validated['opened_report_type']);
+
+        return redirect()
+            ->route('report.template.index')
+            ->with('success', 'Jenis rapor yang dibuka untuk Wali Kelas berhasil diperbarui.');
     }
     // Modify the upload method to use school profile data
     /**
@@ -190,9 +206,10 @@ class ReportController extends Controller
      */
     public function printRaporHtml(Siswa $siswa, Request $request)
     {
+        $type = $this->normalizeReportType($request->query('type', 'UTS'));
         $performance = ReportPerformanceTracker::startFlowIfEnabled(
             'html_print',
-            $request->query('type', 'UTS'),
+            $type,
             $request->route()?->getName()
         );
 
@@ -201,6 +218,7 @@ class ReportController extends Controller
                 return $this->resolveRaporTahunAjaranId($request);
             });
             abort_unless($tahunAjaranId, 403);
+            $type = $this->resolveReportTypeForRequest($request, $tahunAjaranId);
 
             ReportPerformanceTracker::measureSegment('authorization', function () use ($siswa, $tahunAjaranId) {
                 $this->authorizeWaliRaporAccess($siswa, $tahunAjaranId);
@@ -215,6 +233,10 @@ class ReportController extends Controller
             });
             $semester = $tahunAjaran ? $tahunAjaran->semester : 1;
             abort_unless($kelas, 403);
+
+            if ($response = $this->ensureReportPeriodOpened($request, $type, $tahunAjaranId)) {
+                return $response;
+            }
 
             ReportPerformanceTracker::measureSegment('preload', function () use ($siswa, $tahunAjaranId, $semester) {
                 $siswa->load([
@@ -379,9 +401,12 @@ class ReportController extends Controller
             return response()->json([
                 'UTS_active' => false,
                 'UAS_active' => false,
+                'opened_report_type' => 'UTS',
                 'error' => 'Tidak ditemukan kelas yang diwalikan'
             ]);
         }
+
+        $openedReportType = $this->openedReportTypeForYear((int) $tahunAjaranId);
         
         // Cek template aktif untuk UTS
         $utsTemplate = $this->getTemplateStatus('UTS', $kelasId, $tahunAjaranId);
@@ -390,8 +415,13 @@ class ReportController extends Controller
         $uasTemplate = $this->getTemplateStatus('UAS', $kelasId, $tahunAjaranId);
         
         return response()->json([
-            'UTS_active' => $utsTemplate,
-            'UAS_active' => $uasTemplate
+            'UTS_active' => $openedReportType === 'UTS' && $utsTemplate,
+            'UAS_active' => $openedReportType === 'UAS' && $uasTemplate,
+            'UTS_template_active' => $utsTemplate,
+            'UAS_template_active' => $uasTemplate,
+            'opened_report_type' => $openedReportType,
+            'UTS_message' => $openedReportType === 'UTS' ? null : app(ReportPeriodService::class)->unopenedMessage('UTS'),
+            'UAS_message' => $openedReportType === 'UAS' ? null : app(ReportPeriodService::class)->unopenedMessage('UAS'),
         ]);
     }
 
@@ -1044,6 +1074,68 @@ class ReportController extends Controller
         return (int) (TahunAjaran::whereKey($tahunAjaranId)->value('semester') ?: 1);
     }
 
+    private function normalizeReportType(?string $type): string
+    {
+        return app(ReportPeriodService::class)->normalizeType($type) ?: 'UTS';
+    }
+
+    private function resolveReportTypeForRequest(Request $request, int $tahunAjaranId, string $source = 'query'): string
+    {
+        $value = $source === 'input'
+            ? $request->input('type')
+            : $request->query('type');
+
+        if ($value !== null && $value !== '') {
+            return $this->normalizeReportType($value);
+        }
+
+        return $this->openedReportTypeForYear($tahunAjaranId);
+    }
+
+    private function openedReportTypeForYear(int $tahunAjaranId): string
+    {
+        return app(ReportPeriodService::class)->openedType(null, $tahunAjaranId);
+    }
+
+    private function reportPeriodUnavailableResponse(Request $request, string $type, int $tahunAjaranId)
+    {
+        $periodService = app(ReportPeriodService::class);
+        $message = $periodService->unopenedMessage($type);
+
+        Log::info('report.period_unopened_access_blocked', [
+            'report_type' => $type,
+            'opened_report_type' => $periodService->openedType(null, $tahunAjaranId),
+            'tahun_ajaran_id' => $tahunAjaranId,
+            'route' => $request->route()?->getName(),
+            'guru_id' => auth()->guard('guru')->id(),
+        ]);
+
+        if ($request->expectsJson() || $request->ajax()) {
+            return response()->json([
+                'success' => false,
+                'message' => $message,
+                'error_type' => 'report_period_unopened',
+                'opened_report_type' => $periodService->openedType(null, $tahunAjaranId),
+            ], 422);
+        }
+
+        return redirect()
+            ->route('wali_kelas.rapor.index', [
+                'type' => $periodService->openedType(null, $tahunAjaranId),
+                'tahun_ajaran_id' => $tahunAjaranId,
+            ])
+            ->with('error', $message);
+    }
+
+    private function ensureReportPeriodOpened(Request $request, string $type, int $tahunAjaranId)
+    {
+        if (app(ReportPeriodService::class)->isOpened($type, null, $tahunAjaranId)) {
+            return null;
+        }
+
+        return $this->reportPeriodUnavailableResponse($request, $type, $tahunAjaranId);
+    }
+
     private function resolveRaporClass(Siswa $siswa, int $tahunAjaranId): ?Kelas
     {
         try {
@@ -1226,7 +1318,7 @@ class ReportController extends Controller
     }
 
     public function previewRapor(Request $request, $siswa_id) {
-        $type = $request->query('type', 'UTS');
+        $type = $this->normalizeReportType($request->query('type', 'UTS'));
         $performance = ReportPerformanceTracker::startFlowIfEnabled(
             'html_preview',
             $type,
@@ -1239,12 +1331,17 @@ class ReportController extends Controller
                 return $this->resolveRaporTahunAjaranId($request);
             });
             abort_unless($tahunAjaranId, 403);
+            $type = $this->resolveReportTypeForRequest($request, $tahunAjaranId);
 
             $siswa = ReportPerformanceTracker::measureSegment('context', fn () => Siswa::find($siswa_id));
             abort_unless($siswa, 403);
             ReportPerformanceTracker::measureSegment('authorization', function () use ($siswa, $tahunAjaranId) {
                 $this->authorizeWaliRaporAccess($siswa, $tahunAjaranId);
             });
+
+            if ($response = $this->ensureReportPeriodOpened($request, $type, $tahunAjaranId)) {
+                return $response;
+            }
             
             // Ambil semester dari tahun ajaran
             [$tahunAjaran, $kelas] = ReportPerformanceTracker::measureSegment('context', function () use ($siswa, $tahunAjaranId) {
@@ -1508,7 +1605,7 @@ class ReportController extends Controller
      */
     public function previewPdf(Siswa $siswa, Request $request)
     {
-        $type = $request->query('type', 'UTS');
+        $type = $this->normalizeReportType($request->query('type', 'UTS'));
         $disposition = $request->query('disposition', 'inline') === 'attachment' ? 'attachment' : 'inline';
         $flowPrefix = $disposition === 'attachment' ? 'pdf_download' : 'pdf_preview';
         $performance = ReportPerformanceTracker::startFlowIfEnabled(
@@ -1527,10 +1624,16 @@ class ReportController extends Controller
             if (!$tahunAjaranId) {
                 return $this->failTahunAjaranNotSet($request, true);
             }
+            $type = $this->resolveReportTypeForRequest($request, $tahunAjaranId);
 
             ReportPerformanceTracker::measureSegment('authorization', function () use ($siswa, $tahunAjaranId) {
                 $this->authorizeWaliRaporAccess($siswa, $tahunAjaranId);
             });
+
+            if ($response = $this->ensureReportPeriodOpened($request, $type, $tahunAjaranId)) {
+                return $response;
+            }
+
             $kelas = ReportPerformanceTracker::measureSegment('context', function () use ($siswa, $tahunAjaranId) {
                 return $this->resolveRaporClass($siswa, $tahunAjaranId);
             });
@@ -1744,7 +1847,7 @@ class ReportController extends Controller
 
     public function requestPdf(Siswa $siswa, Request $request)
     {
-        $type = $request->input('type', 'UTS');
+        $type = $this->normalizeReportType($request->input('type', 'UTS'));
         $disposition = $request->input('disposition') === 'inline' ? 'inline' : 'attachment';
         $performance = ReportPerformanceTracker::startFlowIfEnabled(
             'pdf_request_pending',
@@ -1760,8 +1863,14 @@ class ReportController extends Controller
             if (!$tahunAjaranId) {
                 return $this->failTahunAjaranNotSet($request, true);
             }
+            $type = $this->resolveReportTypeForRequest($request, $tahunAjaranId, 'input');
 
             $this->authorizeWaliRaporAccess($siswa, $tahunAjaranId);
+
+            if ($response = $this->ensureReportPeriodOpened($request, $type, $tahunAjaranId)) {
+                return $response;
+            }
+
             $kelas = $this->resolveRaporClass($siswa, $tahunAjaranId);
             $template = $this->getTemplateForSiswa($siswa, $type, $tahunAjaranId);
 
@@ -2038,7 +2147,7 @@ class ReportController extends Controller
 
     public function generateReport(Request $request, Siswa $siswa)
     {
-        $type = $request->input('type', 'UTS');
+        $type = $this->normalizeReportType($request->input('type', 'UTS'));
         $action = $request->input('action', 'download');
         $tahunAjaranId = null;
         $performance = ReportPerformanceTracker::startFlowIfEnabled(
@@ -2057,10 +2166,15 @@ class ReportController extends Controller
             if (!$tahunAjaranId) {
                 return $this->failTahunAjaranNotSet($request, true);
             }
+            $type = $this->resolveReportTypeForRequest($request, $tahunAjaranId, 'input');
 
             ReportPerformanceTracker::measureSegment('authorization', function () use ($siswa, $tahunAjaranId) {
                 $this->authorizeWaliRaporAccess($siswa, $tahunAjaranId);
             });
+
+            if ($response = $this->ensureReportPeriodOpened($request, $type, $tahunAjaranId)) {
+                return $response;
+            }
 
             \Log::info('Generate report request', [
                 'siswa_id' => $siswa->id,
@@ -2536,11 +2650,22 @@ class ReportController extends Controller
         // Semester bisa 1/2 (ganjil/genap)
         // Tipe bisa UTS/UAS (tengah semester/akhir semester)
         $semester = $tahunAjaran->semester; // 1 atau 2
-        $type = request('type', 'UTS'); // Default ke UTS, tapi bisa diubah dengan query param
+        $openedReportType = $this->openedReportTypeForYear((int) $tahunAjaranId);
+        $type = $this->normalizeReportType(request('type', $openedReportType));
+
+        if ($type !== $openedReportType) {
+            return redirect()
+                ->route('wali_kelas.rapor.index', [
+                    'type' => $openedReportType,
+                    'tahun_ajaran_id' => $tahunAjaranId,
+                ])
+                ->with('error', app(ReportPeriodService::class)->unopenedMessage($type));
+        }
         
         \Log::info('Rapor WaliKelas - Info penting:', [
             'semester' => $semester,
             'type' => $type,
+            'opened_report_type' => $openedReportType,
             'tahun_ajaran_id' => $tahunAjaranId,
             'kombinasi_valid' => "Semester {$semester} - {$type}"
         ]);
@@ -2654,13 +2779,25 @@ class ReportController extends Controller
         $pdfStatuses = [];
         foreach ($siswa as $student) {
             $pdfTemplateAvailability[$student->id] = [
-                'UTS' => (bool) $this->getTemplateForSiswa($student, 'UTS', $tahunAjaranId),
-                'UAS' => (bool) $this->getTemplateForSiswa($student, 'UAS', $tahunAjaranId),
+                'UTS' => $openedReportType === 'UTS' && (bool) $this->getTemplateForSiswa($student, 'UTS', $tahunAjaranId),
+                'UAS' => $openedReportType === 'UAS' && (bool) $this->getTemplateForSiswa($student, 'UAS', $tahunAjaranId),
             ];
             $pdfStatuses[$student->id] = [
-                'UTS' => PdfCacheService::getPdfPreparationStatus($student, 'UTS', $tahunAjaranId),
-                'UAS' => PdfCacheService::getPdfPreparationStatus($student, 'UAS', $tahunAjaranId),
+                'UTS' => $openedReportType === 'UTS' ? PdfCacheService::getPdfPreparationStatus($student, 'UTS', $tahunAjaranId) : 'missing',
+                'UAS' => $openedReportType === 'UAS' ? PdfCacheService::getPdfPreparationStatus($student, 'UAS', $tahunAjaranId) : 'missing',
             ];
+        }
+
+        if (config('report.pdf_auto_prepare.enabled', false)) {
+            $autoPrepare = app(ReportPdfAutoPrepareService::class);
+
+            foreach ($siswa as $student) {
+                if (($pdfTemplateAvailability[$student->id][$openedReportType] ?? false) &&
+                    ($pdfStatuses[$student->id][$openedReportType] ?? 'missing') === 'missing') {
+                    $autoPrepare->scheduleForStudent($student, (int) $tahunAjaranId, [$openedReportType], 'report_page_warmup');
+                    $pdfStatuses[$student->id][$openedReportType] = PdfCacheService::getPdfPreparationStatus($student, $openedReportType, (int) $tahunAjaranId);
+                }
+            }
         }
         
         return view('wali_kelas.rapor.index', [
@@ -2671,6 +2808,7 @@ class ReportController extends Controller
             'pdfTemplateAvailability' => $pdfTemplateAvailability,
             'pdfStatuses' => $pdfStatuses,
             'type' => $type, // Kirim ke view
+            'openedReportType' => $openedReportType,
             'semester' => $semester, // Kirim ke view
             'tahunAjaran' => $tahunAjaran,
             'kelas' => $kelas,
@@ -2680,7 +2818,7 @@ class ReportController extends Controller
 
     public function pdfStatuses(Request $request)
     {
-        $type = strtoupper((string) $request->query('type', 'UTS'));
+        $type = $this->normalizeReportType($request->query('type', 'UTS'));
 
         if (! in_array($type, ['UTS', 'UAS'], true)) {
             return response()->json([
@@ -2696,10 +2834,15 @@ class ReportController extends Controller
         if (! $tahunAjaranId) {
             return $this->failTahunAjaranNotSet($request, true);
         }
+        $type = $this->resolveReportTypeForRequest($request, $tahunAjaranId);
 
         $tahunAjaran = TahunAjaran::find($tahunAjaranId);
         if (! $tahunAjaran) {
             return $this->failTahunAjaranNotSet($request, true);
+        }
+
+        if ($response = $this->ensureReportPeriodOpened($request, $type, $tahunAjaranId)) {
+            return $response;
         }
 
         $studentIds = collect($request->query('student_ids', []))
@@ -2874,7 +3017,7 @@ class ReportController extends Controller
      */
     public function generateBatchReport(Request $request)
     {
-        $type = $request->input('type', 'UTS');
+        $type = $this->normalizeReportType($request->input('type', 'UTS'));
         $guru = null;
         $performance = ReportPerformanceTracker::startFlowIfEnabled(
             'batch_docx',
@@ -2892,6 +3035,11 @@ class ReportController extends Controller
 
             if (!$tahunAjaranId) {
                 return $this->failTahunAjaranNotSet($request, true);
+            }
+            $type = $this->resolveReportTypeForRequest($request, $tahunAjaranId, 'input');
+
+            if ($response = $this->ensureReportPeriodOpened($request, $type, $tahunAjaranId)) {
+                return $response;
             }
             
             // Get current semester from tahun ajaran

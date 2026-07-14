@@ -371,7 +371,9 @@ class PdfCacheService
         bool $scheduleAutoPrepare = false,
         ?int $autoPrepareDelaySeconds = null
     ): void {
-        $types = ['UTS', 'UAS'];
+        $types = $tahunAjaranId
+            ? app(ReportPeriodService::class)->filterOpenedTypes(['UTS', 'UAS'], null, $tahunAjaranId)
+            : ['UTS', 'UAS'];
 
         if ($tahunAjaranId) {
             foreach ($types as $type) {

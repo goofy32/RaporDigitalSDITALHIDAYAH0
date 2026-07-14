@@ -26,6 +26,7 @@
     $pdfAvailable = $pdfAvailable ?? false;
     $pdfTemplateAvailability = $pdfTemplateAvailability ?? [];
     $pdfStatuses = $pdfStatuses ?? [];
+    $openedReportType = $openedReportType ?? $type ?? 'UTS';
     $hasPdfTemplateForCurrentType = collect($pdfTemplateAvailability)->contains(function ($availability) use ($type) {
         return (bool) ($availability[$type] ?? false);
     });
@@ -40,6 +41,7 @@
     x-cloak
     class="p-4 bg-white mt-14"
     data-active-tab="{{ $type }}"
+    data-opened-report-type="{{ $openedReportType }}"
     data-tahun-ajaran-id="{{ session('tahun_ajaran_id') }}"
     data-semester="{{ $semester }}"
     data-pdf-status-url="{{ route('wali_kelas.rapor.pdf-statuses') }}"
@@ -59,13 +61,13 @@
         </div>
     </div>
 
-    <!-- No Template Active State -->
+    <!-- No Template Available for Opened Period State -->
     <div x-show="initialized && !templateUTSActive && !templateUASActive" class="text-center py-8">
         <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
         </svg>
-        <h3 class="mt-2 text-sm font-medium text-gray-900">Tidak Ada Template Aktif</h3>
-        <p class="mt-1 text-sm text-gray-500">Admin belum mengaktifkan template rapor untuk kelas ini.</p>
+        <h3 class="mt-2 text-sm font-medium text-gray-900">Template Periode Dibuka Belum Tersedia</h3>
+        <p class="mt-1 text-sm text-gray-500">Admin belum mengaktifkan template rapor untuk periode yang sedang dibuka.</p>
         <div class="mt-6">
             <button type="button" @click="refreshPage()" class="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
                 <svg class="-ml-1 mr-2 h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -84,6 +86,11 @@
             <h2 class="text-2xl font-bold text-gray-800">
                 Manajemen Rapor Kelas {{ auth()->user()->kelasWali->nama_kelas ?? 'N/A' }}
             </h2>
+        </div>
+
+        <div class="mb-6 rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-800">
+            <p class="font-semibold">Jenis rapor yang dibuka admin: {{ $openedReportType }}</p>
+            <p class="mt-1">UTS dan UAS tetap berada pada semester aktif. Wali Kelas hanya dapat menyiapkan, mencetak, dan mengunduh jenis rapor yang sedang dibuka.</p>
         </div>
 
         @if(!$pdfAvailable)
@@ -112,7 +119,8 @@
                             type="button"
                             :disabled="!templateUTSActive">
                         Rapor UTS
-                        <span x-show="!templateUTSActive" class="ml-1 text-xs text-red-500">(Nonaktif)</span>
+                        <span x-show="openedReportType !== 'UTS'" class="ml-1 text-xs text-red-500">(Belum dibuka)</span>
+                        <span x-show="openedReportType === 'UTS' && !templateUTSActive" class="ml-1 text-xs text-red-500">(Template belum aktif)</span>
                     </button>
                     <button @click="setActiveTab('UAS')"
                             :class="{
@@ -124,7 +132,8 @@
                             type="button"
                             :disabled="!templateUASActive">
                         Rapor UAS
-                        <span x-show="!templateUASActive" class="ml-1 text-xs text-red-500">(Nonaktif)</span>
+                        <span x-show="openedReportType !== 'UAS'" class="ml-1 text-xs text-red-500">(Belum dibuka)</span>
+                        <span x-show="openedReportType === 'UAS' && !templateUASActive" class="ml-1 text-xs text-red-500">(Template belum aktif)</span>
                     </button>
                 </nav>
             </div>

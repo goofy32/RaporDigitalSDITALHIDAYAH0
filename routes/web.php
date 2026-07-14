@@ -413,6 +413,8 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
         Route::post('/upload', [ReportController::class, 'upload'])
             ->middleware('throttle:20,1')
             ->name('upload');
+        Route::post('/opened-period', [ReportController::class, 'updateOpenedReportPeriod'])
+            ->name('opened-period.update');
         
         Route::get('/{template}/download', [ReportController::class, 'downloadTemplate'])
         ->name('download');

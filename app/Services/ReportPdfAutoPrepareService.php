@@ -34,6 +34,8 @@ class ReportPdfAutoPrepareService
             ->unique()
             ->values();
 
+        $types = collect(app(ReportPeriodService::class)->filterOpenedTypes($types->all(), null, $tahunAjaranId));
+
         if ($types->isEmpty()) {
             return 0;
         }
@@ -116,7 +118,7 @@ class ReportPdfAutoPrepareService
         }
 
         $semester = (int) ($semester ?: $tahunAjaran->semester);
-        $type = $this->typeForSemester($semester);
+        $type = app(ReportPeriodService::class)->openedType($tahunAjaran, (int) $tahunAjaran->id);
 
         if (! $type) {
             return $summary;
@@ -204,6 +206,10 @@ class ReportPdfAutoPrepareService
 
         if ((int) $tahunAjaran->semester !== $this->semesterForType($type)) {
             return 'inactive_semester';
+        }
+
+        if (! app(ReportPeriodService::class)->isOpened($type, $tahunAjaran, $tahunAjaranId)) {
+            return 'report_period_unopened';
         }
 
         if (! Schema::hasTable('report_templates')) {

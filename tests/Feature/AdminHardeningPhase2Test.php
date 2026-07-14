@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\BobotNilai;
 use App\Models\Guru;
 use App\Models\ReportTemplate;
+use App\Models\Setting;
 use App\Models\User;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
@@ -222,6 +223,49 @@ class AdminHardeningPhase2Test extends TestCase
             'id' => $uasTemplate->id,
             'is_active' => true,
         ]);
+    }
+
+    public function test_admin_can_set_opened_report_period_to_uts(): void
+    {
+        Setting::set('active_wali_report_period', 'UAS');
+
+        $this->actingAsAdmin()
+            ->post(route('report.template.opened-period.update'), [
+                'opened_report_type' => 'UTS',
+            ])
+            ->assertRedirect(route('report.template.index'))
+            ->assertSessionHas('success');
+
+        $this->assertSame('UTS', Setting::get('active_wali_report_period'));
+    }
+
+    public function test_admin_can_set_opened_report_period_to_uas(): void
+    {
+        $this->actingAsAdmin()
+            ->post(route('report.template.opened-period.update'), [
+                'opened_report_type' => 'UAS',
+            ])
+            ->assertRedirect(route('report.template.index'))
+            ->assertSessionHas('success');
+
+        $this->assertSame('UAS', Setting::get('active_wali_report_period'));
+    }
+
+    public function test_rejected_template_deactivate_keeps_admin_view_active_status(): void
+    {
+        $template = $this->createTemplate('UAS', true, $this->activeClassId, 2);
+
+        $this->actingAsAdmin()
+            ->postJson(route('report.template.activate', $template))
+            ->assertUnprocessable()
+            ->assertJsonPath('success', false);
+
+        $this->assertTrue($template->fresh()->is_active);
+
+        $this->actingAsAdmin()
+            ->get(route('report.template.index'))
+            ->assertOk()
+            ->assertSee('Aktif');
     }
 
     public function test_student_create_and_update_require_active_year_context(): void
@@ -554,6 +598,7 @@ class AdminHardeningPhase2Test extends TestCase
             'kkms',
             'report_template_kelas',
             'report_templates',
+            'settings',
             'siswa_kelas_semester',
             'siswas',
             'absensis',
@@ -771,6 +816,13 @@ class AdminHardeningPhase2Test extends TestCase
             $table->id();
             $table->foreignId('report_template_id');
             $table->foreignId('kelas_id');
+            $table->timestamps();
+        });
+
+        Schema::create('settings', function (Blueprint $table) {
+            $table->id();
+            $table->string('key')->unique();
+            $table->text('value')->nullable();
             $table->timestamps();
         });
 

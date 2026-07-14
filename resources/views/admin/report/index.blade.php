@@ -53,6 +53,37 @@
             </div>
         </div>
 
+        <div class="mb-6 rounded-lg border border-green-200 bg-green-50 p-4">
+            <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                    <h3 class="text-sm font-semibold text-green-900">Jenis Rapor yang Dibuka untuk Wali Kelas</h3>
+                    <p class="mt-1 text-sm text-green-800">
+                        UTS dan UAS tetap berada pada semester aktif. Pilihan ini hanya menentukan jenis rapor yang dapat diakses Wali Kelas saat ini.
+                    </p>
+                    <p class="mt-1 text-xs text-green-700">
+                        Contoh: jika semester aktif Ganjil dan jenis rapor dibuka UAS, Wali Kelas dapat mengakses UAS untuk semester Ganjil.
+                    </p>
+                    <p class="mt-1 text-xs text-green-700">
+                        Jenis rapor dibuka: <span class="font-semibold">{{ $openedReportType ?? 'UTS' }}</span>
+                    </p>
+                </div>
+                <form action="{{ route('report.template.opened-period.update') }}" method="POST" class="flex flex-col gap-3 sm:flex-row sm:items-center">
+                    @csrf
+                    <label for="opened_report_type" class="sr-only">Jenis rapor dibuka</label>
+                    <select id="opened_report_type"
+                            name="opened_report_type"
+                            class="rounded-lg border border-green-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-green-500 focus:ring-green-500">
+                        <option value="UTS" @selected(($openedReportType ?? 'UTS') === 'UTS')>UTS</option>
+                        <option value="UAS" @selected(($openedReportType ?? 'UTS') === 'UAS')>UAS</option>
+                    </select>
+                    <button type="submit"
+                            class="inline-flex items-center justify-center rounded-lg bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 focus:outline-none focus:ring-4 focus:ring-green-300">
+                        Simpan Jenis Rapor
+                    </button>
+                </form>
+            </div>
+        </div>
+
         <!-- Filter Controls -->
         <div class="flex flex-wrap justify-between items-center gap-4 mb-6">
             <div class="flex gap-2">
