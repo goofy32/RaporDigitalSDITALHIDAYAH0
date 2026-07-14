@@ -295,6 +295,8 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
     // Subject Settings Routes - harus di atas resource route untuk menghindari konflik
     Route::get('subject/bobot-nilai', [BobotNilaiController::class, 'subjectView'])->name('admin.subject.bobot-nilai');
     Route::get('subject/kkm', [KkmController::class, 'subjectView'])->name('admin.subject.kkm');
+    Route::get('subject/{id}/copy-lm-tp', [SubjectController::class, 'copyLmTp'])->name('subject.copy_lm_tp');
+    Route::post('subject/{id}/copy-lm-tp', [SubjectController::class, 'applyCopyLmTp'])->name('subject.copy_lm_tp.apply');
     
     // Subject Routes
     Route::resource('subject', SubjectController::class);
@@ -519,6 +521,8 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
         Route::get('/', [SubjectController::class, 'teacherIndex'])->name('index');
         Route::get('/create', [SubjectController::class, 'teacherCreate'])->name('create');
         Route::post('/', [SubjectController::class, 'teacherStore'])->name('store');
+        Route::get('/{id}/copy-lm-tp', [SubjectController::class, 'teacherCopyLmTp'])->name('copy_lm_tp');
+        Route::post('/{id}/copy-lm-tp', [SubjectController::class, 'teacherApplyCopyLmTp'])->name('copy_lm_tp.apply');
         Route::get('/{id}/edit', [SubjectController::class, 'teacherEdit'])->name('edit');
         Route::put('/{id}', [SubjectController::class, 'teacherUpdate'])->name('update');
         Route::delete('/{id}', [SubjectController::class, 'teacherDestroy'])->name('destroy');

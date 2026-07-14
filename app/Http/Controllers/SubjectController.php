@@ -6,7 +6,10 @@ use App\Models\Guru;
 use App\Models\Kelas;
 use App\Models\LingkupMateri;
 use App\Models\MataPelajaran;
+use App\Models\TahunAjaran;
+use App\Services\LearningStructureCopyService;
 use App\Services\SubjectTeacherAssignmentValidator;
+use InvalidArgumentException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -353,6 +356,128 @@ class SubjectController extends Controller
         return view('data.edit_subject', compact('subject', 'classes', 'teachers', 'teacherWaliClassIds', 'teacherTeachingClassIds', 'waliKelasMap', 'mataPelajaranList'));
     }
 
+    public function copyLmTp(Request $request, int $id, LearningStructureCopyService $copyService)
+    {
+        $target = $this->adminCopyTarget($id);
+        $sources = $copyService->sourceCandidates($target);
+        $selectedSource = null;
+        $preview = null;
+
+        if ($request->filled('source_id')) {
+            $selectedSource = $sources->firstWhere('id', (int) $request->query('source_id'));
+
+            if (! $selectedSource) {
+                return redirect()->route('subject.copy_lm_tp', $target->id)
+                    ->with('error', 'LM/TP hanya dapat disalin dari mata pelajaran yang sama pada tahun ajaran dan semester yang sama.');
+            }
+
+            try {
+                $preview = $copyService->preview($selectedSource, $target);
+            } catch (InvalidArgumentException $exception) {
+                return redirect()->route('subject.copy_lm_tp', $target->id)
+                    ->with('error', $exception->getMessage());
+            }
+        }
+
+        return view('data.copy_lm_tp', [
+            'mode' => 'admin',
+            'target' => $target,
+            'sources' => $sources,
+            'selectedSource' => $selectedSource,
+            'preview' => $preview,
+            'previewRoute' => route('subject.copy_lm_tp', $target->id),
+            'applyRoute' => route('subject.copy_lm_tp.apply', $target->id),
+            'backRoute' => route('tujuan_pembelajaran.create', $target->id),
+        ]);
+    }
+
+    public function applyCopyLmTp(Request $request, int $id, LearningStructureCopyService $copyService)
+    {
+        $target = $this->adminCopyTarget($id);
+        $validated = $request->validate([
+            'source_id' => 'required|integer',
+        ]);
+        $source = $copyService->sourceCandidates($target)
+            ->firstWhere('id', (int) $validated['source_id']);
+
+        if (! $source) {
+            return redirect()->route('subject.copy_lm_tp', $target->id)
+                ->with('error', 'LM/TP hanya dapat disalin dari mata pelajaran yang sama pada tahun ajaran dan semester yang sama.');
+        }
+
+        try {
+            $summary = $copyService->copy($source, $target);
+        } catch (InvalidArgumentException $exception) {
+            return redirect()->route('subject.copy_lm_tp', $target->id)
+                ->with('error', $exception->getMessage());
+        }
+
+        return redirect()->route('tujuan_pembelajaran.create', $target->id)
+            ->with('success', $this->copyLmTpSuccessMessage($summary));
+    }
+
+    public function teacherCopyLmTp(Request $request, int $id, LearningStructureCopyService $copyService)
+    {
+        $guru = auth()->guard('guru')->user();
+        $target = $this->teacherCopyTarget($id, $guru->id);
+        $sources = $copyService->sourceCandidates($target, $guru);
+        $selectedSource = null;
+        $preview = null;
+
+        if ($request->filled('source_id')) {
+            $selectedSource = $sources->firstWhere('id', (int) $request->query('source_id'));
+
+            if (! $selectedSource) {
+                return redirect()->route('pengajar.subject.copy_lm_tp', $target->id)
+                    ->with('error', 'Anda tidak memiliki akses untuk menyalin LM/TP dari pembelajaran tersebut.');
+            }
+
+            try {
+                $preview = $copyService->preview($selectedSource, $target);
+            } catch (InvalidArgumentException $exception) {
+                return redirect()->route('pengajar.subject.copy_lm_tp', $target->id)
+                    ->with('error', $exception->getMessage());
+            }
+        }
+
+        return view('pengajar.copy_lm_tp', [
+            'mode' => 'pengajar',
+            'target' => $target,
+            'sources' => $sources,
+            'selectedSource' => $selectedSource,
+            'preview' => $preview,
+            'previewRoute' => route('pengajar.subject.copy_lm_tp', $target->id),
+            'applyRoute' => route('pengajar.subject.copy_lm_tp.apply', $target->id),
+            'backRoute' => route('pengajar.tujuan_pembelajaran.create', $target->id),
+        ]);
+    }
+
+    public function teacherApplyCopyLmTp(Request $request, int $id, LearningStructureCopyService $copyService)
+    {
+        $guru = auth()->guard('guru')->user();
+        $target = $this->teacherCopyTarget($id, $guru->id);
+        $validated = $request->validate([
+            'source_id' => 'required|integer',
+        ]);
+        $source = $copyService->sourceCandidates($target, $guru)
+            ->firstWhere('id', (int) $validated['source_id']);
+
+        if (! $source) {
+            return redirect()->route('pengajar.subject.copy_lm_tp', $target->id)
+                ->with('error', 'Anda tidak memiliki akses untuk menyalin LM/TP dari pembelajaran tersebut.');
+        }
+
+        try {
+            $summary = $copyService->copy($source, $target);
+        } catch (InvalidArgumentException $exception) {
+            return redirect()->route('pengajar.subject.copy_lm_tp', $target->id)
+                ->with('error', $exception->getMessage());
+        }
+
+        return redirect()->route('pengajar.tujuan_pembelajaran.create', $target->id)
+            ->with('success', $this->copyLmTpSuccessMessage($summary));
+    }
+
     public function updateLingkupMateri(Request $request, $id)
     {
         try {
@@ -525,6 +650,66 @@ class SubjectController extends Controller
         $subject->delete();
 
         return redirect()->route('subject.index')->with('success', 'Mata Pelajaran berhasil dihapus!');
+    }
+
+    private function adminCopyTarget(int $id): MataPelajaran
+    {
+        $tahunAjaranId = session('tahun_ajaran_id');
+
+        if (! $tahunAjaranId) {
+            abort(422, 'Tahun ajaran belum aktif. Aktifkan tahun ajaran terlebih dahulu sebelum menyalin LM/TP.');
+        }
+
+        $semester = $this->copySemesterContext((int) $tahunAjaranId);
+
+        return MataPelajaran::with(['kelas', 'lingkupMateris.tujuanPembelajarans'])
+            ->where('tahun_ajaran_id', $tahunAjaranId)
+            ->where('semester', $semester)
+            ->findOrFail($id);
+    }
+
+    private function teacherCopyTarget(int $id, int $guruId): MataPelajaran
+    {
+        $tahunAjaranId = session('tahun_ajaran_id');
+
+        if (! $tahunAjaranId) {
+            abort(422, 'Tahun ajaran belum aktif. Aktifkan tahun ajaran terlebih dahulu sebelum menyalin LM/TP.');
+        }
+
+        $semester = $this->copySemesterContext((int) $tahunAjaranId);
+
+        return MataPelajaran::with(['kelas', 'lingkupMateris.tujuanPembelajarans'])
+            ->where('guru_id', $guruId)
+            ->where('tahun_ajaran_id', $tahunAjaranId)
+            ->where('semester', $semester)
+            ->findOrFail($id);
+    }
+
+    private function copySemesterContext(int $tahunAjaranId): int
+    {
+        return (int) (session('selected_semester')
+            ?: TahunAjaran::find($tahunAjaranId)?->semester
+            ?: 1);
+    }
+
+    private function copyLmTpSuccessMessage(array $summary): string
+    {
+        if (($summary['copied_lm_count'] ?? 0) === 0 && ($summary['copied_tp_count'] ?? 0) === 0) {
+            return 'Tidak ada LM/TP baru yang disalin karena kelas tujuan sudah memiliki data yang sama.';
+        }
+
+        $message = sprintf(
+            '%d Lingkup Materi dan %d Tujuan Pembelajaran berhasil disalin.',
+            (int) ($summary['copied_lm_count'] ?? 0),
+            (int) ($summary['copied_tp_count'] ?? 0)
+        );
+
+        $skipped = (int) ($summary['skipped_lm_count'] ?? 0) + (int) ($summary['skipped_tp_count'] ?? 0);
+        if ($skipped > 0) {
+            $message .= sprintf(' %d data dilewati karena sudah ada di kelas tujuan.', $skipped);
+        }
+
+        return $message;
     }
 
     public function teacherIndex()

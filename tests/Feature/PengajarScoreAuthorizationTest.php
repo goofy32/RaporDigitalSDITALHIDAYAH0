@@ -500,7 +500,7 @@ class PengajarScoreAuthorizationTest extends TestCase
         $this->actingAsPengajar($this->budi)
             ->get(route('pengajar.score.index'))
             ->assertOk()
-            ->assertDontSee('Template Excel');
+            ->assertDontSee('data-row-action="template"', false);
     }
 
     public function test_score_import_template_disabled_state_explains_incomplete_lm_tp_setup(): void

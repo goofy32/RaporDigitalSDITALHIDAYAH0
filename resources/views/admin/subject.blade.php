@@ -109,6 +109,12 @@
                                     <img src="{{ asset('images/icons/edittp.png') }}" alt="Extracurricular Icon" class="w-5 h-5 object-contain">
                                 </a>
 
+                                <a href="{{ route('subject.copy_lm_tp', $subject->id) }}"
+                                   class="inline-flex items-center justify-center rounded px-1.5 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-50 hover:text-blue-800"
+                                   title="Salin LM/TP dari kelas lain">
+                                    Salin
+                                </a>
+
                                 <a href="{{ route('subject.edit', $subject->id) }}"
                                    data-turbo-action="replace"
                                    class="inline-flex items-center justify-center text-green-600 hover:text-green-800"

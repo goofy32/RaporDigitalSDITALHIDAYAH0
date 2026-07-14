@@ -57,6 +57,13 @@
                                     <img src="{{ asset('images/icons/edittp.png') }}" alt="" class="h-6 w-6 object-contain">
                                 </a>
 
+                                <a href="{{ route('pengajar.subject.copy_lm_tp', $subject->id) }}"
+                                    class="inline-flex h-7 shrink-0 items-center justify-center rounded-md px-1.5 text-xs font-semibold text-blue-700 transition hover:bg-blue-50 hover:text-blue-800 focus:outline-none focus:ring-2 focus:ring-blue-300"
+                                    title="Salin LM/TP dari kelas lain"
+                                    aria-label="Salin LM/TP">
+                                    Salin
+                                </a>
+
                                 <!-- Edit Subject Button -->
                                 <a href="{{ route('pengajar.subject.edit', $subject->id) }}"
                                     class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-green-700 transition hover:bg-green-50 hover:text-green-800 focus:outline-none focus:ring-2 focus:ring-green-300"
