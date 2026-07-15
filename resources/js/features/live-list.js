@@ -121,7 +121,11 @@ function bindLiveList(container) {
     });
 
     container.addEventListener('click', event => {
-        const paginationLink = event.target.closest('[data-live-list-results] a[href]');
+        if (event.target.closest('[data-live-list-ignore]')) {
+            return;
+        }
+
+        const paginationLink = event.target.closest('[data-live-list-results] [data-live-list-pagination] a[href]');
         if (paginationLink) {
             const url = new URL(paginationLink.href, window.location.origin);
 

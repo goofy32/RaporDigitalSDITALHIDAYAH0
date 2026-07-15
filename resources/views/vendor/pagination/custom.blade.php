@@ -1,5 +1,5 @@
 @if ($paginator->hasPages())
-    <nav class="flex justify-between items-center p-4" aria-label="Table navigation">
+    <nav class="flex justify-between items-center p-4" aria-label="Table navigation" data-live-list-pagination>
         <span class="text-sm font-normal text-gray-500 dark:text-gray-400">
             Showing
             <span class="font-semibold text-gray-900 dark:text-white">{{ $paginator->firstItem() }}-{{ $paginator->lastItem() }}</span>

@@ -21,7 +21,7 @@
                     @endif
                 </td>
                 <td class="px-6 py-4 text-center">
-                    <div class="flex space-x-2">
+                    <div class="flex space-x-2" data-live-list-ignore>
                         <a href="{{ route('kelas.edit', $kelas->id) }}" class="text-yellow-600 hover:text-yellow-800" title="Ubah Data">
                             <img src="{{ asset('images/icons/edit.png') }}" alt="Edit Icon" class="w-5 h-5">
                         </a>

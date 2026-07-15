@@ -58,7 +58,7 @@
                     </div>
                 </td>
                 <td class="px-1 py-4">
-                    <div class="flex space-x-2">
+                    <div class="flex space-x-2" data-live-list-ignore>
                         <a href="{{ route('teacher.show', $teacher->id) }}" class="text-blue-600 hover:text-blue-800" title="Lihat Detail">
                             <img src="{{ asset('images/icons/detail.png') }}" alt="Detail Icon" class="w-5 h-5">
                         </a>

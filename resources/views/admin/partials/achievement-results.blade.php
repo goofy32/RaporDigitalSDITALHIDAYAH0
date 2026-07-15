@@ -26,7 +26,7 @@
                     <td class="px-6 py-4">{{ $prestasi->jenis_prestasi }}</td>
                     <td class="px-6 py-4">{{ $prestasi->keterangan }}</td>
                     <td class="px-6 py-4 text-center">
-                        <div class="flex space-x-2">
+                        <div class="flex space-x-2" data-live-list-ignore>
                             <a href="{{ route('achievement.edit', $prestasi->id) }}" class="text-green-600 hover:text-green-800 transition-colors duration-200">
                                 <img src="{{ asset('images/icons/edit.png') }}" alt="Edit Icon" class="w-5 h-5" title="Ubah Data">
                             </a>

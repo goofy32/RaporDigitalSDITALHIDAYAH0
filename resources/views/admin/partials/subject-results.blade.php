@@ -51,7 +51,7 @@
                 </td>
 
                 <td class="px-1 py-4 text-center whitespace-nowrap">
-                    <div class="flex items-center justify-center gap-2">
+                    <div class="flex items-center justify-center gap-2" data-live-list-ignore>
                         <a href="{{ route('tujuan_pembelajaran.create', $subject->id) }}"
                            class="inline-flex items-center justify-center text-green-600 hover:text-green-800"
                            title="Ubah atau Lihat Tujuan Pembelajaran">

@@ -127,6 +127,36 @@ class LiveListSearchFilterTest extends TestCase
         $this->assertStringNotContainsString('Siti Aisyah', $response->json('html'));
     }
 
+    public function test_row_actions_are_marked_to_bypass_live_list_interception(): void
+    {
+        foreach ([
+            route('kelas.index'),
+            route('teacher'),
+            route('student'),
+            route('subject.index'),
+            route('ekstra.index'),
+            route('achievement.index'),
+        ] as $url) {
+            $response = $this->actingAs($this->admin, 'web')
+                ->withSession($this->adminSession())
+                ->getJson($url, [
+                    'X-Requested-With' => 'XMLHttpRequest',
+                ]);
+
+            $response->assertOk();
+            $this->assertStringContainsString('data-live-list-ignore', $response->json('html'));
+        }
+
+        $response = $this->actingAs($this->wali, 'guru')
+            ->withSession($this->waliSession())
+            ->getJson(route('wali_kelas.student.index'), [
+                'X-Requested-With' => 'XMLHttpRequest',
+            ]);
+
+        $response->assertOk();
+        $this->assertStringContainsString('data-live-list-ignore', $response->json('html'));
+    }
+
     public function test_ajax_pagination_preserves_search_and_filter_query(): void
     {
         for ($i = 1; $i <= 12; $i++) {
@@ -148,6 +178,7 @@ class LiveListSearchFilterTest extends TestCase
 
         $this->assertStringContainsString('search=Siswa', $html);
         $this->assertStringContainsString('jenis_kelamin=Laki-laki', $html);
+        $this->assertStringContainsString('data-live-list-pagination', $html);
     }
 
     public function test_reset_filter_url_restores_unfiltered_list(): void

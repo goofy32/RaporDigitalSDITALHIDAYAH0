@@ -15,7 +15,7 @@
                 <td class="px-6 py-4">{{ $ekstra->nama_ekstrakurikuler }}</td>
                 <td class="px-6 py-4">{{ $ekstra->pembina }}</td>
                 <td class="px-6 py-4">
-                    <div class="flex space-x-2">
+                    <div class="flex space-x-2" data-live-list-ignore>
                         <a href="{{ route('ekstra.edit', $ekstra->id) }}" class="text-green-600 hover:text-green-800 transition-colors duration-200" title="Ubah Data">
                             <img src="{{ asset('images/icons/edit.png') }}" alt="Edit Icon" class="w-5 h-5">
                         </a>

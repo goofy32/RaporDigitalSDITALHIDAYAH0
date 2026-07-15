@@ -27,7 +27,7 @@
                 </td>
                 <td class="px-6 py-4">{{ $student->jenis_kelamin }}</td>
                 <td class="px-6 py-4">
-                    <div class="flex justify-center gap-2">
+                    <div class="flex justify-center gap-2" data-live-list-ignore>
                         <a href="{{ route('wali_kelas.student.show', $student->id) }}"
                            class="text-blue-600 hover:text-blue-800"
                            title="Detail Siswa">
