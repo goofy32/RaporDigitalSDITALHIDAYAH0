@@ -619,6 +619,70 @@ class ReportCardAuthorizationTest extends TestCase
         Queue::assertNotPushed(AutoPreparePdfReportJob::class, fn (AutoPreparePdfReportJob $job) => $job->type === 'UAS');
     }
 
+    public function test_wali_report_page_can_warm_uas_in_active_ganjil_when_uas_is_opened(): void
+    {
+        config()->set('report.pdf_auto_prepare.enabled', true);
+        config()->set('report.pdf_auto_prepare.delay_seconds', 60);
+        config()->set('report.pdf_auto_prepare.queue', 'pdf-warm');
+        Setting::set('active_wali_report_period', 'UAS');
+        Queue::fake();
+
+        $this->insertReportTemplate($this->currentClassId, 'UAS', $this->activeYearId, 1);
+
+        $this->actingAsWali()
+            ->get(route('wali_kelas.rapor.index', [
+                'type' => 'UAS',
+                'tahun_ajaran_id' => $this->activeYearId,
+            ]))
+            ->assertOk();
+
+        Queue::assertPushedOn('pdf-warm', AutoPreparePdfReportJob::class);
+        Queue::assertPushed(AutoPreparePdfReportJob::class, function (AutoPreparePdfReportJob $job) {
+            return $job->siswaId === $this->authorizedStudentId
+                && $job->type === 'UAS'
+                && $job->tahunAjaranId === $this->activeYearId
+                && $job->reason === 'report_page_warmup';
+        });
+        Queue::assertNotPushed(AutoPreparePdfReportJob::class, fn (AutoPreparePdfReportJob $job) => $job->type === 'UTS');
+    }
+
+    public function test_wali_report_page_can_warm_uts_in_active_genap_when_uts_is_opened(): void
+    {
+        config()->set('report.pdf_auto_prepare.enabled', true);
+        config()->set('report.pdf_auto_prepare.delay_seconds', 60);
+        config()->set('report.pdf_auto_prepare.queue', 'pdf-warm');
+        Setting::set('active_wali_report_period', 'UTS');
+        Queue::fake();
+
+        DB::table('tahun_ajarans')
+            ->where('id', $this->activeYearId)
+            ->update(['semester' => 2]);
+        DB::table('profil_sekolah')->update(['semester' => 2]);
+        $this->insertEnrollment($this->authorizedStudentId, $this->currentClassId, $this->activeYearId, 2);
+        $this->insertReportTemplate($this->currentClassId, 'UTS', $this->activeYearId, 2);
+
+        $this->actingAsWaliWithSession([
+            'selected_role' => 'wali_kelas',
+            'tahun_ajaran_id' => $this->activeYearId,
+            'selected_semester' => 2,
+            'no_tahun_ajaran' => false,
+        ])
+            ->get(route('wali_kelas.rapor.index', [
+                'type' => 'UTS',
+                'tahun_ajaran_id' => $this->activeYearId,
+            ]))
+            ->assertOk();
+
+        Queue::assertPushedOn('pdf-warm', AutoPreparePdfReportJob::class);
+        Queue::assertPushed(AutoPreparePdfReportJob::class, function (AutoPreparePdfReportJob $job) {
+            return $job->siswaId === $this->authorizedStudentId
+                && $job->type === 'UTS'
+                && $job->tahunAjaranId === $this->activeYearId
+                && $job->reason === 'report_page_warmup';
+        });
+        Queue::assertNotPushed(AutoPreparePdfReportJob::class, fn (AutoPreparePdfReportJob $job) => $job->type === 'UAS');
+    }
+
     public function test_report_index_js_encodes_student_names_in_report_actions(): void
     {
         $this->fakeLibreOfficeAvailability();

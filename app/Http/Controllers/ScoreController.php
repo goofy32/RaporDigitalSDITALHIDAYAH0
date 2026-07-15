@@ -1364,9 +1364,7 @@ class ScoreController extends Controller
                 $nilaiAkhirSemester = ($nilaiTes !== null && $nilaiNonTes !== null)
                     ? $this->calculateNilaiAkhirSemester($nilaiTes, $nilaiNonTes)
                     : null;
-                $nilaiAkhirRapor = $nilaiAkhirSemester !== null
-                    ? $this->calculateNilaiAkhirRapor($naTp ?? 0.0, $naLm ?? 0.0, $nilaiAkhirSemester, $bobotNilai)
-                    : null;
+                $nilaiAkhirRapor = $this->calculateNilaiAkhirRapor($naTp, $naLm, $nilaiAkhirSemester, $bobotNilai);
                 $this->addProfileStep($profileSteps, 'final_score_calculation', $this->elapsedMs($stepStartedAt));
 
                 $finalScores = [
@@ -2148,24 +2146,37 @@ class ScoreController extends Controller
     }
 
     private function calculateNilaiAkhirRapor(
-        float $naTp,
-        float $naLm,
-        float $nilaiAkhirSemester,
+        ?float $naTp,
+        ?float $naLm,
+        ?float $nilaiAkhirSemester,
         BobotNilai $bobotNilai
-    ): float {
-        $totalBobot = $bobotNilai->getTotal();
+    ): ?float {
+        $weightedTotal = 0.0;
+        $totalBobot = 0;
 
-        if ($totalBobot === 0) {
-            return 0.0;
+        if ($naTp !== null) {
+            $bobotTp = (int) $bobotNilai->bobot_tp;
+            $weightedTotal += $naTp * $bobotTp;
+            $totalBobot += $bobotTp;
         }
 
-        return round(
-            (
-                ($naTp * (int) $bobotNilai->bobot_tp) +
-                ($naLm * (int) $bobotNilai->bobot_lm) +
-                ($nilaiAkhirSemester * (int) $bobotNilai->bobot_as)
-            ) / $totalBobot
-        );
+        if ($naLm !== null) {
+            $bobotLm = (int) $bobotNilai->bobot_lm;
+            $weightedTotal += $naLm * $bobotLm;
+            $totalBobot += $bobotLm;
+        }
+
+        if ($nilaiAkhirSemester !== null) {
+            $bobotAs = (int) $bobotNilai->bobot_as;
+            $weightedTotal += $nilaiAkhirSemester * $bobotAs;
+            $totalBobot += $bobotAs;
+        }
+
+        if ($totalBobot === 0) {
+            return null;
+        }
+
+        return round($weightedTotal / $totalBobot);
     }
       
     public function previewScore($id)

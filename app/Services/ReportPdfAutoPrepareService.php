@@ -81,7 +81,7 @@ class ReportPdfAutoPrepareService
                 'siswa_id' => $siswa->id,
                 'report_type' => $type,
                 'tahun_ajaran_id' => $tahunAjaranId,
-                'semester' => $this->semesterForType($type),
+                'semester' => $this->semesterForYear($tahunAjaranId),
                 'cache_key' => PdfCacheService::getCacheKey($siswa, $type, $tahunAjaranId),
                 'delay_seconds' => $resolvedDelaySeconds,
                 'queue' => $this->queueName(),
@@ -204,10 +204,6 @@ class ReportPdfAutoPrepareService
             return 'academic_year_unavailable';
         }
 
-        if ((int) $tahunAjaran->semester !== $this->semesterForType($type)) {
-            return 'inactive_semester';
-        }
-
         if (! app(ReportPeriodService::class)->isOpened($type, $tahunAjaran, $tahunAjaranId)) {
             return 'report_period_unopened';
         }
@@ -300,7 +296,7 @@ class ReportPdfAutoPrepareService
             'siswa_id' => $siswa->id,
             'report_type' => $type,
             'tahun_ajaran_id' => $tahunAjaranId,
-            'semester' => $this->semesterForType($type),
+            'semester' => $this->semesterForYear($tahunAjaranId),
             'cache_key' => PdfCacheService::getCacheKey($siswa, $type, $tahunAjaranId),
             'unavailable_reason' => $unavailableReason,
             'reason' => $reason,
@@ -348,18 +344,15 @@ class ReportPdfAutoPrepareService
         return "{$siswaId}:{$type}:{$tahunAjaranId}";
     }
 
-    private function semesterForType(string $type): int
+    private function semesterForYear(int $tahunAjaranId): ?int
     {
-        return strtoupper($type) === 'UTS' ? 1 : 2;
-    }
+        if (! Schema::hasTable('tahun_ajarans')) {
+            return null;
+        }
 
-    private function typeForSemester(int $semester): ?string
-    {
-        return match ($semester) {
-            1 => 'UTS',
-            2 => 'UAS',
-            default => null,
-        };
+        $semester = TahunAjaran::whereKey($tahunAjaranId)->value('semester');
+
+        return $semester === null ? null : (int) $semester;
     }
 
     private function dashboardWarmupCooldownKey(int $guruId, int $kelasId, string $type, int $tahunAjaranId): string

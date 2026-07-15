@@ -99,6 +99,76 @@ class PengajarScoreAuthorizationTest extends TestCase
         $this->assertSame(1, DB::table('nilais')->whereNull('lingkup_materi_id')->whereNull('tujuan_pembelajaran_id')->whereNotNull('nilai_akhir_rapor')->count());
     }
 
+    public function test_blank_nilai_akhir_semester_is_skipped_from_final_report_score(): void
+    {
+        $this->actingAsPengajar($this->budi)
+            ->postJson(route('pengajar.score.save_scores', $this->subjectId), [
+                'scores' => $this->scoresPayloadWithComponents(85, 90, '', ''),
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $aggregate = $this->aggregateNilai();
+
+        $this->assertNotNull($aggregate);
+        $this->assertEquals(85.0, (float) $aggregate->na_tp);
+        $this->assertEquals(90.0, (float) $aggregate->na_lm);
+        $this->assertNull($aggregate->nilai_akhir_semester);
+        $this->assertEquals(88.0, (float) $aggregate->nilai_akhir_rapor);
+    }
+
+    public function test_zero_nilai_akhir_semester_is_included_as_real_value(): void
+    {
+        $this->actingAsPengajar($this->budi)
+            ->postJson(route('pengajar.score.save_scores', $this->subjectId), [
+                'scores' => $this->scoresPayloadWithComponents(80, 100, 0, 0),
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $aggregate = $this->aggregateNilai();
+
+        $this->assertNotNull($aggregate);
+        $this->assertEquals(0.0, (float) $aggregate->nilai_akhir_semester);
+        $this->assertEquals(45.0, (float) $aggregate->nilai_akhir_rapor);
+    }
+
+    public function test_all_blank_final_score_components_remain_blank_not_zero(): void
+    {
+        $this->actingAsPengajar($this->budi)
+            ->postJson(route('pengajar.score.save_scores', $this->subjectId), [
+                'scores' => $this->scoresPayloadWithComponents('', '', '', ''),
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $aggregate = $this->aggregateNilai();
+
+        $this->assertTrue($aggregate === null || $aggregate->nilai_akhir_rapor === null);
+        $this->assertDatabaseMissing('nilais', [
+            'siswa_id' => $this->studentId,
+            'mata_pelajaran_id' => $this->subjectId,
+            'nilai_akhir_rapor' => 0,
+            'tahun_ajaran_id' => $this->activeYearId,
+        ]);
+    }
+
+    public function test_complete_score_calculation_still_uses_all_components(): void
+    {
+        $this->actingAsPengajar($this->budi)
+            ->postJson(route('pengajar.score.save_scores', $this->subjectId), [
+                'scores' => $this->scoresPayloadWithComponents(80, 90, 100, 80),
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $aggregate = $this->aggregateNilai();
+
+        $this->assertNotNull($aggregate);
+        $this->assertEquals(90.0, (float) $aggregate->nilai_akhir_semester);
+        $this->assertEquals(88.0, (float) $aggregate->nilai_akhir_rapor);
+    }
+
     public function test_score_save_schedules_pdf_auto_prepare_when_enabled(): void
     {
         config()->set('report.pdf_auto_prepare.enabled', true);
@@ -1505,6 +1575,35 @@ class PengajarScoreAuthorizationTest extends TestCase
                 'nilai_non_tes' => $score,
             ],
         ];
+    }
+
+    private function scoresPayloadWithComponents(mixed $tpScore, mixed $lmScore, mixed $nilaiTes, mixed $nilaiNonTes): array
+    {
+        return [
+            $this->studentId => [
+                'tp' => [
+                    $this->lingkupMateriId => [
+                        $this->tujuanPembelajaranId => $tpScore,
+                    ],
+                ],
+                'lm' => [
+                    $this->lingkupMateriId => $lmScore,
+                ],
+                'nilai_tes' => $nilaiTes,
+                'nilai_non_tes' => $nilaiNonTes,
+            ],
+        ];
+    }
+
+    private function aggregateNilai(): ?object
+    {
+        return DB::table('nilais')
+            ->where('siswa_id', $this->studentId)
+            ->where('mata_pelajaran_id', $this->subjectId)
+            ->where('tahun_ajaran_id', $this->activeYearId)
+            ->whereNull('lingkup_materi_id')
+            ->whereNull('tujuan_pembelajaran_id')
+            ->first();
     }
 
     private function validScoresPayloadForSpecificSetup(int $studentId, int $lingkupMateriId, int $tujuanPembelajaranId, int $score): array

@@ -70,17 +70,30 @@ function calculateSemesterAverage(nilaiTes, nilaiNonTes) {
 }
 
 function calculateNilaiAkhirRapor(naTP, naLM, nilaiAkhirSemester) {
-    if (nilaiAkhirSemester === null) {
+    const { rawTP, rawLM, rawAS } = getBobotNilai();
+    let weightedTotal = 0;
+    let totalBobot = 0;
+
+    if (naTP !== null) {
+        weightedTotal += naTP * rawTP;
+        totalBobot += rawTP;
+    }
+
+    if (naLM !== null) {
+        weightedTotal += naLM * rawLM;
+        totalBobot += rawLM;
+    }
+
+    if (nilaiAkhirSemester !== null) {
+        weightedTotal += nilaiAkhirSemester * rawAS;
+        totalBobot += rawAS;
+    }
+
+    if (totalBobot === 0) {
         return null;
     }
 
-    const { bobotTP, bobotLM, bobotAS } = getBobotNilai();
-
-    return Math.round(
-        ((naTP ?? 0) * bobotTP) +
-        ((naLM ?? 0) * bobotLM) +
-        (nilaiAkhirSemester * bobotAS)
-    );
+    return Math.round(weightedTotal / totalBobot);
 }
 
 function calculateFilledAverage(inputs) {
@@ -286,8 +299,8 @@ function calculateIntermediateValues(row) {
     // 4. Calculate Nilai Akhir Rapor if empty
     let nilaiAkhirRaporInput = row.querySelector('input[name*="[nilai_akhir_rapor]"]');
     if (!nilaiAkhirRaporInput.value) {
-        let naTP = parseNumericInputValue(row.querySelector('.na-tp')) ?? 0;
-        let naLM = parseNumericInputValue(row.querySelector('.na-lm')) ?? 0;
+        let naTP = parseNumericInputValue(row.querySelector('.na-tp'));
+        let naLM = parseNumericInputValue(row.querySelector('.na-lm'));
         let nilaiAkhirSemester = parseNumericInputValue(nilaiAkhirInput);
         let nilaiAkhirRapor = calculateNilaiAkhirRapor(naTP, naLM, nilaiAkhirSemester);
 

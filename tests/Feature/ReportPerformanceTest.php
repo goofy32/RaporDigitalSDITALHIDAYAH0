@@ -555,7 +555,7 @@ class ReportPerformanceTest extends TestCase
             ->with('report.pdf.auto_prepare_skipped_unavailable', Mockery::on(function (array $context) use ($siswa) {
                 return $context['siswa_id'] === $siswa->id
                     && $context['report_type'] === 'UAS'
-                    && $context['unavailable_reason'] === 'inactive_semester';
+                    && $context['unavailable_reason'] === 'report_period_unopened';
             }))
             ->once();
 
