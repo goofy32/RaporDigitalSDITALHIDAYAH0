@@ -95,31 +95,7 @@ Route::get('/api/session-config', function () {
 })->middleware(['web']);
 
 Route::get('/notifications/unread-count', function () {
-    if (Auth::guard('guru')->check()) {
-        $guru = Auth::guard('guru')->user();
-        $role = session('selected_role') === 'wali_kelas' ? 'wali_kelas' : 'guru';
-
-        $count = \App\Models\Notification::where(function($query) use ($guru, $role) {
-            $query->where('target', 'all')
-                  ->orWhere('target', $role)
-                  ->orWhere(function($q) use ($guru) {
-                      $q->where('target', 'specific')
-                        ->whereJsonContains('specific_users', (int) $guru->id);
-                  });
-        })
-        ->whereDoesntHave('readers', function($query) use ($guru) {
-            $query->where('guru_id', $guru->id);
-        })
-        ->count();
-
-        return response()->json(['count' => $count]);
-    }
-
-    if (Auth::guard('web')->check()) {
-        return response()->json(['count' => 0]);
-    }
-
-    return response()->json(['count' => 0], 401);
+    return app(NotificationController::class)->getUnreadCount();
 })->middleware(['web']);
 
 
@@ -252,6 +228,10 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
     // Information/Notifications
     Route::prefix('information')->name('information.')->group(function () {
         Route::post('/', [NotificationController::class, 'store'])->name('store');
+        Route::post('/mark-all-read', [NotificationController::class, 'markAllAsRead'])->name('mark-all-read');
+        Route::delete('/delete-all', [NotificationController::class, 'destroyAllMine'])->name('delete-all');
+        Route::get('/unread-count', [NotificationController::class, 'getUnreadCount'])->name('unread-count');
+        Route::post('/{notification}/read', [NotificationController::class, 'markAsRead'])->name('read');
         Route::delete('/{notification}', [NotificationController::class, 'destroy'])->name('destroy');
         Route::get('/list', [NotificationController::class, 'list'])->name('list');
     });
@@ -475,6 +455,8 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
     // Notifications
     Route::prefix('notifications')->name('notifications.')->group(function () {
         Route::get('/', [NotificationController::class, 'index'])->name('index');
+        Route::post('/mark-all-read', [NotificationController::class, 'markAllAsRead'])->name('mark-all-read');
+        Route::delete('/delete-all', [NotificationController::class, 'destroyAllMine'])->name('delete-all');
         Route::post('/{notification}/read', [NotificationController::class, 'markAsRead'])->name('read');
         Route::get('/unread-count', [NotificationController::class, 'getUnreadCount'])->name('unread-count');
     });
@@ -611,6 +593,8 @@ Route::prefix('catatan')->name('catatan.')->group(function () {
 
 Route::prefix('notifications')->name('notifications.')->group(function () {
     Route::get('/', [NotificationController::class, 'index'])->name('index');
+    Route::post('/mark-all-read', [NotificationController::class, 'markAllAsRead'])->name('mark-all-read');
+    Route::delete('/delete-all', [NotificationController::class, 'destroyAllMine'])->name('delete-all');
     Route::post('/{notification}/read', [NotificationController::class, 'markAsRead'])->name('read');
     Route::get('/unread-count', [NotificationController::class, 'getUnreadCount'])->name('unread-count');
 });

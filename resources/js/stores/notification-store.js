@@ -9,7 +9,21 @@ export function registerNotificationStore() {
         baseTitle: '',
         showModal: false,
         hideRead: false,
+        activeFilter: 'all',
         visibilityHandlerBound: false,
+        filterOptions: [
+            { key: 'all', label: 'Semua' },
+            { key: 'unread', label: 'Belum dibaca' },
+            { key: 'read', label: 'Sudah dibaca' },
+            { key: 'admin', label: 'Admin' },
+            { key: 'guru', label: 'Guru/Pengajar' },
+            { key: 'wali_kelas', label: 'Wali Kelas' },
+            { key: 'sistem', label: 'Sistem' },
+            { key: 'nilai', label: 'Nilai' },
+            { key: 'rapor', label: 'Rapor' },
+            { key: 'template', label: 'Template' },
+            { key: 'tahun_ajaran', label: 'Tahun Ajaran' },
+        ],
 
         init() {
             this.baseTitle = document.title.replace(/^\(\d+\)\s/, '');
@@ -44,10 +58,15 @@ export function registerNotificationStore() {
         resolveReadBaseUrl() {
             const path = window.location.pathname;
 
+            if (path.includes('/admin/')) return '/admin/information';
             if (path.includes('/pengajar/')) return '/pengajar/notifications';
             if (path.includes('/wali-kelas/')) return '/wali-kelas/notifications';
 
             return null;
+        },
+
+        resolveDeleteBaseUrl() {
+            return this.resolveReadBaseUrl();
         },
 
         formatTime(dateString) {
@@ -102,13 +121,64 @@ export function registerNotificationStore() {
         },
 
         normalizeNotification(item) {
+            const source = item.source || this.deriveSource(item);
+            const category = item.category || this.deriveCategory(item);
+
             return {
                 ...item,
                 created_at_raw: item.created_at,
                 created_at: this.formatTime(item.created_at),
                 created_at_formatted: this.formatDateTime(item.created_at),
                 is_read: Boolean(item.is_read),
+                source,
+                source_label: item.source_label || this.sourceLabel(source),
+                category,
+                category_label: item.category_label || this.categoryLabel(category),
             };
+        },
+
+        deriveSource(item) {
+            const category = item.category || this.deriveCategory(item);
+
+            if (category === 'nilai') return 'guru';
+            if (category === 'tahun_ajaran' || category === 'rapor') return 'sistem';
+            if (['all', 'guru', 'wali_kelas', 'specific'].includes(item.target)) return 'admin';
+
+            return 'sistem';
+        },
+
+        deriveCategory(item) {
+            const text = `${item.title || ''} ${item.content || ''}`.toLowerCase();
+
+            if (text.includes('nilai') || text.includes('score')) return 'nilai';
+            if (text.includes('rapor') || text.includes('pdf')) return 'rapor';
+            if (text.includes('template')) return 'template';
+            if (text.includes('tahun ajaran') || text.includes('semester')) return 'tahun_ajaran';
+
+            return 'sistem';
+        },
+
+        sourceLabel(source) {
+            const labels = {
+                admin: 'Admin',
+                guru: 'Guru/Pengajar',
+                wali_kelas: 'Wali Kelas',
+                sistem: 'Sistem',
+            };
+
+            return labels[source] || 'Sistem';
+        },
+
+        categoryLabel(category) {
+            const labels = {
+                nilai: 'Nilai',
+                rapor: 'Rapor',
+                template: 'Template',
+                tahun_ajaran: 'Tahun Ajaran',
+                sistem: 'Sistem',
+            };
+
+            return labels[category] || 'Sistem';
         },
 
         getUnreadItems() {
@@ -120,11 +190,47 @@ export function registerNotificationStore() {
         },
 
         get visibleItems() {
-            if (this.hideRead) {
-                return this.items.filter(item => item.is_read !== true);
+            return this.filteredItems;
+        },
+
+        get filteredItems() {
+            return this.items.filter(item => this.matchesActiveFilter(item));
+        },
+
+        get previewItems() {
+            return this.filteredItems.slice(0, 3);
+        },
+
+        matchesActiveFilter(item) {
+            if (this.hideRead && item.is_read === true) {
+                return false;
             }
 
-            return this.items;
+            switch (this.activeFilter) {
+                case 'unread':
+                    return item.is_read !== true;
+                case 'read':
+                    return item.is_read === true;
+                case 'admin':
+                    return item.source === 'admin';
+                case 'guru':
+                    return item.source === 'guru';
+                case 'wali_kelas':
+                    return item.source === 'wali_kelas';
+                case 'sistem':
+                    return item.source === 'sistem' || item.category === 'sistem';
+                case 'nilai':
+                case 'rapor':
+                case 'template':
+                case 'tahun_ajaran':
+                    return item.category === this.activeFilter;
+                default:
+                    return true;
+            }
+        },
+
+        setFilter(filter) {
+            this.activeFilter = filter;
         },
 
         toggleHideRead() {
@@ -233,30 +339,49 @@ export function registerNotificationStore() {
         },
 
         async markAllAsRead() {
-            const unreadItems = this.items.filter(item => item.is_read !== true);
-
-            if (unreadItems.length === 0) {
+            if (this.items.filter(item => item.is_read !== true).length === 0) {
                 return true;
             }
 
-            const results = await Promise.all(
-                unreadItems.map(item => this.markAsRead(item.id, { refreshCount: false }))
-            );
+            const baseUrl = this.resolveReadBaseUrl();
 
-            await this.fetchUnreadCount();
-            return results.every(Boolean);
+            if (!baseUrl) {
+                return false;
+            }
+
+            const response = await fetch(`${baseUrl}/mark-all-read`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
+                    Accept: 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                },
+            });
+
+            if (!response.ok) {
+                return false;
+            }
+
+            this.items = this.items.map(item => ({ ...item, is_read: true }));
+            this.unreadCount = 0;
+            this.updateTabTitle();
+
+            return true;
         },
 
         async fetchUnreadCount() {
             try {
-                if (!this.resolveReadBaseUrl()) {
+                const baseUrl = this.resolveReadBaseUrl();
+
+                if (!baseUrl) {
                     this.unreadCount = this.items.filter(item => item.is_read !== true).length;
                     this.updateTabTitle();
                     return this.unreadCount;
                 }
 
                 const previousCount = Number(this.unreadCount || 0);
-                const response = await fetch('/notifications/unread-count', {
+                const response = await fetch(`${baseUrl}/unread-count`, {
                     headers: {
                         Accept: 'application/json',
                         'X-Requested-With': 'XMLHttpRequest',
@@ -295,6 +420,34 @@ export function registerNotificationStore() {
             this.showModal = false;
         },
 
+        badgeClass(item) {
+            const source = item.source || item.category;
+
+            if (item.category === 'nilai' || source === 'guru') {
+                return 'bg-green-100 text-green-700 border-green-200';
+            }
+
+            if (source === 'wali_kelas') {
+                return 'bg-indigo-100 text-indigo-700 border-indigo-200';
+            }
+
+            if (item.category === 'rapor' || item.category === 'template') {
+                return 'bg-blue-100 text-blue-700 border-blue-200';
+            }
+
+            if (item.category === 'tahun_ajaran') {
+                return 'bg-amber-100 text-amber-700 border-amber-200';
+            }
+
+            return 'bg-gray-100 text-gray-700 border-gray-200';
+        },
+
+        itemCardClass(item) {
+            return item.is_read
+                ? 'border-gray-200 bg-white'
+                : 'border-green-200 bg-green-50';
+        },
+
         async addNotification(notification) {
             try {
                 const response = await fetch('/admin/information', {
@@ -328,7 +481,13 @@ export function registerNotificationStore() {
 
         async deleteNotification(id) {
             try {
-                const response = await fetch(`/admin/information/${id}`, {
+                const baseUrl = this.resolveDeleteBaseUrl();
+
+                if (!baseUrl) {
+                    return false;
+                }
+
+                const response = await fetch(`${baseUrl}/${id}`, {
                     method: 'DELETE',
                     headers: {
                         'Content-Type': 'application/json',
@@ -349,6 +508,49 @@ export function registerNotificationStore() {
                 return false;
             } catch (error) {
                 console.error('Error deleting notification:', error);
+                return false;
+            }
+        },
+
+        async deleteAllOwn() {
+            if (this.items.length === 0) {
+                return true;
+            }
+
+            if (!window.confirm('Hapus semua notifikasi Anda? Tindakan ini tidak dapat dibatalkan.')) {
+                return false;
+            }
+
+            try {
+                const baseUrl = this.resolveDeleteBaseUrl();
+
+                if (!baseUrl) {
+                    return false;
+                }
+
+                const response = await fetch(`${baseUrl}/delete-all`, {
+                    method: 'DELETE',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
+                        Accept: 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest',
+                    },
+                });
+
+                if (!response.ok) throw new Error('Failed to delete notifications');
+
+                const result = await response.json();
+                if (result.success) {
+                    this.items = [];
+                    this.unreadCount = 0;
+                    this.updateTabTitle();
+                    return true;
+                }
+
+                return false;
+            } catch (error) {
+                console.error('Error deleting all notifications:', error);
                 return false;
             }
         },

@@ -575,7 +575,7 @@ class ScoreController extends Controller
         });
     }
 
-    private function sendScoreCompletionNotification(MataPelajaran $mataPelajaran, Siswa $siswa, string $guruNama): void
+    private function sendScoreCompletionNotification(MataPelajaran $mataPelajaran, int $studentCount, string $guruNama): void
     {
         $waliKelasGuru = DB::table('guru_kelas')
             ->where('kelas_id', $mataPelajaran->kelas_id)
@@ -588,13 +588,37 @@ class ScoreController extends Controller
         }
 
         $mapelNama = $mataPelajaran->nama_pelajaran;
-        $siswaNama = $siswa->nama;
+        $kelasLabel = $mataPelajaran->kelas
+            ? trim('Kelas ' . $mataPelajaran->kelas->nomor_kelas . ' ' . $mataPelajaran->kelas->nama_kelas)
+            : 'kelas terkait';
+        $studentText = $studentCount > 1
+            ? "{$studentCount} siswa"
+            : '1 siswa';
 
-        $notification = new Notification();
-        $notification->title = "Nilai {$mapelNama} Selesai";
-        $notification->content = "{$guruNama}: nilai {$mapelNama} {$siswaNama} selesai diinput";
-        $notification->target = 'specific';
-        $notification->specific_users = [(int) $waliKelasGuru];
+        $title = "Nilai {$mapelNama} {$kelasLabel} Disimpan";
+        $content = "Nilai {$mapelNama} {$kelasLabel} telah disimpan oleh {$guruNama} untuk {$studentText}.";
+
+        $notification = Notification::where('target', 'specific')
+            ->whereJsonContains('specific_users', (int) $waliKelasGuru)
+            ->where('title', $title)
+            ->where('created_at', '>=', now()->subMinutes(30))
+            ->whereDoesntHave('readers', function ($query) use ($waliKelasGuru) {
+                $query->where('guru_id', (int) $waliKelasGuru);
+            })
+            ->latest()
+            ->first();
+
+        if ($notification) {
+            $notification->content = $content;
+            $notification->touch();
+        } else {
+            $notification = new Notification();
+            $notification->title = $title;
+            $notification->content = $content;
+            $notification->target = 'specific';
+            $notification->specific_users = [(int) $waliKelasGuru];
+        }
+
         $notification->save();
 
         event(new NotificationCreated($notification));
@@ -1445,17 +1469,18 @@ class ScoreController extends Controller
             $this->addProfileStep($profileSteps, 'pdf_warmup_scheduling', $cacheStats['pdf_warmup_scheduling_ms']);
 
             $stepStartedAt = microtime(true);
-            foreach (collect($newlySubmittedStudents)->unique('id') as $completedStudent) {
+            $completedStudents = collect($newlySubmittedStudents)->unique('id');
+            if ($completedStudents->isNotEmpty()) {
                 try {
                     $this->sendScoreCompletionNotification(
                         $mataPelajaran,
-                        $completedStudent,
+                        $completedStudents->count(),
                         $guru?->nama ?? 'Guru'
                     );
                 } catch (\Exception $notificationException) {
                     Log::warning('Notification failed', [
                         'error' => $notificationException->getMessage(),
-                        'siswa_id' => $completedStudent->id,
+                        'submitted_student_count' => $completedStudents->count(),
                         'mata_pelajaran_id' => $mataPelajaran->id,
                         'guru_id' => $guru?->id,
                     ]);
