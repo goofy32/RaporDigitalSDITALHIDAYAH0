@@ -610,6 +610,52 @@ class GuruSignatureTest extends TestCase
         $this->assertStringContainsString('Ahmad', $xml);
     }
 
+    public function test_report_template_replaces_table_cell_student_photo_with_centered_inline_3x4_image(): void
+    {
+        Storage::disk('public')->put('student-photos/landscape.png', $this->pngBytesWithSize([20, 80, 180], 800, 400));
+        Siswa::findOrFail($this->studentId)->forceFill(['photo' => 'student-photos/landscape.png'])->save();
+
+        $template = $this->createDocxTemplateWithPhotoTable();
+
+        $result = (new RaporTemplateProcessor($template, Siswa::findOrFail($this->studentId), 'UTS', $this->activeYearId))
+            ->generate(true);
+
+        $outputPath = storage_path('app/public/'.$result['path']);
+        $xml = $this->docxXml($outputPath);
+
+        $this->assertStringContainsString('<w:tbl>', $xml);
+        $this->assertStringNotContainsString('foto_siswa', $xml);
+        $this->assertStringContainsString('width:3cm;height:4cm', $xml);
+        $this->assertStringContainsString('<w:jc w:val="center"/>', $xml);
+        $this->assertStringContainsString('<w:pict>', $xml);
+        $this->assertStringNotContainsString('<wp:anchor', $xml);
+        $this->assertStringContainsString('Bandung, tanggal', $xml);
+        $this->assertStringContainsString('Kepala Sekolah', $xml);
+        $this->assertStringContainsString('NUPTK', $xml);
+
+        $this->assertContains([450, 600], $this->docxMediaDimensions($outputPath));
+    }
+
+    public function test_report_template_cleans_table_cell_student_photo_placeholder_when_photo_missing(): void
+    {
+        Siswa::findOrFail($this->studentId)->forceFill(['photo' => 'student-photos/missing.png'])->save();
+
+        $template = $this->createDocxTemplateWithPhotoTable();
+
+        $result = (new RaporTemplateProcessor($template, Siswa::findOrFail($this->studentId), 'UTS', $this->activeYearId))
+            ->generate(true);
+
+        $xml = $this->docxXml(storage_path('app/public/'.$result['path']));
+
+        $this->assertStringContainsString('<w:tbl>', $xml);
+        $this->assertStringNotContainsString('foto_siswa', $xml);
+        $this->assertStringNotContainsString('[FOTO TIDAK TERSEDIA]', $xml);
+        $this->assertStringNotContainsString('[ERROR MEMUAT FOTO]', $xml);
+        $this->assertStringContainsString('Bandung, tanggal', $xml);
+        $this->assertStringContainsString('Kepala Sekolah', $xml);
+        $this->assertStringContainsString('NUPTK', $xml);
+    }
+
     private function createSchema(): void
     {
         foreach ([
@@ -727,6 +773,7 @@ class GuruSignatureTest extends TestCase
             $table->string('nisn')->nullable();
             $table->string('nama');
             $table->foreignId('kelas_id')->nullable();
+            $table->string('photo')->nullable();
             $table->timestamps();
             $table->softDeletes();
         });
@@ -1060,6 +1107,19 @@ class GuruSignatureTest extends TestCase
         return (string) ob_get_clean();
     }
 
+    private function pngBytesWithSize(array $rgb, int $width, int $height): string
+    {
+        $image = imagecreatetruecolor($width, $height);
+        $color = imagecolorallocate($image, $rgb[0], $rgb[1], $rgb[2]);
+        imagefilledrectangle($image, 0, 0, $width - 1, $height - 1, $color);
+
+        ob_start();
+        imagepng($image);
+        imagedestroy($image);
+
+        return (string) ob_get_clean();
+    }
+
     private function webpUpload(string $name): UploadedFile
     {
         $image = imagecreatetruecolor(120, 60);
@@ -1112,6 +1172,40 @@ class GuruSignatureTest extends TestCase
         ]);
     }
 
+    private function createDocxTemplateWithPhotoTable(): ReportTemplate
+    {
+        $directory = storage_path('app/public/test-templates');
+        if (! is_dir($directory)) {
+            mkdir($directory, 0755, true);
+        }
+
+        $filename = 'photo-table-template-'.uniqid().'.docx';
+        $path = $directory.'/'.$filename;
+
+        $phpWord = new PhpWord;
+        $section = $phpWord->addSection();
+        $table = $section->addTable();
+        $table->addRow();
+        $table->addCell(2400)->addText('${foto_siswa}');
+        $signatureCell = $table->addCell(5200);
+        $signatureCell->addText('Bandung, tanggal');
+        $signatureCell->addText('Kepala Sekolah');
+        $signatureCell->addText('Nama Kepala Sekolah');
+        $signatureCell->addText('NUPTK');
+
+        IOFactory::createWriter($phpWord, 'Word2007')->save($path);
+
+        return ReportTemplate::create([
+            'filename' => $filename,
+            'path' => 'test-templates/'.$filename,
+            'type' => 'UTS',
+            'is_active' => true,
+            'kelas_id' => $this->classId,
+            'tahun_ajaran_id' => $this->activeYearId,
+            'semester' => 1,
+        ]);
+    }
+
     private function docxXml(string $path): string
     {
         $zip = new ZipArchive;
@@ -1143,6 +1237,29 @@ class GuruSignatureTest extends TestCase
         $zip->close();
 
         return false;
+    }
+
+    private function docxMediaDimensions(string $path): array
+    {
+        $zip = new ZipArchive;
+        $this->assertTrue($zip->open($path));
+
+        $dimensions = [];
+        for ($index = 0; $index < $zip->numFiles; $index++) {
+            $name = $zip->getNameIndex($index);
+            if (! str_starts_with($name, 'word/media/')) {
+                continue;
+            }
+
+            $imageSize = @getimagesizefromstring($zip->getFromIndex($index));
+            if (is_array($imageSize)) {
+                $dimensions[] = [$imageSize[0], $imageSize[1]];
+            }
+        }
+
+        $zip->close();
+
+        return $dimensions;
     }
 
     private function deleteDirectory(string $path): void

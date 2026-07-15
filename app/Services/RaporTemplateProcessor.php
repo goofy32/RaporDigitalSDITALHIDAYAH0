@@ -35,6 +35,9 @@ class RaporTemplateProcessor
     protected $tahunAjaranId; // Tambahkan property untuk menyimpan tahun ajaran ID
     protected ?Kelas $reportKelas = null;
     protected ?TahunAjaran $reportTahunAjaran = null;
+    protected ?string $fotoSiswaReplacementPath = null;
+    private const FOTO_SISWA_WIDTH = '3cm';
+    private const FOTO_SISWA_HEIGHT = '4cm';
 
     public function __construct(ReportTemplate $template, Siswa $siswa, $type = 'UTS', $tahunAjaranId = null)
     {
@@ -922,36 +925,40 @@ class RaporTemplateProcessor
      * 
      * @return string|null
      */
-protected function prepareFotoSiswa()
-{
-    // TEMPORARY: Skip processing untuk test
-    if ($this->siswa->photo) {
-        $originalPath = storage_path('app/public/' . $this->siswa->photo);
-        $originalPath = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $originalPath);
-        
-        if (file_exists($originalPath)) {
-            $this->logReportProcessing('Using ORIGINAL photo (no processing)', [
-                'siswa_id' => $this->siswa->id,
-                'path' => $originalPath
-            ]);
-            return $originalPath; // Return foto asli langsung
+    protected function prepareFotoSiswa()
+    {
+        if ($this->siswa->photo) {
+            $originalPath = storage_path('app/public/' . $this->siswa->photo);
+            $originalPath = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $originalPath);
+
+            if (file_exists($originalPath)) {
+                $processedPath = $this->prepareAndResizeFoto($originalPath);
+
+                $this->logReportProcessing('Using processed student photo', [
+                    'siswa_id' => $this->siswa->id,
+                    'path' => $processedPath,
+                ]);
+
+                return $processedPath;
+            }
         }
+
+        $defaultPath = public_path('images/default-student.png');
+        $defaultPath = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $defaultPath);
+
+        if (file_exists($defaultPath)) {
+            $processedPath = $this->prepareAndResizeFoto($defaultPath);
+
+            $this->logReportProcessing('Using processed default student photo', [
+                'siswa_id' => $this->siswa->id,
+                'path' => $processedPath,
+            ]);
+
+            return $processedPath;
+        }
+
+        return null;
     }
-    
-    // Default photo
-    $defaultPath = public_path('images/default-student.png');
-    $defaultPath = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $defaultPath);
-    
-    if (file_exists($defaultPath)) {
-        $this->logReportProcessing('Using default photo (no processing)', [
-            'siswa_id' => $this->siswa->id,
-            'path' => $defaultPath
-        ]);
-        return $defaultPath;
-    }
-    
-    return null;
-}
 
     protected function prepareTtdWaliKelas(?Guru $waliKelas): ?string
     {
@@ -1407,28 +1414,26 @@ protected function prepareFotoSiswa()
     {
         try {
             if ($fotoPath && file_exists($fotoPath)) {
-                // Ukuran dalam twips untuk 3x4 cm
-                // 1 cm ≈ 28.35 points ≈ 40.5 twips
-                $widthTwips = 3 * 40.5;   // 3 cm = ~121 twips
-                $heightTwips = 4 * 40.5;  // 4 cm = ~162 twips
+                // Keep the table-cell placeholder as an inline 3x4 cm student photo.
+                $this->fotoSiswaReplacementPath = $fotoPath;
                 
                 $this->processor->setImageValue('foto_siswa', [
                     'path' => $fotoPath,
-                    'width' => $widthTwips,
-                    'height' => $heightTwips,
-                    'ratio' => false // Karena sudah di-crop perfect, tidak perlu maintain ratio
+                    'width' => self::FOTO_SISWA_WIDTH,
+                    'height' => self::FOTO_SISWA_HEIGHT,
+                    'ratio' => ! $this->isThreeByFourImage($fotoPath),
                 ]);
                 
                 $this->logReportProcessing('Foto successfully set to template', [
                     'siswa_id' => $this->siswa->id,
                     'foto_path' => $fotoPath,
-                    'size_cm' => '3x4',
-                    'size_twips' => "{$widthTwips}x{$heightTwips}",
+                    'size_cm' => self::FOTO_SISWA_WIDTH.'x'.self::FOTO_SISWA_HEIGHT,
                     'is_processed' => strpos($fotoPath, 'processed_') !== false
                 ]);
             } else {
                 // Placeholder jika tidak ada foto
-                $this->processor->setValue('foto_siswa', '[FOTO TIDAK TERSEDIA]');
+                $this->fotoSiswaReplacementPath = null;
+                $this->processor->setValue('foto_siswa', '');
                 
                 Log::warning('No photo available for template', [
                     'siswa_id' => $this->siswa->id
@@ -1443,13 +1448,79 @@ protected function prepareFotoSiswa()
             
             // Fallback graceful
             try {
-                $this->processor->setValue('foto_siswa', '[ERROR MEMUAT FOTO]');
+                $this->fotoSiswaReplacementPath = null;
+                $this->processor->setValue('foto_siswa', '');
             } catch (\Exception $fallbackError) {
                 Log::error('Critical error in foto fallback', [
                     'error' => $fallbackError->getMessage()
                 ]);
             }
         }
+    }
+
+    private function isThreeByFourImage(string $path): bool
+    {
+        $size = @getimagesize($path);
+
+        if (! is_array($size) || empty($size[0]) || empty($size[1])) {
+            return false;
+        }
+
+        return abs(($size[0] / $size[1]) - 0.75) < 0.01;
+    }
+
+    private function centerFotoSiswaParagraph(string $outputPath): void
+    {
+        if (! $this->fotoSiswaReplacementPath || ! is_file($outputPath)) {
+            return;
+        }
+
+        $zip = new \ZipArchive;
+
+        if ($zip->open($outputPath) !== true) {
+            return;
+        }
+
+        $xml = $zip->getFromName('word/document.xml');
+
+        if (! is_string($xml) || $xml === '') {
+            $zip->close();
+
+            return;
+        }
+
+        $pattern = '/<w:p\b[^>]*>(?:(?!<\/w:p>).)*<v:shape\b[^>]*style="[^"]*width:'
+            .preg_quote(self::FOTO_SISWA_WIDTH, '/')
+            .';height:'
+            .preg_quote(self::FOTO_SISWA_HEIGHT, '/')
+            .'[^"]*"(?:(?!<\/w:p>).)*<\/w:p>/s';
+
+        $updatedXml = preg_replace_callback($pattern, function (array $matches) {
+            return $this->centerParagraphXml($matches[0]);
+        }, $xml);
+
+        if (is_string($updatedXml) && $updatedXml !== $xml) {
+            $zip->addFromString('word/document.xml', $updatedXml);
+
+            $this->logReportProcessing('Centered student photo paragraph in generated DOCX', [
+                'siswa_id' => $this->siswa->id,
+            ]);
+        }
+
+        $zip->close();
+    }
+
+    private function centerParagraphXml(string $paragraphXml): string
+    {
+        if (preg_match('/<w:pPr\b[^>]*>.*?<\/w:pPr>/s', $paragraphXml)) {
+            if (str_contains($paragraphXml, '<w:jc ')) {
+                return preg_replace('/<w:jc\b[^\/>]*\/>/', '<w:jc w:val="center"/>', $paragraphXml, 1) ?? $paragraphXml;
+            }
+
+            return preg_replace('/<\/w:pPr>/', '<w:jc w:val="center"/></w:pPr>', $paragraphXml, 1) ?? $paragraphXml;
+        }
+
+        return preg_replace('/(<w:p\b[^>]*>)/', '$1<w:pPr><w:jc w:val="center"/></w:pPr>', $paragraphXml, 1) ?? $paragraphXml;
     }
 
     protected function setTtdWaliKelas(?string $signaturePath): void
@@ -1740,6 +1811,7 @@ protected function prepareFotoSiswa()
                     throw new \Exception("File tidak berhasil disimpan");
                 }
 
+                $this->centerFotoSiswaParagraph($outputPath);
                 app(ReportIdentityLayoutStabilizer::class)->stabilize($outputPath);
             });
             
