@@ -9,6 +9,7 @@ use App\Models\MataPelajaran;
 use App\Models\TahunAjaran;
 use App\Services\LearningStructureCopyService;
 use App\Services\SubjectTeacherAssignmentValidator;
+use App\Traits\RespondsWithLiveList;
 use InvalidArgumentException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -20,6 +21,8 @@ use Illuminate\Validation\ValidationException;
 
 class SubjectController extends Controller
 {
+    use RespondsWithLiveList;
+
     public function index(Request $request)
     {
         // Ambil tahun ajaran dari session
@@ -63,10 +66,51 @@ class SubjectController extends Controller
             });
         }
 
-        // Default sorting: urutkan berdasarkan nomor kelas (ascending) lalu nama kelas
-        $query->orderBy('kelas.nomor_kelas', 'asc')
-            ->orderBy('kelas.nama_kelas', 'asc')
-            ->orderBy('mata_pelajarans.nama_pelajaran', 'asc');
+        if ($request->filled('kelas_id')) {
+            $query->where('mata_pelajarans.kelas_id', $request->integer('kelas_id'));
+        }
+
+        if ($request->filled('guru_id')) {
+            $query->where('mata_pelajarans.guru_id', $request->integer('guru_id'));
+        }
+
+        if ($request->filled('jenis')) {
+            if ($request->jenis === 'muatan_lokal') {
+                $query->where('mata_pelajarans.is_muatan_lokal', true);
+            } elseif ($request->jenis === 'wajib') {
+                $query->where(function ($query) {
+                    $query->where('mata_pelajarans.is_muatan_lokal', false)
+                        ->orWhereNull('mata_pelajarans.is_muatan_lokal');
+                });
+            }
+        }
+
+        if ($request->filled('tp_status')) {
+            if ($request->tp_status === 'lengkap') {
+                $query->whereHas('lingkupMateris')
+                    ->whereDoesntHave('lingkupMateris', function ($lingkupMateriQuery) {
+                        $lingkupMateriQuery->whereDoesntHave('tujuanPembelajarans');
+                    });
+            } elseif ($request->tp_status === 'belum') {
+                $query->where(function ($query) {
+                    $query->whereDoesntHave('lingkupMateris')
+                        ->orWhereHas('lingkupMateris', function ($lingkupMateriQuery) {
+                            $lingkupMateriQuery->whereDoesntHave('tujuanPembelajarans');
+                        });
+                });
+            }
+        }
+
+        if ($request->input('sort') === 'az') {
+            $query->orderBy('mata_pelajarans.nama_pelajaran', 'asc');
+        } elseif ($request->input('sort') === 'za') {
+            $query->orderBy('mata_pelajarans.nama_pelajaran', 'desc');
+        } else {
+            // Default sorting: urutkan berdasarkan nomor kelas (ascending) lalu nama kelas
+            $query->orderBy('kelas.nomor_kelas', 'asc')
+                ->orderBy('kelas.nama_kelas', 'asc')
+                ->orderBy('mata_pelajarans.nama_pelajaran', 'asc');
+        }
 
         $subjects = $query->paginate(10);
 
@@ -76,7 +120,20 @@ class SubjectController extends Controller
             $activeTahunAjaran = \App\Models\TahunAjaran::find($tahunAjaranId);
         }
 
-        return view('admin.subject', compact('subjects', 'activeTahunAjaran'));
+        $kelasOptions = Kelas::query()
+            ->when($tahunAjaranId, fn ($kelasQuery) => $kelasQuery->where('tahun_ajaran_id', $tahunAjaranId))
+            ->orderBy('nomor_kelas')
+            ->orderBy('nama_kelas')
+            ->get(['id', 'nomor_kelas', 'nama_kelas']);
+
+        $guruOptions = Guru::orderBy('nama')->get(['id', 'nama']);
+
+        return $this->liveListResponse(
+            $request,
+            'admin.subject',
+            'admin.partials.subject-results',
+            compact('subjects', 'activeTahunAjaran', 'kelasOptions', 'guruOptions')
+        );
     }
 
     public function create(LearningStructureCopyService $copyService)

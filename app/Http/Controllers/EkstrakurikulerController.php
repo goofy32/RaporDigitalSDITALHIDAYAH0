@@ -7,6 +7,7 @@ use App\Models\NilaiEkstrakurikuler;
 use App\Models\TahunAjaran;
 use App\Services\SiswaKelasSemesterResolver;
 use App\Traits\RequiresTahunAjaran;
+use App\Traits\RespondsWithLiveList;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
@@ -19,7 +20,7 @@ use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 
 class EkstrakurikulerController extends Controller
 {
-    use RequiresTahunAjaran;
+    use RequiresTahunAjaran, RespondsWithLiveList;
 
     public function index(Request $request)
     {
@@ -38,9 +39,31 @@ class EkstrakurikulerController extends Controller
             });
         }
 
+        if ($request->filled('pembina')) {
+            $query->where('pembina', $request->input('pembina'));
+        }
+
+        $query->orderBy('nama_ekstrakurikuler', $request->input('sort') === 'za' ? 'desc' : 'asc');
+
         $ekstrakurikulers = $query->paginate(10);
 
-        return view('admin.ekstrakulikuler', compact('ekstrakurikulers'));
+        $pembinaOptions = Ekstrakurikuler::query()
+            ->when($tahunAjaranId && Schema::hasColumn('ekstrakurikulers', 'tahun_ajaran_id'), function ($query) use ($tahunAjaranId) {
+                $query->where('tahun_ajaran_id', $tahunAjaranId);
+            })
+            ->whereNotNull('pembina')
+            ->where('pembina', '!=', '')
+            ->select('pembina')
+            ->distinct()
+            ->orderBy('pembina')
+            ->pluck('pembina');
+
+        return $this->liveListResponse(
+            $request,
+            'admin.ekstrakulikuler',
+            'admin.partials.ekstrakurikuler-results',
+            compact('ekstrakurikulers', 'pembinaOptions')
+        );
     }
 
     public function create()

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Traits\RequiresTahunAjaran;
+use App\Traits\RespondsWithLiveList;
 use Illuminate\Http\Request;
 use App\Models\Siswa;
 use App\Models\Kelas;
@@ -20,7 +21,7 @@ use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
 class StudentController extends Controller
 {
-    use RequiresTahunAjaran;
+    use RequiresTahunAjaran, RespondsWithLiveList;
 
     public function index(Request $request)
     {
@@ -34,7 +35,14 @@ class StudentController extends Controller
 
             $this->attachAdminStudentContextClasses($students->getCollection());
 
-            return view('admin.student', compact('students', 'activeTahunAjaran'));
+            $kelasOptions = $this->adminStudentClassOptions($tahunAjaranId);
+
+            return $this->liveListResponse(
+                $request,
+                'admin.student',
+                'admin.partials.student-results',
+                compact('students', 'activeTahunAjaran', 'kelasOptions')
+            );
         }
         
         // Buat query dasar dengan join ke tabel kelas untuk sorting
@@ -71,18 +79,28 @@ class StudentController extends Controller
                 }
             });
         }
-        
-        // Always apply this sorting regardless of search
-        $query->orderBy('kelas.nomor_kelas', 'asc')
-            ->orderBy('kelas.nama_kelas', 'asc')
-            ->orderBy('siswas.nama', 'asc');
+
+        $this->applyStudentFilters($query, $request, 'siswas.kelas_id');
+        $this->orderStudentQuery(
+            $query,
+            $request,
+            'kelas.nomor_kelas',
+            'kelas.nama_kelas'
+        );
         
         $students = $query->paginate(10);
         
         // Eager load the kelas relationship for the paginated results
         $students->load('kelas');
-        
-        return view('admin.student', compact('students', 'activeTahunAjaran'));
+
+        $kelasOptions = $this->adminStudentClassOptions($tahunAjaranId);
+
+        return $this->liveListResponse(
+            $request,
+            'admin.student',
+            'admin.partials.student-results',
+            compact('students', 'activeTahunAjaran', 'kelasOptions')
+        );
     }
 
     private function enrollmentAwareAdminStudentQuery(Request $request, TahunAjaran $tahunAjaran)
@@ -132,10 +150,59 @@ class StudentController extends Controller
             });
         }
 
-        return $query
-            ->orderByRaw('COALESCE(enrollment_kelas.nomor_kelas, legacy_kelas.nomor_kelas) asc')
-            ->orderByRaw('COALESCE(enrollment_kelas.nama_kelas, legacy_kelas.nama_kelas) asc')
-            ->orderBy('siswas.nama', 'asc');
+        $this->applyStudentFilters($query, $request, 'COALESCE(enrollment_context.kelas_id, legacy_kelas.id)');
+
+        return $this->orderStudentQuery(
+            $query,
+            $request,
+            'COALESCE(enrollment_kelas.nomor_kelas, legacy_kelas.nomor_kelas)',
+            'COALESCE(enrollment_kelas.nama_kelas, legacy_kelas.nama_kelas)'
+        );
+    }
+
+    private function applyStudentFilters($query, Request $request, string $classIdExpression): void
+    {
+        if ($request->filled('kelas_id')) {
+            $query->whereRaw($classIdExpression.' = ?', [$request->integer('kelas_id')]);
+        }
+
+        if (in_array($request->input('jenis_kelamin'), ['Laki-laki', 'Perempuan'], true)) {
+            $query->where('siswas.jenis_kelamin', $request->input('jenis_kelamin'));
+        }
+
+        if ($request->filled('foto')) {
+            if ($request->foto === 'ada') {
+                $query->whereNotNull('siswas.photo')
+                    ->where('siswas.photo', '!=', '');
+            } elseif ($request->foto === 'belum') {
+                $query->where(function ($query) {
+                    $query->whereNull('siswas.photo')
+                        ->orWhere('siswas.photo', '');
+                });
+            }
+        }
+    }
+
+    private function orderStudentQuery($query, Request $request, string $classNumberExpression, string $classNameExpression)
+    {
+        return match ($request->input('sort')) {
+            'nama_za' => $query->orderBy('siswas.nama', 'desc'),
+            'nis' => $query->orderBy('siswas.nis', 'asc'),
+            'nisn' => $query->orderBy('siswas.nisn', 'asc'),
+            default => $query
+                ->orderByRaw($classNumberExpression.' asc')
+                ->orderByRaw($classNameExpression.' asc')
+                ->orderBy('siswas.nama', 'asc'),
+        };
+    }
+
+    private function adminStudentClassOptions(?int $tahunAjaranId)
+    {
+        return Kelas::query()
+            ->when($tahunAjaranId, fn ($query) => $query->where('tahun_ajaran_id', $tahunAjaranId))
+            ->orderBy('nomor_kelas')
+            ->orderBy('nama_kelas')
+            ->get(['id', 'nomor_kelas', 'nama_kelas']);
     }
 
     private function attachAdminStudentContextClasses($students): void
@@ -389,13 +456,36 @@ class StudentController extends Controller
         if ($request->has('search')) {
             $search = $request->search;
             $query->where(function($q) use ($search) {
-                $q->where('nama', 'LIKE', "%{$search}%")
-                ->orWhere('nis', 'LIKE', "%{$search}%")
-                ->orWhere('nisn', 'LIKE', "%{$search}%");
+                $q->where('siswas.nama', 'LIKE', "%{$search}%")
+                ->orWhere('siswas.nis', 'LIKE', "%{$search}%")
+                ->orWhere('siswas.nisn', 'LIKE', "%{$search}%");
             });
         }
-        
-        $students = $query->orderBy('nama')->paginate(10);
+
+        if (in_array($request->input('jenis_kelamin'), ['Laki-laki', 'Perempuan'], true)) {
+            $query->where('siswas.jenis_kelamin', $request->input('jenis_kelamin'));
+        }
+
+        if ($request->filled('catatan')) {
+            $catatanConstraint = function ($catatanQuery) use ($tahunAjaranId, $tahunAjaran) {
+                $catatanQuery->where('tahun_ajaran_id', $tahunAjaranId)
+                    ->where('semester', $tahunAjaran->semester);
+            };
+
+            if ($request->catatan === 'ada') {
+                $query->whereHas('catatanSiswa', $catatanConstraint);
+            } elseif ($request->catatan === 'belum') {
+                $query->whereDoesntHave('catatanSiswa', $catatanConstraint);
+            }
+        }
+
+        if ($request->input('sort') === 'nama_za') {
+            $query->orderBy('siswas.nama', 'desc');
+        } else {
+            $query->orderBy('siswas.nama');
+        }
+
+        $students = $query->paginate(10);
 
         $kelasModel = Kelas::find($kelasWali->kelas_id);
         $students->getCollection()->each(function (Siswa $student) use ($kelasModel) {
@@ -406,7 +496,12 @@ class StudentController extends Controller
         
         \Log::info("Students found:", ['count' => $students->count()]);
         
-        return view('wali_kelas.student', compact('students'));
+        return $this->liveListResponse(
+            $request,
+            'wali_kelas.student',
+            'wali_kelas.partials.student-results',
+            compact('students')
+        );
     }
 
     public function waliKelasShow($id)

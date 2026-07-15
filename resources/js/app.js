@@ -20,6 +20,7 @@ import { registerSidebarFeatures } from './features/sidebar';
 import { registerTopbarFeatures } from './features/topbar';
 import { registerDashboard } from './features/dashboard';
 import { registerSettingsModalFeatures } from './features/settings-modal';
+import { registerLiveList } from './features/live-list';
 
 import { registerFormProtectionComponent } from './components/form-protection';
 
@@ -247,6 +248,7 @@ registerDashboard();
 registerFormDiagnostics();
 registerTopbarFeatures();
 registerSettingsModalFeatures();
+registerLiveList();
 
 registerHelpersStore();
 registerSidebarStore();

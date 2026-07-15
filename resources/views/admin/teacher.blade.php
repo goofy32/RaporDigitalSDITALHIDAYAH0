@@ -21,193 +21,87 @@
             </a>
         </div>
 
-        <div class="flex flex-col md:flex-row justify-between items-center gap-4 mb-6">
-            <!-- Form Pencarian yang Disederhanakan dan Ditingkatkan -->
-            <form action="{{ route('teacher') }}" method="GET" class="w-full" id="searchForm">
-                <div class="flex gap-2">
-                    <input type="text" name="search" value="{{ request('search') }}"
-                        class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-green-500 focus:border-green-500 block w-full p-2"
-                        placeholder="Cari pengajar berdasarkan NUPTK, Nama, Username, Email" 
-                        id="searchInput">
-                    <!-- Hidden input untuk reset pagination -->
-                    <input type="hidden" name="page" value="1">
-                    <button type="submit" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700" id="searchButton">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                            <path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd" />
-                        </svg>
-                    </button>
+        <div data-live-list>
+            <form action="{{ route('teacher') }}" method="GET" class="mb-4" data-live-list-form>
+                <div class="flex flex-col gap-3 md:flex-row">
+                    <div class="flex flex-1 gap-2">
+                        <input type="text" name="search" value="{{ request('search') }}"
+                            data-live-search-input
+                            class="block w-full rounded-lg border border-gray-300 bg-gray-50 p-2 text-sm text-gray-900 focus:border-green-500 focus:ring-green-500"
+                            placeholder="Cari pengajar berdasarkan NUPTK, Nama, Username, Email">
+                        <button type="submit" class="shrink-0 rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700">Cari</button>
+                    </div>
+
+                    <details class="relative">
+                        <x-live-list.filter-button />
+                        <div class="mt-2 w-full rounded-lg border border-gray-200 bg-white p-4 shadow-lg md:absolute md:right-0 md:z-20 md:w-80">
+                            <div class="space-y-3">
+                                <div>
+                                    <label class="mb-1 block text-sm font-medium text-gray-700">Tanggung jawab</label>
+                                    <select name="jabatan" class="w-full rounded-lg border-gray-300 text-sm focus:border-green-500 focus:ring-green-500">
+                                        <option value="">Semua</option>
+                                        <option value="guru" @selected(request('jabatan') === 'guru')>Pengajar</option>
+                                        <option value="guru_wali" @selected(request('jabatan') === 'guru_wali')>Guru dan Wali Kelas</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="mb-1 block text-sm font-medium text-gray-700">Status wali kelas</label>
+                                    <select name="wali_status" class="w-full rounded-lg border-gray-300 text-sm focus:border-green-500 focus:ring-green-500">
+                                        <option value="">Semua</option>
+                                        <option value="wali" @selected(request('wali_status') === 'wali')>Menjadi wali kelas</option>
+                                        <option value="bukan_wali" @selected(request('wali_status') === 'bukan_wali')>Bukan wali kelas</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="mb-1 block text-sm font-medium text-gray-700">Kelas yang diajar</label>
+                                    <select name="kelas_id" class="w-full rounded-lg border-gray-300 text-sm focus:border-green-500 focus:ring-green-500">
+                                        <option value="">Semua kelas</option>
+                                        @foreach($kelasOptions as $kelas)
+                                            <option value="{{ $kelas->id }}" @selected((string) request('kelas_id') === (string) $kelas->id)>{{ $kelas->label_kelas }}</option>
+                                        @endforeach
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="mb-1 block text-sm font-medium text-gray-700">Mata pelajaran</label>
+                                    <select name="mata_pelajaran_id" class="w-full rounded-lg border-gray-300 text-sm focus:border-green-500 focus:ring-green-500">
+                                        <option value="">Semua mata pelajaran</option>
+                                        @foreach($mataPelajaranOptions as $mapel)
+                                            <option value="{{ $mapel->id }}" @selected((string) request('mata_pelajaran_id') === (string) $mapel->id)>{{ $mapel->nama_pelajaran }}</option>
+                                        @endforeach
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="mb-1 block text-sm font-medium text-gray-700">Urutkan</label>
+                                    <select name="sort" class="w-full rounded-lg border-gray-300 text-sm focus:border-green-500 focus:ring-green-500">
+                                        <option value="">A-Z</option>
+                                        <option value="za" @selected(request('sort') === 'za')>Z-A</option>
+                                    </select>
+                                </div>
+                                <div class="flex items-center justify-end gap-2 pt-2">
+                                    <a href="{{ route('teacher') }}" data-live-reset class="rounded-lg bg-gray-100 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200">Reset Filter</a>
+                                    <button type="submit" class="rounded-lg bg-green-700 px-3 py-2 text-sm font-medium text-white hover:bg-green-800">Terapkan</button>
+                                </div>
+                            </div>
+                        </div>
+                    </details>
                 </div>
             </form>
-        </div>
 
-        <!-- Tampilkan hasil pencarian jika ada 
-        @if(request('search'))
-        <div class="p-2 bg-blue-100 text-blue-800 mb-4 rounded">
-            <p>
-                <strong>Hasil pencarian untuk:</strong> "{{ request('search') }}" 
-                ({{ $teachers->total() }} hasil)
-                <a href="{{ route('teacher') }}" class="ml-2 text-blue-600 hover:underline">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 inline-block" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                    Bersihkan pencarian
-                </a>
-            </p>
-        </div>
-        @endif
+            @include('components.live-list.filter-chips', ['filters' => [
+                ['key' => 'search', 'label' => 'Pencarian'],
+                ['key' => 'jabatan', 'label' => 'Tanggung jawab', 'values' => ['guru' => 'Pengajar', 'guru_wali' => 'Guru dan Wali Kelas']],
+                ['key' => 'wali_status', 'label' => 'Status wali', 'values' => ['wali' => 'Menjadi wali kelas', 'bukan_wali' => 'Bukan wali kelas']],
+                ['key' => 'kelas_id', 'label' => 'Kelas', 'values' => $kelasOptions->mapWithKeys(fn ($kelas) => [$kelas->id => $kelas->label_kelas])->all()],
+                ['key' => 'mata_pelajaran_id', 'label' => 'Mata pelajaran', 'values' => $mataPelajaranOptions->pluck('nama_pelajaran', 'id')->all()],
+                ['key' => 'sort', 'label' => 'Urutan', 'values' => ['za' => 'Z-A']],
+            ]])
 
-        -->
+            <div class="mb-3 hidden text-sm text-gray-500" data-live-list-loading>Memuat data...</div>
 
-        <!-- Tabel Data Pengajar -->
-        <div class="overflow-x-auto mt-4">
-            <table class="w-full text-sm text-left text-gray-500">
-            <thead class="text-xs text-gray-700 uppercase bg-gray-50">
-                <tr>
-                    <th class="px-6 py-3">No</th>
-                    <th class="px-6 py-3">NUPTK</th>
-                    <th class="px-6 py-3">Nama</th>
-                    <th class="px-6 py-3">Username</th>
-                    <th class="px-6 py-3">Jenis Kelamin</th>
-                    <th class="px-6 py-3">Email</th>
-                    <th class="px-6 py-3">No Handphone</th>
-                    <th class="px-6 py-3">Alamat</th>
-                    <th class="px-6 py-3">Jabatan</th>
-                    <th class="px-6 py-3">Tanggung Jawab</th>
-                    <th class="px-6 py-3">Aksi</th>
-                </tr>
-            </thead>
-                <tbody>
-                @forelse ($teachers as $teacher)
-                <tr class="bg-white border-b hover:bg-gray-50 @if(request('search') && stripos($teacher->nama, request('search')) !== false) bg-green-50 @endif">
-                    <td class="px-6 py-4">{{ $loop->iteration + ($teachers->currentPage() - 1) * $teachers->perPage() }}</td>
-                    <td class="px-6 py-4">{{ $teacher->nuptk ?: '-' }}</td>
-                    <td class="px-6 py-4 font-medium @if(request('search') && stripos($teacher->nama, request('search')) !== false) text-green-700 @endif">{{ $teacher->nama }}</td>
-                    <td class="px-6 py-4">{{ $teacher->username }}</td>
-                    <td class="px-6 py-4">{{ $teacher->jenis_kelamin }}</td>
-                    <td class="px-6 py-4">{{ $teacher->email }}</td>
-                    <td class="px-6 py-4">{{ $teacher->no_handphone }}</td>
-                    <td class="px-6 py-4">{{ $teacher->alamat }}</td>
-                    <td class="px-6 py-4">
-                        @if($teacher->jabatan == 'guru_wali')
-                            Guru dan Wali Kelas
-                        @else
-                            Guru
-                        @endif
-                    </td>
-                    <td class="px-6 py-4">
-                        @php
-                            $waliLabels = $teacher->waliClassLabels();
-                            $mengajarLabels = $teacher->teachingSummaryLabels();
-                        @endphp
-                        <div class="min-w-52 space-y-1 text-gray-700">
-                            <div>
-                                <span class="font-medium text-gray-900">Wali Kelas:</span>
-                                <span>{{ $waliLabels->isNotEmpty() ? $waliLabels->join(', ') : '-' }}</span>
-                            </div>
-                            <div>
-                                <span class="font-medium text-gray-900">Mengajar:</span>
-                                @if($mengajarLabels->isNotEmpty())
-                                    <div class="mt-1 space-y-0.5">
-                                        @foreach($mengajarLabels as $label)
-                                            <div>{{ $label }}</div>
-                                        @endforeach
-                                    </div>
-                                @else
-                                    <span>-</span>
-                                @endif
-                            </div>
-                        </div>
-                    </td>
-                    <td class="px-1 py-4">
-                        <div class="flex space-x-2">
-                            <a href="{{ route('teacher.show', $teacher->id) }}" class="text-blue-600 hover:text-blue-800" title="Lihat Detail">
-                                <img src="{{ asset('images/icons/detail.png') }}" alt="Detail Icon" class="w-5 h-5">
-                            </a>
-                            <a href="{{ route('teacher.edit', $teacher->id) }}" class="text-yellow-600 hover:text-yellow-800" title="Ubah Data">
-                                <img src="{{ asset('images/icons/edit.png') }}" alt="Edit Icon" class="w-5 h-5">
-                            </a>
-                            <form action="{{ route('teacher.destroy', $teacher->id) }}" method="POST" 
-                                onsubmit="return confirm('Apakah Anda yakin ingin menghapus data ini?');" 
-                                class="inline">
-                                @csrf
-                                @method('DELETE')
-                                <button type="submit" class="text-red-500 hover:text-red-700" title="Hapus Data">
-                                    <img src="{{ asset('images/icons/delete.png') }}" alt="Delete Icon" class="w-5 h-5">
-                                </button>
-                            </form>
-                        </div>
-                    </td>
-                    </tr>
-                    @empty
-                    <tr>
-                        <td colspan="11" class="px-6 py-4 text-center">Tidak ada data pengajar.</td>
-                    </tr>
-                    @endforelse
-                </tbody>
-            </table>
-        </div>
-        
-        <!-- Paginasi -->
-        <div class="mt-4">
-            {{ $teachers->withQueryString()->links('vendor.pagination.custom') }}
+            <div data-live-list-results>
+                @include('admin.partials.teacher-results', ['teachers' => $teachers])
+            </div>
         </div>
     </div>
 </div>
-
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-    const searchForm = document.getElementById('searchForm');
-    const searchInput = document.getElementById('searchInput');
-    const searchButton = document.getElementById('searchButton');
-    
-    // Fokus pada input pencarian jika ada nilai
-    if (searchInput && searchInput.value) {
-        searchInput.focus();
-        searchInput.select();
-    }
-    
-    // Submit form saat Enter ditekan di input pencarian
-    if (searchInput) {
-        searchInput.addEventListener('keydown', function(e) {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                showLoadingIndicator();
-                searchForm.submit();
-            }
-        });
-    }
-    
-    // Show loading indicator saat form disubmit
-    if (searchForm) {
-        searchForm.addEventListener('submit', function(e) {
-            showLoadingIndicator();
-        });
-    }
-    
-    function showLoadingIndicator() {
-        if (searchButton) {
-            const originalContent = searchButton.innerHTML;
-            
-            searchButton.innerHTML = `
-                <svg class="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-            `;
-            
-            // Add a temporary meta tag to disable Turbo cache
-            const meta = document.createElement('meta');
-            meta.name = 'turbo-cache-control';
-            meta.content = 'no-cache';
-            document.head.appendChild(meta);
-            
-            // Clean up after navigation (fallback)
-            setTimeout(function() {
-                searchButton.innerHTML = originalContent;
-                meta.remove();
-            }, 5000);
-        }
-    }
-});
-</script>
 @endsection

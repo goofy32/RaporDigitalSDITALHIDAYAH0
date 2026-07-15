@@ -4,8 +4,9 @@ namespace App\Http\Controllers;
 
 use App\Models\Guru;
 use App\Models\Kelas;
+use App\Models\MataPelajaran;
+use App\Traits\RespondsWithLiveList;
 use Illuminate\Http\Request;
-use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -16,6 +17,8 @@ use Illuminate\Validation\Rule;
 
 class TeacherController extends Controller
 {
+    use RespondsWithLiveList;
+
     private const PHOTO_MAX_KB = 2048;
 
     private function logTeacherSearch(string $message, array $context = []): void
@@ -39,96 +42,6 @@ class TeacherController extends Controller
             'page' => $request->page,
         ]);
 
-        // Jika pencarian aktif, gunakan pendekatan 2-step untuk prioritaskan hasil yang persis sama
-        if ($request->has('search') && ! empty($request->search)) {
-            $search = trim(strtolower($request->search));
-            $this->logTeacherSearch('Processing teacher advanced search', [
-                'search_length' => mb_strlen($search),
-            ]);
-
-            // Step 1: Query untuk exact match terlebih dahulu
-            $exactMatches = Guru::select('gurus.*')
-                ->where(function ($q) use ($search) {
-                    $q->whereRaw('LOWER(gurus.nama) = ?', [$search])
-                        ->orWhereRaw('LOWER(gurus.nuptk) = ?', [$search])
-                        ->orWhereRaw('LOWER(gurus.username) = ?', [$search])
-                        ->orWhereRaw('LOWER(gurus.email) = ?', [$search]);
-                })
-                ->get();
-
-            $this->logTeacherSearch('Teacher exact search completed', [
-                'count' => $exactMatches->count(),
-            ]);
-
-            // Step 2: Query untuk partial match (mengandung kata pencarian)
-            $partialMatches = Guru::select('gurus.*')
-                ->where(function ($q) use ($search) {
-                    $q->whereRaw('LOWER(gurus.nama) LIKE ?', ["%{$search}%"])
-                        ->orWhereRaw('LOWER(gurus.nuptk) LIKE ?', ["%{$search}%"])
-                        ->orWhereRaw('LOWER(gurus.username) LIKE ?', ["%{$search}%"])
-                        ->orWhereRaw('LOWER(gurus.email) LIKE ?', ["%{$search}%"]);
-                })
-                ->whereNotIn('id', $exactMatches->pluck('id')->toArray()) // Exclude exact matches
-                ->get();
-
-            $this->logTeacherSearch('Teacher partial search completed', [
-                'count' => $partialMatches->count(),
-            ]);
-
-            // Step 3: Gabungkan hasil dengan exact match di awal
-            $combinedResults = $exactMatches->concat($partialMatches);
-
-            // Step 4: Load relations
-            $guruIds = $combinedResults->pluck('id')->toArray();
-            $relatedData = Guru::with([
-                'kelas' => function ($q) use ($tahunAjaranId) {
-                    $q->withPivot('is_wali_kelas', 'role');
-                    if ($tahunAjaranId) {
-                        $q->where('kelas.tahun_ajaran_id', $tahunAjaranId);
-                    }
-                },
-                'mataPelajarans' => function ($query) use ($tahunAjaranId) {
-                    $query->with('kelas')
-                        ->when($tahunAjaranId, function ($query) use ($tahunAjaranId) {
-                            $query->where('tahun_ajaran_id', $tahunAjaranId);
-                        })
-                        ->orderBy('nama_pelajaran');
-                },
-            ])
-                ->whereIn('id', $guruIds)
-                ->get()
-                ->keyBy('id');
-
-            // Step 5: Integrasi data relational dengan urutan yang sama
-            $completeResults = $combinedResults->map(function ($item) use ($relatedData) {
-                return $relatedData->get($item->id);
-            })->filter(); // Remove nulls
-
-            // Step 6: Custom pagination
-            $page = $request->input('page', 1);
-            $perPage = 10;
-            $total = $completeResults->count();
-
-            $slice = $completeResults->slice(($page - 1) * $perPage, $perPage)->values();
-
-            $teachers = new LengthAwarePaginator(
-                $slice,
-                $total,
-                $perPage,
-                $page,
-                ['path' => request()->url(), 'query' => request()->query()]
-            );
-
-            $this->logTeacherSearch('Teacher search pagination prepared', [
-                'total' => $total,
-                'results_on_this_page' => $slice->count(),
-                'page' => $page,
-            ]);
-
-            return view('admin.teacher', compact('teachers'));
-        }
-
-        // Standard query tanpa pencarian (kode asli)
         $query = Guru::select([
             'gurus.*',
             DB::raw('MIN(kelas.nomor_kelas) as nomor_kelas'),
@@ -170,22 +83,81 @@ class TeacherController extends Controller
 
         // Filter berdasarkan tahun ajaran aktif
         if ($tahunAjaranId) {
-            $query->whereExists(function ($subquery) use ($tahunAjaranId) {
-                $subquery->select(DB::raw(1))
-                    ->from('guru_kelas')
-                    ->join('kelas', 'guru_kelas.kelas_id', '=', 'kelas.id')
-                    ->whereRaw('guru_kelas.guru_id = gurus.id')
-                    ->where('kelas.tahun_ajaran_id', $tahunAjaranId);
-            })
-                ->orWhereNotExists(function ($subquery) {
+            $query->where(function ($query) use ($tahunAjaranId) {
+                $query->whereExists(function ($subquery) use ($tahunAjaranId) {
                     $subquery->select(DB::raw(1))
                         ->from('guru_kelas')
-                        ->whereRaw('guru_kelas.guru_id = gurus.id');
-                });
+                        ->join('kelas', 'guru_kelas.kelas_id', '=', 'kelas.id')
+                        ->whereRaw('guru_kelas.guru_id = gurus.id')
+                        ->where('kelas.tahun_ajaran_id', $tahunAjaranId);
+                })
+                    ->orWhereNotExists(function ($subquery) {
+                        $subquery->select(DB::raw(1))
+                            ->from('guru_kelas')
+                            ->whereRaw('guru_kelas.guru_id = gurus.id');
+                    });
+            });
         }
 
-        // Order by untuk tampilan yang konsisten
-        $query->orderBy('gurus.nama', 'asc');
+        if ($request->filled('search')) {
+            $search = mb_strtolower(trim((string) $request->search));
+
+            $query->where(function ($q) use ($search) {
+                $q->whereRaw('LOWER(gurus.nama) LIKE ?', ["%{$search}%"])
+                    ->orWhereRaw('LOWER(gurus.nuptk) LIKE ?', ["%{$search}%"])
+                    ->orWhereRaw('LOWER(gurus.username) LIKE ?', ["%{$search}%"])
+                    ->orWhereRaw('LOWER(gurus.email) LIKE ?', ["%{$search}%"]);
+            });
+        }
+
+        if (in_array($request->input('jabatan'), ['guru', 'guru_wali'], true)) {
+            $query->where('gurus.jabatan', $request->input('jabatan'));
+        }
+
+        if ($request->filled('wali_status')) {
+            if ($request->wali_status === 'wali') {
+                $query->whereExists(function ($subquery) use ($tahunAjaranId) {
+                    $subquery->select(DB::raw(1))
+                        ->from('guru_kelas')
+                        ->join('kelas', 'guru_kelas.kelas_id', '=', 'kelas.id')
+                        ->whereRaw('guru_kelas.guru_id = gurus.id')
+                        ->where('guru_kelas.is_wali_kelas', true)
+                        ->where('guru_kelas.role', 'wali_kelas')
+                        ->when($tahunAjaranId, fn ($query) => $query->where('kelas.tahun_ajaran_id', $tahunAjaranId));
+                });
+            } elseif ($request->wali_status === 'bukan_wali') {
+                $query->whereNotExists(function ($subquery) use ($tahunAjaranId) {
+                    $subquery->select(DB::raw(1))
+                        ->from('guru_kelas')
+                        ->join('kelas', 'guru_kelas.kelas_id', '=', 'kelas.id')
+                        ->whereRaw('guru_kelas.guru_id = gurus.id')
+                        ->where('guru_kelas.is_wali_kelas', true)
+                        ->where('guru_kelas.role', 'wali_kelas')
+                        ->when($tahunAjaranId, fn ($query) => $query->where('kelas.tahun_ajaran_id', $tahunAjaranId));
+                });
+            }
+        }
+
+        if ($request->filled('kelas_id')) {
+            $query->whereExists(function ($subquery) use ($request) {
+                $subquery->select(DB::raw(1))
+                    ->from('guru_kelas')
+                    ->whereRaw('guru_kelas.guru_id = gurus.id')
+                    ->where('guru_kelas.kelas_id', $request->integer('kelas_id'));
+            });
+        }
+
+        if ($request->filled('mata_pelajaran_id')) {
+            $query->whereExists(function ($subquery) use ($request, $tahunAjaranId) {
+                $subquery->select(DB::raw(1))
+                    ->from('mata_pelajarans')
+                    ->whereRaw('mata_pelajarans.guru_id = gurus.id')
+                    ->where('mata_pelajarans.id', $request->integer('mata_pelajaran_id'))
+                    ->when($tahunAjaranId, fn ($query) => $query->where('mata_pelajarans.tahun_ajaran_id', $tahunAjaranId));
+            });
+        }
+
+        $query->orderBy('gurus.nama', $request->input('sort') === 'za' ? 'desc' : 'asc');
 
         $teachers = $query->paginate(10);
 
@@ -195,7 +167,23 @@ class TeacherController extends Controller
             'current_page' => $teachers->currentPage(),
         ]);
 
-        return view('admin.teacher', compact('teachers'));
+        $kelasOptions = Kelas::query()
+            ->when($tahunAjaranId, fn ($kelasQuery) => $kelasQuery->where('tahun_ajaran_id', $tahunAjaranId))
+            ->orderBy('nomor_kelas')
+            ->orderBy('nama_kelas')
+            ->get(['id', 'nomor_kelas', 'nama_kelas']);
+
+        $mataPelajaranOptions = MataPelajaran::query()
+            ->when($tahunAjaranId, fn ($subjectQuery) => $subjectQuery->where('tahun_ajaran_id', $tahunAjaranId))
+            ->orderBy('nama_pelajaran')
+            ->get(['id', 'nama_pelajaran']);
+
+        return $this->liveListResponse(
+            $request,
+            'admin.teacher',
+            'admin.partials.teacher-results',
+            compact('teachers', 'kelasOptions', 'mataPelajaranOptions')
+        );
     }
 
     public function create()

@@ -38,69 +38,77 @@
             </a>
         </div>
         
-        <div class="flex flex-col md:flex-row justify-between items-center gap-4 mb-6">
-            <form action="{{ route('kelas.index') }}" method="GET" class="w-full" data-turbo="false">
-                <div class="flex gap-2">
-                    <input type="text" name="search" value="{{ request('search') }}"
-                        class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-green-500 focus:border-green-500 block w-full p-2"
-                        placeholder="Cari (contoh: kelas 1)">
-                    <button type="submit" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                            <path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd" />
-                        </svg>
-                    </button>
+        <div data-live-list>
+            <form action="{{ route('kelas.index') }}" method="GET" class="mb-4" data-live-list-form data-turbo="false">
+                <div class="flex flex-col gap-3 md:flex-row">
+                    <div class="flex flex-1 gap-2">
+                        <input type="text" name="search" value="{{ request('search') }}"
+                            data-live-search-input
+                            class="block w-full rounded-lg border border-gray-300 bg-gray-50 p-2 text-sm text-gray-900 focus:border-green-500 focus:ring-green-500"
+                            placeholder="Cari (contoh: kelas 1)">
+                        <button type="submit" class="shrink-0 rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700">Cari</button>
+                    </div>
+
+                    <details class="relative">
+                        <x-live-list.filter-button />
+                        <div class="mt-2 w-full rounded-lg border border-gray-200 bg-white p-4 shadow-lg md:absolute md:right-0 md:z-20 md:w-80">
+                            <div class="space-y-3">
+                                <div>
+                                    <label class="mb-1 block text-sm font-medium text-gray-700">Tingkat kelas</label>
+                                    <select name="tingkat" class="w-full rounded-lg border-gray-300 text-sm focus:border-green-500 focus:ring-green-500">
+                                        <option value="">Semua tingkat</option>
+                                        @foreach($classLevels as $level)
+                                            <option value="{{ $level }}" @selected((string) request('tingkat') === (string) $level)>Kelas {{ $level }}</option>
+                                        @endforeach
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="mb-1 block text-sm font-medium text-gray-700">Wali kelas</label>
+                                    <select name="wali_kelas_id" class="w-full rounded-lg border-gray-300 text-sm focus:border-green-500 focus:ring-green-500">
+                                        <option value="">Semua wali kelas</option>
+                                        @foreach($waliKelasOptions as $wali)
+                                            <option value="{{ $wali->id }}" @selected((string) request('wali_kelas_id') === (string) $wali->id)>{{ $wali->nama }}</option>
+                                        @endforeach
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="mb-1 block text-sm font-medium text-gray-700">Status wali</label>
+                                    <select name="wali_status" class="w-full rounded-lg border-gray-300 text-sm focus:border-green-500 focus:ring-green-500">
+                                        <option value="">Semua status</option>
+                                        <option value="ada" @selected(request('wali_status') === 'ada')>Sudah ada wali kelas</option>
+                                        <option value="belum" @selected(request('wali_status') === 'belum')>Belum ada wali kelas</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="mb-1 block text-sm font-medium text-gray-700">Urutkan</label>
+                                    <select name="sort" class="w-full rounded-lg border-gray-300 text-sm focus:border-green-500 focus:ring-green-500">
+                                        <option value="">A-Z</option>
+                                        <option value="za" @selected(request('sort') === 'za')>Z-A</option>
+                                    </select>
+                                </div>
+                                <div class="flex items-center justify-end gap-2 pt-2">
+                                    <a href="{{ route('kelas.index') }}" data-live-reset class="rounded-lg bg-gray-100 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200">Reset Filter</a>
+                                    <button type="submit" class="rounded-lg bg-green-700 px-3 py-2 text-sm font-medium text-white hover:bg-green-800">Terapkan</button>
+                                </div>
+                            </div>
+                        </div>
+                    </details>
                 </div>
             </form>
-        </div>
 
-        <!-- Tabel Data Kelas -->
-        <div class="overflow-x-auto mt-4">
-            <table class="w-full text-sm text-left text-gray-500">
-                <thead class="text-xs text-gray-700 uppercase bg-gray-50">
-                    <tr>
-                        <th class="px-6 py-3">Nomor</th>
-                        <th class="px-6 py-3">Kelas</th>
-                        <th class="px-6 py-3">Wali Kelas</th>
-                        <th class="px-6 py-3">Aksi</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    @forelse ($kelasList as $index => $kelas)
-                    <tr class="bg-white border-b hover:bg-gray-50">
-                        <td class="px-6 py-4">{{ $index + $kelasList->firstItem() }}</td>
-                        <td class="px-6 py-4">{{ $kelas->label_kelas }}</td>
-                        <td class="px-6 py-4">
-                            @if($kelas->waliKelas->first())
-                                {{ $kelas->waliKelas->first()->nama }}
-                            @else
-                                <span class="text-gray-400">Belum ada wali kelas</span>
-                            @endif
-                        </td>
-                        <td class="px-6 py-4 text-center">
-                            <div class="flex space-x-2">
-                                <a href="{{ route('kelas.edit', $kelas->id) }}" class="text-yellow-600 hover:text-yellow-800" title="Ubah Data">
-                                    <img src="{{ asset('images/icons/edit.png') }}" alt="Extracurricular Icon" class="w-5 h-5">
-                                </a>
-                                <form action="{{ route('kelas.destroy', $kelas->id) }}" method="POST" onsubmit="return confirm('Apakah Anda yakin ingin menghapus data ini?');" class="inline">
-                                    @csrf
-                                    @method('DELETE')
-                                    <button type="submit" class="text-red-500 hover:underline" title="Hapus Data"><img src="{{ asset('images/icons/delete.png') }}" alt="Extracurricular Icon" class="w-5 h-5"></button>
-                                </form>
-                            </div>
-                        </td>
-                    </tr>
-                    @empty
-                    <tr>
-                        <td colspan="4" class="px-6 py-4 text-center">Tidak ada data kelas.</td>
-                    </tr>
-                    @endforelse
-                </tbody>
-            </table>
-        </div>
+            @include('components.live-list.filter-chips', ['filters' => [
+                ['key' => 'search', 'label' => 'Pencarian'],
+                ['key' => 'tingkat', 'label' => 'Tingkat'],
+                ['key' => 'wali_kelas_id', 'label' => 'Wali kelas', 'values' => $waliKelasOptions->pluck('nama', 'id')->all()],
+                ['key' => 'wali_status', 'label' => 'Status wali', 'values' => ['ada' => 'Sudah ada wali kelas', 'belum' => 'Belum ada wali kelas']],
+                ['key' => 'sort', 'label' => 'Urutan', 'values' => ['za' => 'Z-A']],
+            ]])
 
-        <!-- Paginasi -->
-        <div>
-            {{ $kelasList->withQueryString()->links('vendor.pagination.custom') }}
+            <div class="mb-3 hidden text-sm text-gray-500" data-live-list-loading>Memuat data...</div>
+
+            <div data-live-list-results>
+                @include('admin.partials.class-results', ['kelasList' => $kelasList])
+            </div>
         </div>
     </div>
 </div>

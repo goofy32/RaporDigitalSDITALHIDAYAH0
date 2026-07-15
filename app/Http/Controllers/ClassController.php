@@ -10,12 +10,15 @@ use App\Models\MataPelajaran;
 use App\Models\Nilai;
 use App\Models\Ekstrakurikuler;
 use App\Models\TahunAjaran;
+use App\Traits\RespondsWithLiveList;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 class ClassController extends Controller
 {
+    use RespondsWithLiveList;
+
     // Menampilkan daftar kelas
     public function index(Request $request)
     {
@@ -28,6 +31,24 @@ class ClassController extends Controller
         // Filter berdasarkan tahun ajaran jika ada
         if ($tahunAjaranId) {
             $query->where('tahun_ajaran_id', $tahunAjaranId);
+        }
+
+        if ($request->filled('tingkat')) {
+            $query->where('nomor_kelas', $request->integer('tingkat'));
+        }
+
+        if ($request->filled('wali_status')) {
+            if ($request->wali_status === 'ada') {
+                $query->whereHas('waliKelas');
+            } elseif ($request->wali_status === 'belum') {
+                $query->whereDoesntHave('waliKelas');
+            }
+        }
+
+        if ($request->filled('wali_kelas_id')) {
+            $query->whereHas('waliKelas', function ($waliQuery) use ($request) {
+                $waliQuery->where('gurus.id', $request->integer('wali_kelas_id'));
+            });
         }
         
         // Handle pencarian
@@ -57,11 +78,16 @@ class ClassController extends Controller
             });
         }
         
-        // Default ordering jika tidak ada pencarian
-        if (!$request->has('search') || 
-            (isset($terms) && count($terms) === 1 && $terms[0] === 'kelas')) {
-            $query->orderBy('nomor_kelas', 'asc')
-                  ->orderBy('nama_kelas', 'asc');
+        if ($request->input('sort') === 'za') {
+            $query->orderBy('nama_kelas', 'desc')
+                ->orderBy('nomor_kelas', 'desc');
+        } else {
+            // Default ordering jika tidak ada pencarian
+            if (!$request->has('search') ||
+                (isset($terms) && count($terms) === 1 && $terms[0] === 'kelas')) {
+                $query->orderBy('nomor_kelas', 'asc')
+                    ->orderBy('nama_kelas', 'asc');
+            }
         }
         
         $kelasList = $query->paginate(10);
@@ -71,8 +97,29 @@ class ClassController extends Controller
         if ($tahunAjaranId) {
             $activeTahunAjaran = \App\Models\TahunAjaran::find($tahunAjaranId);
         }
-        
-        return view('admin.class', compact('kelasList', 'activeTahunAjaran'));
+
+        $classLevels = Kelas::query()
+            ->when($tahunAjaranId, fn ($levelQuery) => $levelQuery->where('tahun_ajaran_id', $tahunAjaranId))
+            ->select('nomor_kelas')
+            ->distinct()
+            ->orderBy('nomor_kelas')
+            ->pluck('nomor_kelas');
+
+        $waliKelasOptions = Guru::query()
+            ->whereHas('kelas', function ($kelasQuery) use ($tahunAjaranId) {
+                $kelasQuery->where('guru_kelas.is_wali_kelas', true)
+                    ->where('guru_kelas.role', 'wali_kelas')
+                    ->when($tahunAjaranId, fn ($query) => $query->where('kelas.tahun_ajaran_id', $tahunAjaranId));
+            })
+            ->orderBy('nama')
+            ->get(['id', 'nama']);
+
+        return $this->liveListResponse(
+            $request,
+            'admin.class',
+            'admin.partials.class-results',
+            compact('kelasList', 'activeTahunAjaran', 'classLevels', 'waliKelasOptions')
+        );
     }
 
     // Menampilkan form tambah data kelas
