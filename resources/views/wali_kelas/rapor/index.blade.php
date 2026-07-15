@@ -100,8 +100,8 @@
             </div>
         @elseif(!$hasPdfTemplateForCurrentType)
             <div class="mb-6 rounded-lg border border-yellow-300 bg-yellow-50 p-4 text-sm text-yellow-800">
-                <p class="font-semibold">Template PDF belum tersedia untuk {{ $type }}.</p>
-                <p class="mt-1">Admin perlu mengaktifkan template rapor untuk kelas, tipe rapor, dan tahun ajaran ini. Unduh DOCX dan cetak HTML tetap dapat digunakan jika template DOCX tersedia.</p>
+                <p class="font-semibold">Belum ada template {{ $type }} aktif untuk kelas ini.</p>
+                <p class="mt-1">Silakan hubungi admin untuk mengaktifkan template {{ $type }} yang sesuai sebelum menyiapkan, mencetak, atau mengunduh rapor.</p>
             </div>
         @endif
 

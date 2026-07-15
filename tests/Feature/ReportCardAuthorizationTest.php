@@ -221,7 +221,8 @@ class ReportCardAuthorizationTest extends TestCase
             ]))
             ->assertStatus(422)
             ->assertJsonPath('success', false)
-            ->assertJsonPath('error_type', 'template_missing');
+            ->assertJsonPath('error_type', 'template_missing')
+            ->assertJsonPath('message', 'Belum ada template UTS aktif untuk kelas ini. Silakan hubungi admin.');
     }
 
     public function test_pdf_download_missing_template_returns_safe_response(): void
@@ -236,7 +237,8 @@ class ReportCardAuthorizationTest extends TestCase
             ]))
             ->assertStatus(422)
             ->assertJsonPath('success', false)
-            ->assertJsonPath('error_type', 'template_missing');
+            ->assertJsonPath('error_type', 'template_missing')
+            ->assertJsonPath('message', 'Belum ada template UTS aktif untuk kelas ini. Silakan hubungi admin.');
     }
 
     public function test_pdf_preview_and_legacy_download_reuse_same_cached_file(): void
@@ -524,7 +526,29 @@ class ReportCardAuthorizationTest extends TestCase
                 'tahun_ajaran_id' => $this->activeYearId,
             ]))
             ->assertStatus(422)
-            ->assertJsonPath('error_type', 'template_missing');
+            ->assertJsonPath('error_type', 'template_missing')
+            ->assertJsonPath('message', 'Belum ada template UTS aktif untuk kelas ini. Silakan hubungi admin.');
+    }
+
+    public function test_report_generation_uses_class_scoped_active_template_before_global_template(): void
+    {
+        $classTemplateId = $this->insertReportTemplate($this->currentClassId, 'UTS', $this->activeYearId, 1);
+        $this->insertGlobalReportTemplate('UTS', $this->activeYearId, 1);
+
+        $template = $this->resolveTemplateForAuthorizedStudent('UTS');
+
+        $this->assertNotNull($template);
+        $this->assertSame($classTemplateId, $template->id);
+    }
+
+    public function test_report_generation_falls_back_to_global_active_template_when_no_class_scoped_template_exists(): void
+    {
+        $globalTemplateId = $this->insertGlobalReportTemplate('UAS', $this->activeYearId, 1);
+
+        $template = $this->resolveTemplateForAuthorizedStudent('UAS');
+
+        $this->assertNotNull($template);
+        $this->assertSame($globalTemplateId, $template->id);
     }
 
     public function test_report_index_marks_pdf_unavailable_when_template_is_missing(): void
@@ -537,8 +561,23 @@ class ReportCardAuthorizationTest extends TestCase
                 'tahun_ajaran_id' => $this->activeYearId,
             ]))
             ->assertOk()
-            ->assertSee('Template PDF belum tersedia untuk UTS', false)
+            ->assertSee('Belum ada template UTS aktif untuk kelas ini.', false)
             ->assertSee('"UTS":false', false);
+    }
+
+    public function test_report_index_shows_friendly_uas_no_template_message_when_uas_is_opened(): void
+    {
+        $this->fakeLibreOfficeAvailability();
+        Setting::set('active_wali_report_period', 'UAS');
+
+        $this->actingAsWali()
+            ->get(route('wali_kelas.rapor.index', [
+                'type' => 'UAS',
+                'tahun_ajaran_id' => $this->activeYearId,
+            ]))
+            ->assertOk()
+            ->assertSee('Belum ada template UAS aktif untuk kelas ini.', false)
+            ->assertSee('"UAS":false', false);
     }
 
     public function test_report_index_keeps_pdf_actions_available_with_valid_template(): void
@@ -552,7 +591,7 @@ class ReportCardAuthorizationTest extends TestCase
                 'tahun_ajaran_id' => $this->activeYearId,
             ]))
             ->assertOk()
-            ->assertDontSee('Template PDF belum tersedia untuk UTS', false)
+            ->assertDontSee('Belum ada template UTS aktif untuk kelas ini.', false)
             ->assertSee('"UTS":true', false);
     }
 
@@ -1542,6 +1581,34 @@ class ReportCardAuthorizationTest extends TestCase
             'created_at' => now(),
             'updated_at' => now(),
         ]);
+    }
+
+    private function insertGlobalReportTemplate(string $type = 'UTS', ?int $yearId = null, ?int $semester = 1): int
+    {
+        return DB::table('report_templates')->insertGetId([
+            'filename' => 'global-template.docx',
+            'path' => 'templates/global-template.docx',
+            'type' => $type,
+            'is_active' => true,
+            'kelas_id' => null,
+            'tahun_ajaran_id' => $yearId ?: $this->activeYearId,
+            'semester' => $semester,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function resolveTemplateForAuthorizedStudent(string $type): ?\App\Models\ReportTemplate
+    {
+        $controller = new class extends \App\Http\Controllers\ReportController
+        {
+            public function resolve(Siswa $siswa, string $type, int $tahunAjaranId): ?\App\Models\ReportTemplate
+            {
+                return $this->getTemplateForSiswa($siswa, $type, $tahunAjaranId);
+            }
+        };
+
+        return $controller->resolve(Siswa::findOrFail($this->authorizedStudentId), $type, $this->activeYearId);
     }
 
     private function cachePdfForAuthorizedStudent(string $filename): void

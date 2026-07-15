@@ -143,52 +143,21 @@ class AdminHardeningPhase2Test extends TestCase
         $this->assertSame(1, DB::table('siswas')->whereNotNull('deleted_at')->count());
     }
 
-    public function test_cannot_delete_only_active_required_uts_template(): void
+    public function test_admin_can_delete_only_active_global_uts_template(): void
     {
-        $template = $this->createTemplate('UTS', true, $this->activeClassId, 1);
+        $template = $this->createTemplate('UTS', true, null, 1);
 
         $this->actingAsAdmin()
             ->deleteJson(route('report.template.destroy', $template))
-            ->assertUnprocessable()
-            ->assertJsonPath('success', false)
-            ->assertJsonFragment(['message' => 'Template ini tidak dapat dihapus karena menjadi satu-satunya template aktif untuk rapor UTS/UAS pada konteks ini.']);
-
-        $this->assertDatabaseHas('report_templates', [
-            'id' => $template->id,
-            'is_active' => true,
-        ]);
-    }
-
-    public function test_cannot_deactivate_only_active_required_uas_template(): void
-    {
-        $template = $this->createTemplate('UAS', true, $this->activeClassId, 2);
-
-        $this->actingAsAdmin()
-            ->postJson(route('report.template.activate', $template))
-            ->assertUnprocessable()
-            ->assertJsonPath('success', false)
-            ->assertJsonFragment(['message' => 'Template ini tidak dapat dinonaktifkan karena menjadi satu-satunya template aktif untuk rapor UTS/UAS pada konteks ini.']);
-
-        $this->assertDatabaseHas('report_templates', [
-            'id' => $template->id,
-            'is_active' => true,
-        ]);
-    }
-
-    public function test_template_can_be_deleted_or_deactivated_when_active_fallback_remains(): void
-    {
-        $classTemplate = $this->createTemplate('UTS', true, $this->activeClassId, 1);
-        $this->createTemplate('UTS', true, null, 1);
-
-        $this->actingAsAdmin()
-            ->deleteJson(route('report.template.destroy', $classTemplate))
             ->assertOk()
             ->assertJsonPath('success', true);
 
-        $this->assertDatabaseMissing('report_templates', ['id' => $classTemplate->id]);
+        $this->assertDatabaseMissing('report_templates', ['id' => $template->id]);
+    }
 
+    public function test_admin_can_deactivate_only_active_global_uas_template(): void
+    {
         $template = $this->createTemplate('UAS', true, null, 2);
-        $fallback = $this->createTemplate('UAS', true, null, 2);
 
         $this->actingAsAdmin()
             ->postJson(route('report.template.activate', $template))
@@ -199,8 +168,59 @@ class AdminHardeningPhase2Test extends TestCase
             'id' => $template->id,
             'is_active' => false,
         ]);
+    }
+
+    public function test_admin_can_deactivate_only_active_global_uts_template(): void
+    {
+        $template = $this->createTemplate('UTS', true, null, 1);
+
+        $this->actingAsAdmin()
+            ->postJson(route('report.template.activate', $template))
+            ->assertOk()
+            ->assertJsonPath('status', 'inactive');
+
         $this->assertDatabaseHas('report_templates', [
-            'id' => $fallback->id,
+            'id' => $template->id,
+            'is_active' => false,
+        ]);
+    }
+
+    public function test_class_scoped_template_does_not_need_to_replace_global_before_global_can_be_deactivated(): void
+    {
+        $globalTemplate = $this->createTemplate('UAS', true, null, 2);
+        $classTemplate = $this->createTemplate('UAS', true, $this->activeClassId, 2);
+
+        $this->actingAsAdmin()
+            ->postJson(route('report.template.activate', $globalTemplate))
+            ->assertOk()
+            ->assertJsonPath('status', 'inactive');
+
+        $this->assertDatabaseHas('report_templates', [
+            'id' => $globalTemplate->id,
+            'is_active' => false,
+        ]);
+        $this->assertDatabaseHas('report_templates', [
+            'id' => $classTemplate->id,
+            'is_active' => true,
+        ]);
+    }
+
+    public function test_multiple_active_templates_per_report_type_are_allowed(): void
+    {
+        $globalTemplate = $this->createTemplate('UTS', true, null, 1);
+        $classTemplate = $this->createTemplate('UTS', false, $this->activeClassId, 1);
+
+        $this->actingAsAdmin()
+            ->postJson(route('report.template.activate', $classTemplate))
+            ->assertOk()
+            ->assertJsonPath('status', 'active');
+
+        $this->assertDatabaseHas('report_templates', [
+            'id' => $globalTemplate->id,
+            'is_active' => true,
+        ]);
+        $this->assertDatabaseHas('report_templates', [
+            'id' => $classTemplate->id,
             'is_active' => true,
         ]);
     }
@@ -251,21 +271,16 @@ class AdminHardeningPhase2Test extends TestCase
         $this->assertSame('UAS', Setting::get('active_wali_report_period'));
     }
 
-    public function test_rejected_template_deactivate_keeps_admin_view_active_status(): void
+    public function test_successful_template_deactivate_updates_backend_active_status(): void
     {
         $template = $this->createTemplate('UAS', true, $this->activeClassId, 2);
 
         $this->actingAsAdmin()
             ->postJson(route('report.template.activate', $template))
-            ->assertUnprocessable()
-            ->assertJsonPath('success', false);
-
-        $this->assertTrue($template->fresh()->is_active);
-
-        $this->actingAsAdmin()
-            ->get(route('report.template.index'))
             ->assertOk()
-            ->assertSee('Aktif');
+            ->assertJsonPath('status', 'inactive');
+
+        $this->assertFalse($template->fresh()->is_active);
     }
 
     public function test_student_create_and_update_require_active_year_context(): void

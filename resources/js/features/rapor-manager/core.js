@@ -274,7 +274,7 @@ export const raporManagerCore = {
             return availableTitle;
         }
 
-        return 'Template PDF belum tersedia untuk kelas, tipe rapor, dan tahun ajaran ini';
+        return `Belum ada template ${this.activeTab} aktif untuk kelas ini. Silakan hubungi admin.`;
     },
 
     validatePdfTemplate(siswaId) {
@@ -294,8 +294,8 @@ export const raporManagerCore = {
 
         Swal.fire({
             icon: 'info',
-            title: 'Template PDF Belum Tersedia',
-            text: 'Template rapor PDF belum tersedia untuk kelas, tipe rapor, dan tahun ajaran yang dipilih.',
+            title: `Template ${this.activeTab} Belum Tersedia`,
+            text: `Belum ada template ${this.activeTab} aktif untuk kelas ini. Silakan hubungi admin.`,
             confirmButtonText: 'Mengerti'
         });
         return false;

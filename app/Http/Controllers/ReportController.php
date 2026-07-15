@@ -34,7 +34,6 @@ class ReportController extends Controller
 {
     use RequiresTahunAjaran;
 
-    private const REQUIRED_TEMPLATE_PROTECTION_MESSAGE = 'Template ini tidak dapat %s karena menjadi satu-satunya template aktif untuk rapor UTS/UAS pada konteks ini.';
     private const UTS_TEMPLATE_TEXT_MARKER = 'RAPOR TENGAH SEMESTER';
     private const TEMPLATE_UNREADABLE_MESSAGE = 'File template tidak dapat dibaca. Pastikan file menggunakan format DOCX yang valid.';
 
@@ -1300,7 +1299,9 @@ class ReportController extends Controller
                     $query->whereNull('semester')
                         ->orWhere('semester', $semester);
                 });
-            });
+            })
+            ->orderByDesc('updated_at')
+            ->orderByDesc('id');
     }
 
     private function findActiveReportTemplateForContext(string $type, ?int $kelasId, ?int $tahunAjaranId = null): ?ReportTemplate
@@ -1331,91 +1332,6 @@ class ReportController extends Controller
             ->first();
     }
 
-    private function templateClassIds(ReportTemplate $template): array
-    {
-        $template->loadMissing('kelasList');
-
-        return collect($template->getAllKelasIds())
-            ->filter()
-            ->map(fn ($id) => (int) $id)
-            ->unique()
-            ->values()
-            ->all();
-    }
-
-    private function activeTemplateFallbackBaseQuery(ReportTemplate $template)
-    {
-        return ReportTemplate::where('id', '!=', $template->id)
-            ->where('type', $template->type)
-            ->where('is_active', true)
-            ->when(
-                $template->tahun_ajaran_id,
-                fn ($query) => $query->where('tahun_ajaran_id', $template->tahun_ajaran_id),
-                fn ($query) => $query->whereNull('tahun_ajaran_id')
-            )
-            ->when(
-                $template->semester,
-                fn ($query) => $query->where(function ($query) use ($template) {
-                    $query->whereNull('semester')
-                        ->orWhere('semester', $template->semester);
-                }),
-                fn ($query) => $query->whereNull('semester')
-            );
-    }
-
-    private function hasGlobalActiveTemplateFallback(ReportTemplate $template): bool
-    {
-        return $this->activeTemplateFallbackBaseQuery($template)
-            ->whereNull('kelas_id')
-            ->whereDoesntHave('kelasList')
-            ->exists();
-    }
-
-    private function hasClassActiveTemplateFallback(ReportTemplate $template, int $kelasId): bool
-    {
-        return $this->activeTemplateFallbackBaseQuery($template)
-            ->where(function ($query) use ($kelasId) {
-                $query->where('kelas_id', $kelasId)
-                    ->orWhereHas('kelasList', function ($query) use ($kelasId) {
-                        $query->where('kelas_id', $kelasId);
-                    })
-                    ->orWhere(function ($query) {
-                        $query->whereNull('kelas_id')
-                            ->whereDoesntHave('kelasList');
-                    });
-            })
-            ->exists();
-    }
-
-    private function activeTemplateHasRequiredFallback(ReportTemplate $template): bool
-    {
-        if (!$template->is_active) {
-            return true;
-        }
-
-        $kelasIds = $this->templateClassIds($template);
-
-        if (empty($kelasIds)) {
-            return $this->hasGlobalActiveTemplateFallback($template);
-        }
-
-        foreach ($kelasIds as $kelasId) {
-            if (!$this->hasClassActiveTemplateFallback($template, $kelasId)) {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    private function requiredTemplateProtectionResponse(string $action)
-    {
-        return response()->json([
-            'success' => false,
-            'message' => sprintf(self::REQUIRED_TEMPLATE_PROTECTION_MESSAGE, $action),
-        ], 422);
-    }
-
     private function pdfTemplateUnavailableResponse(Request $request, Siswa $siswa, string $type, int $tahunAjaranId, ?int $kelasId = null)
     {
         Log::warning('PDF report template unavailable for requested context', [
@@ -1429,9 +1345,16 @@ class ReportController extends Controller
 
         return response()->json([
             'success' => false,
-            'message' => 'Template rapor PDF belum tersedia untuk kelas, tipe rapor, dan tahun ajaran yang dipilih. Silakan minta admin mengaktifkan template yang sesuai.',
+            'message' => $this->missingActiveTemplateMessage($type),
             'error_type' => 'template_missing',
         ], 422);
+    }
+
+    private function missingActiveTemplateMessage(string $type): string
+    {
+        $type = $this->normalizeReportType($type);
+
+        return "Belum ada template {$type} aktif untuk kelas ini. Silakan hubungi admin.";
     }
 
     public function previewRapor(Request $request, $siswa_id) {
@@ -2308,7 +2231,7 @@ class ReportController extends Controller
             if (!$template) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Tidak ditemukan template rapor ' . $type . ' yang aktif untuk kelas ini pada tahun ajaran yang dipilih.',
+                    'message' => $this->missingActiveTemplateMessage($type),
                     'error_type' => 'template_missing'
                 ], 404);
             }
@@ -3025,17 +2948,12 @@ class ReportController extends Controller
     public function activate(ReportTemplate $template)
     {
         try {
-            // Cek apakah template ini sudah aktif
             if ($template->is_active) {
-                if (!$this->activeTemplateHasRequiredFallback($template)) {
-                    return $this->requiredTemplateProtectionResponse('dinonaktifkan');
-                }
-
-                // Jika sudah aktif, berarti ini adalah request untuk menonaktifkan
                 $template->update(['is_active' => false]);
+
                 return response()->json([
                     'success' => true,
-                    'message' => 'Template berhasil dinonaktifkan',
+                    'message' => 'Template berhasil dinonaktifkan. Jika tidak ada template ' . $template->type . ' aktif lain yang sesuai, rapor ' . $template->type . ' belum dapat dibuat.',
                     'status' => 'inactive'
                 ]);
             }
@@ -3046,66 +2964,6 @@ class ReportController extends Controller
                 'kelas_id' => $template->kelas_id
             ]);
 
-            // Dapatkan semua kelas yang terkait dengan template ini
-            $targetKelasIds = [];
-            
-            // Jika ini template untuk kelas tertentu (relasi lama)
-            if ($template->kelas_id) {
-                $targetKelasIds[] = $template->kelas_id;
-            }
-            
-            // Jika template memiliki relasi many-to-many ke kelas
-            if ($template->kelasList && $template->kelasList->count() > 0) {
-                $kelasListIds = $template->kelasList->pluck('id')->toArray();
-                $targetKelasIds = array_merge($targetKelasIds, $kelasListIds);
-            }
-            
-            \Log::info('Target kelas IDs', [
-                'ids' => $targetKelasIds,
-                'count' => count($targetKelasIds)
-            ]);
-
-            // Jika template ini untuk kelas spesifik
-            if (!empty($targetKelasIds)) {
-                // Cari template lain dengan tipe yang sama dan untuk kelas yang sama
-                $conflictingTemplates = ReportTemplate::where('type', $template->type)
-                    ->where('tahun_ajaran_id', $template->tahun_ajaran_id)
-                    ->where('id', '!=', $template->id)
-                    ->where(function($query) use ($targetKelasIds) {
-                        // Template dengan kelas_id yang cocok
-                        $query->whereIn('kelas_id', $targetKelasIds);
-                        // Atau template dengan relasi many-to-many ke kelas yang sama
-                        $query->orWhereHas('kelasList', function($q) use ($targetKelasIds) {
-                            $q->whereIn('kelas_id', $targetKelasIds);
-                        });
-                    })
-                    ->where('is_active', true)
-                    ->get();
-                    
-                \Log::info('Found conflicting templates', [
-                    'count' => $conflictingTemplates->count(),
-                    'template_ids' => $conflictingTemplates->pluck('id')->toArray()
-                ]);
-                
-                // Nonaktifkan template yang konflik
-                foreach ($conflictingTemplates as $conflictingTemplate) {
-                    \Log::info('Deactivating conflicting template', [
-                        'template_id' => $conflictingTemplate->id
-                    ]);
-                    $conflictingTemplate->update(['is_active' => false]);
-                }
-            } else {
-                // Ini adalah template global, nonaktifkan semua template global dengan tipe yang sama
-                ReportTemplate::where('type', $template->type)
-                    ->where('tahun_ajaran_id', $template->tahun_ajaran_id)
-                    ->whereNull('kelas_id')
-                    ->whereDoesntHave('kelasList')
-                    ->where('id', '!=', $template->id)
-                    ->where('is_active', true)
-                    ->update(['is_active' => false]);
-            }
-            
-            // Aktifkan template ini
             $template->update(['is_active' => true]);
             
             return response()->json([
@@ -3601,10 +3459,6 @@ class ReportController extends Controller
     public function destroy(ReportTemplate $template)
     {
         try {
-            if (!$this->activeTemplateHasRequiredFallback($template)) {
-                return $this->requiredTemplateProtectionResponse('dihapus');
-            }
-
             DB::beginTransaction();
 
             // Hapus file
@@ -3619,7 +3473,7 @@ class ReportController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Template berhasil dihapus'
+                'message' => 'Template berhasil dihapus. Jika tidak ada template ' . $template->type . ' aktif lain yang sesuai, rapor ' . $template->type . ' belum dapat dibuat.'
             ]);
 
         } catch (\Exception $e) {
