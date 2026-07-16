@@ -34,15 +34,19 @@ class HelpCenterTest extends TestCase
         $this->seedFixture();
     }
 
-    public function test_help_widget_renders_search_tabs_and_accordion_shell(): void
+    public function test_help_widget_renders_compact_quick_help_shell(): void
     {
         $html = view('components.ai-chatbot')->render();
+        $js = file_get_contents(resource_path('js/features/help-center.js'));
 
         $this->assertStringContainsString('Pusat Bantuan Rapor Digital', $html);
-        $this->assertStringContainsString('Panduan singkat untuk Admin, Pengajar, dan Wali Kelas.', $html);
-        $this->assertStringContainsString('placeholder="Cari topik bantuan..."', $html);
-        $this->assertStringContainsString('filteredTopics()', $html);
+        $this->assertStringContainsString('Cari bantuan singkat atau buka panduan lengkap.', $html);
+        $this->assertStringContainsString('placeholder="Cari bantuan singkat..."', $html);
+        $this->assertStringContainsString('Buka Pusat Bantuan Lengkap', $html);
+        $this->assertStringContainsString('displayedTopics()', $html);
         $this->assertStringContainsString('x-data="helpCenter"', $html);
+        $this->assertStringContainsString('fullHelpUrl', $js);
+        $this->assertStringNotContainsString('activeCategory', $html);
         $this->assertStringNotContainsString('AI Nilai Assistant', $html);
         $this->assertStringNotContainsString('/gemini/send-message', $html);
     }
