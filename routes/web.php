@@ -144,6 +144,7 @@ Route::middleware(['auth:guru', 'force.guru.password'])->group(function () {
 // Admin Routes - Guard: web, Role: admin only
 Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admin')->group(function () {
 
+    Route::get('/help', [HelpCenterController::class, 'adminIndex'])->name('admin.help.index');
     Route::get('/help/faq', [HelpCenterController::class, 'adminFaq'])->name('admin.help.faq');
     
     Route::prefix('gemini')->name('gemini.')->middleware('throttle:20,1')->group(function () {
@@ -421,6 +422,7 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
     Route::get('/mata-pelajaran-progress/{mataPelajaranId}', [DashboardController::class, 'getMataPelajaranProgress'])
         ->name('mata_pelajaran.progress');
 
+    Route::get('/help', [HelpCenterController::class, 'pengajarIndex'])->name('help.index');
     Route::get('/help/faq', [HelpCenterController::class, 'pengajarFaq'])->name('help.faq');
 
     Route::prefix('gemini')->name('gemini.')->middleware('throttle:20,1')->group(function () {
@@ -548,6 +550,7 @@ Route::get('/cetak-rapor/{siswa}', [ReportController::class, 'printRaporHtml'])
     ->middleware('check.rapor.access')
     ->name('rapor.print_html');
 
+Route::get('/help', [HelpCenterController::class, 'waliKelasIndex'])->name('help.index');
 Route::get('/help/faq', [HelpCenterController::class, 'waliKelasFaq'])->name('help.faq');
 
 Route::prefix('gemini')->name('gemini.')->middleware('throttle:20,1')->group(function () {

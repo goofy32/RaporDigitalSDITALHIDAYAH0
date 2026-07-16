@@ -10,10 +10,11 @@ class HelpFaqService
     /**
      * @return array<string, mixed>
      */
-    public function responseFor(string $role, ?string $query = null, ?string $question = null): array
+    public function responseFor(string $role, ?string $query = null, ?string $question = null, bool $all = false): array
     {
         $items = $this->itemsForRole($role);
         $suggestedQuestions = $items->pluck('question')->take(6)->values()->all();
+        $categories = $items->pluck('category')->unique()->values()->all();
 
         if ($question) {
             $selected = $items->first(fn (array $item) => $this->normalize($item['question']) === $this->normalize($question));
@@ -21,19 +22,23 @@ class HelpFaqService
             return [
                 'success' => true,
                 'role' => $role,
+                'categories' => $categories,
                 'suggested_questions' => $suggestedQuestions,
                 'results' => $selected ? [$selected] : [],
                 'answer' => $selected['answer'] ?? null,
             ];
         }
 
-        $results = $query
-            ? $this->searchItems($items, $query)->values()
-            : $items->take(6)->values();
+        $results = match (true) {
+            (bool) $query => $this->searchItems($items, (string) $query)->values(),
+            $all => $items->values(),
+            default => $items->take(6)->values(),
+        };
 
         return [
             'success' => true,
             'role' => $role,
+            'categories' => $categories,
             'suggested_questions' => $suggestedQuestions,
             'results' => $results->all(),
             'answer' => $results->first()['answer'] ?? null,
@@ -45,17 +50,37 @@ class HelpFaqService
      */
     private function itemsForRole(string $role): Collection
     {
+        $topics = config('help_center.topics');
+
+        if (is_array($topics)) {
+            $allowedCategories = config("help_center.roles.{$role}", []);
+
+            return collect($topics)
+                ->filter(fn (array $item) => in_array((string) ($item['category'] ?? ''), $allowedCategories, true))
+                ->map(fn (array $item) => $this->normalizeItem($item))
+                ->filter(fn (array $item) => $item['question'] !== '' && $item['answer'] !== '')
+                ->values();
+        }
+
         $items = config("help_faq.{$role}", []);
 
         return collect($items)
-            ->map(fn (array $item) => [
-                'category' => (string) ($item['category'] ?? 'Umum'),
-                'question' => (string) ($item['question'] ?? ''),
-                'answer' => (string) ($item['answer'] ?? ''),
-                'keywords' => array_values($item['keywords'] ?? []),
-            ])
+            ->map(fn (array $item) => $this->normalizeItem($item))
             ->filter(fn (array $item) => $item['question'] !== '' && $item['answer'] !== '')
             ->values();
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function normalizeItem(array $item): array
+    {
+        return [
+            'category' => (string) ($item['category'] ?? 'Umum'),
+            'question' => (string) ($item['question'] ?? ''),
+            'answer' => (string) ($item['answer'] ?? ''),
+            'keywords' => array_values($item['keywords'] ?? []),
+        ];
     }
 
     /**

@@ -5,9 +5,25 @@ namespace App\Http\Controllers;
 use App\Services\HelpFaqService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\View\View;
 
 class HelpCenterController extends Controller
 {
+    public function adminIndex(HelpFaqService $faq): View
+    {
+        return $this->indexResponse($faq, 'admin', 'Admin', 'layouts.app');
+    }
+
+    public function pengajarIndex(HelpFaqService $faq): View
+    {
+        return $this->indexResponse($faq, 'pengajar', 'Pengajar', 'layouts.pengajar.app');
+    }
+
+    public function waliKelasIndex(HelpFaqService $faq): View
+    {
+        return $this->indexResponse($faq, 'wali_kelas', 'Wali Kelas', 'layouts.wali_kelas.app');
+    }
+
     public function adminFaq(Request $request, HelpFaqService $faq): JsonResponse
     {
         return $this->faqResponse($request, $faq, 'admin');
@@ -32,6 +48,20 @@ class HelpCenterController extends Controller
             $role,
             $query !== '' ? $query : null,
             $question !== '' ? $question : null,
+            $request->boolean('all'),
         ));
+    }
+
+    private function indexResponse(HelpFaqService $faq, string $role, string $roleLabel, string $layout): View
+    {
+        $payload = $faq->responseFor($role, all: true);
+
+        return view('help.center', [
+            'layout' => $layout,
+            'role' => $role,
+            'roleLabel' => $roleLabel,
+            'categories' => $payload['categories'] ?? [],
+            'topics' => $payload['results'] ?? [],
+        ]);
     }
 }

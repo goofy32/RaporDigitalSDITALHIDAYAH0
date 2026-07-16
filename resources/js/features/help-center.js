@@ -11,21 +11,24 @@ export function registerHelpCenter() {
 
     Alpine.data('helpCenter', () => ({
         isOpen: false,
-        message: '',
-        messages: [],
+        searchQuery: '',
+        topics: [],
+        categories: [],
+        activeCategory: '',
+        openTopicKey: '',
         suggestions: [],
         isLoading: false,
         error: '',
 
         init() {
-            this.loadSuggestions();
+            this.loadTopics();
         },
 
         togglePanel() {
             this.isOpen = !this.isOpen;
 
-            if (this.isOpen && this.suggestions.length === 0) {
-                this.loadSuggestions();
+            if (this.isOpen && this.topics.length === 0) {
+                this.loadTopics();
             }
         },
 
@@ -43,33 +46,13 @@ export function registerHelpCenter() {
             return '/admin/help/faq';
         },
 
-        async loadSuggestions() {
-            await this.fetchFaq();
-        },
+        async loadTopics() {
+            const data = await this.fetchFaq({ all: '1' });
 
-        async sendMessage() {
-            const query = this.message.trim();
-
-            if (!query || this.isLoading) {
-                return;
-            }
-
-            this.messages.push({ role: 'user', content: query });
-            this.message = '';
-
-            const data = await this.fetchFaq({ q: query });
-            this.addResponse(data);
-        },
-
-        async selectSuggestion(question) {
-            if (!question || this.isLoading) {
-                return;
-            }
-
-            this.messages.push({ role: 'user', content: question });
-
-            const data = await this.fetchFaq({ question });
-            this.addResponse(data);
+            this.topics = data.results || [];
+            this.categories = data.categories || [...new Set(this.topics.map((topic) => topic.category).filter(Boolean))];
+            this.suggestions = data.suggested_questions || [];
+            this.activeCategory = this.categories[0] || '';
         },
 
         async fetchFaq(params = {}) {
@@ -96,48 +79,70 @@ export function registerHelpCenter() {
                     throw new Error('Panduan belum dapat dimuat.');
                 }
 
-                const data = await response.json();
-                this.suggestions = data.suggested_questions || [];
-
-                return data;
+                return await response.json();
             } catch (error) {
                 this.error = error.message || 'Panduan belum dapat dimuat.';
 
                 return {
+                    categories: [],
                     results: [],
-                    answer: null,
+                    suggested_questions: [],
                 };
             } finally {
                 this.isLoading = false;
-                this.$nextTick(() => this.scrollToBottom());
             }
         },
 
-        addResponse(data) {
-            const results = data.results || [];
+        selectCategory(category) {
+            this.activeCategory = category;
+            this.openTopicKey = '';
+        },
 
-            if (data.answer) {
-                this.messages.push({
-                    role: 'assistant',
-                    content: data.answer,
-                });
-                return;
-            }
+        filteredTopics() {
+            const query = this.normalize(this.searchQuery);
 
-            if (results.length > 0) {
-                this.messages.push({
-                    role: 'assistant',
-                    content: results
-                        .map((item) => `${item.question}\n${item.answer}`)
-                        .join('\n\n'),
-                });
-                return;
-            }
+            return this.topics.filter((topic) => {
+                const matchesCategory = !this.activeCategory || topic.category === this.activeCategory;
 
-            this.messages.push({
-                role: 'assistant',
-                content: 'Panduan yang cocok belum ditemukan. Coba gunakan kata kunci lain atau pilih pertanyaan yang tersedia.',
+                if (!matchesCategory) {
+                    return false;
+                }
+
+                if (!query) {
+                    return true;
+                }
+
+                const haystack = this.normalize([
+                    topic.category,
+                    topic.question,
+                    topic.answer,
+                    (topic.keywords || []).join(' '),
+                ].join(' '));
+
+                return haystack.includes(query);
             });
+        },
+
+        hasSearch() {
+            return this.searchQuery.trim().length > 0;
+        },
+
+        clearSearch() {
+            this.searchQuery = '';
+            this.openTopicKey = '';
+        },
+
+        topicKey(topic, index) {
+            return `${topic.category}-${topic.question}-${index}`;
+        },
+
+        toggleTopic(topic, index) {
+            const key = this.topicKey(topic, index);
+            this.openTopicKey = this.openTopicKey === key ? '' : key;
+        },
+
+        isTopicOpen(topic, index) {
+            return this.openTopicKey === this.topicKey(topic, index);
         },
 
         formatText(text) {
@@ -153,12 +158,8 @@ export function registerHelpCenter() {
             return div.innerHTML;
         },
 
-        scrollToBottom() {
-            if (!this.$refs.chatContainer) {
-                return;
-            }
-
-            this.$refs.chatContainer.scrollTop = this.$refs.chatContainer.scrollHeight;
+        normalize(value) {
+            return (value || '').toString().toLowerCase().replace(/\s+/g, ' ').trim();
         },
     }));
 }

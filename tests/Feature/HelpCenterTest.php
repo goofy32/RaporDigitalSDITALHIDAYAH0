@@ -34,12 +34,14 @@ class HelpCenterTest extends TestCase
         $this->seedFixture();
     }
 
-    public function test_faq_widget_uses_help_center_label_and_not_ai_assistant_label(): void
+    public function test_help_widget_renders_search_tabs_and_accordion_shell(): void
     {
         $html = view('components.ai-chatbot')->render();
 
         $this->assertStringContainsString('Pusat Bantuan Rapor Digital', $html);
-        $this->assertStringContainsString('Panduan penggunaan sistem', $html);
+        $this->assertStringContainsString('Panduan singkat untuk Admin, Pengajar, dan Wali Kelas.', $html);
+        $this->assertStringContainsString('placeholder="Cari topik bantuan..."', $html);
+        $this->assertStringContainsString('filteredTopics()', $html);
         $this->assertStringContainsString('x-data="helpCenter"', $html);
         $this->assertStringNotContainsString('AI Nilai Assistant', $html);
         $this->assertStringNotContainsString('/gemini/send-message', $html);
@@ -58,197 +60,156 @@ class HelpCenterTest extends TestCase
         }
     }
 
-    public function test_admin_faq_endpoint_returns_admin_topics(): void
+    public function test_admin_help_page_renders_all_major_categories(): void
     {
         $this->actingAs($this->admin, 'web')
-            ->getJson('/admin/help/faq')
+            ->get('/admin/help')
+            ->assertOk()
+            ->assertSee('Pusat Bantuan')
+            ->assertSee('Setup awal aplikasi untuk Admin')
+            ->assertSee('Input Nilai Manual')
+            ->assertSee('Rapor UTS dan UAS untuk Wali Kelas')
+            ->assertSee('Masalah Umum');
+    }
+
+    public function test_pengajar_help_page_renders_pengajar_topics(): void
+    {
+        $this->actingAs($this->guru, 'guru')
+            ->withSession(['selected_role' => 'pengajar'])
+            ->get('/pengajar/help')
+            ->assertOk()
+            ->assertSee('Data Pembelajaran Pengajar')
+            ->assertSee('Upload Nilai Excel dan preview')
+            ->assertDontSee('Setup awal aplikasi untuk Admin');
+    }
+
+    public function test_wali_kelas_help_page_renders_wali_topics(): void
+    {
+        $this->actingAs($this->guru, 'guru')
+            ->withSession(['selected_role' => 'wali_kelas'])
+            ->get('/wali-kelas/help')
+            ->assertOk()
+            ->assertSee('Daftar Siswa Wali Kelas')
+            ->assertSee('DOCX dan PDF Rapor')
+            ->assertDontSee('Download Template Nilai Excel');
+    }
+
+    public function test_admin_can_access_all_help_center_topic_categories(): void
+    {
+        $this->actingAs($this->admin, 'web')
+            ->getJson('/admin/help/faq?all=1')
             ->assertOk()
             ->assertJsonPath('role', 'admin')
-            ->assertJsonFragment(['question' => 'Bagaimana import siswa dari Excel?']);
+            ->assertJsonPath('categories.0', 'Admin')
+            ->assertJsonFragment(['question' => 'Setup awal aplikasi untuk Admin'])
+            ->assertJsonFragment(['question' => 'Input Nilai Manual'])
+            ->assertJsonFragment(['question' => 'Rapor UTS dan UAS untuk Wali Kelas'])
+            ->assertJsonFragment(['question' => 'Apa bedanya UTS dan UAS di aplikasi?']);
     }
 
-    public function test_pengajar_faq_endpoint_returns_pengajar_topics(): void
+    public function test_pengajar_can_access_relevant_help_topics(): void
     {
-        $this->actingAs($this->guru, 'guru')
+        $response = $this->actingAs($this->guru, 'guru')
             ->withSession(['selected_role' => 'pengajar'])
-            ->getJson('/pengajar/help/faq')
+            ->getJson('/pengajar/help/faq?all=1')
             ->assertOk()
             ->assertJsonPath('role', 'pengajar')
-            ->assertJsonFragment(['question' => 'Bagaimana input nilai?']);
+            ->assertJsonFragment(['question' => 'Input Nilai Manual'])
+            ->assertJsonFragment(['question' => 'Upload Nilai Excel dan preview'])
+            ->assertJsonFragment(['question' => 'Apa bedanya UTS dan UAS di aplikasi?']);
+
+        $questions = collect($response->json('results'))->pluck('question')->implode(' ');
+
+        $this->assertStringNotContainsString('Setup awal aplikasi untuk Admin', $questions);
+        $this->assertStringNotContainsString('Data Siswa dan import Excel', $questions);
     }
 
-    public function test_wali_kelas_faq_endpoint_returns_wali_topics(): void
+    public function test_wali_kelas_can_access_relevant_help_topics(): void
     {
-        $this->actingAs($this->guru, 'guru')
+        $response = $this->actingAs($this->guru, 'guru')
             ->withSession(['selected_role' => 'wali_kelas'])
-            ->getJson('/wali-kelas/help/faq')
+            ->getJson('/wali-kelas/help/faq?all=1')
             ->assertOk()
             ->assertJsonPath('role', 'wali_kelas')
-            ->assertJsonFragment(['question' => 'Bagaimana mengubah capaian siswa?']);
+            ->assertJsonFragment(['question' => 'Daftar Siswa Wali Kelas'])
+            ->assertJsonFragment(['question' => 'DOCX dan PDF Rapor'])
+            ->assertJsonFragment(['question' => 'Kenapa PDF lama disiapkan?']);
+
+        $questions = collect($response->json('results'))->pluck('question')->implode(' ');
+
+        $this->assertStringNotContainsString('Setup awal aplikasi untuk Admin', $questions);
+        $this->assertStringNotContainsString('Download Template Nilai Excel', $questions);
     }
 
-    public function test_expanded_faq_contains_key_topics_for_each_role(): void
+    public function test_help_center_includes_required_internal_school_topics(): void
     {
-        $adminQuestions = collect(config('help_faq.admin'))->pluck('question');
-        $pengajarQuestions = collect(config('help_faq.pengajar'))->pluck('question');
-        $waliQuestions = collect(config('help_faq.wali_kelas'))->pluck('question');
-
-        $this->assertCount(64, $adminQuestions);
-        $this->assertCount(19, $pengajarQuestions);
-        $this->assertCount(39, $waliQuestions);
+        $topics = collect(config('help_center.topics'));
+        $questions = $topics->pluck('question');
+        $allText = $topics
+            ->map(fn (array $topic) => $topic['question'].' '.$topic['answer'])
+            ->implode(' ');
 
         foreach ([
-            'Bagaimana mengunduh template Excel siswa?',
-            'Bagaimana reset password guru?',
-            'Bagaimana upload tanda tangan wali kelas?',
-            'Bagaimana menggunakan placeholder ${ttd_wali_kelas}?',
-            'Mengapa PDF belum berubah setelah data diperbarui?',
+            'Jenis Rapor yang Dibuka untuk Wali Kelas',
+            'Template Rapor UTS dan UAS',
+            'Mata Pelajaran, Pengajar, dan LM/TP',
+            'Upload Nilai Excel dan preview',
+            'DOCX dan PDF Rapor',
+            'Notifikasi untuk Admin',
+            'Notifikasi untuk Wali Kelas',
         ] as $question) {
-            $this->assertContains($question, $adminQuestions);
+            $this->assertContains($question, $questions);
         }
 
         foreach ([
-            'Bagaimana memilih role pengajar?',
-            'Bagaimana mengganti password setelah reset admin?',
-            'Apakah pengajar dapat mengunggah tanda tangan sendiri?',
-            'Bagaimana mengelola TP?',
-            'Mengapa progress belum penuh?',
-        ] as $question) {
-            $this->assertContains($question, $pengajarQuestions);
-        }
-
-        foreach ([
-            'Apa fungsi Pengaturan Kalimat Awal Capaian?',
-            'Mengapa hanya ada satu tombol Simpan Semua Perubahan?',
-            'Apa arti Belum disimpan?',
-            'Apakah deskripsi khusus tertimpa ketika default diubah?',
-            'Apakah tanda tangan muncul otomatis?',
-        ] as $question) {
-            $this->assertContains($question, $waliQuestions);
+            'RAPOR TENGAH SEMESTER',
+            'UAS bukan berarti semester genap',
+            'Nilai kosong tidak dihitung sebagai 0',
+            'Simpan & Lanjut',
+            'PDF dibuat melalui proses latar belakang',
+            'Menghapus notifikasi hanya menghapus pemberitahuan',
+        ] as $phrase) {
+            $this->assertStringContainsString($phrase, $allText);
         }
     }
 
-    public function test_search_returns_deterministic_matching_faq(): void
+    public function test_search_returns_matching_help_topics(): void
     {
         $this->actingAs($this->admin, 'web')
-            ->getJson('/admin/help/faq?q=kelas%20tidak%20ditemukan')
+            ->getJson('/admin/help/faq?q=jenis%20rapor%20dibuka')
             ->assertOk()
-            ->assertJsonPath('results.0.question', 'Mengapa kelas tidak ditemukan saat import?')
-            ->assertJsonPath('answer', 'Kelas di file harus sudah dibuat pada tahun ajaran aktif dan penulisannya harus sama. Cek daftar kelas di template atau menu Kelas, lalu samakan kolom kelas pada file Excel.');
+            ->assertJsonPath('results.0.question', 'Jenis Rapor yang Dibuka untuk Wali Kelas');
+
+        $this->actingAs($this->guru, 'guru')
+            ->withSession(['selected_role' => 'pengajar'])
+            ->getJson('/pengajar/help/faq?q=upload%20nilai%20excel')
+            ->assertOk()
+            ->assertJsonFragment(['question' => 'Upload Nilai Excel dan preview']);
+
+        $this->actingAs($this->guru, 'guru')
+            ->withSession(['selected_role' => 'wali_kelas'])
+            ->getJson('/wali-kelas/help/faq?q=pdf%20lama')
+            ->assertOk()
+            ->assertJsonFragment(['question' => 'Kenapa PDF lama disiapkan?']);
     }
 
-    public function test_common_search_terms_return_expected_role_faq(): void
-    {
-        $this->actingAs($this->admin, 'web')
-            ->getJson('/admin/help/faq?q=import%20siswa')
-            ->assertOk()
-            ->assertJsonPath('results.0.question', 'Bagaimana import siswa dari Excel?');
-
-        $this->actingAs($this->admin, 'web')
-            ->getJson('/admin/help/faq?q=kelas%20tidak%20ditemukan')
-            ->assertOk()
-            ->assertJsonPath('results.0.question', 'Mengapa kelas tidak ditemukan saat import?');
-
-        $this->actingAs($this->admin, 'web')
-            ->getJson('/admin/help/faq?q=download%20template')
-            ->assertOk()
-            ->assertJsonFragment(['question' => 'Bagaimana mengunduh template Excel siswa?']);
-
-        $this->actingAs($this->admin, 'web')
-            ->getJson('/admin/help/faq?q=reset%20password')
-            ->assertOk()
-            ->assertJsonFragment(['question' => 'Bagaimana reset password guru?']);
-
-        $this->actingAs($this->admin, 'web')
-            ->getJson('/admin/help/faq?q=ttd')
-            ->assertOk()
-            ->assertJsonFragment(['question' => 'Bagaimana upload tanda tangan wali kelas?']);
-
-        $this->actingAs($this->admin, 'web')
-            ->getJson('/admin/help/faq?q=tanda%20tangan')
-            ->assertOk()
-            ->assertJsonFragment(['question' => 'Bagaimana upload tanda tangan wali kelas?']);
-
-        $this->actingAs($this->admin, 'web')
-            ->getJson('/admin/help/faq?q=pdf%20belum%20berubah')
-            ->assertOk()
-            ->assertJsonFragment(['question' => 'Mengapa PDF belum berubah setelah data diperbarui?']);
-
-        $this->actingAs($this->guru, 'guru')
-            ->withSession(['selected_role' => 'pengajar'])
-            ->getJson('/pengajar/help/faq?q=input%20nilai')
-            ->assertOk()
-            ->assertJsonPath('results.0.question', 'Bagaimana input nilai?');
-
-        $this->actingAs($this->guru, 'guru')
-            ->withSession(['selected_role' => 'pengajar'])
-            ->getJson('/pengajar/help/faq?q=progress')
-            ->assertOk()
-            ->assertJsonFragment(['question' => 'Apa arti progress nilai?']);
-
-        $this->actingAs($this->guru, 'guru')
-            ->withSession(['selected_role' => 'pengajar'])
-            ->getJson('/pengajar/help/faq?q=ganti%20password')
-            ->assertOk()
-            ->assertJsonFragment(['question' => 'Bagaimana mengganti password setelah reset admin?']);
-
-        $this->actingAs($this->guru, 'guru')
-            ->withSession(['selected_role' => 'wali_kelas'])
-            ->getJson('/wali-kelas/help/faq?q=gunakan%20default')
-            ->assertOk()
-            ->assertJsonFragment(['question' => 'Apa fungsi tombol Gunakan default?']);
-
-        $this->actingAs($this->guru, 'guru')
-            ->withSession(['selected_role' => 'wali_kelas'])
-            ->getJson('/wali-kelas/help/faq?q=rapor')
-            ->assertOk()
-            ->assertJsonFragment(['question' => 'Mengapa rapor belum berubah?']);
-
-        $this->actingAs($this->guru, 'guru')
-            ->withSession(['selected_role' => 'wali_kelas'])
-            ->getJson('/wali-kelas/help/faq?q=pdf')
-            ->assertOk()
-            ->assertJsonFragment(['question' => 'Mengapa PDF rapor belum berubah setelah data diperbarui?']);
-
-        $this->actingAs($this->guru, 'guru')
-            ->withSession(['selected_role' => 'wali_kelas'])
-            ->getJson('/wali-kelas/help/faq?q=absensi')
-            ->assertOk()
-            ->assertJsonFragment(['question' => 'Bagaimana mengisi absensi?']);
-    }
-
-    public function test_empty_search_returns_suggested_questions(): void
+    public function test_empty_endpoint_still_returns_suggested_questions_for_widget_start(): void
     {
         $this->actingAs($this->admin, 'web')
             ->getJson('/admin/help/faq')
             ->assertOk()
-            ->assertJsonPath('suggested_questions.0', 'Bagaimana import siswa dari Excel?')
-            ->assertJsonPath('suggested_questions.1', 'Bagaimana reset password guru?')
-            ->assertJsonPath('suggested_questions.2', 'Bagaimana upload tanda tangan wali kelas?')
-            ->assertJsonPath('suggested_questions.3', 'Bagaimana berpindah ke semester genap?')
-            ->assertJsonPath('suggested_questions.4', 'Mengapa PDF belum berubah setelah data diperbarui?');
-
-        $this->actingAs($this->guru, 'guru')
-            ->withSession(['selected_role' => 'pengajar'])
-            ->getJson('/pengajar/help/faq')
-            ->assertOk()
             ->assertJsonCount(6, 'suggested_questions')
-            ->assertJsonPath('suggested_questions.0', 'Bagaimana input nilai?')
-            ->assertJsonPath('suggested_questions.1', 'Mengapa siswa tidak muncul di input nilai?')
-            ->assertJsonPath('suggested_questions.2', 'Bagaimana mengganti password setelah reset admin?')
-            ->assertJsonPath('suggested_questions.3', 'Bagaimana mengelola TP?')
-            ->assertJsonPath('suggested_questions.4', 'Apa arti progress nilai?');
+            ->assertJsonPath('suggested_questions.0', 'Setup awal aplikasi untuk Admin');
+    }
 
-        $this->actingAs($this->guru, 'guru')
-            ->withSession(['selected_role' => 'wali_kelas'])
-            ->getJson('/wali-kelas/help/faq')
-            ->assertOk()
-            ->assertJsonCount(6, 'suggested_questions')
-            ->assertJsonPath('suggested_questions.0', 'Bagaimana mengubah capaian siswa?')
-            ->assertJsonPath('suggested_questions.1', 'Apa arti Default dan Khusus?')
-            ->assertJsonPath('suggested_questions.2', 'Bagaimana mengembalikan capaian ke default?')
-            ->assertJsonPath('suggested_questions.3', 'Mengapa rapor belum berubah?')
-            ->assertJsonPath('suggested_questions.4', 'Apakah tanda tangan muncul otomatis?');
+    public function test_guests_cannot_access_protected_help_center_endpoints(): void
+    {
+        $this->get('/admin/help')->assertRedirect(route('login'));
+        $this->get('/pengajar/help')->assertRedirect(route('login'));
+        $this->get('/wali-kelas/help')->assertRedirect(route('login'));
+        $this->get('/admin/help/faq')->assertRedirect(route('login'));
+        $this->get('/pengajar/help/faq')->assertRedirect(route('login'));
+        $this->get('/wali-kelas/help/faq')->assertRedirect(route('login'));
     }
 
     public function test_faq_endpoint_does_not_require_gemini_api_key_or_send_external_http(): void
@@ -259,40 +220,9 @@ class HelpCenterTest extends TestCase
         $this->actingAs($this->admin, 'web')
             ->getJson('/admin/help/faq?q=template')
             ->assertOk()
-            ->assertJsonFragment(['question' => 'Bagaimana memeriksa template rapor?']);
+            ->assertJsonFragment(['question' => 'Template Rapor UTS dan UAS']);
 
         Http::assertNothingSent();
-    }
-
-    public function test_faq_usage_does_not_create_gemini_chat_records(): void
-    {
-        $this->actingAs($this->admin, 'web')
-            ->getJson('/admin/help/faq?question=Cara%20import%20siswa%20dari%20Excel')
-            ->assertOk();
-
-        $this->actingAs($this->guru, 'guru')
-            ->withSession(['selected_role' => 'wali_kelas'])
-            ->getJson('/wali-kelas/help/faq?q=rapor')
-            ->assertOk();
-
-        $this->assertDatabaseCount('gemini_chats', 0);
-    }
-
-    public function test_role_specific_faq_does_not_leak_admin_actions_to_other_roles(): void
-    {
-        $pengajarQuestions = collect(config('help_faq.pengajar'))->pluck('question')->implode(' ');
-        $waliQuestions = collect(config('help_faq.wali_kelas'))->pluck('question')->implode(' ');
-
-        $this->assertStringNotContainsString('Bagaimana reset password guru?', $pengajarQuestions);
-        $this->assertStringNotContainsString('Bagaimana upload tanda tangan wali kelas?', $pengajarQuestions);
-        $this->assertStringNotContainsString('Bagaimana reset password guru?', $waliQuestions);
-        $this->assertStringNotContainsString('Bagaimana upload tanda tangan wali kelas?', $waliQuestions);
-
-        $this->actingAs($this->guru, 'guru')
-            ->withSession(['selected_role' => 'pengajar'])
-            ->getJson('/pengajar/help/faq?q=upload%20tanda%20tangan')
-            ->assertOk()
-            ->assertJsonFragment(['question' => 'Apakah pengajar dapat mengunggah tanda tangan sendiri?']);
     }
 
     public function test_help_center_uses_help_endpoint_and_not_gemini_endpoint(): void
@@ -307,7 +237,7 @@ class HelpCenterTest extends TestCase
         $this->assertStringNotContainsString('/gemini/send-message', $widget);
     }
 
-    public function test_faq_answers_avoid_sensitive_or_developer_terms(): void
+    public function test_help_center_answers_avoid_sensitive_or_developer_terms(): void
     {
         $forbiddenTerms = [
             '/gemini/send-message',
@@ -322,36 +252,32 @@ class HelpCenterTest extends TestCase
             'token rahasia',
         ];
 
-        foreach (config('help_faq') as $role => $items) {
-            foreach ($items as $item) {
-                $text = implode(' ', [
-                    $item['question'],
-                    $item['answer'],
-                ]);
+        foreach (config('help_center.topics') as $item) {
+            $text = implode(' ', [
+                $item['question'],
+                $item['answer'],
+            ]);
 
-                foreach ($forbiddenTerms as $term) {
-                    $this->assertStringNotContainsString($term, $text, "{$role}: {$item['question']}");
-                }
+            foreach ($forbiddenTerms as $term) {
+                $this->assertStringNotContainsString($term, $text, $item['question']);
             }
         }
     }
 
-    public function test_no_duplicate_faq_questions_exist(): void
+    public function test_no_duplicate_help_center_questions_exist(): void
     {
-        $questions = collect(config('help_faq'))
-            ->flatMap(fn (array $items) => collect($items)->pluck('question'))
-            ->values();
+        $questions = collect(config('help_center.topics'))->pluck('question')->values();
 
         $this->assertSame(
             $questions->count(),
             $questions->unique()->count(),
-            'FAQ questions should stay unique so search results are not confusing.'
+            'Help center questions should stay unique so search results are not confusing.'
         );
     }
 
     private function createSchema(): void
     {
-        foreach (['gemini_chats', 'mata_pelajarans', 'guru_kelas', 'kelas', 'profil_sekolah', 'tahun_ajarans', 'audit_logs', 'gurus', 'users'] as $table) {
+        foreach (['gemini_chats', 'nilais', 'kkms', 'mata_pelajarans', 'guru_kelas', 'kelas', 'profil_sekolah', 'tahun_ajarans', 'audit_logs', 'gurus', 'users'] as $table) {
             Schema::dropIfExists($table);
         }
 
@@ -434,6 +360,23 @@ class HelpCenterTest extends TestCase
             $table->foreignId('guru_id')->nullable();
             $table->integer('semester')->default(1);
             $table->foreignId('tahun_ajaran_id')->nullable();
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('kkms', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('mata_pelajaran_id');
+            $table->foreignId('tahun_ajaran_id')->nullable();
+            $table->integer('nilai')->default(75);
+            $table->timestamps();
+        });
+
+        Schema::create('nilais', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('mata_pelajaran_id');
+            $table->foreignId('tahun_ajaran_id')->nullable();
+            $table->decimal('nilai_akhir_rapor', 5, 2)->nullable();
             $table->timestamps();
             $table->softDeletes();
         });
