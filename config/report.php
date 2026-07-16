@@ -22,4 +22,9 @@ return [
     'score_save_profiling' => [
         'enabled' => (bool) env('REPORT_SCORE_SAVE_PROFILING_ENABLED', false),
     ],
+
+    'default_templates' => [
+        'UTS' => resource_path('defaults/report-templates/template-uts-default.docx'),
+        'UAS' => resource_path('defaults/report-templates/template-uas-default.docx'),
+    ],
 ];
