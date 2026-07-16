@@ -39,6 +39,18 @@ Proyek ini bertujuan untuk mendemonstrasikan bagaimana AI dapat membantu membang
 
 ---
 
+## Dokumentasi
+
+Dokumentasi lengkap untuk pengguna sekolah, operator, dan developer tersedia di:
+
+- [docs/README.md](docs/README.md)
+
+Dokumentasi tersebut berisi panduan Admin, Pengajar, Wali Kelas, setup lokal, deployment production, DNS/domain/VPS, backup/restore, troubleshooting, dan skrip video tutorial.
+
+Perhatian: jangan memasukkan file `.env`, password, database dump, private key, atau data siswa asli ke GitHub. Gunakan data dummy untuk demo, testing publik, dan video tutorial.
+
+---
+
 # Panduan Instalasi & Menjalankan Website
 
 Panduan ini ditujukan untuk developer baru yang ingin menjalankan proyek ini dari awal setelah melakukan clone dari GitHub.
