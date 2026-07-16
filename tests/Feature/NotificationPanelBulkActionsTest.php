@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 use ReflectionMethod;
 use Tests\TestCase;
 
@@ -159,15 +160,32 @@ class NotificationPanelBulkActionsTest extends TestCase
         $this->assertTrue($nilaiItem['is_read']);
     }
 
-    public function test_notification_panel_renders_larger_readable_ui(): void
+    public function test_notification_dashboard_preview_is_compact(): void
+    {
+        $html = Blade::render('<x-notification-panel :can-create="true" />');
+        $dashboardHtml = Str::between($html, 'data-notification-dashboard-preview', 'data-testid="notification-modal"');
+
+        $this->assertStringContainsString('data-testid="notification-open-button"', $html);
+        $this->assertStringContainsString('Informasi', $dashboardHtml);
+        $this->assertStringContainsString('data-testid="notification-dashboard-snippets"', $dashboardHtml);
+        $this->assertStringNotContainsString('Tandai semua dibaca', $dashboardHtml);
+        $this->assertStringNotContainsString('Hapus semua', $dashboardHtml);
+        $this->assertStringNotContainsString('Filter lanjutan', $dashboardHtml);
+    }
+
+    public function test_notification_modal_keeps_bulk_actions_and_simple_filters(): void
     {
         $html = Blade::render('<x-notification-panel :can-create="true" />');
 
+        $this->assertStringContainsString('data-testid="notification-modal"', $html);
         $this->assertStringContainsString('Tandai semua dibaca', $html);
         $this->assertStringContainsString('Hapus semua', $html);
         $this->assertStringContainsString('Belum dibaca', $html);
+        $this->assertStringContainsString('Sudah dibaca', $html);
+        $this->assertStringContainsString('Filter lanjutan', $html);
+        $this->assertStringContainsString('Semua sumber', $html);
         $this->assertStringContainsString('Guru/Pengajar', $html);
-        $this->assertStringContainsString('Kelola informasi dari admin, guru, wali kelas, dan sistem.', $html);
+        $this->assertStringContainsString('Baca informasi terbaru dan kelola notifikasi Anda.', $html);
     }
 
     public function test_score_completion_notification_is_aggregated_per_class_subject_context(): void

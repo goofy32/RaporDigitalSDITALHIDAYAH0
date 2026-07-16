@@ -10,6 +10,9 @@ export function registerNotificationStore() {
         showModal: false,
         hideRead: false,
         activeFilter: 'all',
+        statusFilter: 'all',
+        sourceFilter: 'all',
+        categoryFilter: 'all',
         visibilityHandlerBound: false,
         filterOptions: [
             { key: 'all', label: 'Semua' },
@@ -198,7 +201,7 @@ export function registerNotificationStore() {
         },
 
         get previewItems() {
-            return this.filteredItems.slice(0, 3);
+            return this.items.slice(0, 3);
         },
 
         matchesActiveFilter(item) {
@@ -206,31 +209,53 @@ export function registerNotificationStore() {
                 return false;
             }
 
-            switch (this.activeFilter) {
-                case 'unread':
-                    return item.is_read !== true;
-                case 'read':
-                    return item.is_read === true;
-                case 'admin':
-                    return item.source === 'admin';
-                case 'guru':
-                    return item.source === 'guru';
-                case 'wali_kelas':
-                    return item.source === 'wali_kelas';
-                case 'sistem':
-                    return item.source === 'sistem' || item.category === 'sistem';
-                case 'nilai':
-                case 'rapor':
-                case 'template':
-                case 'tahun_ajaran':
-                    return item.category === this.activeFilter;
-                default:
-                    return true;
+            if (this.statusFilter === 'unread' && item.is_read === true) {
+                return false;
             }
+
+            if (this.statusFilter === 'read' && item.is_read !== true) {
+                return false;
+            }
+
+            if (this.sourceFilter !== 'all' && item.source !== this.sourceFilter) {
+                return false;
+            }
+
+            if (this.categoryFilter !== 'all' && item.category !== this.categoryFilter) {
+                return false;
+            }
+
+            return true;
         },
 
         setFilter(filter) {
             this.activeFilter = filter;
+
+            if (['all', 'unread', 'read'].includes(filter)) {
+                this.statusFilter = filter;
+                return;
+            }
+
+            if (['admin', 'guru', 'wali_kelas', 'sistem'].includes(filter)) {
+                this.sourceFilter = filter;
+                return;
+            }
+
+            if (['nilai', 'rapor', 'template', 'tahun_ajaran'].includes(filter)) {
+                this.categoryFilter = filter;
+            }
+        },
+
+        setStatusFilter(filter) {
+            this.statusFilter = filter;
+            this.activeFilter = filter;
+        },
+
+        resetFilters() {
+            this.activeFilter = 'all';
+            this.statusFilter = 'all';
+            this.sourceFilter = 'all';
+            this.categoryFilter = 'all';
         },
 
         toggleHideRead() {
@@ -444,8 +469,8 @@ export function registerNotificationStore() {
 
         itemCardClass(item) {
             return item.is_read
-                ? 'border-gray-200 bg-white'
-                : 'border-green-200 bg-green-50';
+                ? 'border-gray-200'
+                : 'border-gray-200 border-l-4 border-l-green-600';
         },
 
         async addNotification(notification) {
