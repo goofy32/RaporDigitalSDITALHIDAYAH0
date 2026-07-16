@@ -155,6 +155,89 @@ class TahunAjaranPermanentDeleteSafetyTest extends TestCase
         $this->assertSame(0, DB::table('tahun_ajarans')->where('id', $archivedYearId)->count());
     }
 
+    public function test_manual_create_tahun_ajaran_is_fresh_without_copying_basic_structure(): void
+    {
+        $guruId = DB::table('gurus')->insertGetId([
+            'nama' => 'Guru Lama',
+            'username' => 'guru_lama',
+            'email' => 'guru-lama@example.test',
+            'password' => Hash::make('password'),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $sourceClassId = $this->insertClass($this->activeYearId);
+
+        DB::table('guru_kelas')->insert([
+            'guru_id' => $guruId,
+            'kelas_id' => $sourceClassId,
+            'is_wali_kelas' => true,
+            'role' => 'wali_kelas',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('bobot_nilais')->insert([
+            'tahun_ajaran_id' => $this->activeYearId,
+            'bobot_tp' => 1,
+            'bobot_lm' => 1,
+            'bobot_as' => 2,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('mata_pelajarans')->insert([
+            'nama_pelajaran' => 'Matematika Lama',
+            'kelas_id' => $sourceClassId,
+            'tahun_ajaran_id' => $this->activeYearId,
+            'semester' => 2,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->actingAs($this->admin, 'web')
+            ->post(route('tahun.ajaran.store'), [
+                'tahun_ajaran' => '2031/2032',
+                'tanggal_mulai' => '2031-07-01',
+                'tanggal_selesai' => '2032-06-30',
+                'semester' => 1,
+                'deskripsi' => 'Tahun ajaran fresh',
+            ])
+            ->assertRedirect(route('tahun.ajaran.index'))
+            ->assertSessionHas('success', 'Tahun ajaran berhasil dibuat.');
+
+        $newYearId = DB::table('tahun_ajarans')
+            ->where('tahun_ajaran', '2031/2032')
+            ->where('semester', 1)
+            ->value('id');
+
+        $this->assertNotNull($newYearId);
+        $this->assertSame(0, DB::table('kelas')->where('tahun_ajaran_id', $newYearId)->count());
+        $this->assertSame(0, DB::table('bobot_nilais')->where('tahun_ajaran_id', $newYearId)->count());
+        $this->assertSame(0, DB::table('mata_pelajarans')->where('tahun_ajaran_id', $newYearId)->count());
+        $this->assertSame(1, DB::table('gurus')->count());
+        $this->assertSame(1, DB::table('guru_kelas')->count());
+    }
+
+    public function test_archived_year_with_only_bobot_can_be_permanently_deleted_and_cascades_bobot(): void
+    {
+        $archivedYearId = $this->insertYear('2032/2033', 1, false, true);
+
+        DB::table('bobot_nilais')->insert([
+            'tahun_ajaran_id' => $archivedYearId,
+            'bobot_tp' => 1,
+            'bobot_lm' => 1,
+            'bobot_as' => 2,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->actingAs($this->admin, 'web')
+            ->delete(route('tahun.ajaran.force-delete', $archivedYearId))
+            ->assertRedirect(route('tahun.ajaran.index', ['showArchived' => 'true']))
+            ->assertSessionHas('success');
+
+        $this->assertSame(0, DB::table('tahun_ajarans')->where('id', $archivedYearId)->count());
+        $this->assertSame(0, DB::table('bobot_nilais')->where('tahun_ajaran_id', $archivedYearId)->count());
+    }
+
     public function test_permanent_delete_requires_archived_year(): void
     {
         $inactiveYearId = $this->insertYear('2030/2031', 1, false, false);
@@ -170,6 +253,7 @@ class TahunAjaranPermanentDeleteSafetyTest extends TestCase
     private function createSchema(): void
     {
         foreach ([
+            'bobot_nilais',
             'report_templates',
             'report_generations',
             'nilai_ekstrakurikuler',
@@ -181,7 +265,9 @@ class TahunAjaranPermanentDeleteSafetyTest extends TestCase
             'mata_pelajarans',
             'siswa_kelas_semester',
             'siswas',
+            'guru_kelas',
             'kelas',
+            'gurus',
             'profil_sekolah',
             'tahun_ajarans',
             'users',
@@ -218,6 +304,15 @@ class TahunAjaranPermanentDeleteSafetyTest extends TestCase
             $table->timestamps();
         });
 
+        Schema::create('gurus', function (Blueprint $table) {
+            $table->id();
+            $table->string('nama');
+            $table->string('username')->nullable()->unique();
+            $table->string('email')->nullable()->unique();
+            $table->string('password');
+            $table->timestamps();
+        });
+
         Schema::create('kelas', function (Blueprint $table) {
             $table->id();
             $table->string('nomor_kelas');
@@ -225,6 +320,15 @@ class TahunAjaranPermanentDeleteSafetyTest extends TestCase
             $table->foreignId('tahun_ajaran_id')->nullable();
             $table->timestamps();
             $table->softDeletes();
+        });
+
+        Schema::create('guru_kelas', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('guru_id');
+            $table->foreignId('kelas_id');
+            $table->boolean('is_wali_kelas')->default(false);
+            $table->string('role')->default('pengajar');
+            $table->timestamps();
         });
 
         Schema::create('siswas', function (Blueprint $table) {
@@ -267,6 +371,18 @@ class TahunAjaranPermanentDeleteSafetyTest extends TestCase
                 $table->softDeletes();
             });
         }
+
+        Schema::create('bobot_nilais', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('tahun_ajaran_id')
+                ->nullable()
+                ->constrained('tahun_ajarans')
+                ->cascadeOnDelete();
+            $table->unsignedTinyInteger('bobot_tp')->default(1);
+            $table->unsignedTinyInteger('bobot_lm')->default(1);
+            $table->unsignedTinyInteger('bobot_as')->default(2);
+            $table->timestamps();
+        });
     }
 
     private function seedFixture(): void

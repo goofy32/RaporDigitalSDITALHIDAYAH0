@@ -9,6 +9,10 @@ class BobotNilai extends Model
 {
     use HasTahunAjaran;
 
+    public const DEFAULT_BOBOT_TP = 1;
+    public const DEFAULT_BOBOT_LM = 1;
+    public const DEFAULT_BOBOT_AS = 2;
+
     protected $casts = [
         'bobot_tp' => 'integer',
         'bobot_lm' => 'integer',
@@ -25,18 +29,35 @@ class BobotNilai extends Model
     public static function getDefault()
     {
         $tahunAjaranId = session('tahun_ajaran_id');
-        $default = self::where('tahun_ajaran_id', $tahunAjaranId)->first();
+        $default = self::where('tahun_ajaran_id', $tahunAjaranId)
+            ->orderBy('id')
+            ->first();
         
         if (!$default) {
             $default = self::create([
                 'tahun_ajaran_id' => $tahunAjaranId,
-                'bobot_tp' => 1,
-                'bobot_lm' => 1,
-                'bobot_as' => 2
+                'bobot_tp' => self::DEFAULT_BOBOT_TP,
+                'bobot_lm' => self::DEFAULT_BOBOT_LM,
+                'bobot_as' => self::DEFAULT_BOBOT_AS
             ]);
         }
         
         return $default;
+    }
+
+    public static function resolveForRead(?int $tahunAjaranId = null): self
+    {
+        $tahunAjaranId ??= session('tahun_ajaran_id');
+
+        return self::where('tahun_ajaran_id', $tahunAjaranId)
+            ->orderBy('id')
+            ->first()
+            ?? new self([
+                'tahun_ajaran_id' => $tahunAjaranId,
+                'bobot_tp' => self::DEFAULT_BOBOT_TP,
+                'bobot_lm' => self::DEFAULT_BOBOT_LM,
+                'bobot_as' => self::DEFAULT_BOBOT_AS,
+            ]);
     }
 
     public function getTotal(): int

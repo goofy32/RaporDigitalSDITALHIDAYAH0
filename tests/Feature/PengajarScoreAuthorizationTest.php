@@ -99,6 +99,38 @@ class PengajarScoreAuthorizationTest extends TestCase
         $this->assertSame(1, DB::table('nilais')->whereNull('lingkup_materi_id')->whereNull('tujuan_pembelajaran_id')->whereNotNull('nilai_akhir_rapor')->count());
     }
 
+    public function test_input_score_uses_default_bobot_without_creating_row(): void
+    {
+        DB::table('bobot_nilais')->where('tahun_ajaran_id', $this->activeYearId)->delete();
+
+        $this->actingAsPengajar($this->budi)
+            ->get(route('pengajar.score.input_score', $this->subjectId))
+            ->assertOk()
+            ->assertSee('Bobot Nilai', false);
+
+        $this->assertSame(0, DB::table('bobot_nilais')->where('tahun_ajaran_id', $this->activeYearId)->count());
+    }
+
+    public function test_score_save_uses_default_bobot_without_creating_row(): void
+    {
+        DB::table('bobot_nilais')->where('tahun_ajaran_id', $this->activeYearId)->delete();
+
+        $this->actingAsPengajar($this->budi)
+            ->postJson(route('pengajar.score.save_scores', $this->subjectId), [
+                'scores' => $this->validScoresPayload(),
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $this->assertSame(0, DB::table('bobot_nilais')->where('tahun_ajaran_id', $this->activeYearId)->count());
+        $this->assertDatabaseHas('nilais', [
+            'siswa_id' => $this->studentId,
+            'mata_pelajaran_id' => $this->subjectId,
+            'is_submitted' => true,
+            'tahun_ajaran_id' => $this->activeYearId,
+        ]);
+    }
+
     public function test_blank_nilai_akhir_semester_is_skipped_from_final_report_score(): void
     {
         $this->actingAsPengajar($this->budi)

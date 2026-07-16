@@ -473,6 +473,112 @@ class AdminHardeningPhase2Test extends TestCase
         $this->assertSame(50.0, $bobot->getAsPercentage());
     }
 
+    public function test_bobot_get_endpoint_returns_default_ratio_without_creating_row(): void
+    {
+        $this->assertDatabaseCount('bobot_nilais', 0);
+
+        $this->actingAsAdmin()
+            ->getJson(route('admin.bobot_nilai.data'))
+            ->assertOk()
+            ->assertJson([
+                'bobot_tp' => 1,
+                'bobot_lm' => 1,
+                'bobot_as' => 2,
+            ]);
+
+        $this->assertDatabaseCount('bobot_nilais', 0);
+
+        $this->actingAsAdmin()
+            ->getJson(route('admin.bobot_nilai.data'))
+            ->assertOk()
+            ->assertJson([
+                'bobot_tp' => 1,
+                'bobot_lm' => 1,
+                'bobot_as' => 2,
+            ]);
+
+        $this->assertDatabaseCount('bobot_nilais', 0);
+    }
+
+    public function test_bobot_get_endpoint_returns_existing_persisted_bobot(): void
+    {
+        DB::table('bobot_nilais')->insert([
+            'tahun_ajaran_id' => $this->activeYearId,
+            'bobot_tp' => 2,
+            'bobot_lm' => 3,
+            'bobot_as' => 4,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->actingAsAdmin()
+            ->getJson(route('admin.bobot_nilai.data'))
+            ->assertOk()
+            ->assertJson([
+                'bobot_tp' => 2,
+                'bobot_lm' => 3,
+                'bobot_as' => 4,
+            ]);
+
+        $this->assertDatabaseCount('bobot_nilais', 1);
+    }
+
+    public function test_explicit_bobot_save_creates_persisted_row_and_audit_log(): void
+    {
+        $this->assertDatabaseCount('bobot_nilais', 0);
+
+        $this->actingAsAdmin()
+            ->postJson(route('admin.bobot_nilai.update'), [
+                'bobot_tp' => 1,
+                'bobot_lm' => 1,
+                'bobot_as' => 2,
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $this->assertDatabaseCount('bobot_nilais', 1);
+        $bobot = BobotNilai::where('tahun_ajaran_id', $this->activeYearId)->firstOrFail();
+
+        $this->assertSame(1, $bobot->bobot_tp);
+        $this->assertSame(1, $bobot->bobot_lm);
+        $this->assertSame(2, $bobot->bobot_as);
+        $this->assertDatabaseHas('audit_logs', [
+            'model_type' => 'App\Models\BobotNilai',
+            'model_id' => $bobot->id,
+            'action' => 'update',
+        ]);
+    }
+
+    public function test_explicit_bobot_save_updates_existing_row_without_duplicate(): void
+    {
+        $bobotId = DB::table('bobot_nilais')->insertGetId([
+            'tahun_ajaran_id' => $this->activeYearId,
+            'bobot_tp' => 1,
+            'bobot_lm' => 1,
+            'bobot_as' => 2,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->actingAsAdmin()
+            ->postJson(route('admin.bobot_nilai.update'), [
+                'bobot_tp' => 2,
+                'bobot_lm' => 3,
+                'bobot_as' => 4,
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $this->assertDatabaseCount('bobot_nilais', 1);
+        $this->assertDatabaseHas('bobot_nilais', [
+            'id' => $bobotId,
+            'tahun_ajaran_id' => $this->activeYearId,
+            'bobot_tp' => 2,
+            'bobot_lm' => 3,
+            'bobot_as' => 4,
+        ]);
+    }
+
     private function actingAsAdmin(): self
     {
         return $this->actingAs($this->admin, 'web')->withSession($this->adminSession());

@@ -172,6 +172,19 @@ class SemesterTransitionEnrollmentTest extends TestCase
         $this->assertSame(0, DB::table('report_generations')->where('tahun_ajaran_id', $targetYear->id)->count());
     }
 
+    public function test_transition_skips_bobot_when_source_has_no_persisted_bobot(): void
+    {
+        DB::table('bobot_nilais')->where('tahun_ajaran_id', $this->sourceYearId)->delete();
+
+        $this->runTransition()
+            ->assertRedirect(route('tahun.ajaran.index'))
+            ->assertSessionHas('success');
+
+        $targetYear = $this->targetYear();
+        $this->assertNotNull($targetYear);
+        $this->assertSame(0, DB::table('bobot_nilais')->where('tahun_ajaran_id', $targetYear->id)->count());
+    }
+
     public function test_transition_initializes_blank_genap_attendance_with_same_student_ids(): void
     {
         $this->runTransition();

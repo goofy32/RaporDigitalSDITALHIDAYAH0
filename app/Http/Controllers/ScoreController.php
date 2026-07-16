@@ -962,7 +962,7 @@ class ScoreController extends Controller
             ->where('tahun_ajaran_id', $tahunAjaranId)
             ->first();
         $kkmValue = $kkm ? $kkm->nilai : 70;
-        $bobotNilai = BobotNilai::getDefault();
+        $bobotNilai = BobotNilai::resolveForRead((int) $tahunAjaranId);
 
         return view('pengajar.input_score', compact(
             'subject',
@@ -1242,7 +1242,7 @@ class ScoreController extends Controller
             $existingNilaisByStudent = collect($existingNilaisByKey)->groupBy(fn (Nilai $nilai) => (int) $nilai->siswa_id);
             $tujuanPembelajarans = TujuanPembelajaran::whereIn('id', $learningIds['tp_ids'])->get()->keyBy('id');
             $lingkupMateris = LingkupMateri::whereIn('id', $learningIds['lm_ids'])->get()->keyBy('id');
-            $bobotNilai = BobotNilai::getDefault();
+            $bobotNilai = BobotNilai::resolveForRead((int) $tahunAjaranId);
             $this->addProfileStep($profileSteps, 'preload_context', $this->elapsedMs($stepStartedAt));
 
             app()->instance('score_save.defer_nilai_pdf_cache_invalidation', true);
@@ -2086,7 +2086,7 @@ class ScoreController extends Controller
             $kkmValue = $kkm ? $kkm->nilai : 70;
             
             // Ambil bobot nilai
-            $bobotNilai = BobotNilai::getDefault();
+            $bobotNilai = BobotNilai::resolveForRead((int) $tahunAjaranId);
             
             return view('pengajar.input_score', compact(
                 'subject',
@@ -2339,7 +2339,7 @@ class ScoreController extends Controller
             $kkmValue = $kkm ? $kkm->nilai : 70; // Default ke 70 jika tidak ada KKM
             
             // Tambahkan ini: Ambil bobot nilai
-            $bobotNilai = BobotNilai::getDefault();
+            $bobotNilai = BobotNilai::resolveForRead((int) $tahunAjaranId);
             
             // Kirim variabel tambahan ke view
             return view('pengajar.preview_score', compact(

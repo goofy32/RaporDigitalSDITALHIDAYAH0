@@ -569,15 +569,6 @@ class TahunAjaranController extends Controller
             // Buat tahun ajaran baru
             $tahunAjaran = TahunAjaran::create($request->all());
 
-            // TAMBAHAN: Auto-copy struktur dari tahun ajaran sebelumnya
-            $previousTahunAjaran = TahunAjaran::where('id', '!=', $tahunAjaran->id)
-                                            ->orderBy('tanggal_mulai', 'desc')
-                                            ->first();
-            
-            if ($previousTahunAjaran) {
-                $this->copyBasicStructureFromPrevious($previousTahunAjaran, $tahunAjaran);
-            }
-
             // Jika aktif, update profil sekolah
             if ($request->has('is_active') && $request->is_active) {
                 $this->updateProfilSekolah($tahunAjaran);
@@ -587,11 +578,20 @@ class TahunAjaranController extends Controller
             $this->clearTahunAjaranCaches($tahunAjaran->id);
 
             return redirect()->route('tahun.ajaran.index')
-                        ->with('success', 'Tahun ajaran berhasil dibuat dengan struktur dasar!');
+                        ->with('success', 'Tahun ajaran berhasil dibuat.');
         } catch (\Exception $e) {
             DB::rollback();
+
+            \Log::error('Gagal membuat tahun ajaran manual', [
+                'tahun_ajaran' => $request->input('tahun_ajaran'),
+                'semester' => $request->input('semester'),
+                'is_active' => $request->boolean('is_active'),
+                'error' => $e->getMessage(),
+                'exception' => get_class($e),
+            ]);
+
             return redirect()->back()
-                    ->with('error', 'Gagal membuat tahun ajaran: ' . $e->getMessage())
+                    ->with('error', 'Gagal membuat tahun ajaran. Silakan coba lagi.')
                     ->withInput();
         }
     }
@@ -1176,7 +1176,6 @@ class TahunAjaranController extends Controller
             'report_generations' => ['column' => 'tahun_ajaran_id', 'label' => 'riwayat rapor'],
             'report_templates' => ['column' => 'tahun_ajaran_id', 'label' => 'template rapor'],
             'kkms' => ['column' => 'tahun_ajaran_id', 'label' => 'KKM'],
-            'bobot_nilais' => ['column' => 'tahun_ajaran_id', 'label' => 'bobot nilai'],
             'ekstrakurikulers' => ['column' => 'tahun_ajaran_id', 'label' => 'ekstrakurikuler'],
             'prestasis' => ['column' => 'tahun_ajaran_id', 'label' => 'prestasi'],
             'semester_snapshots' => ['column' => 'tahun_ajaran_id', 'label' => 'snapshot semester'],

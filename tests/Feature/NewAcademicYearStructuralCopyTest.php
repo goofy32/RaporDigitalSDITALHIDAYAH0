@@ -193,6 +193,71 @@ class NewAcademicYearStructuralCopyTest extends TestCase
         Storage::assertMissing('public/templates/copy_2027-2028_demo.docx');
     }
 
+    public function test_bobot_only_archived_target_can_be_removed_then_copy_retried_successfully(): void
+    {
+        $archivedTargetId = DB::table('tahun_ajarans')->insertGetId([
+            'tahun_ajaran' => '2027/2028',
+            'is_active' => false,
+            'tanggal_mulai' => '2027-07-01',
+            'tanggal_selesai' => '2028-06-30',
+            'semester' => 1,
+            'deskripsi' => 'Archived draft target',
+            'created_at' => now(),
+            'updated_at' => now(),
+            'deleted_at' => now(),
+        ]);
+
+        DB::table('bobot_nilais')->insert([
+            'tahun_ajaran_id' => $archivedTargetId,
+            'bobot_tp' => 1,
+            'bobot_lm' => 1,
+            'bobot_as' => 2,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->postCopy()
+            ->assertStatus(409)
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('conflict', 'archived')
+            ->assertJsonPath('archived_id', $archivedTargetId);
+
+        $this->actingAs($this->admin, 'web')
+            ->deleteJson(route('tahun.ajaran.force-delete', $archivedTargetId))
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $this->assertSame(0, DB::table('tahun_ajarans')->where('id', $archivedTargetId)->count());
+        $this->assertSame(0, DB::table('bobot_nilais')->where('tahun_ajaran_id', $archivedTargetId)->count());
+
+        $this->postCopy()
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $targetYear = $this->targetYear();
+        $this->assertNotNull($targetYear);
+        $this->assertNotSame($archivedTargetId, (int) $targetYear->id);
+        $this->assertDatabaseHas('bobot_nilais', [
+            'tahun_ajaran_id' => $targetYear->id,
+            'bobot_tp' => 0.25,
+            'bobot_lm' => 0.25,
+            'bobot_as' => 0.5,
+        ]);
+    }
+
+    public function test_new_year_copy_skips_bobot_when_source_has_no_persisted_bobot(): void
+    {
+        DB::table('bobot_nilais')->where('tahun_ajaran_id', $this->sourceYearId)->delete();
+
+        $this->postCopy()
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $targetYear = $this->targetYear();
+        $this->assertNotNull($targetYear);
+        $this->assertSame(0, DB::table('bobot_nilais')->where('tahun_ajaran_id', $targetYear->id)->count());
+    }
+
     public function test_failed_copy_rolls_back_structural_data_keeps_active_year_and_cleans_new_template_file(): void
     {
         Schema::dropIfExists('bobot_nilais');
@@ -413,7 +478,10 @@ class NewAcademicYearStructuralCopyTest extends TestCase
 
         Schema::create('bobot_nilais', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('tahun_ajaran_id')->nullable();
+            $table->foreignId('tahun_ajaran_id')
+                ->nullable()
+                ->constrained('tahun_ajarans')
+                ->cascadeOnDelete();
             $table->float('bobot_tp', 5, 2)->default(0.25);
             $table->float('bobot_lm', 5, 2)->default(0.25);
             $table->float('bobot_as', 5, 2)->default(0.50);
