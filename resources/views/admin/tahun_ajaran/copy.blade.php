@@ -5,6 +5,7 @@
 @section('content')
 <div class="p-4"
      data-page="tahun-ajaran-copy"
+     data-confirmation-phrase="BUAT TAHUN AJARAN BERIKUTNYA"
      data-index-url="{{ route('tahun.ajaran.index') }}"
      data-force-delete-url-template="{{ route('tahun.ajaran.force-delete', ['id' => '__ID__']) }}">
     <div class="bg-white rounded-lg shadow p-6">
@@ -18,31 +19,37 @@
                 <a href="{{ route('tahun.ajaran.index') }}" class="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700">
                     Kembali
                 </a>
-                <button type="submit" form="formCopyTahunAjaran" class="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700">
+                <button type="submit" form="formCopyTahunAjaran" class="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50" disabled>
                     Buat Tahun Ajaran
                 </button>
             </div>
         </div>
 
-        <div class="bg-green-50 border border-green-200 rounded-lg p-4 mb-6">
+        <div class="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-6">
             <div class="flex">
                 <div class="flex-shrink-0">
-                    <i class="fas fa-info-circle text-green-400 text-lg"></i>
+                    <i class="fas fa-exclamation-triangle text-amber-500 text-lg"></i>
                 </div>
                 <div class="ml-3">
-                    <h3 class="text-sm font-medium text-green-800">Informasi Pembuatan Tahun Ajaran Berikutnya</h3>
-                    <p class="mt-1 text-sm text-green-700">
-                        Fitur ini digunakan untuk membuat tahun ajaran baru dengan struktur yang sama. Sistem akan:
+                    <h3 class="text-sm font-semibold text-amber-900">Buat Tahun Ajaran Berikutnya?</h3>
+                    <p class="mt-1 text-sm text-amber-800">
+                        Tahun ajaran berikutnya akan dibuat berdasarkan struktur yang tersedia saat ini. Perubahan pada tahun ajaran sumber setelah proses ini tidak akan otomatis disalin ke target.
                     </p>
-                    <ul class="mt-2 text-sm text-green-700 list-disc list-inside">
-                        <li>Mempertahankan struktur kelas yang sama (Kelas 1A -> Kelas 1A, dst.)</li>
-                        <li>Menyalin pengaturan guru dan wali kelas</li>
-                        <li>Menyalin pengaturan mata pelajaran, KKM, dan template rapor</li>
-                        <li>Siswa dapat diatur kenaikan kelasnya secara manual nanti</li>
-                    </ul>
+                    <p class="mt-1 text-sm text-amber-800">
+                        Target akan dibuat dalam keadaan belum aktif. Anda masih perlu memeriksa struktur, menjalankan proses kenaikan kelas sesuai kebutuhan, dan mengaktifkan tahun ajaran baru ketika sudah siap.
+                    </p>
+                    <p class="mt-1 text-sm text-amber-800">
+                        Siswa tidak disalin sebagai data baru. Penempatan siswa untuk tahun ajaran berikutnya ditangani melalui proses Kenaikan Kelas.
+                    </p>
                 </div>
             </div>
         </div>
+
+        @if($nextYearReadiness)
+            <div class="mb-6">
+                @include('admin.tahun_ajaran.partials.transition_readiness', ['readiness' => $nextYearReadiness])
+            </div>
+        @endif
 
         <form action="{{ route('tahun.ajaran.process-copy', $sourceTahunAjaran->id) }}" method="POST" id="formCopyTahunAjaran">
             @csrf
@@ -99,6 +106,25 @@
                 <label for="deskripsi" class="block text-sm font-medium text-gray-700 mb-1">Deskripsi</label>
                 <textarea name="deskripsi" id="deskripsi" rows="2"
                           class="w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 p-2">{{ old('deskripsi', 'Tahun Ajaran ' . $newTahunAjaran) }}</textarea>
+            </div>
+
+            <div class="mt-6 rounded-lg border border-amber-200 bg-amber-50 p-4">
+                <label for="transition_confirmation_next_year" class="block text-sm font-medium text-amber-900">
+                    Ketik <span class="font-bold">BUAT TAHUN AJARAN BERIKUTNYA</span> untuk melanjutkan.
+                </label>
+                <input type="text"
+                       name="transition_confirmation"
+                       id="transition_confirmation_next_year"
+                       autocomplete="off"
+                       value="{{ old('transition_confirmation') }}"
+                       class="mt-2 w-full rounded-md border-amber-300 shadow-sm focus:border-amber-500 focus:ring-amber-500 p-2"
+                       placeholder="BUAT TAHUN AJARAN BERIKUTNYA">
+                @error('transition_confirmation')
+                    <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                @enderror
+                <p class="mt-2 text-xs text-amber-800">
+                    Jika target belum digunakan, Admin dapat meninjau atau mengarsipkannya sesuai aturan yang tersedia. Jangan menghapus target yang sudah berisi data kerja.
+                </p>
             </div>
 
             {{-- Opsi data copy disembunyikan. Semua data akan selalu disalin. --}}

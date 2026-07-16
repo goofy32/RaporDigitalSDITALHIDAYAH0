@@ -250,6 +250,113 @@ class SemesterTransitionEnrollmentTest extends TestCase
         $this->assertSame($this->sourceYearId, DB::table('tahun_ajarans')->where('is_active', true)->value('id'));
     }
 
+    public function test_semester_genap_page_renders_readiness_and_does_not_persist_default_bobot(): void
+    {
+        DB::table('bobot_nilais')->where('tahun_ajaran_id', $this->sourceYearId)->delete();
+        DB::table('tahun_ajarans')->insert([
+            'tahun_ajaran' => '2025/2026',
+            'is_active' => false,
+            'tanggal_mulai' => '2025-07-01',
+            'tanggal_selesai' => '2026-06-30',
+            'semester' => 1,
+            'deskripsi' => 'Other year',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $counts = $this->coreCounts();
+
+        $this->actingAs($this->admin)
+            ->get(route('tahun.ajaran.show', $this->sourceYearId))
+            ->assertOk()
+            ->assertSeeText('Lanjutkan ke Semester Genap?')
+            ->assertSeeText('Kelas')
+            ->assertSeeText('2 kelas tersedia')
+            ->assertSeeText('Roster siswa sumber')
+            ->assertSeeText('4 siswa terdeteksi dari kelas sumber')
+            ->assertSeeText('1 kelas belum memiliki wali kelas')
+            ->assertSeeText('2 mata pelajaran tersedia')
+            ->assertSeeText('1 mata pelajaran belum memiliki LM/TP lengkap')
+            ->assertSeeText('Menggunakan default sementara (1:1:2), belum tersimpan');
+
+        $this->assertSame(0, DB::table('bobot_nilais')->where('tahun_ajaran_id', $this->sourceYearId)->count());
+        $this->assertSame($counts, $this->coreCounts());
+        $this->assertDatabaseMissing('tahun_ajarans', [
+            'tahun_ajaran' => '2026/2027',
+            'semester' => 2,
+        ]);
+    }
+
+    public function test_semester_transition_without_typed_confirmation_is_rejected_without_creating_target(): void
+    {
+        $counts = $this->coreCounts();
+
+        $this->actingAs($this->admin)
+            ->withSession([
+                'tahun_ajaran_id' => $this->sourceYearId,
+                'selected_semester' => 1,
+                'no_tahun_ajaran' => false,
+            ])
+            ->post(route('tahun.ajaran.advance-semester', $this->sourceYearId))
+            ->assertRedirect()
+            ->assertSessionHas('error', 'Konfirmasi tidak sesuai. Ketik kalimat yang diminta untuk melanjutkan.');
+
+        $this->assertSame($counts, $this->coreCounts());
+        $this->assertDatabaseMissing('tahun_ajarans', [
+            'tahun_ajaran' => '2026/2027',
+            'semester' => 2,
+        ]);
+        $this->assertSame($this->sourceYearId, DB::table('tahun_ajarans')->where('is_active', true)->value('id'));
+    }
+
+    public function test_semester_transition_with_incorrect_confirmation_is_rejected_without_changing_source(): void
+    {
+        $counts = $this->coreCounts();
+
+        $this->actingAs($this->admin)
+            ->withSession([
+                'tahun_ajaran_id' => $this->sourceYearId,
+                'selected_semester' => 1,
+                'no_tahun_ajaran' => false,
+            ])
+            ->post(route('tahun.ajaran.advance-semester', $this->sourceYearId), [
+                'transition_confirmation' => 'lanjutkan',
+            ])
+            ->assertRedirect()
+            ->assertSessionHas('error', 'Konfirmasi tidak sesuai. Ketik kalimat yang diminta untuk melanjutkan.');
+
+        $this->assertSame($counts, $this->coreCounts());
+        $this->assertTrue((bool) DB::table('tahun_ajarans')->where('id', $this->sourceYearId)->value('is_active'));
+    }
+
+    public function test_semester_transition_rejects_active_source_that_is_not_semester_ganjil(): void
+    {
+        DB::table('tahun_ajarans')->where('id', $this->sourceYearId)->update(['semester' => 0]);
+        $counts = $this->coreCounts();
+
+        $this->runTransition()
+            ->assertRedirect()
+            ->assertSessionHas('error', 'Pembuatan Semester Genap hanya dapat dilakukan dari Semester Ganjil.');
+
+        $this->assertSame($counts, $this->coreCounts());
+        $this->assertDatabaseMissing('tahun_ajarans', [
+            'tahun_ajaran' => '2026/2027',
+            'semester' => 2,
+        ]);
+        $this->assertSame($this->sourceYearId, DB::table('tahun_ajarans')->where('is_active', true)->value('id'));
+    }
+
+    public function test_semester_genap_ui_renders_phase_one_safeguards(): void
+    {
+        $this->actingAs($this->admin)
+            ->get(route('tahun.ajaran.show', $this->sourceYearId))
+            ->assertOk()
+            ->assertSeeText('Lanjutkan ke Semester Genap?')
+            ->assertSeeText('Perubahan yang Anda lakukan pada Semester Ganjil setelah proses ini tidak akan otomatis disalin ke Semester Genap.')
+            ->assertSeeText('Semester Genap akan menjadi periode aktif untuk Admin, Pengajar, dan Wali Kelas.')
+            ->assertSeeText('LANJUTKAN KE SEMESTER GENAP')
+            ->assertSee('disabled', false);
+    }
+
     public function test_archive_ui_does_not_render_active_semester_transition_actions(): void
     {
         $archivedActiveGanjilId = $this->insertArchivedSameAcademicYear(1, true);
@@ -417,7 +524,9 @@ class SemesterTransitionEnrollmentTest extends TestCase
                 'selected_semester' => 1,
                 'no_tahun_ajaran' => false,
             ])
-            ->post(route('tahun.ajaran.advance-semester', $this->sourceYearId));
+            ->post(route('tahun.ajaran.advance-semester', $this->sourceYearId), [
+                'transition_confirmation' => 'LANJUTKAN KE SEMESTER GENAP',
+            ]);
     }
 
     private function targetYear(): ?object

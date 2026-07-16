@@ -141,21 +141,73 @@
 
             <!-- Button to advance semester (only shown for active academic year with odd semester) -->
             @if(!$tahunAjaran->trashed() && $tahunAjaran->is_active && $tahunAjaran->semester == 1)
-                <form action="{{ route('tahun.ajaran.advance-semester', $tahunAjaran->id) }}" method="POST" class="inline">
-                    @csrf
-                    <input type="hidden" name="tahun_ajaran" value="{{ $tahunAjaran->tahun_ajaran }}">
-                    <input type="hidden" name="tanggal_mulai" value="{{ $tahunAjaran->tanggal_mulai->format('Y-m-d') }}">
-                    <input type="hidden" name="tanggal_selesai" value="{{ $tahunAjaran->tanggal_selesai->format('Y-m-d') }}">
-                    <input type="hidden" name="deskripsi" value="{{ $tahunAjaran->deskripsi }}">
-                    <input type="hidden" name="is_active" value="1">
-                    <input type="hidden" name="semester" value="2">
-                    
-                    <button type="submit" 
-                        class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
-                        onclick="return confirm('Apakah Anda yakin ingin melanjutkan ke semester Genap? Tindakan ini akan memperbarui semua data terkait (mata pelajaran, absensi, dll) ke semester 2.')">
-                        <i class="fas fa-arrow-right mr-2"></i>Lanjutkan ke Semester Genap
-                    </button>
-                </form>
+                <div class="w-full rounded-lg border border-amber-200 bg-amber-50 p-4"
+                     x-data="{ phrase: '', submitting: false, required: 'LANJUTKAN KE SEMESTER GENAP', get canSubmit() { return this.phrase.trim() === this.required && !this.submitting; } }">
+                    <div class="flex items-start gap-3">
+                        <div class="mt-0.5 text-amber-600">
+                            <i class="fas fa-exclamation-triangle"></i>
+                        </div>
+                        <div class="flex-1 space-y-3">
+                            <div>
+                                <h3 class="font-semibold text-amber-900">Lanjutkan ke Semester Genap?</h3>
+                                <p class="mt-1 text-sm text-amber-800">
+                                    Semester Genap akan dibuat berdasarkan kondisi data saat ini. Perubahan yang Anda lakukan pada Semester Ganjil setelah proses ini tidak akan otomatis disalin ke Semester Genap.
+                                </p>
+                                <p class="mt-1 text-sm text-amber-800">
+                                    Setelah proses berhasil, Semester Ganjil akan dinonaktifkan dan Semester Genap akan menjadi periode aktif untuk Admin, Pengajar, dan Wali Kelas.
+                                </p>
+                                <p class="mt-1 text-sm text-amber-800">
+                                    Nilai, catatan, rapor, dan hasil pekerjaan siswa dari Semester Ganjil tidak disalin sebagai pekerjaan Semester Genap.
+                                </p>
+                            </div>
+
+                            @if($semesterGenapReadiness)
+                                @include('admin.tahun_ajaran.partials.transition_readiness', ['readiness' => $semesterGenapReadiness])
+                            @endif
+
+                            <p class="text-xs text-amber-800">
+                                Jika proses sudah dijalankan terlalu awal, Admin dapat mengaktifkan kembali Semester Ganjil untuk menyelesaikan data sumber. Data yang sudah dibuat di Semester Genap tidak otomatis diperbarui.
+                            </p>
+
+                            <form action="{{ route('tahun.ajaran.advance-semester', $tahunAjaran->id) }}"
+                                  method="POST"
+                                  class="space-y-3"
+                                  x-on:submit="if (!canSubmit) { $event.preventDefault(); return false; } submitting = true;">
+                                @csrf
+                                <input type="hidden" name="tahun_ajaran" value="{{ $tahunAjaran->tahun_ajaran }}">
+                                <input type="hidden" name="tanggal_mulai" value="{{ $tahunAjaran->tanggal_mulai->format('Y-m-d') }}">
+                                <input type="hidden" name="tanggal_selesai" value="{{ $tahunAjaran->tanggal_selesai->format('Y-m-d') }}">
+                                <input type="hidden" name="deskripsi" value="{{ $tahunAjaran->deskripsi }}">
+                                <input type="hidden" name="is_active" value="1">
+                                <input type="hidden" name="semester" value="2">
+
+                                <div>
+                                    <label for="transition_confirmation_semester" class="block text-sm font-medium text-amber-900">
+                                        Ketik <span class="font-bold">LANJUTKAN KE SEMESTER GENAP</span> untuk melanjutkan.
+                                    </label>
+                                    <input id="transition_confirmation_semester"
+                                           name="transition_confirmation"
+                                           type="text"
+                                           x-model="phrase"
+                                           autocomplete="off"
+                                           class="mt-1 w-full max-w-xl rounded-md border-amber-300 shadow-sm focus:border-amber-500 focus:ring-amber-500"
+                                           placeholder="LANJUTKAN KE SEMESTER GENAP">
+                                    @error('transition_confirmation')
+                                        <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                                    @enderror
+                                </div>
+
+                                <button type="submit"
+                                    class="inline-flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
+                                    disabled
+                                    x-bind:disabled="!canSubmit"
+                                    x-html="submitting ? '<i class=&quot;fas fa-spinner fa-spin mr-2&quot;></i>Memproses...' : '<i class=&quot;fas fa-arrow-right mr-2&quot;></i>Lanjutkan ke Semester Genap'">
+                                    <i class="fas fa-arrow-right mr-2"></i>Lanjutkan ke Semester Genap
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
             @endif
 
             <!-- Tombol untuk membuat tahun ajaran baru - HANYA muncul di semester genap -->

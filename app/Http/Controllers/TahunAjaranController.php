@@ -9,6 +9,7 @@ use App\Models\ReportTemplate;
 use App\Models\Siswa;
 use App\Models\SiswaKelasSemester;
 use App\Models\ProfilSekolah;
+use App\Models\BobotNilai;
 use App\Services\SiswaKelasSemesterResolver;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
@@ -26,6 +27,9 @@ class TahunAjaranController extends Controller
 {
     private const PERMANENT_DELETE_BLOCKED_MESSAGE = 'Tahun ajaran ini tidak dapat dihapus permanen karena masih terhubung dengan alur akademik, siswa, nilai, atau rapor. Gunakan arsip sebagai penyimpanan aman, atau pulihkan jika masih diperlukan.';
     private const PERMANENT_DELETE_PROTECTED_NOTICE = 'Data tahun ajaran ini tidak dapat dihapus permanen karena masih terhubung dengan alur akademik.';
+    private const SEMESTER_GENAP_CONFIRMATION = 'LANJUTKAN KE SEMESTER GENAP';
+    private const NEXT_YEAR_CONFIRMATION = 'BUAT TAHUN AJARAN BERIKUTNYA';
+    private const CONFIRMATION_MISMATCH_MESSAGE = 'Konfirmasi tidak sesuai. Ketik kalimat yang diminta untuk melanjutkan.';
 
     /**
      * Display a listing of tahun ajaran.
@@ -282,6 +286,253 @@ class TahunAjaranController extends Controller
         }
     }
 
+    private function buildTransitionReadiness(TahunAjaran $sourceTahunAjaran, string $workflow): array
+    {
+        $kelasCount = $this->countRowsForTahunAjaran('kelas', (int) $sourceTahunAjaran->id);
+        $rosterCount = $this->countRosterStudentsForSource($sourceTahunAjaran);
+        $kelasTanpaWali = $this->countClassesWithoutHomeroom((int) $sourceTahunAjaran->id);
+        $mapelCount = $this->countRowsForTahunAjaran('mata_pelajarans', (int) $sourceTahunAjaran->id);
+        $mapelTanpaGuru = $this->countSubjectsWithoutTeacher((int) $sourceTahunAjaran->id);
+        $mapelBelumLengkap = $this->countSubjectsWithIncompleteLearningStructure((int) $sourceTahunAjaran->id);
+        $kkmCount = $this->countRowsForTahunAjaran('kkms', (int) $sourceTahunAjaran->id);
+        $ekstrakurikulerCount = $this->countRowsForTahunAjaran('ekstrakurikulers', (int) $sourceTahunAjaran->id);
+        $templateCount = $this->countRowsForTahunAjaran('report_templates', (int) $sourceTahunAjaran->id);
+        $activeTemplateCount = $this->countActiveReportTemplates((int) $sourceTahunAjaran->id);
+        $bobot = Schema::hasTable('bobot_nilais')
+            ? BobotNilai::resolveForRead((int) $sourceTahunAjaran->id)
+            : null;
+
+        $ready = [];
+        $warnings = [];
+        $info = [];
+
+        if ($kelasCount > 0) {
+            $ready[] = ['label' => 'Kelas', 'value' => "{$kelasCount} kelas tersedia"];
+        } else {
+            $warnings[] = ['label' => 'Kelas', 'value' => 'Belum ada kelas pada tahun ajaran sumber.'];
+        }
+
+        if ($workflow === 'semester_genap') {
+            $info[] = ['label' => 'Roster siswa sumber', 'value' => "{$rosterCount} siswa terdeteksi dari kelas sumber"];
+        }
+
+        if ($kelasTanpaWali === 0 && $kelasCount > 0) {
+            $ready[] = ['label' => 'Wali kelas', 'value' => 'Semua kelas memiliki wali kelas'];
+        } elseif ($kelasCount > 0) {
+            $warnings[] = ['label' => 'Wali kelas', 'value' => "{$kelasTanpaWali} kelas belum memiliki wali kelas"];
+        }
+
+        if ($mapelCount > 0) {
+            $ready[] = ['label' => 'Mata pelajaran', 'value' => "{$mapelCount} mata pelajaran tersedia"];
+        } else {
+            $warnings[] = ['label' => 'Mata pelajaran', 'value' => 'Belum ada mata pelajaran pada tahun ajaran sumber.'];
+        }
+
+        if ($mapelTanpaGuru === 0 && $mapelCount > 0) {
+            $ready[] = ['label' => 'Guru pengajar', 'value' => 'Semua mata pelajaran memiliki guru pengajar'];
+        } elseif ($mapelCount > 0) {
+            $warnings[] = ['label' => 'Guru pengajar', 'value' => "{$mapelTanpaGuru} mata pelajaran belum memiliki guru pengajar"];
+        }
+
+        if ($mapelBelumLengkap === 0 && $mapelCount > 0) {
+            $ready[] = ['label' => 'LM/TP', 'value' => 'Struktur LM/TP sudah tersedia'];
+        } elseif ($mapelCount > 0) {
+            $warnings[] = ['label' => 'LM/TP', 'value' => "{$mapelBelumLengkap} mata pelajaran belum memiliki LM/TP lengkap"];
+        }
+
+        if ($kkmCount > 0) {
+            $ready[] = ['label' => 'KKM', 'value' => "{$kkmCount} pengaturan KKM tersedia"];
+        } else {
+            $warnings[] = ['label' => 'KKM', 'value' => 'Belum ada pengaturan KKM tersimpan.'];
+        }
+
+        if ($bobot) {
+            $info[] = [
+                'label' => 'Bobot Nilai',
+                'value' => $bobot->exists
+                    ? "Tersimpan ({$bobot->bobot_tp}:{$bobot->bobot_lm}:{$bobot->bobot_as})"
+                    : "Menggunakan default sementara ({$bobot->bobot_tp}:{$bobot->bobot_lm}:{$bobot->bobot_as}), belum tersimpan",
+            ];
+        }
+
+        if ($workflow === 'next_year') {
+            $info[] = ['label' => 'Ekstrakurikuler', 'value' => "{$ekstrakurikulerCount} data ekstrakurikuler tersedia"];
+        }
+
+        if ($templateCount > 0) {
+            $info[] = ['label' => 'Template rapor', 'value' => "{$templateCount} template tersedia, {$activeTemplateCount} aktif"];
+        } else {
+            $warnings[] = ['label' => 'Template rapor', 'value' => 'Belum ada template rapor pada tahun ajaran sumber.'];
+        }
+
+        $info[] = [
+            'label' => $workflow === 'semester_genap' ? 'Data pekerjaan siswa' : 'Data siswa',
+            'value' => $workflow === 'semester_genap'
+                ? 'Nilai, catatan, rapor, dan hasil pekerjaan siswa Semester Ganjil tidak disalin sebagai pekerjaan Semester Genap.'
+                : 'Siswa tidak disalin sebagai data baru; penempatan tahun ajaran berikutnya melalui Kenaikan Kelas.',
+        ];
+
+        return [
+            'workflow' => $workflow,
+            'source' => [
+                'id' => $sourceTahunAjaran->id,
+                'tahun_ajaran' => $sourceTahunAjaran->tahun_ajaran,
+                'semester' => (int) $sourceTahunAjaran->semester,
+            ],
+            'counts' => [
+                'kelas' => $kelasCount,
+                'roster_siswa' => $rosterCount,
+                'kelas_tanpa_wali' => $kelasTanpaWali,
+                'mata_pelajaran' => $mapelCount,
+                'mata_pelajaran_tanpa_guru' => $mapelTanpaGuru,
+                'mata_pelajaran_lm_tp_belum_lengkap' => $mapelBelumLengkap,
+                'kkm' => $kkmCount,
+                'bobot_persisted' => $bobot?->exists ?? false,
+                'template_rapor' => $templateCount,
+                'template_rapor_aktif' => $activeTemplateCount,
+                'ekstrakurikuler' => $ekstrakurikulerCount,
+            ],
+            'siap' => $ready,
+            'perlu_diperiksa' => $warnings,
+            'informasi' => $info,
+        ];
+    }
+
+    private function countRowsForTahunAjaran(string $table, int $tahunAjaranId): int
+    {
+        if (! Schema::hasTable($table) || ! Schema::hasColumn($table, 'tahun_ajaran_id')) {
+            return 0;
+        }
+
+        $query = DB::table($table)->where('tahun_ajaran_id', $tahunAjaranId);
+
+        if (Schema::hasColumn($table, 'deleted_at')) {
+            $query->whereNull('deleted_at');
+        }
+
+        return (int) $query->count();
+    }
+
+    private function countRosterStudentsForSource(TahunAjaran $sourceTahunAjaran): int
+    {
+        if (! Schema::hasTable('kelas') || ! Schema::hasTable('siswas')) {
+            return 0;
+        }
+
+        $studentIds = [];
+        $classes = Kelas::where('tahun_ajaran_id', $sourceTahunAjaran->id)->get();
+
+        foreach ($classes as $kelas) {
+            foreach ($this->studentsForSemesterTransitionClass($kelas, $sourceTahunAjaran) as $student) {
+                $studentIds[(int) $student->id] = true;
+            }
+        }
+
+        return count($studentIds);
+    }
+
+    private function countClassesWithoutHomeroom(int $tahunAjaranId): int
+    {
+        if (! Schema::hasTable('kelas') || ! Schema::hasTable('guru_kelas')) {
+            return $this->countRowsForTahunAjaran('kelas', $tahunAjaranId);
+        }
+
+        return (int) DB::table('kelas as k')
+            ->where('k.tahun_ajaran_id', $tahunAjaranId)
+            ->when(Schema::hasColumn('kelas', 'deleted_at'), fn ($query) => $query->whereNull('k.deleted_at'))
+            ->whereNotExists(function ($query) {
+                $query->select(DB::raw(1))
+                    ->from('guru_kelas as gk')
+                    ->whereColumn('gk.kelas_id', 'k.id')
+                    ->where(function ($nested) {
+                        $nested->where('gk.is_wali_kelas', true)
+                            ->orWhere('gk.role', 'wali_kelas');
+                    });
+            })
+            ->count();
+    }
+
+    private function countSubjectsWithoutTeacher(int $tahunAjaranId): int
+    {
+        if (! Schema::hasTable('mata_pelajarans') || ! Schema::hasColumn('mata_pelajarans', 'guru_id')) {
+            return 0;
+        }
+
+        $query = DB::table('mata_pelajarans')
+            ->where('tahun_ajaran_id', $tahunAjaranId)
+            ->whereNull('guru_id');
+
+        if (Schema::hasColumn('mata_pelajarans', 'deleted_at')) {
+            $query->whereNull('deleted_at');
+        }
+
+        return (int) $query->count();
+    }
+
+    private function countSubjectsWithIncompleteLearningStructure(int $tahunAjaranId): int
+    {
+        if (! Schema::hasTable('mata_pelajarans')) {
+            return 0;
+        }
+
+        $subjects = DB::table('mata_pelajarans')
+            ->where('tahun_ajaran_id', $tahunAjaranId)
+            ->when(Schema::hasColumn('mata_pelajarans', 'deleted_at'), fn ($query) => $query->whereNull('deleted_at'))
+            ->pluck('id');
+
+        if ($subjects->isEmpty() || ! Schema::hasTable('lingkup_materis') || ! Schema::hasTable('tujuan_pembelajarans')) {
+            return 0;
+        }
+
+        $incomplete = 0;
+
+        foreach ($subjects as $subjectId) {
+            $lingkupMateriIds = DB::table('lingkup_materis')
+                ->where('mata_pelajaran_id', $subjectId)
+                ->when(Schema::hasColumn('lingkup_materis', 'deleted_at'), fn ($query) => $query->whereNull('deleted_at'))
+                ->pluck('id');
+
+            if ($lingkupMateriIds->isEmpty()) {
+                $incomplete++;
+                continue;
+            }
+
+            $hasLmWithoutTp = $lingkupMateriIds->contains(function ($lingkupMateriId) {
+                $tpQuery = DB::table('tujuan_pembelajarans')
+                    ->where('lingkup_materi_id', $lingkupMateriId);
+
+                if (Schema::hasColumn('tujuan_pembelajarans', 'deleted_at')) {
+                    $tpQuery->whereNull('deleted_at');
+                }
+
+                return ! $tpQuery->exists();
+            });
+
+            if ($hasLmWithoutTp) {
+                $incomplete++;
+            }
+        }
+
+        return $incomplete;
+    }
+
+    private function countActiveReportTemplates(int $tahunAjaranId): int
+    {
+        if (! Schema::hasTable('report_templates') || ! Schema::hasColumn('report_templates', 'tahun_ajaran_id')) {
+            return 0;
+        }
+
+        $query = DB::table('report_templates')
+            ->where('tahun_ajaran_id', $tahunAjaranId)
+            ->where('is_active', true);
+
+        if (Schema::hasColumn('report_templates', 'deleted_at')) {
+            $query->whereNull('deleted_at');
+        }
+
+        return (int) $query->count();
+    }
+
     private function copyReportTemplateFileForSemester(ReportTemplate $template, array &$copiedStoragePaths): ?string
     {
         if (! $template->path) {
@@ -397,9 +648,26 @@ class TahunAjaranController extends Controller
     }
 
 
-    public function advanceToNextSemester($id)
+    public function advanceToNextSemester(Request $request, $id)
     {
         $copiedStoragePaths = [];
+
+        try {
+            $sourceTahunAjaran = TahunAjaran::withTrashed()->findOrFail($id);
+            $this->assertSemesterTransitionSourceIsEligible($sourceTahunAjaran);
+        } catch (DomainException $e) {
+            Log::warning('[TahunAjaranController] Advance semester rejected before confirmation', [
+                'error' => $e->getMessage(),
+                'user_id' => auth()->id(),
+                'tahun_ajaran_id' => $id,
+            ]);
+
+            return redirect()->back()->with('error', $e->getMessage());
+        }
+
+        if (! $this->hasValidTransitionConfirmation($request, self::SEMESTER_GENAP_CONFIRMATION)) {
+            return $this->rejectTransitionConfirmation($request);
+        }
 
         DB::beginTransaction();
         
@@ -410,20 +678,10 @@ class TahunAjaranController extends Controller
                 ->lockForUpdate()
                 ->firstOrFail();
 
-            if ($sourceTahunAjaran->trashed()) {
-                throw new DomainException('Tahun ajaran yang berada di arsip harus dipulihkan terlebih dahulu sebelum dapat dilanjutkan ke semester berikutnya.');
-            }
-            
-            if (! $sourceTahunAjaran->is_active) {
-                throw new DomainException('Only the active semester ganjil academic year can be advanced.');
-            }
-
-            if ($sourceTahunAjaran->semester == 2) {
-                throw new DomainException('Tahun ajaran ini sudah berada di semester Genap.');
-            }
+            $this->assertSemesterTransitionSourceIsEligible($sourceTahunAjaran);
 
             if (TahunAjaran::where('is_active', true)->where('id', '!=', $sourceTahunAjaran->id)->exists()) {
-                throw new DomainException('Another active academic year exists; semester transition cannot proceed safely.');
+                throw new DomainException('Ada tahun ajaran lain yang sedang aktif. Transisi semester tidak dapat dilanjutkan dengan aman.');
             }
 
             $existingSemesterGenap = TahunAjaran::withTrashed()
@@ -513,6 +771,69 @@ class TahunAjaranController extends Controller
 
             return redirect()->back()->with('error', 'Gagal melanjutkan semester. Silakan coba lagi.');
         }
+    }
+
+    private function assertSemesterTransitionSourceIsEligible(TahunAjaran $sourceTahunAjaran): void
+    {
+        if ($sourceTahunAjaran->trashed()) {
+            throw new DomainException('Tahun ajaran yang berada di arsip harus dipulihkan terlebih dahulu sebelum dapat dilanjutkan ke semester berikutnya.');
+        }
+
+        if (! $sourceTahunAjaran->is_active) {
+            throw new DomainException('Hanya Semester Ganjil yang sedang aktif yang dapat dilanjutkan ke Semester Genap.');
+        }
+
+        if ((int) $sourceTahunAjaran->semester !== 1) {
+            throw new DomainException('Pembuatan Semester Genap hanya dapat dilakukan dari Semester Ganjil.');
+        }
+    }
+
+    private function assertNextYearCopySourceIsEligible(TahunAjaran $sourceTahunAjaran): void
+    {
+        if ($sourceTahunAjaran->trashed()) {
+            throw new DomainException('Tahun ajaran yang berada di arsip harus dipulihkan terlebih dahulu sebelum dapat digunakan untuk membuat tahun ajaran berikutnya.');
+        }
+
+        if ((int) $sourceTahunAjaran->semester !== 2) {
+            throw new DomainException('Pembuatan tahun ajaran berikutnya hanya dapat dilakukan dari Semester Genap.');
+        }
+    }
+
+    private function hasValidTransitionConfirmation(Request $request, string $requiredPhrase): bool
+    {
+        return trim((string) $request->input('transition_confirmation')) === $requiredPhrase;
+    }
+
+    private function rejectTransitionConfirmation(Request $request)
+    {
+        if ($request->expectsJson()) {
+            return response()->json([
+                'success' => false,
+                'message' => self::CONFIRMATION_MISMATCH_MESSAGE,
+                'errors' => [
+                    'transition_confirmation' => [self::CONFIRMATION_MISMATCH_MESSAGE],
+                ],
+            ], 422);
+        }
+
+        return redirect()->back()
+            ->withErrors(['transition_confirmation' => self::CONFIRMATION_MISMATCH_MESSAGE])
+            ->with('error', self::CONFIRMATION_MISMATCH_MESSAGE)
+            ->withInput();
+    }
+
+    private function rejectCopyRequest(Request $request, string $message, int $status = 422)
+    {
+        if ($request->expectsJson()) {
+            return response()->json([
+                'success' => false,
+                'message' => $message,
+            ], $status);
+        }
+
+        return redirect()->back()
+            ->with('error', $message)
+            ->withInput();
     }
 
     /**
@@ -718,13 +1039,17 @@ class TahunAjaranController extends Controller
         })->count();
         $totalMataPelajaran = MataPelajaran::where('tahun_ajaran_id', $id)->count();
         $permanentDeleteProtectionMessage = $this->permanentDeleteProtectionMessage($tahunAjaran);
+        $semesterGenapReadiness = (! $tahunAjaran->trashed() && $tahunAjaran->is_active && (int) $tahunAjaran->semester === 1)
+            ? $this->buildTransitionReadiness($tahunAjaran, 'semester_genap')
+            : null;
         
         return view('admin.tahun_ajaran.show', compact(
             'tahunAjaran', 
             'totalKelas', 
             'totalSiswa', 
             'totalMataPelajaran',
-            'permanentDeleteProtectionMessage'
+            'permanentDeleteProtectionMessage',
+            'semesterGenapReadiness'
         ));
     }
 
@@ -1274,16 +1599,18 @@ class TahunAjaranController extends Controller
     {
         $sourceTahunAjaran = TahunAjaran::withTrashed()->findOrFail($id);
         
-        // Validasi: hanya bisa copy dari semester genap
-        if ($sourceTahunAjaran->semester != 2) {
-            return redirect()->back()->with('error', 'Pembuatan tahun ajaran berikutnya hanya dapat dilakukan dari semester genap (semester 2). Saat ini semester: ' . ($sourceTahunAjaran->semester == 1 ? 'ganjil' : 'genap'));
+        try {
+            $this->assertNextYearCopySourceIsEligible($sourceTahunAjaran);
+        } catch (DomainException $e) {
+            return redirect()->back()->with('error', $e->getMessage());
         }
         
         // Generate tahun ajaran baru
         $tahunParts = explode('/', $sourceTahunAjaran->tahun_ajaran);
         $newTahunAjaran = (intval($tahunParts[0]) + 1) . '/' . (intval($tahunParts[1]) + 1);
+        $nextYearReadiness = $this->buildTransitionReadiness($sourceTahunAjaran, 'next_year');
         
-        return view('admin.tahun_ajaran.copy', compact('sourceTahunAjaran', 'newTahunAjaran'));
+        return view('admin.tahun_ajaran.copy', compact('sourceTahunAjaran', 'newTahunAjaran', 'nextYearReadiness'));
     }
 
     private function findCopyConflictRecord(string $tahunAjaran, int $semester): ?TahunAjaran
@@ -1335,15 +1662,14 @@ class TahunAjaranController extends Controller
     {
         $sourceTahunAjaran = TahunAjaran::withTrashed()->findOrFail($id);
 
-        if ($sourceTahunAjaran->semester != 2) {
-            if ($request->expectsJson()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Pembuatan tahun ajaran berikutnya hanya dapat dilakukan dari semester genap.'
-                ], 422);
-            }
+        try {
+            $this->assertNextYearCopySourceIsEligible($sourceTahunAjaran);
+        } catch (DomainException $e) {
+            return $this->rejectCopyRequest($request, $e->getMessage());
+        }
 
-            return redirect()->back()->with('error', 'Pembuatan tahun ajaran berikutnya hanya dapat dilakukan dari semester genap.');
+        if (! $this->hasValidTransitionConfirmation($request, self::NEXT_YEAR_CONFIRMATION)) {
+            return $this->rejectTransitionConfirmation($request);
         }
 
         $validator = Validator::make($request->all(), [
@@ -1384,6 +1710,7 @@ class TahunAjaranController extends Controller
             'copy_ekstrakurikuler' => 'boolean',
             'copy_kkm' => 'boolean',
             'copy_bobot_nilai' => 'boolean',
+            'transition_confirmation' => 'required|string',
             'is_active' => 'boolean'
         ]);
 
@@ -1514,7 +1841,7 @@ class TahunAjaranController extends Controller
                 ], 500);
             }
 
-            return redirect()->back()->with('error', 'Gagal membuat tahun ajaran berikutnya: ' . $e->getMessage());
+            return redirect()->back()->with('error', 'Gagal membuat tahun ajaran berikutnya. Silakan coba lagi.');
         }
     }
 

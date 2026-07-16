@@ -171,6 +171,152 @@ class NewAcademicYearStructuralCopyTest extends TestCase
         ]);
     }
 
+    public function test_new_year_copy_page_renders_readiness_and_does_not_persist_default_bobot(): void
+    {
+        DB::table('bobot_nilais')->where('tahun_ajaran_id', $this->sourceYearId)->delete();
+        DB::table('tahun_ajarans')->insert([
+            'tahun_ajaran' => '2025/2026',
+            'is_active' => false,
+            'tanggal_mulai' => '2025-07-01',
+            'tanggal_selesai' => '2026-06-30',
+            'semester' => 2,
+            'deskripsi' => 'Other source',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $counts = [
+            'tahun_ajarans' => DB::table('tahun_ajarans')->count(),
+            'kelas' => DB::table('kelas')->count(),
+            'mata_pelajarans' => DB::table('mata_pelajarans')->count(),
+            'bobot_nilais' => DB::table('bobot_nilais')->count(),
+            'report_templates' => DB::table('report_templates')->count(),
+        ];
+
+        $this->actingAs($this->admin, 'web')
+            ->get(route('tahun.ajaran.copy', $this->sourceYearId))
+            ->assertOk()
+            ->assertSeeText('Buat Tahun Ajaran Berikutnya?')
+            ->assertSeeText('Target akan dibuat dalam keadaan belum aktif.')
+            ->assertSeeText('Penempatan siswa untuk tahun ajaran berikutnya ditangani melalui proses Kenaikan Kelas.')
+            ->assertSeeText('1 kelas tersedia')
+            ->assertSeeText('Semua kelas memiliki wali kelas')
+            ->assertSeeText('1 mata pelajaran tersedia')
+            ->assertSeeText('Struktur LM/TP sudah tersedia')
+            ->assertSeeText('Menggunakan default sementara (1:1:2), belum tersimpan');
+
+        $this->assertSame(0, DB::table('bobot_nilais')->where('tahun_ajaran_id', $this->sourceYearId)->count());
+        $this->assertSame($counts, [
+            'tahun_ajarans' => DB::table('tahun_ajarans')->count(),
+            'kelas' => DB::table('kelas')->count(),
+            'mata_pelajarans' => DB::table('mata_pelajarans')->count(),
+            'bobot_nilais' => DB::table('bobot_nilais')->count(),
+            'report_templates' => DB::table('report_templates')->count(),
+        ]);
+        $this->assertDatabaseMissing('tahun_ajarans', [
+            'tahun_ajaran' => '2027/2028',
+        ]);
+    }
+
+    public function test_new_year_copy_without_typed_confirmation_is_rejected_without_partial_copy(): void
+    {
+        $this->postCopy(['transition_confirmation' => null])
+            ->assertStatus(422)
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('message', 'Konfirmasi tidak sesuai. Ketik kalimat yang diminta untuk melanjutkan.');
+
+        $this->assertDatabaseMissing('tahun_ajarans', [
+            'tahun_ajaran' => '2027/2028',
+        ]);
+        $this->assertSame(1, DB::table('kelas')->count());
+        $this->assertSame(1, DB::table('mata_pelajarans')->count());
+    }
+
+    public function test_new_year_copy_with_incorrect_confirmation_is_rejected_without_partial_copy(): void
+    {
+        $this->postCopy(['transition_confirmation' => 'BUAT'])
+            ->assertStatus(422)
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('message', 'Konfirmasi tidak sesuai. Ketik kalimat yang diminta untuk melanjutkan.');
+
+        $this->assertDatabaseMissing('tahun_ajarans', [
+            'tahun_ajaran' => '2027/2028',
+        ]);
+        $this->assertSame(1, DB::table('report_templates')->count());
+    }
+
+    public function test_new_year_copy_normal_request_creates_inactive_target(): void
+    {
+        $this->postCopy()
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $targetYear = $this->targetYear();
+
+        $this->assertNotNull($targetYear);
+        $this->assertFalse((bool) $targetYear->is_active);
+        $this->assertTrue((bool) DB::table('tahun_ajarans')->where('id', $this->sourceYearId)->value('is_active'));
+    }
+
+    public function test_new_year_copy_rejects_archived_source_direct_request(): void
+    {
+        DB::table('tahun_ajarans')->where('id', $this->sourceYearId)->update([
+            'is_active' => false,
+            'deleted_at' => now(),
+        ]);
+        $activeFallbackId = DB::table('tahun_ajarans')->insertGetId([
+            'tahun_ajaran' => '2028/2029',
+            'is_active' => true,
+            'tanggal_mulai' => '2028-07-01',
+            'tanggal_selesai' => '2029-06-30',
+            'semester' => 1,
+            'deskripsi' => 'Active fallback',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession([
+                'tahun_ajaran_id' => $activeFallbackId,
+                'selected_semester' => 1,
+                'no_tahun_ajaran' => false,
+            ])
+            ->postJson(route('tahun.ajaran.process-copy', $this->sourceYearId), [
+                'tahun_ajaran' => '2027/2028',
+                'tanggal_mulai' => '2027-07-01',
+                'tanggal_selesai' => '2028-06-30',
+                'semester' => 1,
+                'copy_kelas' => true,
+                'copy_mata_pelajaran' => true,
+                'copy_templates' => true,
+                'copy_ekstrakurikuler' => true,
+                'copy_kkm' => true,
+                'copy_bobot_nilai' => true,
+                'transition_confirmation' => 'BUAT TAHUN AJARAN BERIKUTNYA',
+                'is_active' => false,
+            ])
+            ->assertStatus(422)
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('message', 'Tahun ajaran yang berada di arsip harus dipulihkan terlebih dahulu sebelum dapat digunakan untuk membuat tahun ajaran berikutnya.');
+
+        $this->assertDatabaseMissing('tahun_ajarans', [
+            'tahun_ajaran' => '2027/2028',
+        ]);
+        Storage::assertMissing('public/templates/copy_2027-2028_demo.docx');
+    }
+
+    public function test_new_year_copy_page_renders_phase_one_safeguards(): void
+    {
+        $this->actingAs($this->admin, 'web')
+            ->get(route('tahun.ajaran.copy', $this->sourceYearId))
+            ->assertOk()
+            ->assertSeeText('Buat Tahun Ajaran Berikutnya?')
+            ->assertSeeText('Perubahan pada tahun ajaran sumber setelah proses ini tidak akan otomatis disalin ke target.')
+            ->assertSeeText('Target akan dibuat dalam keadaan belum aktif.')
+            ->assertSeeText('Penempatan siswa untuk tahun ajaran berikutnya ditangani melalui proses Kenaikan Kelas.')
+            ->assertSeeText('BUAT TAHUN AJARAN BERIKUTNYA')
+            ->assertSee('disabled', false);
+    }
+
     public function test_duplicate_target_year_is_rejected_without_partial_copy(): void
     {
         DB::table('tahun_ajarans')->insert([
@@ -305,6 +451,7 @@ class NewAcademicYearStructuralCopyTest extends TestCase
                 'copy_ekstrakurikuler' => true,
                 'copy_kkm' => true,
                 'copy_bobot_nilai' => true,
+                'transition_confirmation' => 'BUAT TAHUN AJARAN BERIKUTNYA',
                 'is_active' => false,
             ], $overrides));
     }
