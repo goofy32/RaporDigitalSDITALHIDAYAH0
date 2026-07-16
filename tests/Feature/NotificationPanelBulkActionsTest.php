@@ -160,17 +160,40 @@ class NotificationPanelBulkActionsTest extends TestCase
         $this->assertTrue($nilaiItem['is_read']);
     }
 
-    public function test_notification_dashboard_preview_is_compact(): void
+    public function test_admin_notification_dashboard_preview_restores_original_timeline_style(): void
     {
         $html = Blade::render('<x-notification-panel :can-create="true" />');
         $dashboardHtml = Str::between($html, 'data-notification-dashboard-preview', 'data-testid="notification-modal"');
 
         $this->assertStringContainsString('data-testid="notification-open-button"', $html);
         $this->assertStringContainsString('Informasi', $dashboardHtml);
-        $this->assertStringContainsString('data-testid="notification-dashboard-snippets"', $dashboardHtml);
+        $this->assertStringContainsString('data-testid="notification-dashboard-timeline"', $dashboardHtml);
+        $this->assertStringContainsString('notifications-container', $dashboardHtml);
+        $this->assertStringContainsString('notification-item', $dashboardHtml);
+        $this->assertStringContainsString('notification-content', $dashboardHtml);
+        $this->assertStringContainsString('M3 8l7.89 5.26', $dashboardHtml);
+        $this->assertStringContainsString('Hapus informasi', $dashboardHtml);
         $this->assertStringNotContainsString('Tandai semua dibaca', $dashboardHtml);
         $this->assertStringNotContainsString('Hapus semua', $dashboardHtml);
         $this->assertStringNotContainsString('Filter lanjutan', $dashboardHtml);
+        $this->assertStringNotContainsString('notification-dashboard-snippets', $dashboardHtml);
+        $this->assertStringNotContainsString('mt-1 h-2 w-2', $dashboardHtml);
+    }
+
+    public function test_pengajar_and_wali_notification_dashboard_preview_use_original_timeline_style(): void
+    {
+        $html = Blade::render('<x-notification-panel />');
+        $dashboardHtml = Str::between($html, 'data-notification-dashboard-preview', 'data-testid="notification-modal"');
+
+        $this->assertStringContainsString('data-testid="notification-open-button"', $html);
+        $this->assertStringContainsString('data-testid="notification-dashboard-timeline"', $dashboardHtml);
+        $this->assertStringContainsString('notifications-container', $dashboardHtml);
+        $this->assertStringContainsString('notification-item', $dashboardHtml);
+        $this->assertStringContainsString('notification-content', $dashboardHtml);
+        $this->assertStringContainsString('M3 8l7.89 5.26', $dashboardHtml);
+        $this->assertStringNotContainsString('Hapus informasi', $dashboardHtml);
+        $this->assertStringNotContainsString('notification-dashboard-snippets', $dashboardHtml);
+        $this->assertStringNotContainsString('mt-1 h-2 w-2', $dashboardHtml);
     }
 
     public function test_notification_modal_keeps_bulk_actions_and_simple_filters(): void

@@ -2,13 +2,13 @@
     'canCreate' => false,
 ])
 
-<div data-notification-dashboard-preview class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-    <div class="flex items-center justify-between gap-3">
+<div data-notification-dashboard-preview>
+    <div class="mb-3 flex items-center justify-between">
         <button
             data-testid="notification-open-button"
             type="button"
             @click="$store.notification.openModal()"
-            class="relative inline-flex items-center justify-center gap-2 rounded-lg bg-green-700 px-4 py-2 text-sm font-semibold text-white hover:bg-green-800 focus:outline-none focus:ring-4 focus:ring-green-300"
+            class="relative inline-flex items-center rounded-lg bg-green-600 px-3 py-1.5 text-sm text-white hover:bg-green-700 focus:outline-none focus:ring-4 focus:ring-green-300"
         >
             <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6 6 0 10-12 0v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
@@ -21,39 +21,96 @@
             ></span>
         </button>
 
-        @if($canCreate)
+        <div class="flex items-center gap-2">
             <button
                 type="button"
-                @click="showModal = true"
-                class="rounded-lg bg-green-100 px-3 py-2 text-xs font-medium text-green-800 hover:bg-green-200"
+                @click="$store.notification.toggleHideRead()"
+                :title="$store.notification.hideRead ? 'Tampilkan semua' : 'Sembunyikan yang sudah dibaca'"
+                class="flex min-h-10 min-w-10 items-center justify-center rounded p-2 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
             >
-                Tambah
+                <svg x-show="!$store.notification.hideRead" class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                </svg>
+                <svg x-show="$store.notification.hideRead" class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.542-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.542 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                </svg>
             </button>
-        @endif
+
+            @if($canCreate)
+                <button
+                    type="button"
+                    @click="showModal = true"
+                    class="flex h-10 w-10 items-center justify-center rounded-lg bg-transparent text-sm text-gray-400 hover:bg-gray-200 hover:text-gray-900"
+                    title="Tambah informasi"
+                >
+                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                    </svg>
+                </button>
+            @endif
+        </div>
     </div>
 
-    <div data-testid="notification-dashboard-snippets" class="mt-3 space-y-2">
-        <template x-for="item in $store.notification.previewItems" :key="`preview-${item.id}`">
-            <button
-                type="button"
-                @click="$store.notification.openModal()"
-                class="flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left hover:bg-gray-50"
-            >
-                <span
-                    class="mt-1 h-2 w-2 shrink-0 rounded-full"
-                    :class="item.is_read ? 'bg-gray-300' : 'bg-green-600'"
-                    aria-hidden="true"
-                ></span>
-                <span class="min-w-0 flex-1">
-                    <span class="block truncate text-xs font-medium text-gray-800" x-text="item.title"></span>
-                    <span class="block truncate text-[11px] text-gray-500" x-text="item.created_at"></span>
-                </span>
-            </button>
-        </template>
+    <div data-testid="notification-dashboard-timeline" class="h-[150px] overflow-y-auto notifications-container">
+        <div class="relative pl-14">
+            <div class="absolute bottom-0 left-5 top-0 w-[2px] bg-gray-200"></div>
 
-        <template x-if="$store.notification.previewItems.length === 0">
-            <p class="px-2 py-1 text-xs text-gray-500">Belum ada informasi.</p>
-        </template>
+            <template x-for="item in $store.notification.dashboardItems" :key="item.id">
+                <div
+                    class="notification-item relative mb-4 min-h-[80px] cursor-pointer"
+                    @click="$store.notification.markAsRead(item.id)"
+                >
+                    <div class="absolute -left-12 top-3 z-10 flex h-10 w-10 items-center justify-center rounded-full bg-gray-200">
+                        <svg class="h-5 w-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                        </svg>
+                    </div>
+
+                    <div
+                        :class="item.is_read ? 'bg-white' : 'bg-green-50'"
+                        class="notification-content rounded-lg border p-3 shadow-sm transition-colors"
+                    >
+                        <div class="flex items-start justify-between">
+                            <div class="min-w-0 flex-1 pr-2">
+                                @if($canCreate)
+                                    <p class="mb-1 truncate text-xs text-gray-500">
+                                        <span class="font-medium">Untuk: </span>
+                                        <span x-text="item.target_display || item.source_label || '-'"></span>
+                                    </p>
+                                @endif
+
+                                <div class="mb-1 flex items-center justify-between">
+                                    <h3 class="truncate text-sm font-medium text-gray-900" x-text="item.title"></h3>
+                                </div>
+
+                                <p class="break-words whitespace-normal text-xs text-gray-600" x-text="item.content"></p>
+                                <p class="mt-2 text-xs text-gray-400 @if($canCreate) text-right @endif" x-text="item.created_at_formatted"></p>
+                            </div>
+
+                            @if($canCreate)
+                                <button
+                                    type="button"
+                                    @click.stop="$store.notification.deleteNotification(item.id)"
+                                    class="ml-2 flex-shrink-0 text-red-500 hover:text-red-700"
+                                    title="Hapus informasi"
+                                >
+                                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                    </svg>
+                                </button>
+                            @endif
+                        </div>
+                    </div>
+                </div>
+            </template>
+
+            <template x-if="$store.notification.dashboardItems.length === 0">
+                <div class="flex h-[150px] items-center justify-center">
+                    <p class="text-sm text-gray-500">Tidak ada informasi baru</p>
+                </div>
+            </template>
+        </div>
     </div>
 </div>
 

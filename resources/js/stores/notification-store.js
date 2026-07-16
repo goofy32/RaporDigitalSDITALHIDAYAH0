@@ -204,6 +204,14 @@ export function registerNotificationStore() {
             return this.items.slice(0, 3);
         },
 
+        get dashboardItems() {
+            if (this.hideRead) {
+                return this.items.filter(item => item.is_read !== true);
+            }
+
+            return this.items;
+        },
+
         matchesActiveFilter(item) {
             if (this.hideRead && item.is_read === true) {
                 return false;
