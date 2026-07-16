@@ -2,6 +2,9 @@
     <table class="w-full text-sm text-left text-gray-500">
         <thead class="text-xs text-gray-700 uppercase bg-gray-50">
             <tr>
+                <th class="px-4 py-3 text-center">
+                    <input type="checkbox" data-bulk-delete-select-all class="h-4 w-4 rounded border-gray-300 text-red-600 focus:ring-red-500" aria-label="Pilih semua siswa di halaman ini">
+                </th>
                 <th class="px-6 py-3">No</th>
                 <th class="px-6 py-3">NIS</th>
                 <th class="px-6 py-3">NISN</th>
@@ -14,6 +17,9 @@
         <tbody>
             @forelse ($students as $student)
             <tr class="bg-white border-b hover:bg-gray-50">
+                <td class="px-4 py-4 text-center">
+                    <input type="checkbox" value="{{ $student->id }}" data-bulk-delete-checkbox class="h-4 w-4 rounded border-gray-300 text-red-600 focus:ring-red-500" aria-label="Pilih siswa {{ $student->nama }}">
+                </td>
                 <td class="px-6 py-4">{{ $loop->iteration + ($students->currentPage() - 1) * $students->perPage() }}</td>
                 <td class="px-6 py-4">{{ str_starts_with($student->nis, 'S2-') ? substr($student->nis, 3) : $student->nis }}</td>
                 <td class="px-6 py-4">{{ str_starts_with($student->nisn, 'S2-') ? substr($student->nisn, 3) : $student->nisn }}</td>
@@ -38,7 +44,7 @@
             </tr>
             @empty
             <tr>
-                <td colspan="7" class="px-6 py-4 text-center">Tidak ada data siswa.</td>
+                <td colspan="8" class="px-6 py-4 text-center">Tidak ada data siswa.</td>
             </tr>
             @endforelse
         </tbody>

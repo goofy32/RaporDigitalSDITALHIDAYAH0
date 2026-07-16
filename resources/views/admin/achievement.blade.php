@@ -90,6 +90,12 @@
 
             <div class="mb-3 hidden text-sm text-gray-500" data-live-list-loading>Memuat data...</div>
 
+            <x-admin.bulk-delete-toolbar
+                :action="route('admin.bulk-delete', 'achievements')"
+                record-type="Prestasi"
+                form-id="bulk-delete-achievements-form"
+            />
+
             <div data-live-list-results>
                 @include('admin.partials.achievement-results', ['prestasis' => $prestasis])
             </div>

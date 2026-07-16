@@ -2,6 +2,9 @@
     <table class="w-full text-sm text-left text-gray-500">
         <thead class="text-xs text-gray-700 uppercase bg-gray-50">
             <tr>
+                <th class="px-4 py-3 text-center">
+                    <input type="checkbox" data-bulk-delete-select-all class="h-4 w-4 rounded border-gray-300 text-red-600 focus:ring-red-500" aria-label="Pilih semua kelas di halaman ini">
+                </th>
                 <th class="px-6 py-3">Nomor</th>
                 <th class="px-6 py-3">Kelas</th>
                 <th class="px-6 py-3">Wali Kelas</th>
@@ -11,6 +14,9 @@
         <tbody>
             @forelse ($kelasList as $index => $kelas)
             <tr class="bg-white border-b hover:bg-gray-50">
+                <td class="px-4 py-4 text-center">
+                    <input type="checkbox" value="{{ $kelas->id }}" data-bulk-delete-checkbox class="h-4 w-4 rounded border-gray-300 text-red-600 focus:ring-red-500" aria-label="Pilih kelas {{ $kelas->label_kelas }}">
+                </td>
                 <td class="px-6 py-4">{{ $index + $kelasList->firstItem() }}</td>
                 <td class="px-6 py-4">{{ $kelas->label_kelas }}</td>
                 <td class="px-6 py-4">
@@ -37,7 +43,7 @@
             </tr>
             @empty
             <tr>
-                <td colspan="4" class="px-6 py-4 text-center">Tidak ada data kelas.</td>
+                <td colspan="5" class="px-6 py-4 text-center">Tidak ada data kelas.</td>
             </tr>
             @endforelse
         </tbody>

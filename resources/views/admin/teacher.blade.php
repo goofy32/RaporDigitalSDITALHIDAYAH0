@@ -98,6 +98,12 @@
 
             <div class="mb-3 hidden text-sm text-gray-500" data-live-list-loading>Memuat data...</div>
 
+            <x-admin.bulk-delete-toolbar
+                :action="route('admin.bulk-delete', 'teachers')"
+                record-type="Guru"
+                form-id="bulk-delete-teachers-form"
+            />
+
             <div data-live-list-results>
                 @include('admin.partials.teacher-results', ['teachers' => $teachers])
             </div>

@@ -2,6 +2,9 @@
     <table class="w-full text-sm text-left text-gray-500">
         <thead class="text-xs text-gray-700 uppercase bg-gray-50">
             <tr>
+                <th scope="col" class="px-4 py-3 text-center">
+                    <input type="checkbox" data-bulk-delete-select-all class="h-4 w-4 rounded border-gray-300 text-red-600 focus:ring-red-500" aria-label="Pilih semua prestasi di halaman ini">
+                </th>
                 <th scope="col" class="px-6 py-3">NO</th>
                 <th scope="col" class="px-6 py-3">Kelas</th>
                 <th scope="col" class="px-6 py-3">Nama Siswa</th>
@@ -13,11 +16,14 @@
         <tbody>
             @if($prestasis->isEmpty())
                 <tr class="bg-white border-b">
-                    <td colspan="6" class="px-6 py-4 text-center">Tidak ada data prestasi.</td>
+                    <td colspan="7" class="px-6 py-4 text-center">Tidak ada data prestasi.</td>
                 </tr>
             @else
                 @foreach ($prestasis as $prestasi)
                 <tr class="bg-white border-b hover:bg-gray-50">
+                    <td class="px-4 py-4 text-center">
+                        <input type="checkbox" value="{{ $prestasi->id }}" data-bulk-delete-checkbox class="h-4 w-4 rounded border-gray-300 text-red-600 focus:ring-red-500" aria-label="Pilih prestasi {{ $prestasi->jenis_prestasi }}">
+                    </td>
                     <td class="px-6 py-4">{{ ($prestasis->currentPage() - 1) * $prestasis->perPage() + $loop->iteration }}</td>
                     <td class="px-6 py-4">
                         {{ $prestasi->kelas ? 'Kelas ' . $prestasi->kelas->nomor_kelas . ' - ' . $prestasi->kelas->nama_kelas : '-' }}

@@ -277,6 +277,10 @@
                 <x-alert type="error" :message="session('error')" />
             @endif
 
+            @if(session('warning'))
+                <x-alert type="warning" :message="session('warning')" />
+            @endif
+
             <div id="main" data-turbo-frame="main">
                 @yield('content')
             </div>

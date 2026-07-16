@@ -2,6 +2,9 @@
     <table class="w-full text-sm text-left text-gray-500">
         <thead class="text-xs text-gray-700 uppercase bg-gray-50">
             <tr>
+                <th scope="col" class="px-4 py-3 text-center">
+                    <input type="checkbox" data-bulk-delete-select-all class="h-4 w-4 rounded border-gray-300 text-red-600 focus:ring-red-500" aria-label="Pilih semua mata pelajaran di halaman ini">
+                </th>
                 <th scope="col" class="px-6 py-3">No</th>
                 <th scope="col" class="px-6 py-3">Mata Pelajaran</th>
                 <th scope="col" class="px-6 py-3">Kelas</th>
@@ -19,6 +22,9 @@
                 $lingkupMateris = $subject->lingkupMateris ?? collect();
             @endphp
             <tr class="bg-white border-b hover:bg-gray-50">
+                <td class="px-4 py-4 text-center">
+                    <input type="checkbox" value="{{ $subject->id }}" data-bulk-delete-checkbox class="h-4 w-4 rounded border-gray-300 text-red-600 focus:ring-red-500" aria-label="Pilih mata pelajaran {{ $subject->nama_pelajaran }}">
+                </td>
                 <td class="px-6 py-4">{{ ($subjects->currentPage() - 1) * $subjects->perPage() + $loop->iteration }}</td>
                 <td class="px-6 py-4">{{ $subject->nama_pelajaran }}</td>
                 <td class="px-6 py-4">
@@ -80,7 +86,7 @@
             </tr>
             @empty
             <tr class="bg-white border-b">
-                <td colspan="7" class="px-6 py-4 text-center">Tidak ada data mata pelajaran</td>
+                <td colspan="8" class="px-6 py-4 text-center">Tidak ada data mata pelajaran</td>
             </tr>
             @endforelse
         </tbody>

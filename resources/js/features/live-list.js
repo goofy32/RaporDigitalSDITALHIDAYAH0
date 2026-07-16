@@ -66,6 +66,7 @@ async function fetchLiveList(container, url, { replace = false } = {}) {
 
         const payload = await response.json();
         target.innerHTML = payload.html ?? '';
+        container.dispatchEvent(new CustomEvent('live-list:updated', { bubbles: true }));
 
         if (replace) {
             window.history.replaceState({}, '', url.toString());

@@ -2,6 +2,9 @@
     <table class="w-full text-sm text-left text-gray-500">
         <thead class="text-xs text-gray-700 uppercase bg-gray-50">
             <tr>
+                <th class="px-4 py-3 text-center">
+                    <input type="checkbox" data-bulk-delete-select-all class="h-4 w-4 rounded border-gray-300 text-red-600 focus:ring-red-500" aria-label="Pilih semua guru di halaman ini">
+                </th>
                 <th class="px-6 py-3">No</th>
                 <th class="px-6 py-3">NUPTK</th>
                 <th class="px-6 py-3">Nama</th>
@@ -18,6 +21,9 @@
         <tbody>
         @forelse ($teachers as $teacher)
             <tr class="bg-white border-b hover:bg-gray-50 @if(request('search') && stripos($teacher->nama, request('search')) !== false) bg-green-50 @endif">
+                <td class="px-4 py-4 text-center">
+                    <input type="checkbox" value="{{ $teacher->id }}" data-bulk-delete-checkbox class="h-4 w-4 rounded border-gray-300 text-red-600 focus:ring-red-500" aria-label="Pilih guru {{ $teacher->nama }}">
+                </td>
                 <td class="px-6 py-4">{{ $loop->iteration + ($teachers->currentPage() - 1) * $teachers->perPage() }}</td>
                 <td class="px-6 py-4">{{ $teacher->nuptk ?: '-' }}</td>
                 <td class="px-6 py-4 font-medium @if(request('search') && stripos($teacher->nama, request('search')) !== false) text-green-700 @endif">{{ $teacher->nama }}</td>
@@ -79,7 +85,7 @@
             </tr>
         @empty
             <tr>
-                <td colspan="11" class="px-6 py-4 text-center">Tidak ada data pengajar.</td>
+                <td colspan="12" class="px-6 py-4 text-center">Tidak ada data pengajar.</td>
             </tr>
         @endforelse
         </tbody>

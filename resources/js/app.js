@@ -21,6 +21,7 @@ import { registerTopbarFeatures } from './features/topbar';
 import { registerDashboard } from './features/dashboard';
 import { registerSettingsModalFeatures } from './features/settings-modal';
 import { registerLiveList } from './features/live-list';
+import { registerBulkDelete } from './features/bulk-delete';
 
 import { registerFormProtectionComponent } from './components/form-protection';
 
@@ -249,6 +250,7 @@ registerFormDiagnostics();
 registerTopbarFeatures();
 registerSettingsModalFeatures();
 registerLiveList();
+registerBulkDelete();
 
 registerHelpersStore();
 registerSidebarStore();

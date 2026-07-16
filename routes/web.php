@@ -29,6 +29,7 @@ use App\Http\Controllers\CapaianKompetensiController;
 use App\Http\Controllers\CapaianRangeTemplateController;
 use App\Http\Controllers\RecycleBinController;
 use App\Http\Controllers\Admin\StagingSimulationController;
+use App\Http\Controllers\AdminBulkDeleteController;
 use App\Models\Siswa;
 use App\Models\Kelas;
 use Illuminate\Support\Facades\Auth;
@@ -206,6 +207,10 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
         
         return response()->json(['kelas' => $kelas]);
     })->name('kelas.data');
+
+    Route::delete('/bulk-delete/{type}', [AdminBulkDeleteController::class, 'destroySelected'])
+        ->whereIn('type', ['kelas', 'teachers', 'students', 'subjects', 'ekstrakurikulers', 'achievements'])
+        ->name('admin.bulk-delete');
 
 
     Route::get('/set-tahun-ajaran/{id}', function($id) {
