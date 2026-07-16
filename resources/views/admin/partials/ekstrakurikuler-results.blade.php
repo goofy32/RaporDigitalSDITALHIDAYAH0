@@ -2,9 +2,6 @@
     <table class="w-full text-sm text-left text-gray-500">
         <thead class="text-xs text-gray-700 uppercase bg-gray-50">
             <tr>
-                <th scope="col" class="px-4 py-3 text-center">
-                    <input type="checkbox" data-bulk-delete-select-all class="h-4 w-4 rounded border-gray-300 text-red-600 focus:ring-red-500" aria-label="Pilih semua ekstrakurikuler di halaman ini">
-                </th>
                 <th scope="col" class="px-6 py-3">NO</th>
                 <th scope="col" class="px-6 py-3">Nama Ekstrakulikuler</th>
                 <th scope="col" class="px-6 py-3">Pembina</th>
@@ -14,9 +11,6 @@
         <tbody>
             @forelse($ekstrakurikulers as $ekstra)
             <tr class="bg-white border-b hover:bg-gray-50">
-                <td class="px-4 py-4 text-center">
-                    <input type="checkbox" value="{{ $ekstra->id }}" data-bulk-delete-checkbox class="h-4 w-4 rounded border-gray-300 text-red-600 focus:ring-red-500" aria-label="Pilih ekstrakurikuler {{ $ekstra->nama_ekstrakurikuler }}">
-                </td>
                 <td class="px-6 py-4">{{ ($ekstrakurikulers->currentPage() - 1) * $ekstrakurikulers->perPage() + $loop->iteration }}</td>
                 <td class="px-6 py-4">{{ $ekstra->nama_ekstrakurikuler }}</td>
                 <td class="px-6 py-4">{{ $ekstra->pembina }}</td>
@@ -38,7 +32,7 @@
             </tr>
             @empty
             <tr class="bg-white border-b">
-                <td colspan="5" class="px-6 py-4 text-center">Tidak ada data ekstrakurikuler</td>
+                <td colspan="4" class="px-6 py-4 text-center">Tidak ada data ekstrakurikuler</td>
             </tr>
             @endforelse
         </tbody>
