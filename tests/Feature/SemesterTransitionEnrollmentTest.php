@@ -522,9 +522,11 @@ class SemesterTransitionEnrollmentTest extends TestCase
 
     public function test_semester_genap_ui_renders_phase_one_safeguards(): void
     {
-        $this->actingAs($this->admin)
+        $response = $this->actingAs($this->admin)
             ->get(route('tahun.ajaran.show', $this->sourceYearId))
-            ->assertOk()
+            ->assertOk();
+
+        $response
             ->assertSeeText('Edit Tahun Ajaran')
             ->assertSeeText('Lanjutkan ke Semester Genap')
             ->assertSeeText('Konfirmasi Lanjut ke Semester Genap')
@@ -540,6 +542,17 @@ class SemesterTransitionEnrollmentTest extends TestCase
             ->assertSee('x-on:submit="if (!canSubmit || submitting)', false)
             ->assertSeeText('LANJUTKAN KE SEMESTER GENAP')
             ->assertSee('disabled', false);
+
+        $content = $response->getContent();
+
+        $this->assertMatchesRegularExpression(
+            '/<input\b(?=[^>]*id="transition_confirmation_semester")(?=[^>]*name="transition_confirmation")(?=[^>]*x-bind:readonly="submitting")(?=[^>]*read-only:cursor-wait)(?=[^>]*read-only:bg-gray-100)[^>]*>/',
+            $content
+        );
+        $this->assertDoesNotMatchRegularExpression(
+            '/<input\b(?=[^>]*id="transition_confirmation_semester")(?=[^>]*x-bind:disabled="submitting")[^>]*>/',
+            $content
+        );
     }
 
     public function test_archive_ui_does_not_render_active_semester_transition_actions(): void

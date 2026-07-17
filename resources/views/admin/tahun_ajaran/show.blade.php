@@ -250,8 +250,8 @@
                                            x-model="phrase"
                                            x-ref="semesterTransitionConfirmation"
                                            autocomplete="off"
-                                           x-bind:disabled="submitting"
-                                           class="mt-1 w-full rounded-md border-amber-300 shadow-sm focus:border-amber-500 focus:ring-amber-500 disabled:cursor-not-allowed disabled:bg-gray-100"
+                                           x-bind:readonly="submitting"
+                                           class="mt-1 w-full rounded-md border-amber-300 shadow-sm focus:border-amber-500 focus:ring-amber-500 read-only:cursor-wait read-only:bg-gray-100"
                                            placeholder="LANJUTKAN KE SEMESTER GENAP">
                                     @error('transition_confirmation')
                                         <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
