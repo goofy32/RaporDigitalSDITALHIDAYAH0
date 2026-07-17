@@ -11,7 +11,9 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 class SemesterTransitionEnrollmentTest extends TestCase
@@ -48,9 +50,11 @@ class SemesterTransitionEnrollmentTest extends TestCase
         config()->set('database.connections.sqlite.database', ':memory:');
         config()->set('cache.default', 'array');
         config()->set('session.driver', 'array');
+        config()->set('filesystems.default', 'local');
         DB::purge('sqlite');
         DB::reconnect('sqlite');
         Cache::flush();
+        Storage::fake('public');
 
         $this->createSchema();
         $this->seedFixture();
@@ -172,6 +176,141 @@ class SemesterTransitionEnrollmentTest extends TestCase
         $this->assertSame(0, DB::table('report_generations')->where('tahun_ajaran_id', $targetYear->id)->count());
     }
 
+    public function test_semester_transition_copies_report_templates_to_public_semester_copy_directory(): void
+    {
+        $this->assertSame('local', config('filesystems.default'));
+
+        $utsTemplateId = (int) DB::table('report_templates')
+            ->where('tahun_ajaran_id', $this->sourceYearId)
+            ->where('type', 'UTS')
+            ->value('id');
+        $utsSourcePath = 'templates/defaults/source.docx';
+        $uasStoredPath = '/public/templates/defaults/other/source.docx';
+        $uasSourcePath = 'templates/defaults/other/source.docx';
+
+        DB::table('report_templates')->where('id', $utsTemplateId)->update([
+            'filename' => 'source.docx',
+            'path' => $utsSourcePath,
+        ]);
+
+        $uasTemplateId = DB::table('report_templates')->insertGetId([
+            'filename' => 'source.docx',
+            'path' => $uasStoredPath,
+            'type' => 'UAS',
+            'is_active' => true,
+            'tahun_ajaran' => '2026/2027',
+            'tahun_ajaran_text' => '2026/2027',
+            'semester' => 1,
+            'kelas_id' => null,
+            'tahun_ajaran_id' => $this->sourceYearId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        Storage::disk('public')->put($utsSourcePath, 'uts-docx');
+        Storage::disk('public')->put($uasSourcePath, 'uas-docx');
+
+        $this->runTransition()
+            ->assertRedirect(route('tahun.ajaran.index'))
+            ->assertSessionHas('success');
+
+        $targetYear = $this->targetYear();
+        $this->assertNotNull($targetYear);
+
+        $copiedTemplates = DB::table('report_templates')
+            ->where('tahun_ajaran_id', $targetYear->id)
+            ->orderBy('type')
+            ->get(['type', 'path', 'is_active']);
+
+        $this->assertCount(2, $copiedTemplates);
+        $this->assertCount(2, $copiedTemplates->pluck('path')->unique());
+
+        foreach ($copiedTemplates as $template) {
+            $this->assertStringStartsWith("templates/semester-copies/{$targetYear->id}/", $template->path);
+            $this->assertFalse(str_starts_with($template->path, 'templates/defaults/'));
+            $this->assertStringNotContainsString('public/', $template->path);
+            $this->assertStringNotContainsString('\\', $template->path);
+            $this->assertSame(0, (int) $template->is_active);
+            Storage::disk('public')->assertExists($template->path);
+        }
+
+        $utsCopiedPath = $copiedTemplates->firstWhere('type', 'UTS')->path;
+        $uasCopiedPath = $copiedTemplates->firstWhere('type', 'UAS')->path;
+
+        $this->assertStringContainsString("template-{$utsTemplateId}-uts-source.docx", $utsCopiedPath);
+        $this->assertStringContainsString("template-{$uasTemplateId}-uas-source.docx", $uasCopiedPath);
+    }
+
+    public function test_semester_transition_rollback_deletes_copied_report_template_files(): void
+    {
+        $templateId = (int) DB::table('report_templates')
+            ->where('tahun_ajaran_id', $this->sourceYearId)
+            ->where('type', 'UTS')
+            ->value('id');
+        $sourcePath = 'templates/defaults/rollback-source.docx';
+
+        DB::table('report_templates')->where('id', $templateId)->update([
+            'filename' => 'rollback-source.docx',
+            'path' => $sourcePath,
+        ]);
+        Storage::disk('public')->put($sourcePath, 'template-docx');
+
+        DB::statement("
+            CREATE TRIGGER fail_semester_two_attendance_copy
+            BEFORE INSERT ON absensis
+            WHEN NEW.semester = 2
+            BEGIN
+                SELECT RAISE(ABORT, 'forced attendance copy failure');
+            END
+        ");
+
+        $this->runTransition()
+            ->assertRedirect()
+            ->assertSessionHas('error');
+
+        $this->assertSame(1, DB::table('tahun_ajarans')->count());
+        $this->assertSame(1, DB::table('report_templates')->where('tahun_ajaran_id', $this->sourceYearId)->count());
+        Storage::disk('public')->assertExists($sourcePath);
+        $this->assertSame([], Storage::disk('public')->allFiles('templates/semester-copies'));
+    }
+
+    public function test_missing_source_report_template_file_reuses_existing_path_and_logs_warning(): void
+    {
+        Log::spy();
+
+        $templateId = (int) DB::table('report_templates')
+            ->where('tahun_ajaran_id', $this->sourceYearId)
+            ->where('type', 'UTS')
+            ->value('id');
+        $missingPath = 'templates/defaults/missing-source.docx';
+
+        DB::table('report_templates')->where('id', $templateId)->update([
+            'filename' => 'missing-source.docx',
+            'path' => $missingPath,
+        ]);
+        Storage::disk('public')->assertMissing($missingPath);
+
+        $this->runTransition()
+            ->assertRedirect(route('tahun.ajaran.index'))
+            ->assertSessionHas('success');
+
+        $targetYear = $this->targetYear();
+        $this->assertNotNull($targetYear);
+
+        $copiedPath = DB::table('report_templates')
+            ->where('tahun_ajaran_id', $targetYear->id)
+            ->value('path');
+
+        $this->assertSame($missingPath, $copiedPath);
+        $this->assertSame([], Storage::disk('public')->allFiles('templates/semester-copies'));
+
+        Log::shouldHaveReceived('warning')->withArgs(function ($message, $context) use ($templateId, $missingPath) {
+            return $message === 'Report template file missing during semester transition; copied template metadata will reuse existing path.'
+                && ($context['report_template_id'] ?? null) === $templateId
+                && ($context['path'] ?? null) === $missingPath;
+        });
+    }
+
     public function test_transition_skips_bobot_when_source_has_no_persisted_bobot(): void
     {
         DB::table('bobot_nilais')->where('tahun_ajaran_id', $this->sourceYearId)->delete();
@@ -268,7 +407,16 @@ class SemesterTransitionEnrollmentTest extends TestCase
         $this->actingAs($this->admin)
             ->get(route('tahun.ajaran.show', $this->sourceYearId))
             ->assertOk()
-            ->assertSeeText('Lanjutkan ke Semester Genap?')
+            ->assertSeeText('Edit Tahun Ajaran')
+            ->assertSeeText('Lanjutkan ke Semester Genap')
+            ->assertSee('data-semester-transition-trigger', false)
+            ->assertSee('data-semester-transition-modal', false)
+            ->assertSee('transitionModalOpen: false', false)
+            ->assertSee('x-show="transitionModalOpen"', false)
+            ->assertSee('x-cloak', false)
+            ->assertDontSee('w-full rounded-lg border border-amber-200 bg-amber-50 p-4', false)
+            ->assertSeeText('Ringkasan di bawah dihitung saat halaman ini dimuat. Jika data sumber berubah, muat ulang halaman sebelum melanjutkan.')
+            ->assertDontSeeText('Ringkasan di bawah adalah snapshot saat tombol ini dibuka.')
             ->assertSeeText('Kelas')
             ->assertSeeText('2 kelas tersedia')
             ->assertSeeText('Roster siswa sumber')
@@ -298,7 +446,8 @@ class SemesterTransitionEnrollmentTest extends TestCase
             ])
             ->post(route('tahun.ajaran.advance-semester', $this->sourceYearId))
             ->assertRedirect()
-            ->assertSessionHas('error', 'Konfirmasi tidak sesuai. Ketik kalimat yang diminta untuk melanjutkan.');
+            ->assertSessionHas('error', 'Konfirmasi tidak sesuai. Ketik kalimat yang diminta untuk melanjutkan.')
+            ->assertSessionHasErrors('transition_confirmation');
 
         $this->assertSame($counts, $this->coreCounts());
         $this->assertDatabaseMissing('tahun_ajarans', [
@@ -322,10 +471,36 @@ class SemesterTransitionEnrollmentTest extends TestCase
                 'transition_confirmation' => 'lanjutkan',
             ])
             ->assertRedirect()
-            ->assertSessionHas('error', 'Konfirmasi tidak sesuai. Ketik kalimat yang diminta untuk melanjutkan.');
+            ->assertSessionHas('error', 'Konfirmasi tidak sesuai. Ketik kalimat yang diminta untuk melanjutkan.')
+            ->assertSessionHasErrors('transition_confirmation');
 
         $this->assertSame($counts, $this->coreCounts());
         $this->assertTrue((bool) DB::table('tahun_ajarans')->where('id', $this->sourceYearId)->value('is_active'));
+    }
+
+    public function test_semester_transition_modal_reopens_after_backend_confirmation_validation_error(): void
+    {
+        $this->actingAs($this->admin)
+            ->from(route('tahun.ajaran.show', $this->sourceYearId))
+            ->withSession([
+                'tahun_ajaran_id' => $this->sourceYearId,
+                'selected_semester' => 1,
+                'no_tahun_ajaran' => false,
+            ])
+            ->post(route('tahun.ajaran.advance-semester', $this->sourceYearId), [
+                'transition_confirmation' => 'lanjutkan',
+            ])
+            ->assertRedirect(route('tahun.ajaran.show', $this->sourceYearId))
+            ->assertSessionHasErrors('transition_confirmation');
+
+        $this->actingAs($this->admin)
+            ->get(route('tahun.ajaran.show', $this->sourceYearId))
+            ->assertOk()
+            ->assertSee('transitionModalOpen: true', false)
+            ->assertSee('x-init="if (transitionModalOpen)', false)
+            ->assertSeeText('Konfirmasi tidak sesuai. Ketik kalimat yang diminta untuk melanjutkan.')
+            ->assertSeeText('Ringkasan di bawah dihitung saat halaman ini dimuat. Jika data sumber berubah, muat ulang halaman sebelum melanjutkan.')
+            ->assertDontSeeText('Ringkasan di bawah adalah snapshot saat tombol ini dibuka.');
     }
 
     public function test_semester_transition_rejects_active_source_that_is_not_semester_ganjil(): void
@@ -350,9 +525,19 @@ class SemesterTransitionEnrollmentTest extends TestCase
         $this->actingAs($this->admin)
             ->get(route('tahun.ajaran.show', $this->sourceYearId))
             ->assertOk()
-            ->assertSeeText('Lanjutkan ke Semester Genap?')
+            ->assertSeeText('Edit Tahun Ajaran')
+            ->assertSeeText('Lanjutkan ke Semester Genap')
+            ->assertSeeText('Konfirmasi Lanjut ke Semester Genap')
             ->assertSeeText('Perubahan yang Anda lakukan pada Semester Ganjil setelah proses ini tidak akan otomatis disalin ke Semester Genap.')
             ->assertSeeText('Semester Genap akan menjadi periode aktif untuk Admin, Pengajar, dan Wali Kelas.')
+            ->assertSeeText('Ringkasan di bawah dihitung saat halaman ini dimuat. Jika data sumber berubah, muat ulang halaman sebelum melanjutkan.')
+            ->assertDontSeeText('Ringkasan di bawah adalah snapshot saat tombol ini dibuka.')
+            ->assertSeeText('Batal')
+            ->assertSeeText('Memproses...')
+            ->assertSee('transitionModalOpen: false', false)
+            ->assertSee('x-init="if (transitionModalOpen)', false)
+            ->assertSee('x-on:keydown.escape.window="closeTransitionModal()"', false)
+            ->assertSee('x-on:submit="if (!canSubmit || submitting)', false)
             ->assertSeeText('LANJUTKAN KE SEMESTER GENAP')
             ->assertSee('disabled', false);
     }

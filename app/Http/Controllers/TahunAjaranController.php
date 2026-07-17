@@ -30,6 +30,7 @@ class TahunAjaranController extends Controller
     private const PERMANENT_DELETE_ACTIVE_TARGET_MESSAGE = 'Tahun ajaran aktif tidak dapat dihapus permanen. Nonaktifkan atau pilih tahun ajaran lain terlebih dahulu.';
     private const PERMANENT_DELETE_SUCCESS_MESSAGE = 'Tahun ajaran berhasil dihapus permanen.';
     private const PERMANENT_DELETE_TEMPLATE_CLEANUP_WARNING = 'Tahun ajaran berhasil dihapus permanen, tetapi ada file template yang perlu dibersihkan oleh administrator sistem.';
+    private const SEMESTER_TEMPLATE_COPY_DIRECTORY = 'templates/semester-copies';
     private const SEMESTER_GENAP_CONFIRMATION = 'LANJUTKAN KE SEMESTER GENAP';
     private const NEXT_YEAR_CONFIRMATION = 'BUAT TAHUN AJARAN BERIKUTNYA';
     private const CONFIRMATION_MISMATCH_MESSAGE = 'Konfirmasi tidak sesuai. Ketik kalimat yang diminta untuk melanjutkan.';
@@ -202,7 +203,7 @@ class TahunAjaranController extends Controller
 
         $reportTemplates = \App\Models\ReportTemplate::where('tahun_ajaran_id', $sourceTahunAjaran->id)->get();
         foreach ($reportTemplates as $template) {
-            $newPath = $this->copyReportTemplateFileForSemester($template, $copiedStoragePaths);
+            $newPath = $this->copyReportTemplateFileForSemester($template, $newTahunAjaran, $copiedStoragePaths);
 
             $newTemplate = $template->replicate();
             $newTemplate->tahun_ajaran_id = $newTahunAjaran->id;
@@ -536,45 +537,74 @@ class TahunAjaranController extends Controller
         return (int) $query->count();
     }
 
-    private function copyReportTemplateFileForSemester(ReportTemplate $template, array &$copiedStoragePaths): ?string
+    private function copyReportTemplateFileForSemester(ReportTemplate $template, TahunAjaran $newTahunAjaran, array &$copiedStoragePaths): ?string
     {
-        if (! $template->path) {
-            return $template->path;
+        $sourcePath = $this->normalizePublicDiskRelativeTemplatePath($template->path);
+
+        if (! $sourcePath) {
+            return $sourcePath;
         }
 
-        $sourcePath = 'public/' . $template->path;
+        $disk = Storage::disk('public');
 
-        if (! Storage::exists($sourcePath)) {
+        if (! $disk->exists($sourcePath)) {
             Log::warning('Report template file missing during semester transition; copied template metadata will reuse existing path.', [
                 'report_template_id' => $template->id,
-                'path' => $template->path,
+                'path' => $sourcePath,
             ]);
 
-            return $template->path;
+            return $sourcePath;
         }
 
-        $newPath = str_replace(
-            basename($template->path),
-            'semester2_' . basename($template->path),
-            $template->path
-        );
-        $targetPath = 'public/' . $newPath;
+        $targetDirectory = self::SEMESTER_TEMPLATE_COPY_DIRECTORY . '/' . $newTahunAjaran->id;
+        $disk->makeDirectory($targetDirectory);
+        $targetPath = $targetDirectory . '/' . $this->semesterTemplateCopyFilename($template, $newTahunAjaran, $sourcePath);
 
-        if (! Storage::copy($sourcePath, $targetPath)) {
+        if (! $disk->copy($sourcePath, $targetPath)) {
             throw new RuntimeException("Failed to copy report template file for template {$template->id}.");
         }
 
         $copiedStoragePaths[] = $targetPath;
 
-        return $newPath;
+        return $targetPath;
+    }
+
+    private function normalizePublicDiskRelativeTemplatePath(?string $path): ?string
+    {
+        if ($path === null) {
+            return null;
+        }
+
+        $normalized = str_replace('\\', '/', trim($path));
+        $normalized = preg_replace('#/+#', '/', $normalized);
+        $normalized = ltrim($normalized, '/');
+
+        if (str_starts_with($normalized, 'public/')) {
+            $normalized = substr($normalized, strlen('public/'));
+        }
+
+        return $normalized === '' ? null : $normalized;
+    }
+
+    private function semesterTemplateCopyFilename(ReportTemplate $template, TahunAjaran $newTahunAjaran, string $sourcePath): string
+    {
+        $type = strtolower((string) ($template->type ?: 'template'));
+        $safeType = preg_replace('/[^a-z0-9]+/', '-', $type) ?: 'template';
+        $safeOriginalName = preg_replace('/[^A-Za-z0-9._-]+/', '-', basename($sourcePath)) ?: 'template.docx';
+
+        return "semester2-target-{$newTahunAjaran->id}-template-{$template->id}-{$safeType}-{$safeOriginalName}";
     }
 
     private function cleanupCopiedTransitionFiles(array $copiedStoragePaths): void
     {
-        foreach ($copiedStoragePaths as $path) {
+        $disk = Storage::disk('public');
+
+        foreach (array_unique($copiedStoragePaths) as $path) {
             try {
-                if (Storage::exists($path)) {
-                    Storage::delete($path);
+                $relativePath = $this->normalizePublicDiskRelativeTemplatePath($path);
+
+                if ($relativePath && $disk->exists($relativePath)) {
+                    $disk->delete($relativePath);
                 }
             } catch (Throwable $exception) {
                 Log::warning('Failed to clean up copied report template file after transition rollback.', [
