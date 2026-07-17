@@ -27,6 +27,8 @@ class TahunAjaranController extends Controller
 {
     private const PERMANENT_DELETE_BLOCKED_MESSAGE = 'Tahun ajaran ini tidak dapat dihapus permanen karena masih terhubung dengan alur akademik, siswa, nilai, atau rapor. Gunakan arsip sebagai penyimpanan aman, atau pulihkan jika masih diperlukan.';
     private const PERMANENT_DELETE_PROTECTED_NOTICE = 'Data tahun ajaran ini tidak dapat dihapus permanen karena masih terhubung dengan alur akademik.';
+    private const PERMANENT_DELETE_SUCCESS_MESSAGE = 'Tahun ajaran berhasil dihapus permanen.';
+    private const PERMANENT_DELETE_TEMPLATE_CLEANUP_WARNING = 'Tahun ajaran berhasil dihapus permanen, tetapi ada file template yang perlu dibersihkan oleh administrator sistem.';
     private const SEMESTER_GENAP_CONFIRMATION = 'LANJUTKAN KE SEMESTER GENAP';
     private const NEXT_YEAR_CONFIRMATION = 'BUAT TAHUN AJARAN BERIKUTNYA';
     private const CONFIRMATION_MISMATCH_MESSAGE = 'Konfirmasi tidak sesuai. Ketik kalimat yang diminta untuk melanjutkan.';
@@ -1405,22 +1407,42 @@ class TahunAjaranController extends Controller
                 }
             }
             
-            // Hapus data terkait (optional, tergantung setup relasi foreign key di database)
-            // Jika FK di database sudah setting ON DELETE CASCADE, maka ini tidak perlu
-            
-            // Hapus permanen
-            $tahunAjaran->forceDelete();
+            $templateFilePaths = [];
+
+            DB::beginTransaction();
+
+            try {
+                $ownedTemplates = ReportTemplate::where('tahun_ajaran_id', $tahunAjaran->id)->get();
+                $templateFilePaths = $this->reportTemplateFilePaths($ownedTemplates);
+
+                foreach ($ownedTemplates as $template) {
+                    $template->delete();
+                }
+
+                $tahunAjaran->forceDelete();
+
+                DB::commit();
+            } catch (Throwable $exception) {
+                DB::rollBack();
+
+                throw $exception;
+            }
+
+            $templateFilesCleaned = $this->cleanupReportTemplateFilesAfterPermanentDelete($templateFilePaths, (int) $id);
             $this->clearTahunAjaranCaches($id);
+            $message = $templateFilesCleaned
+                ? self::PERMANENT_DELETE_SUCCESS_MESSAGE
+                : self::PERMANENT_DELETE_TEMPLATE_CLEANUP_WARNING;
 
             if (request()->expectsJson()) {
                 return response()->json([
                     'success' => true,
-                    'message' => 'Tahun ajaran berhasil dihapus permanen.'
+                    'message' => $message
                 ]);
             }
             
             return redirect()->route('tahun.ajaran.index', ['showArchived' => 'true'])
-                ->with('success', 'Tahun ajaran berhasil dihapus permanen.');
+                ->with('success', $message);
                 
         } catch (\Exception $e) {
             \Log::error('Error saat menghapus permanen tahun ajaran: ' . $e->getMessage(), [
@@ -1498,8 +1520,6 @@ class TahunAjaranController extends Controller
             'catatan_mata_pelajaran' => ['column' => 'tahun_ajaran_id', 'label' => 'catatan mata pelajaran'],
             'capaian_custom' => ['column' => 'tahun_ajaran_id', 'label' => 'capaian kompetensi'],
             'nilai_ekstrakurikuler' => ['column' => 'tahun_ajaran_id', 'label' => 'nilai ekstrakurikuler'],
-            'report_generations' => ['column' => 'tahun_ajaran_id', 'label' => 'riwayat rapor'],
-            'report_templates' => ['column' => 'tahun_ajaran_id', 'label' => 'template rapor'],
             'kkms' => ['column' => 'tahun_ajaran_id', 'label' => 'KKM'],
             'ekstrakurikulers' => ['column' => 'tahun_ajaran_id', 'label' => 'ekstrakurikuler'],
             'prestasis' => ['column' => 'tahun_ajaran_id', 'label' => 'prestasi'],
@@ -1525,7 +1545,118 @@ class TahunAjaranController extends Controller
             }
         }
 
+        $reportGenerationCount = $this->countPermanentDeleteBlockingReportGenerations($tahunAjaranId);
+        if ($reportGenerationCount > 0) {
+            $blocking[] = "riwayat rapor ({$reportGenerationCount})";
+        }
+
         return $blocking;
+    }
+
+    private function countPermanentDeleteBlockingReportGenerations(int $tahunAjaranId): int
+    {
+        if (! Schema::hasTable('report_generations')) {
+            return 0;
+        }
+
+        $templateIds = $this->reportTemplateIdsForTahunAjaran($tahunAjaranId);
+        $hasTahunAjaranColumn = Schema::hasColumn('report_generations', 'tahun_ajaran_id');
+        $hasTemplateColumn = Schema::hasColumn('report_generations', 'report_template_id');
+
+        if (! $hasTahunAjaranColumn && (! $hasTemplateColumn || $templateIds === [])) {
+            return 0;
+        }
+
+        $query = DB::table('report_generations')
+            ->where(function ($query) use ($tahunAjaranId, $templateIds, $hasTahunAjaranColumn, $hasTemplateColumn) {
+                $hasCondition = false;
+
+                if ($hasTahunAjaranColumn) {
+                    $query->where('tahun_ajaran_id', $tahunAjaranId);
+                    $hasCondition = true;
+                }
+
+                if ($hasTemplateColumn && $templateIds !== []) {
+                    $hasCondition
+                        ? $query->orWhereIn('report_template_id', $templateIds)
+                        : $query->whereIn('report_template_id', $templateIds);
+                }
+            });
+
+        return (int) $query->distinct()->count('id');
+    }
+
+    private function reportTemplateIdsForTahunAjaran(int $tahunAjaranId): array
+    {
+        if (! Schema::hasTable('report_templates') || ! Schema::hasColumn('report_templates', 'tahun_ajaran_id')) {
+            return [];
+        }
+
+        return ReportTemplate::where('tahun_ajaran_id', $tahunAjaranId)
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->filter()
+            ->values()
+            ->all();
+    }
+
+    private function reportTemplateFilePaths($templates): array
+    {
+        return $templates
+            ->map(fn (ReportTemplate $template) => $this->normalizeReportTemplateStoragePath($template->path))
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    private function normalizeReportTemplateStoragePath(?string $path): ?string
+    {
+        $path = trim(str_replace('\\', '/', (string) $path));
+        $path = ltrim($path, '/');
+
+        return $path !== '' ? $path : null;
+    }
+
+    private function cleanupReportTemplateFilesAfterPermanentDelete(array $paths, int $tahunAjaranId): bool
+    {
+        $allFilesCleaned = true;
+        $disk = Storage::disk('public');
+
+        foreach ($paths as $path) {
+            try {
+                if (! is_string($path) || $path === '') {
+                    continue;
+                }
+
+                if (ReportTemplate::where('path', $path)->exists()) {
+                    continue;
+                }
+
+                if (! $disk->exists($path)) {
+                    continue;
+                }
+
+                if (! $disk->delete($path)) {
+                    $allFilesCleaned = false;
+
+                    Log::warning('[TahunAjaranController] Failed to delete report template file after permanent delete.', [
+                        'tahun_ajaran_id' => $tahunAjaranId,
+                        'path' => $path,
+                    ]);
+                }
+            } catch (Throwable $exception) {
+                $allFilesCleaned = false;
+
+                Log::warning('[TahunAjaranController] Report template file cleanup failed after permanent delete.', [
+                    'tahun_ajaran_id' => $tahunAjaranId,
+                    'path' => $path,
+                    'error' => $exception->getMessage(),
+                ]);
+            }
+        }
+
+        return $allFilesCleaned;
     }
     
     /**

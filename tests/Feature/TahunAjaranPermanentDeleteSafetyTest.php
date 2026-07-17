@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 class TahunAjaranPermanentDeleteSafetyTest extends TestCase
@@ -33,6 +34,7 @@ class TahunAjaranPermanentDeleteSafetyTest extends TestCase
         DB::purge('sqlite');
         DB::reconnect('sqlite');
         Cache::flush();
+        Storage::fake('public');
 
         $this->createSchema();
         $this->seedFixture();
@@ -219,6 +221,9 @@ class TahunAjaranPermanentDeleteSafetyTest extends TestCase
     public function test_archived_year_with_only_bobot_can_be_permanently_deleted_and_cascades_bobot(): void
     {
         $archivedYearId = $this->insertYear('2032/2033', 1, false, true);
+        $templatePath = 'templates/bobot-plus-template.docx';
+        $templateId = $this->insertReportTemplate($archivedYearId, false, $templatePath);
+        Storage::disk('public')->put($templatePath, 'template-docx');
 
         DB::table('bobot_nilais')->insert([
             'tahun_ajaran_id' => $archivedYearId,
@@ -236,6 +241,8 @@ class TahunAjaranPermanentDeleteSafetyTest extends TestCase
 
         $this->assertSame(0, DB::table('tahun_ajarans')->where('id', $archivedYearId)->count());
         $this->assertSame(0, DB::table('bobot_nilais')->where('tahun_ajaran_id', $archivedYearId)->count());
+        $this->assertSame(0, DB::table('report_templates')->where('id', $templateId)->count());
+        Storage::disk('public')->assertMissing($templatePath);
     }
 
     public function test_permanent_delete_requires_archived_year(): void
@@ -250,11 +257,189 @@ class TahunAjaranPermanentDeleteSafetyTest extends TestCase
         $this->assertSame(1, DB::table('tahun_ajarans')->where('id', $inactiveYearId)->count());
     }
 
+    public function test_archived_year_with_only_inactive_report_template_is_permanently_deleted_and_cleans_file(): void
+    {
+        $archivedYearId = $this->insertYear('2033/2034', 1, false, true);
+        $path = 'templates/inactive-owned-template.docx';
+        $templateId = $this->insertReportTemplate($archivedYearId, false, $path);
+        Storage::disk('public')->put($path, 'template-docx');
+
+        $this->actingAs($this->admin, 'web')
+            ->delete(route('tahun.ajaran.force-delete', $archivedYearId))
+            ->assertRedirect(route('tahun.ajaran.index', ['showArchived' => 'true']))
+            ->assertSessionHas('success', 'Tahun ajaran berhasil dihapus permanen.');
+
+        $this->assertSame(0, DB::table('tahun_ajarans')->where('id', $archivedYearId)->count());
+        $this->assertSame(0, DB::table('report_templates')->where('id', $templateId)->count());
+        Storage::disk('public')->assertMissing($path);
+    }
+
+    public function test_archived_year_with_active_report_template_is_permanently_deleted_and_cleans_file(): void
+    {
+        $archivedYearId = $this->insertYear('2034/2035', 1, false, true);
+        $path = 'templates/active-owned-template.docx';
+        $templateId = $this->insertReportTemplate($archivedYearId, true, $path);
+        Storage::disk('public')->put($path, 'template-docx');
+
+        $this->actingAs($this->admin, 'web')
+            ->deleteJson(route('tahun.ajaran.force-delete', $archivedYearId))
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('message', 'Tahun ajaran berhasil dihapus permanen.');
+
+        $this->assertSame(0, DB::table('tahun_ajarans')->where('id', $archivedYearId)->count());
+        $this->assertSame(0, DB::table('report_templates')->where('id', $templateId)->count());
+        Storage::disk('public')->assertMissing($path);
+    }
+
+    public function test_shared_report_template_path_is_not_deleted_when_another_template_still_uses_it(): void
+    {
+        $archivedYearId = $this->insertYear('2035/2036', 1, false, true);
+        $survivingYearId = $this->insertYear('2036/2037', 1, false, false);
+        $sharedPath = 'templates/shared-template.docx';
+        $targetTemplateId = $this->insertReportTemplate($archivedYearId, false, $sharedPath);
+        $survivingTemplateId = $this->insertReportTemplate($survivingYearId, false, $sharedPath);
+        Storage::disk('public')->put($sharedPath, 'shared-template-docx');
+
+        $this->actingAs($this->admin, 'web')
+            ->delete(route('tahun.ajaran.force-delete', $archivedYearId))
+            ->assertRedirect(route('tahun.ajaran.index', ['showArchived' => 'true']))
+            ->assertSessionHas('success', 'Tahun ajaran berhasil dihapus permanen.');
+
+        $this->assertSame(0, DB::table('tahun_ajarans')->where('id', $archivedYearId)->count());
+        $this->assertSame(0, DB::table('report_templates')->where('id', $targetTemplateId)->count());
+        $this->assertSame(1, DB::table('report_templates')->where('id', $survivingTemplateId)->count());
+        Storage::disk('public')->assertExists($sharedPath);
+    }
+
+    public function test_missing_report_template_file_does_not_prevent_permanent_delete(): void
+    {
+        $archivedYearId = $this->insertYear('2037/2038', 1, false, true);
+        $path = 'templates/missing-owned-template.docx';
+        $templateId = $this->insertReportTemplate($archivedYearId, false, $path);
+
+        Storage::disk('public')->assertMissing($path);
+
+        $this->actingAs($this->admin, 'web')
+            ->delete(route('tahun.ajaran.force-delete', $archivedYearId))
+            ->assertRedirect(route('tahun.ajaran.index', ['showArchived' => 'true']))
+            ->assertSessionHas('success', 'Tahun ajaran berhasil dihapus permanen.');
+
+        $this->assertSame(0, DB::table('tahun_ajarans')->where('id', $archivedYearId)->count());
+        $this->assertSame(0, DB::table('report_templates')->where('id', $templateId)->count());
+    }
+
+    public function test_report_generation_with_target_tahun_ajaran_id_still_blocks_permanent_delete(): void
+    {
+        $archivedYearId = $this->insertYear('2038/2039', 1, false, true);
+        $this->insertReportGeneration($archivedYearId);
+
+        $response = $this->actingAs($this->admin, 'web')
+            ->deleteJson(route('tahun.ajaran.force-delete', $archivedYearId));
+
+        $response->assertStatus(422)
+            ->assertJsonPath('success', false);
+
+        $message = $response->json('message');
+        $this->assertStringContainsString('riwayat rapor (1)', $message);
+        $this->assertStringNotContainsString('SQLSTATE', $message);
+        $this->assertStringNotContainsString('report_generations', $message);
+        $this->assertStringNotContainsString('constraint', strtolower($message));
+        $this->assertSame(1, DB::table('tahun_ajarans')->where('id', $archivedYearId)->count());
+    }
+
+    public function test_legacy_report_generation_referencing_target_template_blocks_even_with_null_or_wrong_tahun_ajaran_id(): void
+    {
+        $archivedYearId = $this->insertYear('2039/2040', 1, false, true);
+        $wrongYearId = $this->insertYear('2040/2041', 1, false, false);
+        $templateId = $this->insertReportTemplate($archivedYearId, false, 'templates/history-owned-template.docx');
+        $this->insertReportGeneration(null, $templateId);
+        $this->insertReportGeneration($wrongYearId, $templateId);
+
+        $response = $this->actingAs($this->admin, 'web')
+            ->deleteJson(route('tahun.ajaran.force-delete', $archivedYearId));
+
+        $response->assertStatus(422)
+            ->assertJsonPath('success', false);
+
+        $message = $response->json('message');
+        $this->assertStringContainsString('riwayat rapor (2)', $message);
+        $this->assertStringNotContainsString('SQLSTATE', $message);
+        $this->assertStringNotContainsString('report_template_id', $message);
+        $this->assertStringNotContainsString('constraint', strtolower($message));
+        $this->assertSame(1, DB::table('tahun_ajarans')->where('id', $archivedYearId)->count());
+        $this->assertSame(1, DB::table('report_templates')->where('id', $templateId)->count());
+    }
+
+    public function test_report_template_row_and_file_are_not_removed_when_protected_dependency_blocks_delete(): void
+    {
+        $archivedYearId = $this->insertYear('2041/2042', 1, false, true);
+        $this->insertClass($archivedYearId);
+        $path = 'templates/protected-owned-template.docx';
+        $templateId = $this->insertReportTemplate($archivedYearId, false, $path);
+        Storage::disk('public')->put($path, 'template-docx');
+
+        $this->actingAs($this->admin, 'web')
+            ->delete(route('tahun.ajaran.force-delete', $archivedYearId))
+            ->assertRedirect()
+            ->assertSessionHas('error');
+
+        $message = session('error');
+        $this->assertStringContainsString('kelas (1)', $message);
+        $this->assertStringNotContainsString('template rapor', $message);
+        $this->assertSame(1, DB::table('tahun_ajarans')->where('id', $archivedYearId)->count());
+        $this->assertSame(1, DB::table('report_templates')->where('id', $templateId)->count());
+        Storage::disk('public')->assertExists($path);
+    }
+
+    public function test_templates_belonging_to_another_tahun_ajaran_are_never_deleted(): void
+    {
+        $archivedYearId = $this->insertYear('2042/2043', 1, false, true);
+        $otherYearId = $this->insertYear('2043/2044', 1, false, false);
+        $targetPath = 'templates/target-owned-template.docx';
+        $otherPath = 'templates/other-owned-template.docx';
+        $targetTemplateId = $this->insertReportTemplate($archivedYearId, false, $targetPath);
+        $otherTemplateId = $this->insertReportTemplate($otherYearId, false, $otherPath);
+        Storage::disk('public')->put($targetPath, 'target-template-docx');
+        Storage::disk('public')->put($otherPath, 'other-template-docx');
+
+        $this->actingAs($this->admin, 'web')
+            ->delete(route('tahun.ajaran.force-delete', $archivedYearId))
+            ->assertRedirect(route('tahun.ajaran.index', ['showArchived' => 'true']))
+            ->assertSessionHas('success');
+
+        $this->assertSame(0, DB::table('report_templates')->where('id', $targetTemplateId)->count());
+        $this->assertSame(1, DB::table('report_templates')->where('id', $otherTemplateId)->count());
+        Storage::disk('public')->assertMissing($targetPath);
+        Storage::disk('public')->assertExists($otherPath);
+    }
+
+    public function test_template_only_archived_year_is_not_rendered_as_protected(): void
+    {
+        $archivedYearId = $this->insertYear('2044/2045', 1, false, true);
+        $this->insertReportTemplate($archivedYearId, false, 'templates/template-only-ui.docx');
+
+        $this->actingAs($this->admin, 'web')
+            ->get(route('tahun.ajaran.show', $archivedYearId))
+            ->assertOk()
+            ->assertSeeText('Pulihkan Tahun Ajaran')
+            ->assertSeeText('Hapus Permanen')
+            ->assertDontSeeText('Dilindungi');
+
+        $this->actingAs($this->admin, 'web')
+            ->get(route('tahun.ajaran.index', ['showArchived' => 'true']))
+            ->assertOk()
+            ->assertSee('title="Hapus Permanen"', false)
+            ->assertDontSeeText('Tidak dapat dihapus permanen karena terhubung alur akademik.');
+    }
+
     private function createSchema(): void
     {
         foreach ([
             'bobot_nilais',
             'report_templates',
+            'report_template_kelas',
+            'report_mappings',
             'report_generations',
             'nilai_ekstrakurikuler',
             'capaian_custom',
@@ -363,7 +548,7 @@ class TahunAjaranPermanentDeleteSafetyTest extends TestCase
             $table->softDeletes();
         });
 
-        foreach (['nilais', 'absensis', 'catatan_siswa', 'catatan_mata_pelajaran', 'capaian_custom', 'nilai_ekstrakurikuler', 'report_generations', 'report_templates'] as $tableName) {
+        foreach (['nilais', 'absensis', 'catatan_siswa', 'catatan_mata_pelajaran', 'capaian_custom', 'nilai_ekstrakurikuler'] as $tableName) {
             Schema::create($tableName, function (Blueprint $table) {
                 $table->id();
                 $table->foreignId('tahun_ajaran_id')->nullable();
@@ -371,6 +556,42 @@ class TahunAjaranPermanentDeleteSafetyTest extends TestCase
                 $table->softDeletes();
             });
         }
+
+        Schema::create('report_templates', function (Blueprint $table) {
+            $table->id();
+            $table->string('filename')->nullable();
+            $table->string('path')->nullable();
+            $table->string('type')->nullable();
+            $table->boolean('is_active')->default(false);
+            $table->string('tahun_ajaran')->nullable();
+            $table->string('tahun_ajaran_text')->nullable();
+            $table->unsignedTinyInteger('semester')->nullable();
+            $table->foreignId('kelas_id')->nullable();
+            $table->foreignId('tahun_ajaran_id')->nullable();
+            $table->timestamps();
+        });
+
+        Schema::create('report_mappings', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('report_template_id');
+            $table->string('placeholder_key')->nullable();
+            $table->string('data_source')->nullable();
+            $table->timestamps();
+        });
+
+        Schema::create('report_template_kelas', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('report_template_id');
+            $table->foreignId('kelas_id');
+            $table->timestamps();
+        });
+
+        Schema::create('report_generations', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('tahun_ajaran_id')->nullable();
+            $table->foreignId('report_template_id')->nullable();
+            $table->timestamps();
+        });
 
         Schema::create('bobot_nilais', function (Blueprint $table) {
             $table->id();
@@ -440,6 +661,33 @@ class TahunAjaranPermanentDeleteSafetyTest extends TestCase
             'kelas_id' => $kelasId,
             'tahun_ajaran_id' => $tahunAjaranId,
             'status' => 'aktif',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function insertReportTemplate(int $tahunAjaranId, bool $active, string $path): int
+    {
+        return DB::table('report_templates')->insertGetId([
+            'filename' => basename($path),
+            'path' => $path,
+            'type' => 'UTS',
+            'is_active' => $active,
+            'tahun_ajaran' => 'Fixture',
+            'tahun_ajaran_text' => 'Fixture',
+            'semester' => 1,
+            'kelas_id' => null,
+            'tahun_ajaran_id' => $tahunAjaranId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function insertReportGeneration(?int $tahunAjaranId, ?int $templateId = null): int
+    {
+        return DB::table('report_generations')->insertGetId([
+            'tahun_ajaran_id' => $tahunAjaranId,
+            'report_template_id' => $templateId,
             'created_at' => now(),
             'updated_at' => now(),
         ]);
