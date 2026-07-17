@@ -245,6 +245,113 @@ class TahunAjaranPermanentDeleteSafetyTest extends TestCase
         Storage::disk('public')->assertMissing($templatePath);
     }
 
+    public function test_same_year_active_counterpart_does_not_block_empty_archived_semester_delete(): void
+    {
+        $activeGanjilId = $this->insertYear('2024/2025', 1, true, false);
+        $archivedGenapId = $this->insertYear('2024/2025', 2, false, true);
+        $templatePath = 'templates/id-2-like-owned-template.docx';
+        $templateId = $this->insertReportTemplate($archivedGenapId, false, $templatePath);
+        Storage::disk('public')->put($templatePath, 'template-docx');
+
+        DB::table('bobot_nilais')->insert([
+            'tahun_ajaran_id' => $archivedGenapId,
+            'bobot_tp' => 1,
+            'bobot_lm' => 1,
+            'bobot_as' => 2,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->actingAs($this->admin, 'web')
+            ->get(route('tahun.ajaran.show', $archivedGenapId))
+            ->assertOk()
+            ->assertSeeText('Pulihkan Tahun Ajaran')
+            ->assertSeeText('Hapus Permanen')
+            ->assertDontSeeText('Dilindungi');
+
+        $this->actingAs($this->admin, 'web')
+            ->get(route('tahun.ajaran.index', ['showArchived' => 'true']))
+            ->assertOk()
+            ->assertSee('title="Hapus Permanen"', false)
+            ->assertDontSeeText('Dilindungi');
+
+        $this->actingAs($this->admin, 'web')
+            ->delete(route('tahun.ajaran.force-delete', $archivedGenapId))
+            ->assertRedirect(route('tahun.ajaran.index', ['showArchived' => 'true']))
+            ->assertSessionHas('success', 'Tahun ajaran berhasil dihapus permanen.');
+
+        $this->assertSame(0, DB::table('tahun_ajarans')->where('id', $archivedGenapId)->count());
+        $this->assertSame(0, DB::table('bobot_nilais')->where('tahun_ajaran_id', $archivedGenapId)->count());
+        $this->assertSame(0, DB::table('report_templates')->where('id', $templateId)->count());
+        Storage::disk('public')->assertMissing($templatePath);
+
+        $activeGanjil = DB::table('tahun_ajarans')->where('id', $activeGanjilId)->first();
+        $this->assertNotNull($activeGanjil);
+        $this->assertSame(1, (int) $activeGanjil->is_active);
+        $this->assertSame(1, (int) $activeGanjil->semester);
+        $this->assertNull($activeGanjil->deleted_at);
+    }
+
+    public function test_same_year_active_counterpart_does_not_hide_real_dependency_blocker(): void
+    {
+        $activeGanjilId = $this->insertYear('2024/2025', 1, true, false);
+        $archivedGenapId = $this->insertYear('2024/2025', 2, false, true);
+        $classId = $this->insertClass($archivedGenapId);
+
+        $this->actingAs($this->admin, 'web')
+            ->get(route('tahun.ajaran.show', $archivedGenapId))
+            ->assertOk()
+            ->assertSeeText('Dilindungi')
+            ->assertDontSeeText('Hapus Permanen');
+
+        $response = $this->actingAs($this->admin, 'web')
+            ->deleteJson(route('tahun.ajaran.force-delete', $archivedGenapId));
+
+        $response->assertStatus(422)
+            ->assertJsonPath('success', false);
+
+        $message = $response->json('message');
+        $this->assertStringContainsString('kelas (1)', $message);
+        $this->assertStringNotContainsString('SQLSTATE', $message);
+        $this->assertStringNotContainsString('semester Ganjil', $message);
+        $this->assertStringNotContainsString('foreign key constraint', strtolower($message));
+
+        $this->assertSame(1, DB::table('tahun_ajarans')->where('id', $archivedGenapId)->count());
+        $this->assertSame(1, DB::table('kelas')->where('id', $classId)->count());
+        $activeGanjil = DB::table('tahun_ajarans')->where('id', $activeGanjilId)->first();
+        $this->assertNotNull($activeGanjil);
+        $this->assertSame(1, (int) $activeGanjil->is_active);
+        $this->assertNull($activeGanjil->deleted_at);
+    }
+
+    public function test_archived_year_that_is_itself_active_cannot_be_permanently_deleted(): void
+    {
+        $archivedActiveYearId = $this->insertYear('2045/2046', 1, true, true);
+
+        $this->actingAs($this->admin, 'web')
+            ->get(route('tahun.ajaran.show', $archivedActiveYearId))
+            ->assertOk()
+            ->assertSeeText('Dilindungi')
+            ->assertDontSeeText('Hapus Permanen');
+
+        $response = $this->actingAs($this->admin, 'web')
+            ->deleteJson(route('tahun.ajaran.force-delete', $archivedActiveYearId));
+
+        $response->assertStatus(422)
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('message', 'Tahun ajaran aktif tidak dapat dihapus permanen. Nonaktifkan atau pilih tahun ajaran lain terlebih dahulu.');
+
+        $message = $response->json('message');
+        $this->assertStringNotContainsString('SQLSTATE', $message);
+        $this->assertStringNotContainsString('tahun_ajarans', $message);
+        $this->assertStringNotContainsString('constraint', strtolower($message));
+
+        $archivedActiveYear = DB::table('tahun_ajarans')->where('id', $archivedActiveYearId)->first();
+        $this->assertNotNull($archivedActiveYear);
+        $this->assertSame(1, (int) $archivedActiveYear->is_active);
+        $this->assertNotNull($archivedActiveYear->deleted_at);
+    }
+
     public function test_permanent_delete_requires_archived_year(): void
     {
         $inactiveYearId = $this->insertYear('2030/2031', 1, false, false);

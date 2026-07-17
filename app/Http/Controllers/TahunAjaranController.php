@@ -27,6 +27,7 @@ class TahunAjaranController extends Controller
 {
     private const PERMANENT_DELETE_BLOCKED_MESSAGE = 'Tahun ajaran ini tidak dapat dihapus permanen karena masih terhubung dengan alur akademik, siswa, nilai, atau rapor. Gunakan arsip sebagai penyimpanan aman, atau pulihkan jika masih diperlukan.';
     private const PERMANENT_DELETE_PROTECTED_NOTICE = 'Data tahun ajaran ini tidak dapat dihapus permanen karena masih terhubung dengan alur akademik.';
+    private const PERMANENT_DELETE_ACTIVE_TARGET_MESSAGE = 'Tahun ajaran aktif tidak dapat dihapus permanen. Nonaktifkan atau pilih tahun ajaran lain terlebih dahulu.';
     private const PERMANENT_DELETE_SUCCESS_MESSAGE = 'Tahun ajaran berhasil dihapus permanen.';
     private const PERMANENT_DELETE_TEMPLATE_CLEANUP_WARNING = 'Tahun ajaran berhasil dihapus permanen, tetapi ada file template yang perlu dibersihkan oleh administrator sistem.';
     private const SEMESTER_GENAP_CONFIRMATION = 'LANJUTKAN KE SEMESTER GENAP';
@@ -1352,9 +1353,9 @@ class TahunAjaranController extends Controller
                     ->with('error', 'Hanya tahun ajaran yang sudah diarsipkan yang dapat dihapus permanen.');
             }
 
-            $activeFlowMessage = $this->activeAcademicYearFlowDeleteBlockMessage($tahunAjaran);
-            if ($activeFlowMessage) {
-                Log::info('[TahunAjaranController] Permanent delete blocked because academic year belongs to active semester flow', [
+            $activeTargetMessage = $this->permanentDeleteActiveTargetBlockMessage($tahunAjaran);
+            if ($activeTargetMessage) {
+                Log::info('[TahunAjaranController] Permanent delete blocked because target academic year is active', [
                     'tahun_ajaran_id' => $tahunAjaran->id,
                     'user_id' => auth()->id(),
                 ]);
@@ -1362,11 +1363,11 @@ class TahunAjaranController extends Controller
                 if (request()->expectsJson()) {
                     return response()->json([
                         'success' => false,
-                        'message' => $activeFlowMessage,
+                        'message' => $activeTargetMessage,
                     ], 422);
                 }
 
-                return redirect()->back()->with('error', $activeFlowMessage);
+                return redirect()->back()->with('error', $activeTargetMessage);
             }
 
             $blockingDependencies = $this->permanentDeleteBlockingDependencies((int) $tahunAjaran->id);
@@ -1462,22 +1463,11 @@ class TahunAjaranController extends Controller
         }
     }
 
-    private function activeAcademicYearFlowDeleteBlockMessage(TahunAjaran $tahunAjaran): ?string
+    private function permanentDeleteActiveTargetBlockMessage(TahunAjaran $tahunAjaran): ?string
     {
-        $activeCounterpart = TahunAjaran::query()
-            ->where('tahun_ajaran', $tahunAjaran->tahun_ajaran)
-            ->where('id', '!=', $tahunAjaran->id)
-            ->where('is_active', true)
-            ->first();
-
-        if (! $activeCounterpart) {
-            return null;
-        }
-
-        return sprintf(
-            'Tahun ajaran ini tidak dapat dihapus permanen karena masih terhubung dengan alur akademik aktif semester %s. Gunakan arsip sebagai penyimpanan aman, atau pulihkan jika masih diperlukan.',
-            $activeCounterpart->semester == 1 ? 'Ganjil' : 'Genap'
-        );
+        return $tahunAjaran->is_active
+            ? self::PERMANENT_DELETE_ACTIVE_TARGET_MESSAGE
+            : null;
     }
 
     private function permanentDeleteProtectionMessage(TahunAjaran $tahunAjaran): ?string
@@ -1486,7 +1476,7 @@ class TahunAjaranController extends Controller
             return null;
         }
 
-        if ($this->activeAcademicYearFlowDeleteBlockMessage($tahunAjaran)) {
+        if ($this->permanentDeleteActiveTargetBlockMessage($tahunAjaran)) {
             return self::PERMANENT_DELETE_PROTECTED_NOTICE;
         }
 

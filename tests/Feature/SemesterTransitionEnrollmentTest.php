@@ -427,20 +427,18 @@ class SemesterTransitionEnrollmentTest extends TestCase
         $this->assertSame($this->sourceYearId, DB::table('tahun_ajarans')->where('is_active', true)->value('id'));
     }
 
-    public function test_archived_genap_in_active_year_flow_cannot_be_permanently_deleted(): void
+    public function test_empty_archived_genap_in_active_year_flow_can_be_permanently_deleted(): void
     {
         $archivedGenapId = $this->insertArchivedSameAcademicYear(2);
 
         $this->actingAs($this->admin)
             ->delete(route('tahun.ajaran.force-delete', $archivedGenapId))
-            ->assertRedirect()
-            ->assertSessionHas('error');
+            ->assertRedirect(route('tahun.ajaran.index', ['showArchived' => 'true']))
+            ->assertSessionHas('success', 'Tahun ajaran berhasil dihapus permanen.');
 
-        $message = session('error');
-        $this->assertStringContainsString('tidak dapat dihapus permanen', $message);
-        $this->assertStringContainsString('alur akademik aktif', $message);
-        $this->assertStringContainsString('Gunakan arsip sebagai penyimpanan aman', $message);
-        $this->assertNotNull(DB::table('tahun_ajarans')->where('id', $archivedGenapId)->value('deleted_at'));
+        $this->assertSame(0, DB::table('tahun_ajarans')->where('id', $archivedGenapId)->count());
+        $this->assertSame($this->sourceYearId, DB::table('tahun_ajarans')->where('is_active', true)->value('id'));
+        $this->assertNull(DB::table('tahun_ajarans')->where('id', $this->sourceYearId)->value('deleted_at'));
     }
 
     public function test_mid_transition_failure_rolls_back_database_changes(): void
