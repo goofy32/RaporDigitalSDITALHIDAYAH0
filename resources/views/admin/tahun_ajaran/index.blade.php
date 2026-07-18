@@ -212,15 +212,9 @@
                                             <span>Tidak dapat dihapus permanen karena terhubung alur akademik.</span>
                                         </div>
                                     @else
-                                        <!-- Tombol Hapus Permanen untuk tahun ajaran yang diarsipkan dan aman dihapus -->
-                                        <form action="{{ route('tahun.ajaran.force-delete', $tahunAjaran->id) }}" method="POST" class="inline">
-                                            @csrf
-                                            @method('DELETE')
-                                            <button type="submit" class="border-0 bg-transparent p-0" title="Hapus Permanen" 
-                                                    onclick="return confirm('PERHATIAN: Tindakan ini tidak dapat dibatalkan. Tahun ajaran hanya dapat dihapus permanen jika tidak memiliki data siswa/enrollment atau riwayat terkait.\n\nApakah Anda benar-benar yakin?')">
-                                                <img src="{{ asset('images/icons/delete.png') }}" alt="Hapus Permanen" class="w-5 h-5">
-                                            </button>
-                                        </form>
+                                        <a href="{{ route('tahun.ajaran.show', $tahunAjaran->id) }}" title="Hapus Permanen">
+                                            <img src="{{ asset('images/icons/delete.png') }}" alt="Hapus Permanen" class="w-5 h-5">
+                                        </a>
                                     @endif
                                 @elseif(!$tahunAjaran->is_active)
                                     <!-- Tombol Arsip untuk tahun ajaran yang tidak diarsipkan -->

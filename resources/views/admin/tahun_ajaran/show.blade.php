@@ -95,10 +95,15 @@
         <div class="flex flex-wrap gap-4"
              x-data="{
                  transitionModalOpen: @js($errors->has('transition_confirmation')),
+                 purgeModalOpen: @js($errors->has('purge_confirmation')),
                  phrase: '',
+                 purgePhrase: '',
                  submitting: false,
+                 purgeSubmitting: false,
                  required: 'LANJUTKAN KE SEMESTER GENAP',
+                 purgeRequired: @js($permanentPurgeConfirmationPhrase ?? ''),
                  get canSubmit() { return this.phrase.trim() === this.required && !this.submitting; },
+                 get canSubmitPurge() { return this.purgePhrase.trim() === this.purgeRequired && !this.purgeSubmitting; },
                  openTransitionModal() {
                      this.transitionModalOpen = true;
                      this.phrase = '';
@@ -108,10 +113,20 @@
                  closeTransitionModal() {
                      if (this.submitting) return;
                      this.transitionModalOpen = false;
+                 },
+                 openPurgeModal() {
+                     this.purgeModalOpen = true;
+                     this.purgePhrase = '';
+                     this.purgeSubmitting = false;
+                     this.$nextTick(() => this.$refs.permanentPurgeConfirmation?.focus());
+                 },
+                 closePurgeModal() {
+                     if (this.purgeSubmitting) return;
+                     this.purgeModalOpen = false;
                  }
              }"
-             x-init="if (transitionModalOpen) { $nextTick(() => $refs.semesterTransitionConfirmation?.focus()); }"
-             x-on:keydown.escape.window="closeTransitionModal()">
+             x-init="if (transitionModalOpen) { $nextTick(() => $refs.semesterTransitionConfirmation?.focus()); } if (purgeModalOpen) { $nextTick(() => $refs.permanentPurgeConfirmation?.focus()); }"
+             x-on:keydown.escape.window="closeTransitionModal(); closePurgeModal()">
             @if(!$tahunAjaran->trashed())
                 <a href="{{ route('tahun.ajaran.edit', $tahunAjaran->id) }}" 
                     class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">
@@ -146,15 +161,12 @@
                         <p>{{ $permanentDeleteProtectionMessage }}</p>
                     </div>
                 @else
-                    <form action="{{ route('tahun.ajaran.force-delete', $tahunAjaran->id) }}" method="POST" class="inline">
-                        @csrf
-                        @method('DELETE')
-                        <button type="submit"
+                    <button type="button"
+                            data-permanent-purge-trigger
                             class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
-                            onclick="return confirm('PERHATIAN: Tindakan ini tidak dapat dibatalkan. Tahun ajaran hanya dapat dihapus permanen jika tidak memiliki data siswa/enrollment atau riwayat terkait.\n\nApakah Anda benar-benar yakin?')">
-                            <i class="fas fa-trash mr-2"></i>Hapus Permanen
-                        </button>
-                    </form>
+                            x-on:click="openPurgeModal()">
+                        <i class="fas fa-trash mr-2"></i>Hapus Permanen
+                    </button>
                 @endif
             @elseif(!$tahunAjaran->is_active)
                 <form action="{{ route('tahun.ajaran.set-active', $tahunAjaran->id) }}" method="POST" class="inline">
@@ -165,6 +177,161 @@
                         <i class="fas fa-power-off mr-2"></i>Aktifkan Tahun Ajaran
                     </button>
                 </form>
+            @endif
+
+            @if($tahunAjaran->trashed() && !$permanentDeleteProtectionMessage)
+                @php
+                    $purgeCounts = $permanentPurgePreview['counts'] ?? [];
+                    $activeReplacement = $permanentPurgePreview['active_replacement'] ?? null;
+                    $purgeCountLabels = [
+                        'classes' => 'Kelas',
+                        'enrollments' => 'Roster semester',
+                        'teacher_assignments' => 'Penugasan guru/wali kelas',
+                        'subjects' => 'Mata pelajaran',
+                        'learning_scopes' => 'Lingkup materi',
+                        'learning_goals' => 'Tujuan pembelajaran',
+                        'pembelajarans' => 'Pembelajaran',
+                        'pembelajaran_students' => 'Siswa pembelajaran',
+                        'kkm' => 'KKM',
+                        'bobot' => 'Bobot nilai',
+                        'scores' => 'Nilai',
+                        'attendance' => 'Absensi',
+                        'student_notes' => 'Catatan siswa',
+                        'subject_notes' => 'Catatan mata pelajaran',
+                        'competencies' => 'Capaian kompetensi',
+                        'extracurriculars' => 'Ekstrakurikuler',
+                        'extracurricular_scores' => 'Nilai ekstrakurikuler',
+                        'achievements' => 'Prestasi',
+                        'report_generations' => 'Riwayat rapor',
+                        'report_templates' => 'Template rapor',
+                        'report_mappings' => 'Mapping template',
+                        'report_template_class_pivots' => 'Penugasan template ke kelas',
+                        'snapshots' => 'Snapshot semester',
+                        'capaian_templates' => 'Template capaian',
+                        'capaian_ranges' => 'Range capaian',
+                        'capaian_phrase_defaults' => 'Default frasa capaian',
+                        'student_class_remaps' => 'Siswa yang diperbaiki ke periode aktif',
+                    ];
+                @endphp
+
+                <div x-show="purgeModalOpen"
+                     x-cloak
+                     x-transition.opacity
+                     data-permanent-purge-modal
+                     class="fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-4"
+                     role="dialog"
+                     aria-modal="true"
+                     aria-labelledby="permanent-purge-modal-title">
+                    <div class="absolute inset-0 bg-gray-900/60" x-on:click="closePurgeModal()"></div>
+
+                    <div class="relative z-10 flex max-h-[100dvh] w-full flex-col bg-white shadow-xl sm:max-h-[90vh] sm:max-w-4xl sm:rounded-xl">
+                        <div class="flex items-start justify-between gap-4 border-b border-gray-200 px-4 py-4 sm:px-6">
+                            <div>
+                                <h3 id="permanent-purge-modal-title" class="text-lg font-semibold text-gray-900">Konfirmasi Hapus Permanen Tahun Ajaran</h3>
+                                <p class="mt-1 text-sm text-gray-600">
+                                    {{ $tahunAjaran->tahun_ajaran }} - Semester {{ (int) $tahunAjaran->semester === 1 ? 'Ganjil' : 'Genap' }}
+                                </p>
+                            </div>
+                            <button type="button"
+                                    class="rounded-md p-2 text-gray-500 hover:bg-gray-100 hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
+                                    x-bind:disabled="purgeSubmitting"
+                                    x-on:click="closePurgeModal()"
+                                    aria-label="Tutup modal hapus permanen">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+
+                        <form action="{{ route('tahun.ajaran.force-delete', $tahunAjaran->id) }}"
+                              method="POST"
+                              class="flex min-h-0 flex-1 flex-col"
+                              x-on:submit="if (!canSubmitPurge || purgeSubmitting) { $event.preventDefault(); return false; } purgeSubmitting = true;">
+                            @csrf
+                            @method('DELETE')
+
+                            <div class="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
+                                <div class="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-900">
+                                    <p class="font-semibold">Tindakan ini tidak dapat dibatalkan.</p>
+                                    <p class="mt-2">
+                                        Seluruh data yang hanya dimiliki periode ini akan dihapus permanen.
+                                        Identitas siswa, guru, akun, dan profil sekolah tidak akan dihapus.
+                                        Tindakan ini tidak dapat dibatalkan.
+                                    </p>
+                                </div>
+
+                                <dl class="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+                                    <div>
+                                        <dt class="font-medium text-gray-700">Tahun ajaran</dt>
+                                        <dd class="text-gray-900">{{ $tahunAjaran->tahun_ajaran }}</dd>
+                                    </div>
+                                    <div>
+                                        <dt class="font-medium text-gray-700">Semester</dt>
+                                        <dd class="text-gray-900">{{ (int) $tahunAjaran->semester === 1 ? 'Ganjil' : 'Genap' }}</dd>
+                                    </div>
+                                    <div>
+                                        <dt class="font-medium text-gray-700">Status periode ini</dt>
+                                        <dd class="text-gray-900">{{ $tahunAjaran->is_active ? 'Aktif' : 'Tidak aktif' }} dan diarsipkan</dd>
+                                    </div>
+                                    <div>
+                                        <dt class="font-medium text-gray-700">Periode aktif pengganti</dt>
+                                        <dd class="text-gray-900">
+                                            @if($activeReplacement)
+                                                {{ $activeReplacement['tahun_ajaran'] }} - Semester {{ $activeReplacement['semester_label'] }}
+                                            @else
+                                                Tidak tersedia
+                                            @endif
+                                        </dd>
+                                    </div>
+                                </dl>
+
+                                <div class="mt-5">
+                                    <h4 class="text-sm font-semibold text-gray-900">Ringkasan data yang akan dipurge</h4>
+                                    <div class="mt-3 grid gap-2 sm:grid-cols-2">
+                                        @foreach($purgeCountLabels as $key => $label)
+                                            <div class="flex items-center justify-between rounded-md border border-gray-200 px-3 py-2 text-sm">
+                                                <span class="text-gray-700">{{ $label }}</span>
+                                                <span class="font-semibold text-gray-900">{{ (int) ($purgeCounts[$key] ?? 0) }}</span>
+                                            </div>
+                                        @endforeach
+                                    </div>
+                                </div>
+
+                                <div class="mt-5">
+                                    <label for="purge_confirmation" class="block text-sm font-medium text-red-900">
+                                        Ketik <span class="font-bold">{{ $permanentPurgeConfirmationPhrase }}</span> untuk menghapus permanen.
+                                    </label>
+                                    <input id="purge_confirmation"
+                                           name="purge_confirmation"
+                                           type="text"
+                                           x-model="purgePhrase"
+                                           x-ref="permanentPurgeConfirmation"
+                                           autocomplete="off"
+                                           x-bind:readonly="purgeSubmitting"
+                                           class="mt-1 w-full rounded-md border-red-300 shadow-sm focus:border-red-500 focus:ring-red-500 read-only:cursor-wait read-only:bg-gray-100"
+                                           placeholder="{{ $permanentPurgeConfirmationPhrase }}">
+                                    @error('purge_confirmation')
+                                        <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                                    @enderror
+                                </div>
+                            </div>
+
+                            <div class="flex flex-col-reverse gap-2 border-t border-gray-200 bg-white px-4 py-4 sm:flex-row sm:justify-end sm:px-6">
+                                <button type="button"
+                                        class="inline-flex items-center justify-center rounded-lg border border-gray-300 px-4 py-2 text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                        x-bind:disabled="purgeSubmitting"
+                                        x-on:click="closePurgeModal()">
+                                    Batal
+                                </button>
+                                <button type="submit"
+                                        class="inline-flex items-center justify-center rounded-lg bg-red-600 px-4 py-2 text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                                        disabled
+                                        x-bind:disabled="!canSubmitPurge">
+                                    <span x-show="!purgeSubmitting"><i class="fas fa-trash mr-2"></i>Hapus Permanen</span>
+                                    <span x-show="purgeSubmitting" x-cloak><i class="fas fa-spinner fa-spin mr-2"></i>Menghapus...</span>
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
             @endif
 
             @if(!$tahunAjaran->trashed() && $tahunAjaran->is_active && $tahunAjaran->semester == 1)

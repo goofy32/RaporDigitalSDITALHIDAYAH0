@@ -538,7 +538,7 @@ class SemesterTransitionEnrollmentTest extends TestCase
             ->assertSeeText('Memproses...')
             ->assertSee('transitionModalOpen: false', false)
             ->assertSee('x-init="if (transitionModalOpen)', false)
-            ->assertSee('x-on:keydown.escape.window="closeTransitionModal()"', false)
+            ->assertSee('x-on:keydown.escape.window="closeTransitionModal(); closePurgeModal()"', false)
             ->assertSee('x-on:submit="if (!canSubmit || submitting)', false)
             ->assertSeeText('LANJUTKAN KE SEMESTER GENAP')
             ->assertSee('disabled', false);
@@ -630,7 +630,9 @@ class SemesterTransitionEnrollmentTest extends TestCase
         $archivedGenapId = $this->insertArchivedSameAcademicYear(2);
 
         $this->actingAs($this->admin)
-            ->delete(route('tahun.ajaran.force-delete', $archivedGenapId))
+            ->delete(route('tahun.ajaran.force-delete', $archivedGenapId), [
+                'purge_confirmation' => 'HAPUS PERMANEN 2026/2027 SEMESTER GENAP',
+            ])
             ->assertRedirect(route('tahun.ajaran.index', ['showArchived' => 'true']))
             ->assertSessionHas('success', 'Tahun ajaran berhasil dihapus permanen.');
 

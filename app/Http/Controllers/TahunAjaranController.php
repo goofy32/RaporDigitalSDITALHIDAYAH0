@@ -11,6 +11,8 @@ use App\Models\SiswaKelasSemester;
 use App\Models\ProfilSekolah;
 use App\Models\BobotNilai;
 use App\Services\SiswaKelasSemesterResolver;
+use App\Services\TahunAjaranPurgeException;
+use App\Services\TahunAjaranPurgeService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\DB;
@@ -25,15 +27,15 @@ use Throwable;
 
 class TahunAjaranController extends Controller
 {
-    private const PERMANENT_DELETE_BLOCKED_MESSAGE = 'Tahun ajaran ini tidak dapat dihapus permanen karena masih terhubung dengan alur akademik, siswa, nilai, atau rapor. Gunakan arsip sebagai penyimpanan aman, atau pulihkan jika masih diperlukan.';
-    private const PERMANENT_DELETE_PROTECTED_NOTICE = 'Data tahun ajaran ini tidak dapat dihapus permanen karena masih terhubung dengan alur akademik.';
-    private const PERMANENT_DELETE_ACTIVE_TARGET_MESSAGE = 'Tahun ajaran aktif tidak dapat dihapus permanen. Nonaktifkan atau pilih tahun ajaran lain terlebih dahulu.';
     private const PERMANENT_DELETE_SUCCESS_MESSAGE = 'Tahun ajaran berhasil dihapus permanen.';
-    private const PERMANENT_DELETE_TEMPLATE_CLEANUP_WARNING = 'Tahun ajaran berhasil dihapus permanen, tetapi ada file template yang perlu dibersihkan oleh administrator sistem.';
     private const SEMESTER_TEMPLATE_COPY_DIRECTORY = 'templates/semester-copies';
     private const SEMESTER_GENAP_CONFIRMATION = 'LANJUTKAN KE SEMESTER GENAP';
     private const NEXT_YEAR_CONFIRMATION = 'BUAT TAHUN AJARAN BERIKUTNYA';
     private const CONFIRMATION_MISMATCH_MESSAGE = 'Konfirmasi tidak sesuai. Ketik kalimat yang diminta untuk melanjutkan.';
+
+    public function __construct(private readonly TahunAjaranPurgeService $tahunAjaranPurgeService)
+    {
+    }
 
     /**
      * Display a listing of tahun ajaran.
@@ -52,7 +54,7 @@ class TahunAjaranController extends Controller
         }
         
         $tahunAjarans = $query->get();
-        $permanentDeleteProtectionMessages = $this->permanentDeleteProtectionMessagesFor($tahunAjarans);
+        $permanentDeleteProtectionMessages = $this->tahunAjaranPurgeService->protectionMessagesFor($tahunAjarans);
         
         // Hitung jumlah arsip secara terpisah
         $archivedCount = TahunAjaran::onlyTrashed()->count();
@@ -1071,7 +1073,14 @@ class TahunAjaranController extends Controller
             $query->where('tahun_ajaran_id', $id);
         })->count();
         $totalMataPelajaran = MataPelajaran::where('tahun_ajaran_id', $id)->count();
-        $permanentDeleteProtectionMessage = $this->permanentDeleteProtectionMessage($tahunAjaran);
+        $permanentPurgePreview = $tahunAjaran->trashed()
+            ? $this->tahunAjaranPurgeService->preview($tahunAjaran)
+            : null;
+        $permanentDeleteProtectionMessage = $permanentPurgePreview['can_purge'] ?? false
+            ? null
+            : ($permanentPurgePreview['blocked_message'] ?? null);
+        $permanentPurgeConfirmationPhrase = $permanentPurgePreview['confirmation_phrase']
+            ?? $this->tahunAjaranPurgeService->confirmationPhrase($tahunAjaran);
         $semesterGenapReadiness = (! $tahunAjaran->trashed() && $tahunAjaran->is_active && (int) $tahunAjaran->semester === 1)
             ? $this->buildTransitionReadiness($tahunAjaran, 'semester_genap')
             : null;
@@ -1082,6 +1091,8 @@ class TahunAjaranController extends Controller
             'totalSiswa', 
             'totalMataPelajaran',
             'permanentDeleteProtectionMessage',
+            'permanentPurgePreview',
+            'permanentPurgeConfirmationPhrase',
             'semesterGenapReadiness'
         ));
     }
@@ -1367,49 +1378,28 @@ class TahunAjaranController extends Controller
     public function forceDelete($id)
     {
         try {
-            // Cari tahun ajaran yang sudah diarsipkan
-            $tahunAjaran = TahunAjaran::withTrashed()->findOrFail($id);
-            
-            // Pastikan tahun ajaran sudah diarsipkan
-            if (!$tahunAjaran->trashed()) {
-                if (request()->expectsJson()) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Hanya tahun ajaran yang sudah diarsipkan yang dapat dihapus permanen.'
-                    ], 422);
-                }
+            $tahunAjaran = TahunAjaran::withTrashed()->find($id);
 
-                return redirect()->back()
-                    ->with('error', 'Hanya tahun ajaran yang sudah diarsipkan yang dapat dihapus permanen.');
-            }
-
-            $activeTargetMessage = $this->permanentDeleteActiveTargetBlockMessage($tahunAjaran);
-            if ($activeTargetMessage) {
-                Log::info('[TahunAjaranController] Permanent delete blocked because target academic year is active', [
-                    'tahun_ajaran_id' => $tahunAjaran->id,
-                    'user_id' => auth()->id(),
-                ]);
+            if (! $tahunAjaran) {
+                $message = 'Tahun ajaran tidak ditemukan.';
 
                 if (request()->expectsJson()) {
                     return response()->json([
                         'success' => false,
-                        'message' => $activeTargetMessage,
-                    ], 422);
+                        'message' => $message,
+                    ], 404);
                 }
 
-                return redirect()->back()->with('error', $activeTargetMessage);
+                return redirect()->route('tahun.ajaran.index', ['showArchived' => 'true'])
+                    ->with('error', $message);
             }
 
-            $blockingDependencies = $this->permanentDeleteBlockingDependencies((int) $tahunAjaran->id);
+            $expectedConfirmation = $this->tahunAjaranPurgeService->confirmationPhrase($tahunAjaran);
+            $submittedConfirmation = (string) request()->input('purge_confirmation', '');
+            $confirmation = trim($submittedConfirmation);
 
-            if (! empty($blockingDependencies)) {
-                Log::info('[TahunAjaranController] Permanent delete blocked because academic year has dependencies', [
-                    'tahun_ajaran_id' => $tahunAjaran->id,
-                    'dependencies' => $blockingDependencies,
-                    'user_id' => auth()->id(),
-                ]);
-
-                $message = self::PERMANENT_DELETE_BLOCKED_MESSAGE . ' Data terkait: ' . implode(', ', $blockingDependencies) . '.';
+            if ($confirmation !== $expectedConfirmation) {
+                $message = TahunAjaranPurgeService::CONFIRMATION_MISMATCH_MESSAGE;
 
                 if (request()->expectsJson()) {
                     return response()->json([
@@ -1418,52 +1408,25 @@ class TahunAjaranController extends Controller
                     ], 422);
                 }
 
-                return redirect()->back()->with('error', $message);
-            }
-            
-            // Pastikan tidak sedang digunakan di session
-            if (session('tahun_ajaran_id') == $id) {
-                // Cari tahun ajaran aktif lain untuk diset ke session
-                $newTahunAjaran = TahunAjaran::where('is_active', true)->first();
-                
-                if (!$newTahunAjaran) {
-                    // Jika tidak ada yang aktif, ambil yang terbaru
-                    $newTahunAjaran = TahunAjaran::orderBy('tanggal_mulai', 'desc')->first();
-                }
-                
-                if ($newTahunAjaran) {
-                    session(['tahun_ajaran_id' => $newTahunAjaran->id]);
-                } else {
-                    session()->forget('tahun_ajaran_id');
-                }
-            }
-            
-            $templateFilePaths = [];
-
-            DB::beginTransaction();
-
-            try {
-                $ownedTemplates = ReportTemplate::where('tahun_ajaran_id', $tahunAjaran->id)->get();
-                $templateFilePaths = $this->reportTemplateFilePaths($ownedTemplates);
-
-                foreach ($ownedTemplates as $template) {
-                    $template->delete();
-                }
-
-                $tahunAjaran->forceDelete();
-
-                DB::commit();
-            } catch (Throwable $exception) {
-                DB::rollBack();
-
-                throw $exception;
+                return redirect()->back()
+                    ->withErrors(['purge_confirmation' => $message])
+                    ->withInput()
+                    ->with('error', $message);
             }
 
-            $templateFilesCleaned = $this->cleanupReportTemplateFilesAfterPermanentDelete($templateFilePaths, (int) $id);
-            $this->clearTahunAjaranCaches($id);
-            $message = $templateFilesCleaned
+            $purgeResult = $this->tahunAjaranPurgeService->purge((int) $id, $submittedConfirmation);
+
+            $sessionFinalized = $this->tahunAjaranPurgeService->finalizeSessionAfterCommitSafely(
+                (int) $id,
+                (int) $purgeResult['active_replacement_id'],
+                auth()->id(),
+                fn () => session('tahun_ajaran_id'),
+                fn (int $activeReplacementId) => session(['tahun_ajaran_id' => $activeReplacementId])
+            );
+            $cleanupComplete = $this->tahunAjaranPurgeService->runPostCommitCleanupSafely($purgeResult);
+            $message = $sessionFinalized && $cleanupComplete
                 ? self::PERMANENT_DELETE_SUCCESS_MESSAGE
-                : self::PERMANENT_DELETE_TEMPLATE_CLEANUP_WARNING;
+                : TahunAjaranPurgeService::FILE_CLEANUP_WARNING;
 
             if (request()->expectsJson()) {
                 return response()->json([
@@ -1474,11 +1437,36 @@ class TahunAjaranController extends Controller
             
             return redirect()->route('tahun.ajaran.index', ['showArchived' => 'true'])
                 ->with('success', $message);
-                
-        } catch (\Exception $e) {
-            \Log::error('Error saat menghapus permanen tahun ajaran: ' . $e->getMessage(), [
+        } catch (TahunAjaranPurgeException $exception) {
+            Log::warning('[TahunAjaranController] Safe academic year purge blocked.', [
                 'tahun_ajaran_id' => $id,
-                'trace' => $e->getTraceAsString()
+                'user_id' => auth()->id(),
+                'context' => $exception->context(),
+            ]);
+
+            if (request()->expectsJson()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $exception->getMessage(),
+                ], 422);
+            }
+
+            $redirect = redirect()->back()
+                ->with('error', $exception->getMessage());
+
+            if ($exception->getMessage() === TahunAjaranPurgeService::CONFIRMATION_MISMATCH_MESSAGE) {
+                $redirect = $redirect
+                    ->withErrors(['purge_confirmation' => $exception->getMessage()])
+                    ->withInput();
+            }
+
+            return $redirect;
+        } catch (Throwable $e) {
+            Log::error('[TahunAjaranController] Unexpected safe academic year purge failure.', [
+                'tahun_ajaran_id' => $id,
+                'user_id' => auth()->id(),
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
             ]);
 
             if (request()->expectsJson()) {
@@ -1487,198 +1475,12 @@ class TahunAjaranController extends Controller
                     'message' => 'Terjadi kesalahan saat menghapus permanen tahun ajaran.'
                 ], 500);
             }
-            
+
             return redirect()->back()
                 ->with('error', 'Terjadi kesalahan saat menghapus permanen tahun ajaran. Silakan coba lagi.');
         }
     }
 
-    private function permanentDeleteActiveTargetBlockMessage(TahunAjaran $tahunAjaran): ?string
-    {
-        return $tahunAjaran->is_active
-            ? self::PERMANENT_DELETE_ACTIVE_TARGET_MESSAGE
-            : null;
-    }
-
-    private function permanentDeleteProtectionMessage(TahunAjaran $tahunAjaran): ?string
-    {
-        if (! $tahunAjaran->trashed()) {
-            return null;
-        }
-
-        if ($this->permanentDeleteActiveTargetBlockMessage($tahunAjaran)) {
-            return self::PERMANENT_DELETE_PROTECTED_NOTICE;
-        }
-
-        if ($this->permanentDeleteBlockingDependencies((int) $tahunAjaran->id) !== []) {
-            return self::PERMANENT_DELETE_PROTECTED_NOTICE;
-        }
-
-        return null;
-    }
-
-    private function permanentDeleteProtectionMessagesFor($tahunAjarans): array
-    {
-        return $tahunAjarans
-            ->filter(fn (TahunAjaran $tahunAjaran) => $tahunAjaran->trashed())
-            ->mapWithKeys(function (TahunAjaran $tahunAjaran) {
-                return [$tahunAjaran->id => $this->permanentDeleteProtectionMessage($tahunAjaran)];
-            })
-            ->filter()
-            ->all();
-    }
-
-    private function permanentDeleteBlockingDependencies(int $tahunAjaranId): array
-    {
-        $dependencies = [
-            'siswa_kelas_semester' => ['column' => 'tahun_ajaran_id', 'label' => 'enrollment siswa'],
-            'kelas' => ['column' => 'tahun_ajaran_id', 'label' => 'kelas'],
-            'mata_pelajarans' => ['column' => 'tahun_ajaran_id', 'label' => 'mata pelajaran'],
-            'nilais' => ['column' => 'tahun_ajaran_id', 'label' => 'nilai'],
-            'absensis' => ['column' => 'tahun_ajaran_id', 'label' => 'absensi'],
-            'catatan_siswa' => ['column' => 'tahun_ajaran_id', 'label' => 'catatan siswa'],
-            'catatan_mata_pelajaran' => ['column' => 'tahun_ajaran_id', 'label' => 'catatan mata pelajaran'],
-            'capaian_custom' => ['column' => 'tahun_ajaran_id', 'label' => 'capaian kompetensi'],
-            'nilai_ekstrakurikuler' => ['column' => 'tahun_ajaran_id', 'label' => 'nilai ekstrakurikuler'],
-            'kkms' => ['column' => 'tahun_ajaran_id', 'label' => 'KKM'],
-            'ekstrakurikulers' => ['column' => 'tahun_ajaran_id', 'label' => 'ekstrakurikuler'],
-            'prestasis' => ['column' => 'tahun_ajaran_id', 'label' => 'prestasi'],
-            'semester_snapshots' => ['column' => 'tahun_ajaran_id', 'label' => 'snapshot semester'],
-            'siswas' => ['column' => 'tahun_ajaran_id', 'label' => 'siswa legacy'],
-            'capaian_templates' => ['column' => 'tahun_ajaran_id', 'label' => 'template capaian'],
-            'capaian_range' => ['column' => 'tahun_ajaran_id', 'label' => 'range capaian'],
-        ];
-
-        $blocking = [];
-
-        foreach ($dependencies as $table => $dependency) {
-            if (! Schema::hasTable($table) || ! Schema::hasColumn($table, $dependency['column'])) {
-                continue;
-            }
-
-            $count = DB::table($table)
-                ->where($dependency['column'], $tahunAjaranId)
-                ->count();
-
-            if ($count > 0) {
-                $blocking[] = "{$dependency['label']} ({$count})";
-            }
-        }
-
-        $reportGenerationCount = $this->countPermanentDeleteBlockingReportGenerations($tahunAjaranId);
-        if ($reportGenerationCount > 0) {
-            $blocking[] = "riwayat rapor ({$reportGenerationCount})";
-        }
-
-        return $blocking;
-    }
-
-    private function countPermanentDeleteBlockingReportGenerations(int $tahunAjaranId): int
-    {
-        if (! Schema::hasTable('report_generations')) {
-            return 0;
-        }
-
-        $templateIds = $this->reportTemplateIdsForTahunAjaran($tahunAjaranId);
-        $hasTahunAjaranColumn = Schema::hasColumn('report_generations', 'tahun_ajaran_id');
-        $hasTemplateColumn = Schema::hasColumn('report_generations', 'report_template_id');
-
-        if (! $hasTahunAjaranColumn && (! $hasTemplateColumn || $templateIds === [])) {
-            return 0;
-        }
-
-        $query = DB::table('report_generations')
-            ->where(function ($query) use ($tahunAjaranId, $templateIds, $hasTahunAjaranColumn, $hasTemplateColumn) {
-                $hasCondition = false;
-
-                if ($hasTahunAjaranColumn) {
-                    $query->where('tahun_ajaran_id', $tahunAjaranId);
-                    $hasCondition = true;
-                }
-
-                if ($hasTemplateColumn && $templateIds !== []) {
-                    $hasCondition
-                        ? $query->orWhereIn('report_template_id', $templateIds)
-                        : $query->whereIn('report_template_id', $templateIds);
-                }
-            });
-
-        return (int) $query->distinct()->count('id');
-    }
-
-    private function reportTemplateIdsForTahunAjaran(int $tahunAjaranId): array
-    {
-        if (! Schema::hasTable('report_templates') || ! Schema::hasColumn('report_templates', 'tahun_ajaran_id')) {
-            return [];
-        }
-
-        return ReportTemplate::where('tahun_ajaran_id', $tahunAjaranId)
-            ->pluck('id')
-            ->map(fn ($id) => (int) $id)
-            ->filter()
-            ->values()
-            ->all();
-    }
-
-    private function reportTemplateFilePaths($templates): array
-    {
-        return $templates
-            ->map(fn (ReportTemplate $template) => $this->normalizeReportTemplateStoragePath($template->path))
-            ->filter()
-            ->unique()
-            ->values()
-            ->all();
-    }
-
-    private function normalizeReportTemplateStoragePath(?string $path): ?string
-    {
-        $path = trim(str_replace('\\', '/', (string) $path));
-        $path = ltrim($path, '/');
-
-        return $path !== '' ? $path : null;
-    }
-
-    private function cleanupReportTemplateFilesAfterPermanentDelete(array $paths, int $tahunAjaranId): bool
-    {
-        $allFilesCleaned = true;
-        $disk = Storage::disk('public');
-
-        foreach ($paths as $path) {
-            try {
-                if (! is_string($path) || $path === '') {
-                    continue;
-                }
-
-                if (ReportTemplate::where('path', $path)->exists()) {
-                    continue;
-                }
-
-                if (! $disk->exists($path)) {
-                    continue;
-                }
-
-                if (! $disk->delete($path)) {
-                    $allFilesCleaned = false;
-
-                    Log::warning('[TahunAjaranController] Failed to delete report template file after permanent delete.', [
-                        'tahun_ajaran_id' => $tahunAjaranId,
-                        'path' => $path,
-                    ]);
-                }
-            } catch (Throwable $exception) {
-                $allFilesCleaned = false;
-
-                Log::warning('[TahunAjaranController] Report template file cleanup failed after permanent delete.', [
-                    'tahun_ajaran_id' => $tahunAjaranId,
-                    'path' => $path,
-                    'error' => $exception->getMessage(),
-                ]);
-            }
-        }
-
-        return $allFilesCleaned;
-    }
-    
     /**
      * Menghapus tahun ajaran yang spesifik.
      *

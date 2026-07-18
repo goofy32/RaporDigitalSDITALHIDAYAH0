@@ -369,7 +369,9 @@ class NewAcademicYearStructuralCopyTest extends TestCase
             ->assertJsonPath('archived_id', $archivedTargetId);
 
         $this->actingAs($this->admin, 'web')
-            ->deleteJson(route('tahun.ajaran.force-delete', $archivedTargetId))
+            ->deleteJson(route('tahun.ajaran.force-delete', $archivedTargetId), [
+                'purge_confirmation' => 'HAPUS PERMANEN 2027/2028 SEMESTER GANJIL',
+            ])
             ->assertOk()
             ->assertJsonPath('success', true);
 
