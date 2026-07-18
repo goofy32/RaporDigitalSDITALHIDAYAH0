@@ -6,6 +6,7 @@ use App\Models\BobotNilai;
 use App\Models\Guru;
 use App\Models\ReportTemplate;
 use App\Models\Setting;
+use App\Models\Siswa;
 use App\Models\User;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
@@ -124,17 +125,13 @@ class AdminHardeningPhase2Test extends TestCase
             ->deleteJson(route('admin.recycle-bin.force-delete-all'), [
                 'confirmation' => 'HAPUS PERMANEN',
             ])
-            ->assertUnprocessable()
-            ->assertJsonPath('message', 'Hapus permanen siswa harus dilakukan satu per satu agar konfirmasi identitas siswa dapat diverifikasi.');
-
-        $this->assertNotNull(DB::table('siswas')->where('id', $studentId)->value('deleted_at'));
-
-        $this->actingAsAdmin()
-            ->deleteJson(route('admin.recycle-bin.force-delete', ['type' => 'siswa', 'id' => $studentId]), [
-                'purge_confirmation' => 'HAPUS PERMANEN SISWA 90001',
-            ])
             ->assertOk()
             ->assertJson(['success' => true]);
+
+        $this->assertDatabaseMissing('siswas', ['id' => $studentId]);
+        $this->assertSame(1, DB::table('audit_logs')->where('action', 'permanent_purge')->where('model_type', Siswa::class)->count());
+
+        $secondStudentId = $this->insertDeletedStudent();
 
         $guruId = DB::table('gurus')->insertGetId([
             'nuptk' => 'delete-all-guru',
@@ -153,7 +150,7 @@ class AdminHardeningPhase2Test extends TestCase
             ->assertOk()
             ->assertJson(['success' => true]);
 
-        $this->assertDatabaseMissing('siswas', ['id' => $studentId]);
+        $this->assertDatabaseMissing('siswas', ['id' => $secondStudentId]);
         $this->assertDatabaseMissing('gurus', ['id' => $guruId]);
     }
 

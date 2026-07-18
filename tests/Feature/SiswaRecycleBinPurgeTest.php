@@ -245,10 +245,12 @@ class SiswaRecycleBinPurgeTest extends TestCase
             ->assertOk()
             ->assertSee('data-force-delete-form', false)
             ->assertSee($this->confirmationPhrase($studentId))
-            ->assertSeeText('Hapus permanen siswa akan membersihkan enrollment dan riwayat akademik milik siswa ini.');
+            ->assertSeeText('Hapus permanen siswa akan membersihkan enrollment dan riwayat akademik milik siswa ini.')
+            ->assertSee('name="confirmation" value="HAPUS PERMANEN"', false)
+            ->assertDontSee('Hapus permanen siswa harus dilakukan satu per satu', false);
     }
 
-    public function test_selected_siswa_force_delete_is_rejected_so_identity_confirmation_cannot_be_bypassed(): void
+    public function test_bulk_selected_siswa_requires_bulk_confirmation(): void
     {
         $studentId = $this->insertStudent('90010', 'Siswa Terpilih', $this->activeClassId, true);
         $this->insertEnrollment($studentId, $this->activeClassId, $this->activeYearId, 1);
@@ -258,31 +260,164 @@ class SiswaRecycleBinPurgeTest extends TestCase
                 'items' => ["siswa:{$studentId}"],
             ])
             ->assertUnprocessable()
-            ->assertJsonPath('message', 'Hapus permanen siswa harus dilakukan satu per satu agar konfirmasi identitas siswa dapat diverifikasi.');
+            ->assertJsonValidationErrors('confirmation');
+
+        $this->actingAsAdmin()
+            ->deleteJson(route('admin.recycle-bin.force-delete-all'), [
+                'confirmation' => 'hapus permanen',
+                'items' => ["siswa:{$studentId}"],
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('confirmation');
 
         $this->assertNotNull(DB::table('siswas')->where('id', $studentId)->value('deleted_at'));
         $this->assertSame(1, DB::table('siswa_kelas_semester')->where('siswa_id', $studentId)->count());
     }
 
-    public function test_delete_all_is_rejected_when_trashed_siswa_requires_identity_confirmation(): void
+    public function test_bulk_selected_containing_multiple_siswa_purges_each_safely(): void
     {
-        $studentId = $this->insertStudent('90011', 'Siswa Semua', $this->activeClassId, true);
+        DB::table('audit_logs')->delete();
+        $firstId = $this->insertStudent('90011', 'Siswa Bulk Satu', $this->activeClassId, true, 'photos/bulk-one.jpg');
+        $secondId = $this->insertStudent('90012', 'Siswa Bulk Dua', $this->activeClassId, true, 'photos/bulk-two.jpg');
+        $otherId = $this->insertStudent('90013', 'Siswa Tetap', $this->activeClassId, false);
+        $this->insertFullStudentData($firstId);
+        $this->insertEnrollment($secondId, $this->activeClassId, $this->activeYearId, 1);
+        $this->insertEnrollment($otherId, $this->activeClassId, $this->activeYearId, 1);
+        Storage::disk('public')->put('photos/bulk-one.jpg', 'photo');
+        Storage::disk('public')->put('photos/bulk-two.jpg', 'photo');
+
+        $this->actingAsAdmin()
+            ->deleteJson(route('admin.recycle-bin.force-delete-all'), [
+                'confirmation' => 'HAPUS PERMANEN',
+                'items' => ["siswa:{$firstId}", "siswa:{$secondId}"],
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $this->assertDatabaseMissing('siswas', ['id' => $firstId]);
+        $this->assertDatabaseMissing('siswas', ['id' => $secondId]);
+        $this->assertNoSiswaReferencesRemain($firstId);
+        $this->assertNoSiswaReferencesRemain($secondId);
+        Storage::disk('public')->assertMissing('photos/bulk-one.jpg');
+        Storage::disk('public')->assertMissing('photos/bulk-two.jpg');
+        $this->assertDatabaseHas('siswas', ['id' => $otherId, 'nama' => 'Siswa Tetap']);
+        $this->assertSame(1, DB::table('siswa_kelas_semester')->where('siswa_id', $otherId)->count());
+        $this->assertSame(2, DB::table('audit_logs')->where('action', 'permanent_purge')->where('model_type', Siswa::class)->count());
+    }
+
+    public function test_bulk_selected_mixed_siswa_and_non_siswa_are_processed_together(): void
+    {
+        $studentId = $this->insertStudent('90014', 'Siswa Campuran', $this->activeClassId, true);
+        $otherId = $this->insertStudent('90015', 'Siswa Bukan Target', $this->activeClassId, false);
+        $deletedGuruId = $this->insertDeletedGuru('guru-bulk-campuran', 'Guru Campuran');
         $this->insertEnrollment($studentId, $this->activeClassId, $this->activeYearId, 1);
+        $this->insertEnrollment($otherId, $this->activeClassId, $this->activeYearId, 1);
+
+        $this->actingAsAdmin()
+            ->deleteJson(route('admin.recycle-bin.force-delete-all'), [
+                'confirmation' => 'HAPUS PERMANEN',
+                'items' => ["siswa:{$studentId}", "guru:{$deletedGuruId}"],
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $this->assertDatabaseMissing('siswas', ['id' => $studentId]);
+        $this->assertDatabaseMissing('gurus', ['id' => $deletedGuruId]);
+        $this->assertDatabaseHas('siswas', ['id' => $otherId, 'nama' => 'Siswa Bukan Target']);
+        $this->assertDatabaseHas('gurus', ['id' => $this->guruId, 'nama' => 'Guru Test']);
+        $this->assertSame(1, DB::table('siswa_kelas_semester')->where('siswa_id', $otherId)->count());
+        $this->assertSame(2, DB::table('kelas')->count());
+        $this->assertSame(2, DB::table('tahun_ajarans')->count());
+    }
+
+    public function test_force_delete_all_processes_supported_recycle_bin_types_including_siswa(): void
+    {
+        DB::table('audit_logs')->delete();
+        $firstId = $this->insertStudent('90016', 'Siswa Semua Satu', $this->activeClassId, true);
+        $secondId = $this->insertStudent('90017', 'Siswa Semua Dua', $this->activeClassId, true);
+        $deletedGuruId = $this->insertDeletedGuru('guru-delete-all', 'Guru Delete All');
+        $this->insertEnrollment($firstId, $this->activeClassId, $this->activeYearId, 1);
+        $this->insertEnrollment($secondId, $this->activeClassId, $this->activeYearId, 1);
 
         $this->actingAsAdmin()
             ->deleteJson(route('admin.recycle-bin.force-delete-all'), [
                 'confirmation' => 'HAPUS PERMANEN',
             ])
-            ->assertUnprocessable()
-            ->assertJsonPath('message', 'Hapus permanen siswa harus dilakukan satu per satu agar konfirmasi identitas siswa dapat diverifikasi.');
+            ->assertOk()
+            ->assertJsonPath('success', true);
 
-        $this->assertNotNull(DB::table('siswas')->where('id', $studentId)->value('deleted_at'));
-        $this->assertSame(1, DB::table('siswa_kelas_semester')->where('siswa_id', $studentId)->count());
+        $this->assertDatabaseMissing('siswas', ['id' => $firstId]);
+        $this->assertDatabaseMissing('siswas', ['id' => $secondId]);
+        $this->assertDatabaseMissing('gurus', ['id' => $deletedGuruId]);
+        $this->assertSame(0, DB::table('siswa_kelas_semester')->whereIn('siswa_id', [$firstId, $secondId])->count());
+        $this->assertSame(2, DB::table('audit_logs')->where('action', 'permanent_purge')->where('model_type', Siswa::class)->count());
+    }
+
+    public function test_bulk_siswa_failure_does_not_roll_back_other_selected_items(): void
+    {
+        $successfulId = $this->insertStudent('90018', 'Siswa Bulk Berhasil', $this->activeClassId, true);
+        $failingId = $this->insertStudent('90019', 'Siswa Bulk Gagal', $this->activeClassId, true, 'photos/bulk-failing.jpg');
+        $this->insertEnrollment($successfulId, $this->activeClassId, $this->activeYearId, 1);
+        $this->insertEnrollment($failingId, $this->activeClassId, $this->activeYearId, 1);
+        Storage::disk('public')->put('photos/bulk-failing.jpg', 'photo');
+
+        Schema::create('unresolved_student_refs', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('siswa_id');
+            $table->timestamps();
+        });
+
+        DB::table('unresolved_student_refs')->insert([
+            'siswa_id' => $failingId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $response = $this->actingAsAdmin()
+            ->deleteJson(route('admin.recycle-bin.force-delete-all'), [
+                'confirmation' => 'HAPUS PERMANEN',
+                'items' => ["siswa:{$successfulId}", "siswa:{$failingId}"],
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $this->assertStringContainsString('1 data berhasil dihapus permanen.', (string) $response->json('message'));
+        $this->assertStringContainsString('1 data gagal:', (string) $response->json('message'));
+        $this->assertStringContainsString(SiswaPurgeService::UNRESOLVED_DEPENDENCY_MESSAGE, (string) $response->json('message'));
+        $this->assertDatabaseMissing('siswas', ['id' => $successfulId]);
+        $this->assertNotNull(DB::table('siswas')->where('id', $failingId)->value('deleted_at'));
+        $this->assertSame(0, DB::table('siswa_kelas_semester')->where('siswa_id', $successfulId)->count());
+        $this->assertSame(1, DB::table('siswa_kelas_semester')->where('siswa_id', $failingId)->count());
+        $this->assertSame(1, DB::table('unresolved_student_refs')->where('siswa_id', $failingId)->count());
+        Storage::disk('public')->assertExists('photos/bulk-failing.jpg');
+    }
+
+    public function test_bulk_cleanup_warning_does_not_turn_committed_purge_into_failure(): void
+    {
+        $studentId = $this->insertStudent('90020', 'Siswa Bulk Cleanup', $this->activeClassId, true);
+        $this->insertEnrollment($studentId, $this->activeClassId, $this->activeYearId, 1);
+
+        $service = Mockery::mock(SiswaPurgeService::class)->makePartial();
+        $service->shouldReceive('runPostCommitCleanupSafely')->once()->andReturn(false);
+        app()->instance(SiswaPurgeService::class, $service);
+
+        $this->actingAsAdmin()
+            ->delete(route('admin.recycle-bin.force-delete-all'), [
+                'confirmation' => 'HAPUS PERMANEN',
+                'items' => ["siswa:{$studentId}"],
+            ])
+            ->assertRedirect()
+            ->assertSessionHas('success', fn (string $message) => str_contains($message, '1 data berhasil dihapus permanen.')
+                && str_contains($message, 'perlu dibersihkan oleh administrator sistem.'))
+            ->assertSessionMissing('error');
+
+        $this->assertDatabaseMissing('siswas', ['id' => $studentId]);
+        $this->assertSame(0, DB::table('siswa_kelas_semester')->where('siswa_id', $studentId)->count());
     }
 
     public function test_generic_force_delete_model_cannot_bypass_siswa_confirmation(): void
     {
-        $studentId = $this->insertStudent('90012', 'Siswa Internal', $this->activeClassId, true);
+        $studentId = $this->insertStudent('90021', 'Siswa Internal', $this->activeClassId, true);
         $this->insertEnrollment($studentId, $this->activeClassId, $this->activeYearId, 1);
         $siswa = Siswa::withTrashed()->findOrFail($studentId);
 
@@ -748,6 +883,18 @@ class SiswaRecycleBinPurgeTest extends TestCase
         ]);
     }
 
+    private function insertDeletedGuru(string $username, string $name): int
+    {
+        return DB::table('gurus')->insertGetId([
+            'nama' => $name,
+            'username' => $username,
+            'password' => Hash::make('password'),
+            'deleted_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
     private function insertSubject(int $classId, int $yearId, string $name): int
     {
         return DB::table('mata_pelajarans')->insertGetId([
@@ -945,6 +1092,7 @@ class SiswaRecycleBinPurgeTest extends TestCase
             $table->foreignId('mata_pelajaran_id')->nullable()->constrained('mata_pelajarans')->nullOnDelete();
             $table->string('judul_lingkup_materi');
             $table->timestamps();
+            $table->softDeletes();
         });
 
         Schema::create('tujuan_pembelajarans', function (Blueprint $table) {
@@ -953,6 +1101,7 @@ class SiswaRecycleBinPurgeTest extends TestCase
             $table->string('kode_tp')->nullable();
             $table->text('deskripsi_tp')->nullable();
             $table->timestamps();
+            $table->softDeletes();
         });
 
         Schema::create('ekstrakurikulers', function (Blueprint $table) {
@@ -961,6 +1110,7 @@ class SiswaRecycleBinPurgeTest extends TestCase
             $table->foreignId('tahun_ajaran_id')->nullable()->constrained('tahun_ajarans')->nullOnDelete();
             $table->unsignedTinyInteger('semester')->nullable();
             $table->timestamps();
+            $table->softDeletes();
         });
 
         Schema::create('siswas', function (Blueprint $table) {

@@ -460,16 +460,11 @@
                 return;
             }
 
-            if (selected.some((value) => value.split(':')[0] === 'siswa')) {
-                alert('Hapus permanen siswa harus dilakukan satu per satu agar konfirmasi identitas siswa dapat diverifikasi.');
-                return;
-            }
-
             if (!confirm('Hapus permanen item yang dipilih? Tindakan ini tidak dapat dibatalkan.')) {
                 return;
             }
 
-            selectedDeleteForm.innerHTML = '<input type="hidden" name="_token" value="' + csrfToken + '"><input type="hidden" name="_method" value="DELETE">';
+            selectedDeleteForm.innerHTML = '<input type="hidden" name="_token" value="' + csrfToken + '"><input type="hidden" name="_method" value="DELETE"><input type="hidden" name="confirmation" value="HAPUS PERMANEN">';
 
             selected.forEach(function (value) {
                 var input = document.createElement('input');

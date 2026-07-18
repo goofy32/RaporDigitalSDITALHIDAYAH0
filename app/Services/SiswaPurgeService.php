@@ -17,6 +17,7 @@ class SiswaPurgeService
     public const CONFIRMATION_MISMATCH_MESSAGE = 'Konfirmasi hapus permanen siswa tidak sesuai.';
     public const UNRESOLVED_DEPENDENCY_MESSAGE = 'Hapus permanen siswa dibatalkan karena ada relasi siswa yang belum dapat dipastikan aman.';
     public const FILE_CLEANUP_WARNING = 'Data siswa berhasil dihapus permanen, tetapi ada file atau cache rapor yang perlu dibersihkan oleh administrator sistem.';
+    public const BULK_CONFIRMATION = 'HAPUS PERMANEN';
 
     /**
      * Tables whose rows are owned by one Siswa through a direct siswa_id column.
@@ -45,7 +46,82 @@ class SiswaPurgeService
 
     public function purge(int $siswaId, string $submittedConfirmation): array
     {
-        return DB::transaction(function () use ($siswaId, $submittedConfirmation) {
+        return $this->purgeInTransaction($siswaId, function (Siswa $siswa) use ($siswaId, $submittedConfirmation): void {
+            $expectedConfirmation = $this->confirmationPhrase($siswa);
+            if (trim($submittedConfirmation) !== $expectedConfirmation) {
+                throw new SiswaPurgeException(self::CONFIRMATION_MISMATCH_MESSAGE, [
+                    'siswa_id' => $siswaId,
+                    'expected_confirmation' => $expectedConfirmation,
+                    'submitted_confirmation_present' => trim($submittedConfirmation) !== '',
+                ]);
+            }
+        });
+    }
+
+    public function purgeBulk(array $siswaIds, string $bulkConfirmation): array
+    {
+        if (trim($bulkConfirmation) !== self::BULK_CONFIRMATION) {
+            throw new SiswaPurgeException(self::CONFIRMATION_MISMATCH_MESSAGE, [
+                'bulk_confirmation_present' => trim($bulkConfirmation) !== '',
+            ]);
+        }
+
+        $summary = [
+            'successes' => [],
+            'failures' => [],
+            'cleanup_incomplete_count' => 0,
+        ];
+
+        $siswaIds = collect($siswaIds)
+            ->map(fn ($siswaId) => (int) $siswaId)
+            ->filter(fn (int $siswaId) => $siswaId > 0)
+            ->unique()
+            ->values()
+            ->all();
+
+        foreach ($siswaIds as $siswaId) {
+            try {
+                $purgeResult = $this->purgeInTransaction($siswaId);
+                $cleanupComplete = $this->runPostCommitCleanupSafely($purgeResult);
+
+                if (! $cleanupComplete) {
+                    $summary['cleanup_incomplete_count']++;
+                }
+
+                $summary['successes'][] = array_merge($purgeResult, [
+                    'cleanup_complete' => $cleanupComplete,
+                ]);
+            } catch (SiswaPurgeException $exception) {
+                $summary['failures'][] = [
+                    'siswa_id' => $siswaId,
+                    'message' => $exception->getMessage(),
+                    'context' => $exception->context(),
+                ];
+            } catch (Throwable $exception) {
+                Log::error('[SiswaPurgeService] Bulk student purge failed unexpectedly.', [
+                    'siswa_id' => $siswaId,
+                    'exception_class' => get_class($exception),
+                    'error' => $exception->getMessage(),
+                    'file' => $exception->getFile(),
+                    'line' => $exception->getLine(),
+                ]);
+
+                $summary['failures'][] = [
+                    'siswa_id' => $siswaId,
+                    'message' => 'Terjadi kesalahan saat menghapus permanen data siswa.',
+                    'context' => [
+                        'exception_class' => get_class($exception),
+                    ],
+                ];
+            }
+        }
+
+        return $summary;
+    }
+
+    private function purgeInTransaction(int $siswaId, ?callable $confirmationValidator = null): array
+    {
+        return DB::transaction(function () use ($siswaId, $confirmationValidator) {
             $siswa = Siswa::withTrashed()
                 ->whereKey($siswaId)
                 ->lockForUpdate()
@@ -64,13 +140,8 @@ class SiswaPurgeService
                 ]);
             }
 
-            $expectedConfirmation = $this->confirmationPhrase($siswa);
-            if (trim($submittedConfirmation) !== $expectedConfirmation) {
-                throw new SiswaPurgeException(self::CONFIRMATION_MISMATCH_MESSAGE, [
-                    'siswa_id' => $siswaId,
-                    'expected_confirmation' => $expectedConfirmation,
-                    'submitted_confirmation_present' => trim($submittedConfirmation) !== '',
-                ]);
+            if ($confirmationValidator) {
+                $confirmationValidator($siswa);
             }
 
             $unclassifiedTables = $this->unclassifiedStudentReferencesFor($siswaId);
