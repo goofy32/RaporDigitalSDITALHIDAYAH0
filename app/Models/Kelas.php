@@ -79,7 +79,6 @@ class Kelas extends Model
                 ->each(fn (Prestasi $prestasi) => $prestasi->delete());
 
             $kelas->siswas->each(fn (Siswa $siswa) => $siswa->delete());
-            $kelas->mataPelajarans->each(fn (MataPelajaran $mataPelajaran) => $mataPelajaran->delete());
 
             DB::table('guru_kelas')->where('kelas_id', $kelas->id)->delete();
         });

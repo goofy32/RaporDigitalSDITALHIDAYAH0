@@ -1,4 +1,5 @@
 const LIVE_LIST_SELECTOR = '[data-live-list]';
+const FILTER_PANEL_SELECTOR = '[data-live-filter-panel]';
 const DEBOUNCE_MS = 400;
 
 function debounce(callback, delay = DEBOUNCE_MS) {
@@ -17,6 +18,12 @@ function setLoading(container, isLoading) {
     target?.classList.toggle('opacity-50', isLoading);
     target?.classList.toggle('pointer-events-none', isLoading);
     loading?.classList.toggle('hidden', !isLoading);
+}
+
+function closeFilterPanels(root = document) {
+    root.querySelectorAll(`${FILTER_PANEL_SELECTOR}[open]`).forEach(panel => {
+        panel.removeAttribute('open');
+    });
 }
 
 function formUrl(form) {
@@ -113,6 +120,7 @@ function bindLiveList(container) {
 
     form?.addEventListener('submit', event => {
         event.preventDefault();
+        closeFilterPanels(container);
         fetchLiveList(container, formUrl(form));
     });
 
@@ -140,6 +148,7 @@ function bindLiveList(container) {
         const resetLink = event.target.closest('[data-live-reset]');
         if (resetLink) {
             event.preventDefault();
+            closeFilterPanels(container);
             fetchLiveList(container, new URL(resetLink.href, window.location.origin));
         }
     });
@@ -151,8 +160,33 @@ function bindLiveList(container) {
     });
 }
 
+function bindFilterPanelInteractions() {
+    if (document.documentElement.dataset.liveFilterPanelsBound === 'true') {
+        return;
+    }
+
+    document.documentElement.dataset.liveFilterPanelsBound = 'true';
+
+    document.addEventListener('click', event => {
+        const target = event.target instanceof Element ? event.target : null;
+
+        document.querySelectorAll(`${FILTER_PANEL_SELECTOR}[open]`).forEach(panel => {
+            if (!target || !panel.contains(target)) {
+                panel.removeAttribute('open');
+            }
+        });
+    });
+
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape') {
+            closeFilterPanels();
+        }
+    });
+}
+
 export function registerLiveList() {
     const init = () => {
+        bindFilterPanelInteractions();
         document.querySelectorAll(LIVE_LIST_SELECTOR).forEach(bindLiveList);
     };
 

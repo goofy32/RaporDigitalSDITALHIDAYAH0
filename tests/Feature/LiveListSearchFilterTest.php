@@ -70,6 +70,7 @@ class LiveListSearchFilterTest extends TestCase
                 ->get($url)
                 ->assertOk()
                 ->assertSee('data-live-filter-button', false)
+                ->assertSee('data-live-filter-panel', false)
                 ->assertSee('Filter');
         }
 
@@ -78,7 +79,33 @@ class LiveListSearchFilterTest extends TestCase
             ->get(route('wali_kelas.student.index'))
             ->assertOk()
             ->assertSee('data-live-filter-button', false)
+            ->assertSee('data-live-filter-panel', false)
             ->assertSee('Filter');
+    }
+
+    public function test_filter_panels_have_shared_outside_click_and_escape_behavior(): void
+    {
+        foreach ($this->filterPanelPages() as $page) {
+            $response = $this->actingAs($page['user'], $page['guard'])
+                ->withSession($page['session'])
+                ->get($page['url']);
+
+            $response->assertOk();
+
+            $html = $response->getContent();
+            $this->assertStringContainsString('data-live-filter-button', $html, $page['label']);
+            $this->assertStringContainsString('data-live-filter-panel', $html, $page['label']);
+            $this->assertStringContainsString('data-live-list-form', $html, $page['label']);
+        }
+
+        $source = file_get_contents(resource_path('js/features/live-list.js'));
+
+        $this->assertStringContainsString("const FILTER_PANEL_SELECTOR = '[data-live-filter-panel]';", $source);
+        $this->assertStringContainsString("document.addEventListener('click'", $source);
+        $this->assertStringContainsString('!panel.contains(target)', $source);
+        $this->assertStringContainsString("event.key === 'Escape'", $source);
+        $this->assertStringContainsString('closeFilterPanels(container);', $source);
+        $this->assertStringContainsString('liveFilterPanelsBound', $source);
     }
 
     public function test_ajax_search_returns_filtered_fragments_for_each_list_page(): void
@@ -219,6 +246,64 @@ class LiveListSearchFilterTest extends TestCase
 
         $this->assertStringContainsString($expected, $html);
         $this->assertStringNotContainsString($unexpected, $html);
+    }
+
+    /**
+     * @return array<int, array{label: string, url: string, user: object, guard: string, session: array<string, mixed>}>
+     */
+    private function filterPanelPages(): array
+    {
+        return [
+            [
+                'label' => 'Admin Kelas',
+                'url' => route('kelas.index'),
+                'user' => $this->admin,
+                'guard' => 'web',
+                'session' => $this->adminSession(),
+            ],
+            [
+                'label' => 'Admin Pengajar',
+                'url' => route('teacher'),
+                'user' => $this->admin,
+                'guard' => 'web',
+                'session' => $this->adminSession(),
+            ],
+            [
+                'label' => 'Admin Siswa',
+                'url' => route('student'),
+                'user' => $this->admin,
+                'guard' => 'web',
+                'session' => $this->adminSession(),
+            ],
+            [
+                'label' => 'Admin Mata Pelajaran',
+                'url' => route('subject.index'),
+                'user' => $this->admin,
+                'guard' => 'web',
+                'session' => $this->adminSession(),
+            ],
+            [
+                'label' => 'Admin Ekstrakurikuler',
+                'url' => route('ekstra.index'),
+                'user' => $this->admin,
+                'guard' => 'web',
+                'session' => $this->adminSession(),
+            ],
+            [
+                'label' => 'Admin Prestasi',
+                'url' => route('achievement.index'),
+                'user' => $this->admin,
+                'guard' => 'web',
+                'session' => $this->adminSession(),
+            ],
+            [
+                'label' => 'Wali Kelas Siswa',
+                'url' => route('wali_kelas.student.index'),
+                'user' => $this->wali,
+                'guard' => 'guru',
+                'session' => $this->waliSession(),
+            ],
+        ];
     }
 
     private function adminSession(): array

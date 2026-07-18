@@ -32,7 +32,7 @@
                         <button type="submit" class="shrink-0 rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700">Cari</button>
                     </div>
 
-                    <details class="relative">
+                    <details class="relative" data-live-filter-panel>
                         <x-live-list.filter-button />
                         <div class="mt-2 w-full rounded-lg border border-gray-200 bg-white p-4 shadow-lg md:absolute md:right-0 md:z-20 md:w-80">
                             <div class="space-y-3">
