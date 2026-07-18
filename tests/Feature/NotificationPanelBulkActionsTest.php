@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 use ReflectionMethod;
 use Tests\TestCase;
@@ -71,6 +72,255 @@ class NotificationPanelBulkActionsTest extends TestCase
                 ->where('user_id', $this->admin->id)
                 ->value('read_at'));
         }
+    }
+
+    public function test_admin_can_mark_unread_notification_as_read_with_one_user_state(): void
+    {
+        $notificationId = $this->insertNotification('Info Baru', 'Pesan admin', 'all');
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->postJson("/admin/information/{$notificationId}/read")
+            ->assertOk()
+            ->assertJson([
+                'success' => true,
+                'message' => 'Notifikasi telah dibaca',
+            ]);
+
+        $this->assertSame(1, DB::table('notification_user_states')
+            ->where('notification_id', $notificationId)
+            ->where('user_type', 'admin')
+            ->where('user_id', $this->admin->id)
+            ->count());
+        $this->assertNotNull(DB::table('notification_user_states')
+            ->where('notification_id', $notificationId)
+            ->where('user_type', 'admin')
+            ->where('user_id', $this->admin->id)
+            ->value('read_at'));
+    }
+
+    public function test_mark_as_read_repeatedly_remains_idempotent_and_uses_latest_read_time(): void
+    {
+        $notificationId = $this->insertNotification('Info Berulang', 'Pesan admin', 'all');
+
+        try {
+            Carbon::setTestNow('2026-07-18 08:00:00');
+            $this->actingAs($this->admin, 'web')
+                ->withSession($this->adminSession())
+                ->postJson("/admin/information/{$notificationId}/read")
+                ->assertOk()
+                ->assertJson(['success' => true]);
+
+            $createdAt = DB::table('notification_user_states')
+                ->where('notification_id', $notificationId)
+                ->where('user_type', 'admin')
+                ->where('user_id', $this->admin->id)
+                ->value('created_at');
+
+            Carbon::setTestNow('2026-07-18 08:05:00');
+            $this->actingAs($this->admin, 'web')
+                ->withSession($this->adminSession())
+                ->postJson("/admin/information/{$notificationId}/read")
+                ->assertOk()
+                ->assertJson(['success' => true]);
+
+            $state = DB::table('notification_user_states')
+                ->where('notification_id', $notificationId)
+                ->where('user_type', 'admin')
+                ->where('user_id', $this->admin->id)
+                ->first();
+
+            $this->assertSame(1, DB::table('notification_user_states')
+                ->where('notification_id', $notificationId)
+                ->where('user_type', 'admin')
+                ->where('user_id', $this->admin->id)
+                ->count());
+            $this->assertSame($createdAt, $state->created_at);
+            $this->assertSame('2026-07-18 08:05:00', Carbon::parse($state->read_at)->format('Y-m-d H:i:s'));
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_existing_admin_user_state_is_updated_without_duplicate_insert(): void
+    {
+        $notificationId = $this->insertNotification('Info Existing', 'Pesan admin', 'all');
+        $createdAt = now()->subHour()->format('Y-m-d H:i:s');
+
+        DB::table('notification_user_states')->insert([
+            'notification_id' => $notificationId,
+            'user_type' => 'admin',
+            'user_id' => $this->admin->id,
+            'read_at' => null,
+            'deleted_at' => null,
+            'created_at' => $createdAt,
+            'updated_at' => $createdAt,
+        ]);
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->postJson("/admin/information/{$notificationId}/read")
+            ->assertOk()
+            ->assertJson(['success' => true]);
+
+        $this->assertSame(1, DB::table('notification_user_states')
+            ->where('notification_id', $notificationId)
+            ->where('user_type', 'admin')
+            ->where('user_id', $this->admin->id)
+            ->count());
+        $state = DB::table('notification_user_states')
+            ->where('notification_id', $notificationId)
+            ->where('user_type', 'admin')
+            ->where('user_id', $this->admin->id)
+            ->first();
+        $this->assertSame($createdAt, $state->created_at);
+        $this->assertNotNull($state->read_at);
+    }
+
+    public function test_mark_all_as_read_remains_idempotent_for_existing_states(): void
+    {
+        $first = $this->insertNotification('Info Satu', 'Pesan admin', 'all');
+        $second = $this->insertNotification('Info Dua', 'Pesan admin', 'all');
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->postJson('/admin/information/mark-all-read')
+            ->assertOk()
+            ->assertJson(['success' => true]);
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->postJson('/admin/information/mark-all-read')
+            ->assertOk()
+            ->assertJson(['success' => true]);
+
+        foreach ([$first, $second] as $notificationId) {
+            $this->assertSame(1, DB::table('notification_user_states')
+                ->where('notification_id', $notificationId)
+                ->where('user_type', 'admin')
+                ->where('user_id', $this->admin->id)
+                ->count());
+        }
+
+        $this->assertSame(2, DB::table('notification_user_states')->count());
+    }
+
+    public function test_notification_user_state_isolated_by_user_and_user_type(): void
+    {
+        $notificationId = $this->insertNotification('Info Isolasi', 'Pesan bersama', 'all');
+        $secondAdmin = User::create([
+            'name' => 'Admin Dua',
+            'username' => 'admin-dua',
+            'email' => 'admin-dua@example.test',
+            'password' => Hash::make('password'),
+        ]);
+
+        DB::table('notification_user_states')->insert([
+            'notification_id' => $notificationId,
+            'user_type' => 'guru',
+            'user_id' => $this->admin->id,
+            'read_at' => now()->subDay(),
+            'deleted_at' => null,
+            'created_at' => now()->subDay(),
+            'updated_at' => now()->subDay(),
+        ]);
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->postJson("/admin/information/{$notificationId}/read")
+            ->assertOk();
+
+        $this->actingAs($secondAdmin, 'web')
+            ->withSession($this->adminSession())
+            ->postJson("/admin/information/{$notificationId}/read")
+            ->assertOk();
+
+        $this->assertDatabaseHas('notification_user_states', [
+            'notification_id' => $notificationId,
+            'user_type' => 'admin',
+            'user_id' => $this->admin->id,
+        ]);
+        $this->assertDatabaseHas('notification_user_states', [
+            'notification_id' => $notificationId,
+            'user_type' => 'admin',
+            'user_id' => $secondAdmin->id,
+        ]);
+        $this->assertDatabaseHas('notification_user_states', [
+            'notification_id' => $notificationId,
+            'user_type' => 'guru',
+            'user_id' => $this->admin->id,
+        ]);
+        $this->assertSame(3, DB::table('notification_user_states')->where('notification_id', $notificationId)->count());
+    }
+
+    public function test_unread_count_decreases_after_marking_notifications_read(): void
+    {
+        $first = $this->insertNotification('Info Count Satu', 'Pesan admin', 'all');
+        $this->insertNotification('Info Count Dua', 'Pesan admin', 'all');
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->getJson('/admin/information/unread-count')
+            ->assertOk()
+            ->assertJson(['count' => 2]);
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->postJson("/admin/information/{$first}/read")
+            ->assertOk();
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->getJson('/admin/information/unread-count')
+            ->assertOk()
+            ->assertJson(['count' => 1]);
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->postJson('/admin/information/mark-all-read')
+            ->assertOk();
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->getJson('/admin/information/unread-count')
+            ->assertOk()
+            ->assertJson(['count' => 0]);
+    }
+
+    public function test_unknown_or_unauthorized_notification_cannot_be_marked_read(): void
+    {
+        $specificForWali = $this->insertNotification('Info Wali Rahasia', 'Pesan wali', 'specific', [$this->wali->id]);
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->postJson('/admin/information/999999/read')
+            ->assertNotFound();
+
+        $this->actingAs($this->pengajar, 'guru')
+            ->withSession($this->pengajarSession())
+            ->postJson("/pengajar/notifications/{$specificForWali}/read")
+            ->assertForbidden()
+            ->assertJson([
+                'success' => false,
+                'message' => 'Notifikasi tidak tersedia untuk akun ini.',
+            ]);
+
+        $this->assertSame(0, DB::table('notification_user_states')->count());
+        $this->assertSame(0, DB::table('notification_reads')->count());
+    }
+
+    public function test_plain_web_mark_as_read_request_keeps_json_success_response(): void
+    {
+        $notificationId = $this->insertNotification('Info Web', 'Pesan admin', 'all');
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->post("/admin/information/{$notificationId}/read")
+            ->assertOk()
+            ->assertJson([
+                'success' => true,
+                'message' => 'Notifikasi telah dibaca',
+            ]);
     }
 
     public function test_pengajar_and_wali_can_mark_all_own_notifications_as_read(): void
@@ -209,6 +459,16 @@ class NotificationPanelBulkActionsTest extends TestCase
         $this->assertStringContainsString('Semua sumber', $html);
         $this->assertStringContainsString('Guru/Pengajar', $html);
         $this->assertStringContainsString('Baca informasi terbaru dan kelola notifikasi Anda.', $html);
+    }
+
+    public function test_notification_store_guards_duplicate_mark_read_submissions(): void
+    {
+        $store = file_get_contents(resource_path('js/stores/notification-store.js'));
+
+        $this->assertStringContainsString('markingReadIds: new Set()', $store);
+        $this->assertStringContainsString('this.markingReadIds.has(markingKey)', $store);
+        $this->assertStringContainsString('acquiredMarkingLock', $store);
+        $this->assertStringContainsString('markingAllAsRead: false', $store);
     }
 
     public function test_score_completion_notification_is_aggregated_per_class_subject_context(): void

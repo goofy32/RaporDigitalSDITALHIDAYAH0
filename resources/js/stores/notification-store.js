@@ -6,6 +6,8 @@ export function registerNotificationStore() {
         unreadCount: 0,
         loading: false,
         refreshInterval: null,
+        markingReadIds: new Set(),
+        markingAllAsRead: false,
         baseTitle: '',
         showModal: false,
         hideRead: false,
@@ -326,6 +328,8 @@ export function registerNotificationStore() {
 
         async markAsRead(notificationId, options = {}) {
             const { refreshCount = true } = options;
+            const markingKey = String(notificationId);
+            let acquiredMarkingLock = false;
 
             try {
                 const item = this.items.find(entry => entry.id === notificationId);
@@ -333,10 +337,17 @@ export function registerNotificationStore() {
                     return true;
                 }
 
+                if (this.markingReadIds.has(markingKey)) {
+                    return true;
+                }
+
                 const baseUrl = this.resolveReadBaseUrl();
                 if (!baseUrl) {
                     return false;
                 }
+
+                this.markingReadIds.add(markingKey);
+                acquiredMarkingLock = true;
 
                 const response = await fetch(`${baseUrl}/${notificationId}/read`, {
                     method: 'POST',
@@ -368,11 +379,19 @@ export function registerNotificationStore() {
             } catch (error) {
                 console.error('Error marking notification as read:', error);
                 return false;
+            } finally {
+                if (acquiredMarkingLock) {
+                    this.markingReadIds.delete(markingKey);
+                }
             }
         },
 
         async markAllAsRead() {
             if (this.items.filter(item => item.is_read !== true).length === 0) {
+                return true;
+            }
+
+            if (this.markingAllAsRead) {
                 return true;
             }
 
@@ -382,25 +401,34 @@ export function registerNotificationStore() {
                 return false;
             }
 
-            const response = await fetch(`${baseUrl}/mark-all-read`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
-                    Accept: 'application/json',
-                    'X-Requested-With': 'XMLHttpRequest',
-                },
-            });
+            this.markingAllAsRead = true;
 
-            if (!response.ok) {
+            try {
+                const response = await fetch(`${baseUrl}/mark-all-read`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
+                        Accept: 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest',
+                    },
+                });
+
+                if (!response.ok) {
+                    return false;
+                }
+
+                this.items = this.items.map(item => ({ ...item, is_read: true }));
+                this.unreadCount = 0;
+                this.updateTabTitle();
+
+                return true;
+            } catch (error) {
+                console.error('Error marking all notifications as read:', error);
                 return false;
+            } finally {
+                this.markingAllAsRead = false;
             }
-
-            this.items = this.items.map(item => ({ ...item, is_read: true }));
-            this.unreadCount = 0;
-            this.updateTabTitle();
-
-            return true;
         },
 
         async fetchUnreadCount() {

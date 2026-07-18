@@ -360,22 +360,30 @@ class NotificationController extends Controller
 
     private function upsertUserState(int $notificationId, array $actor, array $values): void
     {
+        $timestamp = now();
         $keys = [
             'notification_id' => $notificationId,
             'user_type' => $actor['type'],
             'user_id' => $actor['id'],
         ];
 
-        $exists = DB::table('notification_user_states')->where($keys)->exists();
+        $row = array_merge($keys, [
+            'read_at' => $values['read_at'] ?? null,
+            'deleted_at' => $values['deleted_at'] ?? null,
+            'created_at' => $timestamp,
+            'updated_at' => $timestamp,
+        ]);
 
-        DB::table('notification_user_states')->updateOrInsert(
-            $keys,
-            array_merge($values, [
-                'updated_at' => now(),
-                'created_at' => $exists
-                    ? DB::table('notification_user_states')->where($keys)->value('created_at')
-                    : now(),
-            ])
+        $updateColumns = collect(['read_at', 'deleted_at'])
+            ->filter(fn (string $column) => array_key_exists($column, $values))
+            ->push('updated_at')
+            ->values()
+            ->all();
+
+        DB::table('notification_user_states')->upsert(
+            [$row],
+            ['notification_id', 'user_type', 'user_id'],
+            $updateColumns
         );
     }
 
