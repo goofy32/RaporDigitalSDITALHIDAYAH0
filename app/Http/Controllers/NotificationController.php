@@ -149,16 +149,17 @@ class NotificationController extends Controller
                 return response()->json(['success' => false], 403);
             }
 
-            $notifications = $this->visibleNotificationsFor($actor)->get();
+            $notificationIds = $this->visibleNotificationsFor($actor)
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->values();
 
-            foreach ($notifications as $notification) {
-                $this->markNotificationReadForActor($notification, $actor);
-            }
+            $this->markNotificationsReadForActor($notificationIds, $actor);
 
             return response()->json([
                 'success' => true,
                 'message' => 'Semua notifikasi Anda telah ditandai dibaca.',
-                'count' => $notifications->count(),
+                'count' => $notificationIds->count(),
             ]);
         } catch (\Exception $e) {
             Log::error('Error marking all notifications as read: ' . $e->getMessage());
@@ -179,10 +180,7 @@ class NotificationController extends Controller
                 return response()->json(['count' => 0], 401);
             }
 
-            $count = $this->visibleNotificationsFor($actor)
-                ->get()
-                ->filter(fn ($notification) => ! $this->isReadByActor($notification, $actor))
-                ->count();
+            $count = $this->unreadNotificationsFor($actor)->count();
 
             return response()->json(['count' => $count]);
         } catch (\Exception $e) {
@@ -197,7 +195,30 @@ class NotificationController extends Controller
         try {
             $actor = $this->currentActor();
 
-            if (! $actor || ! $this->isVisibleToActor($notification, $actor)) {
+            if (! $actor) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Notifikasi tidak tersedia untuk akun ini.',
+                ], 403);
+            }
+
+            if ($actor['type'] === 'admin') {
+                if (! $this->isAdminManagedNotification($notification)) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Notifikasi tidak tersedia untuk akun ini.',
+                    ], 403);
+                }
+
+                $this->deleteNotificationGlobally($notification);
+
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Notifikasi berhasil dihapus.',
+                ]);
+            }
+
+            if (! $this->isVisibleToActor($notification, $actor)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Notifikasi tidak tersedia untuk akun ini.',
@@ -220,7 +241,7 @@ class NotificationController extends Controller
         }
     }
 
-    public function destroyAllMine()
+    public function destroyAll()
     {
         try {
             $actor = $this->currentActor();
@@ -229,11 +250,19 @@ class NotificationController extends Controller
                 return response()->json(['success' => false], 403);
             }
 
+            if ($actor['type'] === 'admin') {
+                $deletedCount = $this->deleteAllManagedNotificationsGlobally();
+
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Semua notifikasi berhasil dihapus.',
+                    'count' => $deletedCount,
+                ]);
+            }
+
             $notificationIds = $this->visibleNotificationsFor($actor)->pluck('id');
 
-            foreach ($notificationIds as $notificationId) {
-                $this->dismissNotificationForActor((int) $notificationId, $actor);
-            }
+            $this->dismissNotificationsForActor($notificationIds, $actor);
 
             return response()->json([
                 'success' => true,
@@ -252,6 +281,14 @@ class NotificationController extends Controller
 
     private function currentActor(): ?array
     {
+        if (request()->is('admin/*') && Auth::guard('web')->check()) {
+            return [
+                'type' => 'admin',
+                'id' => (int) Auth::guard('web')->id(),
+                'role' => 'admin',
+            ];
+        }
+
         if (Auth::guard('guru')->check()) {
             $guru = Auth::guard('guru')->user();
 
@@ -275,7 +312,11 @@ class NotificationController extends Controller
 
     private function visibleNotificationsFor(array $actor): Builder
     {
-        $query = Notification::select([
+        $query = $actor['type'] === 'admin'
+            ? $this->adminManagedNotificationsQuery()
+            : Notification::query();
+
+        $query->select([
             'id',
             'title',
             'content',
@@ -297,6 +338,54 @@ class NotificationController extends Controller
         }
 
         $this->excludeDismissedForActor($query, $actor);
+
+        return $query;
+    }
+
+    private function adminManagedNotificationsQuery(): Builder
+    {
+        // Historical Admin notification management listed and deleted all active notification rows.
+        // The schema has no persisted source/owner flag to separate Admin-created and system-created rows.
+        return Notification::query();
+    }
+
+    private function isAdminManagedNotification(Notification $notification): bool
+    {
+        return $this->adminManagedNotificationsQuery()
+            ->whereKey($notification->id)
+            ->exists();
+    }
+
+    private function unreadNotificationsFor(array $actor): Builder
+    {
+        $query = $this->visibleNotificationsFor($actor);
+
+        if (Schema::hasTable('notification_user_states')) {
+            $query->whereNotExists(function ($subquery) use ($actor) {
+                $subquery->select(DB::raw(1))
+                    ->from('notification_user_states')
+                    ->whereColumn('notification_user_states.notification_id', 'notifications.id')
+                    ->where('notification_user_states.user_type', $actor['type'])
+                    ->where('notification_user_states.user_id', $actor['id'])
+                    ->whereNotNull('notification_user_states.read_at');
+            });
+
+            if ($actor['type'] !== 'guru' || ! Schema::hasTable('notification_reads')) {
+                return $query;
+            }
+        }
+
+        if ($actor['type'] === 'guru' && Schema::hasTable('notification_reads')) {
+            $query->whereDoesntHave('readers', function ($readerQuery) use ($actor) {
+                $readerQuery->where('guru_id', $actor['id']);
+            });
+
+            return $query;
+        }
+
+        if (! Schema::hasTable('notification_user_states')) {
+            $query->where('is_read', false);
+        }
 
         return $query;
     }
@@ -326,33 +415,56 @@ class NotificationController extends Controller
 
     private function markNotificationReadForActor(Notification $notification, array $actor): void
     {
-        if ($actor['type'] === 'guru') {
-            if (! $notification->readers()->where('guru_id', $actor['id'])->exists()) {
-                $notification->readers()->attach($actor['id'], ['read_at' => now()]);
-            }
+        $this->markNotificationsReadForActor(collect([(int) $notification->id]), $actor);
+    }
 
+    private function markNotificationsReadForActor(Collection $notificationIds, array $actor): void
+    {
+        $notificationIds = $notificationIds
+            ->map(fn ($notificationId) => (int) $notificationId)
+            ->filter()
+            ->unique()
+            ->values();
+
+        if ($notificationIds->isEmpty()) {
             return;
         }
 
         if (Schema::hasTable('notification_user_states')) {
-            $this->upsertUserState($notification->id, $actor, ['read_at' => now()]);
+            $this->upsertUserStates($notificationIds, $actor, ['read_at' => now()]);
             return;
         }
 
-        $notification->update(['is_read' => true]);
-    }
-
-    private function dismissNotificationForActor(int $notificationId, array $actor): void
-    {
-        if (! Schema::hasTable('notification_user_states')) {
-            if ($actor['type'] === 'admin') {
-                Notification::whereKey($notificationId)->delete();
+        if ($actor['type'] === 'guru') {
+            foreach ($notificationIds as $notificationId) {
+                $notification = Notification::find($notificationId);
+                if ($notification && ! $notification->readers()->where('guru_id', $actor['id'])->exists()) {
+                    $notification->readers()->attach($actor['id'], ['read_at' => now()]);
+                }
             }
 
             return;
         }
 
-        $this->upsertUserState($notificationId, $actor, [
+        Notification::whereIn('id', $notificationIds)->update(['is_read' => true]);
+    }
+
+    private function dismissNotificationForActor(int $notificationId, array $actor): void
+    {
+        $this->dismissNotificationsForActor(collect([$notificationId]), $actor);
+    }
+
+    private function dismissNotificationsForActor(Collection $notificationIds, array $actor): void
+    {
+        if (! Schema::hasTable('notification_user_states')) {
+            if ($actor['type'] === 'admin') {
+                Notification::whereIn('id', $notificationIds)->delete();
+            }
+
+            return;
+        }
+
+        $this->upsertUserStates($notificationIds, $actor, [
             'read_at' => now(),
             'deleted_at' => now(),
         ]);
@@ -360,19 +472,30 @@ class NotificationController extends Controller
 
     private function upsertUserState(int $notificationId, array $actor, array $values): void
     {
-        $timestamp = now();
-        $keys = [
-            'notification_id' => $notificationId,
-            'user_type' => $actor['type'],
-            'user_id' => $actor['id'],
-        ];
+        $this->upsertUserStates(collect([$notificationId]), $actor, $values);
+    }
 
-        $row = array_merge($keys, [
-            'read_at' => $values['read_at'] ?? null,
-            'deleted_at' => $values['deleted_at'] ?? null,
-            'created_at' => $timestamp,
-            'updated_at' => $timestamp,
-        ]);
+    private function upsertUserStates(Collection $notificationIds, array $actor, array $values): void
+    {
+        $timestamp = now();
+        $rows = $notificationIds
+            ->map(fn ($notificationId) => (int) $notificationId)
+            ->filter()
+            ->unique()
+            ->map(fn (int $notificationId) => [
+                'notification_id' => $notificationId,
+                'user_type' => $actor['type'],
+                'user_id' => $actor['id'],
+                'read_at' => $values['read_at'] ?? null,
+                'deleted_at' => $values['deleted_at'] ?? null,
+                'created_at' => $timestamp,
+                'updated_at' => $timestamp,
+            ])
+            ->values();
+
+        if ($rows->isEmpty()) {
+            return;
+        }
 
         $updateColumns = collect(['read_at', 'deleted_at'])
             ->filter(fn (string $column) => array_key_exists($column, $values))
@@ -380,26 +503,88 @@ class NotificationController extends Controller
             ->values()
             ->all();
 
-        DB::table('notification_user_states')->upsert(
-            [$row],
-            ['notification_id', 'user_type', 'user_id'],
-            $updateColumns
-        );
+        $rows
+            ->chunk(500)
+            ->each(function (Collection $chunk) use ($updateColumns) {
+                DB::table('notification_user_states')->upsert(
+                    $chunk->all(),
+                    ['notification_id', 'user_type', 'user_id'],
+                    $updateColumns
+                );
+            });
+    }
+
+    private function deleteNotificationGlobally(Notification $notification): void
+    {
+        DB::transaction(function () use ($notification) {
+            $this->deleteNotificationStateRows(collect([(int) $notification->id]));
+            $notification->delete();
+        });
+    }
+
+    private function deleteAllManagedNotificationsGlobally(): int
+    {
+        $notificationIds = $this->adminManagedNotificationsQuery()
+            ->select('id')
+            ->orderBy('id')
+            ->pluck('id')
+            ->map(fn ($notificationId) => (int) $notificationId)
+            ->values();
+
+        if ($notificationIds->isEmpty()) {
+            return 0;
+        }
+
+        DB::transaction(function () use ($notificationIds) {
+            $this->deleteNotificationStateRows($notificationIds);
+            Notification::whereIn('id', $notificationIds)->delete();
+        });
+
+        return $notificationIds->count();
+    }
+
+    private function deleteNotificationStateRows(Collection $notificationIds): void
+    {
+        $notificationIds = $notificationIds
+            ->map(fn ($notificationId) => (int) $notificationId)
+            ->filter()
+            ->unique()
+            ->values();
+
+        if ($notificationIds->isEmpty()) {
+            return;
+        }
+
+        if (Schema::hasTable('notification_user_states')) {
+            DB::table('notification_user_states')
+                ->whereIn('notification_id', $notificationIds)
+                ->delete();
+        }
+
+        if (Schema::hasTable('notification_reads')) {
+            DB::table('notification_reads')
+                ->whereIn('notification_id', $notificationIds)
+                ->delete();
+        }
     }
 
     private function isReadByActor(Notification $notification, array $actor): bool
     {
-        if ($actor['type'] === 'guru') {
-            return $notification->isReadBy($actor['id']);
-        }
-
         if (Schema::hasTable('notification_user_states')) {
-            return DB::table('notification_user_states')
+            $stateIsRead = DB::table('notification_user_states')
                 ->where('notification_id', $notification->id)
                 ->where('user_type', $actor['type'])
                 ->where('user_id', $actor['id'])
                 ->whereNotNull('read_at')
                 ->exists();
+
+            if ($stateIsRead) {
+                return true;
+            }
+        }
+
+        if ($actor['type'] === 'guru' && Schema::hasTable('notification_reads')) {
+            return $notification->isReadBy($actor['id']);
         }
 
         return (bool) $notification->is_read;

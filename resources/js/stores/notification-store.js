@@ -8,6 +8,9 @@ export function registerNotificationStore() {
         refreshInterval: null,
         markingReadIds: new Set(),
         markingAllAsRead: false,
+        deletingNotificationIds: new Set(),
+        deletingAllNotifications: false,
+        errorMessage: '',
         baseTitle: '',
         showModal: false,
         hideRead: false,
@@ -72,6 +75,27 @@ export function registerNotificationStore() {
 
         resolveDeleteBaseUrl() {
             return this.resolveReadBaseUrl();
+        },
+
+        isAdminContext() {
+            return window.location.pathname.includes('/admin/');
+        },
+
+        clearError() {
+            this.errorMessage = '';
+        },
+
+        setError(message) {
+            this.errorMessage = message || 'Aksi notifikasi gagal diproses.';
+        },
+
+        async responseErrorMessage(response, fallback) {
+            try {
+                const data = await response.clone().json();
+                return data.message || fallback;
+            } catch (error) {
+                return fallback;
+            }
         },
 
         formatTime(dateString) {
@@ -312,7 +336,7 @@ export function registerNotificationStore() {
                 });
 
                 if (!response.ok) {
-                    throw new Error(`Network response was not ok: ${response.status}`);
+                    throw new Error(await this.responseErrorMessage(response, 'Gagal memuat notifikasi.'));
                 }
 
                 const data = await response.json();
@@ -321,18 +345,20 @@ export function registerNotificationStore() {
                 this.updateTabTitle();
             } catch (error) {
                 console.error('Error fetching notifications:', error);
+                this.setError(error.message || 'Gagal memuat notifikasi.');
             } finally {
                 this.loading = false;
             }
         },
 
         async markAsRead(notificationId, options = {}) {
-            const { refreshCount = true } = options;
             const markingKey = String(notificationId);
             let acquiredMarkingLock = false;
+            const previousItems = this.items.map(item => ({ ...item }));
+            const previousUnreadCount = Number(this.unreadCount || 0);
 
             try {
-                const item = this.items.find(entry => entry.id === notificationId);
+                const item = this.items.find(entry => String(entry.id) === markingKey);
                 if (item && item.is_read) {
                     return true;
                 }
@@ -348,6 +374,13 @@ export function registerNotificationStore() {
 
                 this.markingReadIds.add(markingKey);
                 acquiredMarkingLock = true;
+                this.clearError();
+
+                if (item && item.is_read !== true) {
+                    this.items = this.items.map(entry => String(entry.id) === markingKey ? { ...entry, is_read: true } : entry);
+                    this.unreadCount = Math.max(0, previousUnreadCount - 1);
+                    this.updateTabTitle();
+                }
 
                 const response = await fetch(`${baseUrl}/${notificationId}/read`, {
                     method: 'POST',
@@ -360,24 +393,21 @@ export function registerNotificationStore() {
                 });
 
                 if (!response.ok) {
-                    return false;
+                    throw new Error(await this.responseErrorMessage(response, 'Gagal menandai notifikasi sebagai dibaca.'));
                 }
 
-                this.items = this.items.map(entry => entry.id === notificationId ? { ...entry, is_read: true } : entry);
-
-                if (refreshCount) {
-                    await this.fetchUnreadCount();
-                } else {
-                    this.unreadCount = Math.max(
-                        0,
-                        this.items.filter(entry => entry.is_read !== true).length
-                    );
-                    this.updateTabTitle();
+                const result = await response.json();
+                if (result.success === false) {
+                    throw new Error(result.message || 'Gagal menandai notifikasi sebagai dibaca.');
                 }
 
                 return true;
             } catch (error) {
                 console.error('Error marking notification as read:', error);
+                this.items = previousItems;
+                this.unreadCount = previousUnreadCount;
+                this.updateTabTitle();
+                this.setError(error.message || 'Gagal menandai notifikasi sebagai dibaca.');
                 return false;
             } finally {
                 if (acquiredMarkingLock) {
@@ -402,6 +432,12 @@ export function registerNotificationStore() {
             }
 
             this.markingAllAsRead = true;
+            const previousItems = this.items.map(item => ({ ...item }));
+            const previousUnreadCount = Number(this.unreadCount || 0);
+            this.clearError();
+            this.items = this.items.map(item => ({ ...item, is_read: true }));
+            this.unreadCount = 0;
+            this.updateTabTitle();
 
             try {
                 const response = await fetch(`${baseUrl}/mark-all-read`, {
@@ -415,16 +451,21 @@ export function registerNotificationStore() {
                 });
 
                 if (!response.ok) {
-                    return false;
+                    throw new Error(await this.responseErrorMessage(response, 'Gagal menandai semua notifikasi sebagai dibaca.'));
                 }
 
-                this.items = this.items.map(item => ({ ...item, is_read: true }));
-                this.unreadCount = 0;
-                this.updateTabTitle();
+                const result = await response.json();
+                if (result.success === false) {
+                    throw new Error(result.message || 'Gagal menandai semua notifikasi sebagai dibaca.');
+                }
 
                 return true;
             } catch (error) {
                 console.error('Error marking all notifications as read:', error);
+                this.items = previousItems;
+                this.unreadCount = previousUnreadCount;
+                this.updateTabTitle();
+                this.setError(error.message || 'Gagal menandai semua notifikasi sebagai dibaca.');
                 return false;
             } finally {
                 this.markingAllAsRead = false;
@@ -450,7 +491,7 @@ export function registerNotificationStore() {
                 });
 
                 if (!response.ok) {
-                    throw new Error(`Network response was not ok: ${response.status}`);
+                    throw new Error(await this.responseErrorMessage(response, 'Gagal memuat jumlah notifikasi.'));
                 }
 
                 const data = await response.json();
@@ -466,6 +507,7 @@ export function registerNotificationStore() {
                 return newCount;
             } catch (error) {
                 console.error('Error fetching unread count:', error);
+                this.setError(error.message || 'Gagal memuat jumlah notifikasi.');
                 this.updateTabTitle();
                 return 0;
             }
@@ -536,16 +578,38 @@ export function registerNotificationStore() {
                 return false;
             } catch (error) {
                 console.error('Error adding notification:', error);
+                this.setError(error.message || 'Gagal menambahkan notifikasi.');
                 return false;
             }
         },
 
         async deleteNotification(id) {
+            const deleteKey = String(id);
+            let acquiredDeleteLock = false;
+            const previousItems = this.items.map(item => ({ ...item }));
+            const previousUnreadCount = Number(this.unreadCount || 0);
+
             try {
+                if (this.deletingNotificationIds.has(deleteKey)) {
+                    return true;
+                }
+
                 const baseUrl = this.resolveDeleteBaseUrl();
 
                 if (!baseUrl) {
                     return false;
+                }
+
+                this.deletingNotificationIds.add(deleteKey);
+                acquiredDeleteLock = true;
+                this.clearError();
+
+                const deletedItem = this.items.find(item => String(item.id) === deleteKey);
+                this.items = this.items.filter(item => String(item.id) !== deleteKey);
+
+                if (deletedItem && deletedItem.is_read !== true) {
+                    this.unreadCount = Math.max(0, previousUnreadCount - 1);
+                    this.updateTabTitle();
                 }
 
                 const response = await fetch(`${baseUrl}/${id}`, {
@@ -558,37 +622,58 @@ export function registerNotificationStore() {
                     },
                 });
 
-                if (!response.ok) throw new Error('Failed to delete notification');
-
-                const result = await response.json();
-                if (result.success) {
-                    this.items = this.items.filter(item => item.id !== id);
-                    return true;
+                if (!response.ok) {
+                    throw new Error(await this.responseErrorMessage(response, 'Gagal menghapus notifikasi.'));
                 }
 
-                return false;
+                const result = await response.json();
+                if (result.success === false) {
+                    throw new Error(result.message || 'Gagal menghapus notifikasi.');
+                }
+
+                return true;
             } catch (error) {
                 console.error('Error deleting notification:', error);
+                this.items = previousItems;
+                this.unreadCount = previousUnreadCount;
+                this.updateTabTitle();
+                this.setError(error.message || 'Gagal menghapus notifikasi.');
                 return false;
+            } finally {
+                if (acquiredDeleteLock) {
+                    this.deletingNotificationIds.delete(deleteKey);
+                }
             }
         },
 
-        async deleteAllOwn() {
-            if (this.items.length === 0) {
+        async deleteAllNotifications() {
+            if (this.deletingAllNotifications) {
                 return true;
             }
 
-            if (!window.confirm('Hapus semua notifikasi Anda? Tindakan ini tidak dapat dibatalkan.')) {
+            const message = this.isAdminContext()
+                ? 'Hapus semua notifikasi secara global? Tindakan ini tidak dapat dibatalkan.'
+                : 'Hapus semua notifikasi Anda? Tindakan ini tidak dapat dibatalkan.';
+
+            if (!window.confirm(message)) {
                 return false;
             }
 
+            const baseUrl = this.resolveDeleteBaseUrl();
+
+            if (!baseUrl) {
+                return false;
+            }
+
+            const previousItems = this.items.map(item => ({ ...item }));
+            const previousUnreadCount = Number(this.unreadCount || 0);
+            this.deletingAllNotifications = true;
+            this.clearError();
+            this.items = [];
+            this.unreadCount = 0;
+            this.updateTabTitle();
+
             try {
-                const baseUrl = this.resolveDeleteBaseUrl();
-
-                if (!baseUrl) {
-                    return false;
-                }
-
                 const response = await fetch(`${baseUrl}/delete-all`, {
                     method: 'DELETE',
                     headers: {
@@ -599,20 +684,25 @@ export function registerNotificationStore() {
                     },
                 });
 
-                if (!response.ok) throw new Error('Failed to delete notifications');
-
-                const result = await response.json();
-                if (result.success) {
-                    this.items = [];
-                    this.unreadCount = 0;
-                    this.updateTabTitle();
-                    return true;
+                if (!response.ok) {
+                    throw new Error(await this.responseErrorMessage(response, 'Gagal menghapus semua notifikasi.'));
                 }
 
-                return false;
+                const result = await response.json();
+                if (result.success === false) {
+                    throw new Error(result.message || 'Gagal menghapus semua notifikasi.');
+                }
+
+                return true;
             } catch (error) {
                 console.error('Error deleting all notifications:', error);
+                this.items = previousItems;
+                this.unreadCount = previousUnreadCount;
+                this.updateTabTitle();
+                this.setError(error.message || 'Gagal menghapus semua notifikasi.');
                 return false;
+            } finally {
+                this.deletingAllNotifications = false;
             }
         },
 

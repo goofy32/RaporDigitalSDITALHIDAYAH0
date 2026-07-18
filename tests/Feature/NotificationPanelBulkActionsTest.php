@@ -2,16 +2,19 @@
 
 namespace Tests\Feature;
 
+use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\ScoreController;
 use App\Models\Guru;
 use App\Models\MataPelajaran;
 use App\Models\Notification;
 use App\Models\User;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Http\Request as HttpRequest;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
@@ -323,6 +326,53 @@ class NotificationPanelBulkActionsTest extends TestCase
             ]);
     }
 
+    public function test_static_notification_bulk_routes_are_not_captured_by_dynamic_notification_routes(): void
+    {
+        $routes = [
+            ['POST', '/admin/information/mark-all-read', NotificationController::class . '@markAllAsRead'],
+            ['DELETE', '/admin/information/delete-all', NotificationController::class . '@destroyAll'],
+            ['POST', '/pengajar/notifications/mark-all-read', NotificationController::class . '@markAllAsRead'],
+            ['DELETE', '/pengajar/notifications/delete-all', NotificationController::class . '@destroyAll'],
+            ['POST', '/wali-kelas/notifications/mark-all-read', NotificationController::class . '@markAllAsRead'],
+            ['DELETE', '/wali-kelas/notifications/delete-all', NotificationController::class . '@destroyAll'],
+            ['POST', '/admin/information/123/read', NotificationController::class . '@markAsRead'],
+            ['DELETE', '/admin/information/123', NotificationController::class . '@destroy'],
+            ['POST', '/pengajar/notifications/123/read', NotificationController::class . '@markAsRead'],
+            ['DELETE', '/pengajar/notifications/123', NotificationController::class . '@destroy'],
+            ['POST', '/wali-kelas/notifications/123/read', NotificationController::class . '@markAsRead'],
+            ['DELETE', '/wali-kelas/notifications/123', NotificationController::class . '@destroy'],
+        ];
+
+        foreach ($routes as [$method, $path, $expectedAction]) {
+            $route = Route::getRoutes()->match(HttpRequest::create($path, $method));
+
+            $this->assertSame($expectedAction, $route->getActionName(), "{$method} {$path}");
+        }
+    }
+
+    public function test_dynamic_notification_action_routes_require_numeric_notification_ids(): void
+    {
+        $adminReadResponse = $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->postJson('/admin/information/not-a-number/read');
+        $this->assertContains($adminReadResponse->getStatusCode(), [404, 405]);
+
+        $adminDeleteResponse = $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->deleteJson('/admin/information/delete-all-extra');
+        $this->assertContains($adminDeleteResponse->getStatusCode(), [404, 405]);
+
+        $pengajarReadResponse = $this->actingAs($this->pengajar, 'guru')
+            ->withSession($this->pengajarSession())
+            ->postJson('/pengajar/notifications/not-a-number/read');
+        $this->assertContains($pengajarReadResponse->getStatusCode(), [404, 405]);
+
+        $waliDeleteResponse = $this->actingAs($this->wali, 'guru')
+            ->withSession($this->waliSession())
+            ->deleteJson('/wali-kelas/notifications/not-a-number');
+        $this->assertContains($waliDeleteResponse->getStatusCode(), [404, 405]);
+    }
+
     public function test_pengajar_and_wali_can_mark_all_own_notifications_as_read(): void
     {
         $forPengajar = $this->insertNotification('Info Guru', 'Pengumuman guru', 'guru');
@@ -334,13 +384,15 @@ class NotificationPanelBulkActionsTest extends TestCase
             ->assertOk()
             ->assertJson(['success' => true]);
 
-        $this->assertDatabaseHas('notification_reads', [
+        $this->assertDatabaseHas('notification_user_states', [
             'notification_id' => $forPengajar,
-            'guru_id' => $this->pengajar->id,
+            'user_type' => 'guru',
+            'user_id' => $this->pengajar->id,
         ]);
-        $this->assertDatabaseMissing('notification_reads', [
+        $this->assertDatabaseMissing('notification_user_states', [
             'notification_id' => $forWali,
-            'guru_id' => $this->pengajar->id,
+            'user_type' => 'guru',
+            'user_id' => $this->pengajar->id,
         ]);
 
         $this->actingAs($this->wali, 'guru')
@@ -349,25 +401,162 @@ class NotificationPanelBulkActionsTest extends TestCase
             ->assertOk()
             ->assertJson(['success' => true]);
 
-        $this->assertDatabaseHas('notification_reads', [
+        $this->assertDatabaseHas('notification_user_states', [
             'notification_id' => $forWali,
-            'guru_id' => $this->wali->id,
+            'user_type' => 'guru',
+            'user_id' => $this->wali->id,
         ]);
+        $this->assertSame(0, DB::table('notification_reads')->count());
     }
 
-    public function test_delete_all_dismisses_only_current_users_notifications(): void
+    public function test_admin_can_delete_one_notification_globally_for_every_recipient(): void
+    {
+        $notificationId = $this->insertNotification('Info Guru Global', 'Pesan untuk guru', 'guru');
+
+        DB::table('notification_user_states')->insert([
+            [
+                'notification_id' => $notificationId,
+                'user_type' => 'admin',
+                'user_id' => $this->admin->id,
+                'read_at' => now(),
+                'deleted_at' => null,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+            [
+                'notification_id' => $notificationId,
+                'user_type' => 'guru',
+                'user_id' => $this->pengajar->id,
+                'read_at' => null,
+                'deleted_at' => now(),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+        ]);
+
+        DB::table('notification_reads')->insert([
+            'notification_id' => $notificationId,
+            'guru_id' => $this->pengajar->id,
+            'read_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->deleteJson("/admin/information/{$notificationId}")
+            ->assertOk()
+            ->assertJson([
+                'success' => true,
+                'message' => 'Notifikasi berhasil dihapus.',
+            ]);
+
+        $this->assertNotNull(DB::table('notifications')->where('id', $notificationId)->value('deleted_at'));
+        $this->assertSame(0, DB::table('notification_user_states')->where('notification_id', $notificationId)->count());
+        $this->assertSame(0, DB::table('notification_reads')->where('notification_id', $notificationId)->count());
+
+        $pengajarList = $this->actingAs($this->pengajar, 'guru')
+            ->withSession($this->pengajarSession())
+            ->getJson('/pengajar/notifications')
+            ->assertOk();
+        $this->assertCount(0, $pengajarList->json('items'));
+    }
+
+    public function test_admin_single_delete_uses_historical_scope_for_system_classified_notifications(): void
+    {
+        $notificationId = $this->insertNotification(
+            'Batch Rapor UTS Kelas 1 Siap Diunduh',
+            'Generate batch rapor UTS telah selesai.',
+            'specific',
+            [$this->wali->id]
+        );
+
+        $adminList = $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->getJson('/admin/information/list')
+            ->assertOk();
+
+        $item = collect($adminList->json('items'))->firstWhere('id', $notificationId);
+        $this->assertSame('sistem', $item['source']);
+        $this->assertSame('rapor', $item['category']);
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->deleteJson("/admin/information/{$notificationId}")
+            ->assertOk()
+            ->assertJson([
+                'success' => true,
+                'message' => 'Notifikasi berhasil dihapus.',
+            ]);
+
+        $this->assertNotNull(DB::table('notifications')->where('id', $notificationId)->value('deleted_at'));
+    }
+
+    public function test_admin_can_delete_all_managed_notifications_globally(): void
     {
         $shared = $this->insertNotification('Info Bersama', 'Pesan bersama', 'all');
         $guruOnly = $this->insertNotification('Info Guru', 'Pesan guru', 'guru');
+        $waliOnly = $this->insertNotification('Info Wali', 'Pesan wali', 'wali_kelas');
+        $specific = $this->insertNotification('Info Spesifik', 'Pesan wali spesifik', 'specific', [$this->wali->id]);
+        $systemClassified = $this->insertNotification(
+            'Semester Genap 2026/2027 Dimulai',
+            'Tahun ajaran semester genap telah dimulai.',
+            'guru'
+        );
+
+        DB::table('notification_user_states')->insert([
+            [
+                'notification_id' => $shared,
+                'user_type' => 'admin',
+                'user_id' => $this->admin->id,
+                'read_at' => now(),
+                'deleted_at' => null,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+            [
+                'notification_id' => $specific,
+                'user_type' => 'guru',
+                'user_id' => $this->wali->id,
+                'read_at' => now(),
+                'deleted_at' => null,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+        ]);
+
+        DB::table('notification_reads')->insert([
+            'notification_id' => $guruOnly,
+            'guru_id' => $this->pengajar->id,
+            'read_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
 
         $this->actingAs($this->admin, 'web')
             ->withSession($this->adminSession())
             ->deleteJson('/admin/information/delete-all')
             ->assertOk()
-            ->assertJson(['success' => true]);
+            ->assertJson([
+                'success' => true,
+                'count' => 5,
+            ]);
 
-        $this->assertDatabaseHas('notifications', ['id' => $shared]);
-        $this->assertDatabaseHas('notifications', ['id' => $guruOnly]);
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->deleteJson('/admin/information/delete-all')
+            ->assertOk()
+            ->assertJson([
+                'success' => true,
+                'count' => 0,
+            ]);
+
+        foreach ([$shared, $guruOnly, $waliOnly, $specific, $systemClassified] as $notificationId) {
+            $this->assertNotNull(DB::table('notifications')->where('id', $notificationId)->value('deleted_at'));
+        }
+
+        $this->assertSame(0, DB::table('notification_user_states')->count());
+        $this->assertSame(0, DB::table('notification_reads')->count());
 
         $adminList = $this->actingAs($this->admin, 'web')
             ->withSession($this->adminSession())
@@ -379,7 +568,134 @@ class NotificationPanelBulkActionsTest extends TestCase
             ->withSession($this->pengajarSession())
             ->getJson('/pengajar/notifications')
             ->assertOk();
+        $this->assertCount(0, $pengajarList->json('items'));
+
+        $waliList = $this->actingAs($this->wali, 'guru')
+            ->withSession($this->waliSession())
+            ->getJson('/wali-kelas/notifications')
+            ->assertOk();
+        $this->assertCount(0, $waliList->json('items'));
+    }
+
+    public function test_admin_delete_all_with_no_matching_notifications_returns_success_count_zero(): void
+    {
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->deleteJson('/admin/information/delete-all')
+            ->assertOk()
+            ->assertJson([
+                'success' => true,
+                'count' => 0,
+            ]);
+
+        $this->assertSame(0, DB::table('notifications')->count());
+        $this->assertSame(0, DB::table('notification_user_states')->count());
+        $this->assertSame(0, DB::table('notification_reads')->count());
+    }
+
+    public function test_pengajar_can_delete_one_notification_only_for_self(): void
+    {
+        $shared = $this->insertNotification('Info Bersama', 'Pesan bersama', 'all');
+        $guruOnly = $this->insertNotification('Info Guru', 'Pesan guru', 'guru');
+
+        $this->actingAs($this->pengajar, 'guru')
+            ->withSession($this->pengajarSession())
+            ->deleteJson("/pengajar/notifications/{$shared}")
+            ->assertOk()
+            ->assertJson([
+                'success' => true,
+                'message' => 'Notifikasi berhasil dihapus dari daftar Anda.',
+            ]);
+
+        $this->assertNull(DB::table('notifications')->where('id', $shared)->value('deleted_at'));
+        $this->assertDatabaseHas('notification_user_states', [
+            'notification_id' => $shared,
+            'user_type' => 'guru',
+            'user_id' => $this->pengajar->id,
+        ]);
+        $this->assertNotNull(DB::table('notification_user_states')
+            ->where('notification_id', $shared)
+            ->where('user_type', 'guru')
+            ->where('user_id', $this->pengajar->id)
+            ->value('deleted_at'));
+
+        $pengajarList = $this->actingAs($this->pengajar, 'guru')
+            ->withSession($this->pengajarSession())
+            ->getJson('/pengajar/notifications')
+            ->assertOk();
+        $this->assertSame([$guruOnly], collect($pengajarList->json('items'))->pluck('id')->all());
+
+        $waliList = $this->actingAs($this->wali, 'guru')
+            ->withSession($this->waliSession())
+            ->getJson('/wali-kelas/notifications')
+            ->assertOk();
+        $this->assertContains($shared, collect($waliList->json('items'))->pluck('id')->all());
+
+        $adminList = $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->getJson('/admin/information/list')
+            ->assertOk();
+        $this->assertContains($shared, collect($adminList->json('items'))->pluck('id')->all());
+    }
+
+    public function test_wali_delete_all_dismisses_only_visible_notifications_for_self(): void
+    {
+        $shared = $this->insertNotification('Info Bersama', 'Pesan bersama', 'all');
+        $guruOnly = $this->insertNotification('Info Guru', 'Pesan guru', 'guru');
+        $waliOnly = $this->insertNotification('Info Wali', 'Pesan wali', 'wali_kelas');
+
+        $this->actingAs($this->wali, 'guru')
+            ->withSession($this->waliSession())
+            ->deleteJson('/wali-kelas/notifications/delete-all')
+            ->assertOk()
+            ->assertJson([
+                'success' => true,
+                'count' => 2,
+            ]);
+
+        $this->actingAs($this->wali, 'guru')
+            ->withSession($this->waliSession())
+            ->deleteJson('/wali-kelas/notifications/delete-all')
+            ->assertOk()
+            ->assertJson([
+                'success' => true,
+                'count' => 0,
+            ]);
+
+        foreach ([$shared, $guruOnly, $waliOnly] as $notificationId) {
+            $this->assertNull(DB::table('notifications')->where('id', $notificationId)->value('deleted_at'));
+        }
+
+        foreach ([$shared, $waliOnly] as $notificationId) {
+            $this->assertNotNull(DB::table('notification_user_states')
+                ->where('notification_id', $notificationId)
+                ->where('user_type', 'guru')
+                ->where('user_id', $this->wali->id)
+                ->value('deleted_at'));
+        }
+        $this->assertDatabaseMissing('notification_user_states', [
+            'notification_id' => $guruOnly,
+            'user_type' => 'guru',
+            'user_id' => $this->wali->id,
+        ]);
+
+        $waliList = $this->actingAs($this->wali, 'guru')
+            ->withSession($this->waliSession())
+            ->getJson('/wali-kelas/notifications')
+            ->assertOk();
+        $this->assertCount(0, $waliList->json('items'));
+
+        $pengajarList = $this->actingAs($this->pengajar, 'guru')
+            ->withSession($this->pengajarSession())
+            ->getJson('/pengajar/notifications')
+            ->assertOk();
         $this->assertCount(2, $pengajarList->json('items'));
+
+        $adminList = $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->getJson('/admin/information/list')
+            ->assertOk();
+        $this->assertCount(3, $adminList->json('items'));
     }
 
     public function test_notification_list_returns_filter_metadata_and_read_status(): void
@@ -451,17 +767,22 @@ class NotificationPanelBulkActionsTest extends TestCase
         $html = Blade::render('<x-notification-panel :can-create="true" />');
 
         $this->assertStringContainsString('data-testid="notification-modal"', $html);
+        $this->assertStringContainsString('role="alert"', $html);
+        $this->assertStringContainsString('$store.notification.errorMessage', $html);
         $this->assertStringContainsString('Tandai semua dibaca', $html);
         $this->assertStringContainsString('Hapus semua', $html);
+        $this->assertStringContainsString('Hapus', $html);
         $this->assertStringContainsString('Belum dibaca', $html);
         $this->assertStringContainsString('Sudah dibaca', $html);
         $this->assertStringContainsString('Filter lanjutan', $html);
         $this->assertStringContainsString('Semua sumber', $html);
         $this->assertStringContainsString('Guru/Pengajar', $html);
         $this->assertStringContainsString('Baca informasi terbaru dan kelola notifikasi Anda.', $html);
+        $this->assertStringContainsString('$store.notification.deleteAllNotifications()', $html);
+        $this->assertStringNotContainsString('$store.notification.deleteAllOwn()', $html);
     }
 
-    public function test_notification_store_guards_duplicate_mark_read_submissions(): void
+    public function test_notification_store_guards_duplicate_mutation_submissions_and_surfaces_errors(): void
     {
         $store = file_get_contents(resource_path('js/stores/notification-store.js'));
 
@@ -469,6 +790,24 @@ class NotificationPanelBulkActionsTest extends TestCase
         $this->assertStringContainsString('this.markingReadIds.has(markingKey)', $store);
         $this->assertStringContainsString('acquiredMarkingLock', $store);
         $this->assertStringContainsString('markingAllAsRead: false', $store);
+        $this->assertStringContainsString('deletingNotificationIds: new Set()', $store);
+        $this->assertStringContainsString('deletingAllNotifications: false', $store);
+        $this->assertStringContainsString('errorMessage: \'\'', $store);
+        $this->assertStringContainsString('this.deletingNotificationIds.has(deleteKey)', $store);
+        $this->assertStringContainsString('this.deletingAllNotifications', $store);
+        $this->assertStringContainsString('setError(message)', $store);
+        $this->assertStringContainsString('this.items = this.items.map(entry => String(entry.id) === markingKey ? { ...entry, is_read: true } : entry);', $store);
+        $this->assertStringContainsString('this.items = this.items.filter(item => String(item.id) !== deleteKey);', $store);
+        $this->assertStringContainsString('Hapus semua notifikasi secara global?', $store);
+        $this->assertStringContainsString('deleteAllNotifications()', $store);
+        $this->assertStringNotContainsString('deleteAllOwn()', $store);
+
+        $markOneBody = Str::between($store, 'async markAsRead(notificationId, options = {})', 'async markAllAsRead()');
+        $this->assertStringNotContainsString('fetchUnreadCount()', $markOneBody);
+
+        $deleteAllBody = Str::between($store, 'async deleteAllNotifications()', 'startAutoRefresh()');
+        $this->assertStringNotContainsString('this.items.length === 0', $deleteAllBody);
+        $this->assertStringContainsString('fetch(`${baseUrl}/delete-all`', $deleteAllBody);
     }
 
     public function test_score_completion_notification_is_aggregated_per_class_subject_context(): void

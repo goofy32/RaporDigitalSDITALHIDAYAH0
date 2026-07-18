@@ -92,6 +92,8 @@
                                 <button
                                     type="button"
                                     @click.stop="$store.notification.deleteNotification(item.id)"
+                                    :disabled="$store.notification.deletingNotificationIds.has(String(item.id))"
+                                    :class="$store.notification.deletingNotificationIds.has(String(item.id)) ? 'cursor-not-allowed opacity-60' : ''"
                                     class="ml-2 flex-shrink-0 text-red-500 hover:text-red-700"
                                     title="Hapus informasi"
                                 >
@@ -128,6 +130,7 @@
         <div
             x-show="$store.notification.showModal"
             x-transition
+            @keydown.escape.window="$store.notification.closeModal()"
             @click.outside="$store.notification.closeModal()"
             class="w-full overflow-hidden rounded-xl bg-white shadow-xl"
         >
@@ -218,18 +221,38 @@
                         <button
                             type="button"
                             @click="$store.notification.markAllAsRead()"
+                            :disabled="$store.notification.markingAllAsRead"
+                            :class="$store.notification.markingAllAsRead ? 'cursor-not-allowed opacity-60' : ''"
                             class="rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50"
                         >
                             Tandai semua dibaca
                         </button>
                         <button
                             type="button"
-                            @click="$store.notification.deleteAllOwn()"
+                            @click="$store.notification.deleteAllNotifications()"
+                            :disabled="$store.notification.deletingAllNotifications"
+                            :class="$store.notification.deletingAllNotifications ? 'cursor-not-allowed opacity-60' : ''"
                             class="rounded-lg border border-red-200 bg-white px-3 py-2 text-xs font-medium text-red-700 hover:bg-red-50"
                         >
                             Hapus semua
                         </button>
                     </div>
+                </div>
+
+                <div
+                    x-cloak
+                    x-show="$store.notification.errorMessage"
+                    class="mt-4 flex items-start justify-between gap-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700"
+                    role="alert"
+                >
+                    <span x-text="$store.notification.errorMessage"></span>
+                    <button
+                        type="button"
+                        @click="$store.notification.clearError()"
+                        class="shrink-0 text-xs font-semibold text-red-700 hover:text-red-900"
+                    >
+                        Tutup
+                    </button>
                 </div>
             </div>
 
@@ -267,14 +290,27 @@
                                             <span x-text="item.created_at_formatted"></span>
                                             <span x-show="item.target_display"> &middot; Untuk: <span x-text="item.target_display"></span></span>
                                         </p>
-                                        <button
-                                            type="button"
-                                            x-show="item.is_read !== true"
-                                            @click="$store.notification.markAsRead(item.id)"
-                                            class="self-start text-xs font-medium text-green-700 hover:text-green-800"
-                                        >
-                                            Tandai dibaca
-                                        </button>
+                                        <div class="flex flex-wrap gap-3">
+                                            <button
+                                                type="button"
+                                                x-show="item.is_read !== true"
+                                                @click="$store.notification.markAsRead(item.id)"
+                                                :disabled="$store.notification.markingReadIds.has(String(item.id))"
+                                                :class="$store.notification.markingReadIds.has(String(item.id)) ? 'cursor-not-allowed opacity-60' : ''"
+                                                class="self-start text-xs font-medium text-green-700 hover:text-green-800"
+                                            >
+                                                Tandai dibaca
+                                            </button>
+                                            <button
+                                                type="button"
+                                                @click="$store.notification.deleteNotification(item.id)"
+                                                :disabled="$store.notification.deletingNotificationIds.has(String(item.id))"
+                                                :class="$store.notification.deletingNotificationIds.has(String(item.id)) ? 'cursor-not-allowed opacity-60' : ''"
+                                                class="self-start text-xs font-medium text-red-700 hover:text-red-800"
+                                            >
+                                                Hapus
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
                             </div>

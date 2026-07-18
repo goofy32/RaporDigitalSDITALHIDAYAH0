@@ -230,10 +230,10 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
     Route::prefix('information')->name('information.')->group(function () {
         Route::post('/', [NotificationController::class, 'store'])->name('store');
         Route::post('/mark-all-read', [NotificationController::class, 'markAllAsRead'])->name('mark-all-read');
-        Route::delete('/delete-all', [NotificationController::class, 'destroyAllMine'])->name('delete-all');
+        Route::delete('/delete-all', [NotificationController::class, 'destroyAll'])->name('delete-all');
         Route::get('/unread-count', [NotificationController::class, 'getUnreadCount'])->name('unread-count');
-        Route::post('/{notification}/read', [NotificationController::class, 'markAsRead'])->name('read');
-        Route::delete('/{notification}', [NotificationController::class, 'destroy'])->name('destroy');
+        Route::post('/{notification}/read', [NotificationController::class, 'markAsRead'])->name('read')->whereNumber('notification');
+        Route::delete('/{notification}', [NotificationController::class, 'destroy'])->name('destroy')->whereNumber('notification');
         Route::get('/list', [NotificationController::class, 'list'])->name('list');
     });
 
@@ -458,8 +458,9 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
     Route::prefix('notifications')->name('notifications.')->group(function () {
         Route::get('/', [NotificationController::class, 'index'])->name('index');
         Route::post('/mark-all-read', [NotificationController::class, 'markAllAsRead'])->name('mark-all-read');
-        Route::delete('/delete-all', [NotificationController::class, 'destroyAllMine'])->name('delete-all');
-        Route::post('/{notification}/read', [NotificationController::class, 'markAsRead'])->name('read');
+        Route::delete('/delete-all', [NotificationController::class, 'destroyAll'])->name('delete-all');
+        Route::post('/{notification}/read', [NotificationController::class, 'markAsRead'])->name('read')->whereNumber('notification');
+        Route::delete('/{notification}', [NotificationController::class, 'destroy'])->name('destroy')->whereNumber('notification');
         Route::get('/unread-count', [NotificationController::class, 'getUnreadCount'])->name('unread-count');
     });
 
@@ -597,8 +598,9 @@ Route::prefix('catatan')->name('catatan.')->group(function () {
 Route::prefix('notifications')->name('notifications.')->group(function () {
     Route::get('/', [NotificationController::class, 'index'])->name('index');
     Route::post('/mark-all-read', [NotificationController::class, 'markAllAsRead'])->name('mark-all-read');
-    Route::delete('/delete-all', [NotificationController::class, 'destroyAllMine'])->name('delete-all');
-    Route::post('/{notification}/read', [NotificationController::class, 'markAsRead'])->name('read');
+    Route::delete('/delete-all', [NotificationController::class, 'destroyAll'])->name('delete-all');
+    Route::post('/{notification}/read', [NotificationController::class, 'markAsRead'])->name('read')->whereNumber('notification');
+    Route::delete('/{notification}', [NotificationController::class, 'destroy'])->name('destroy')->whereNumber('notification');
     Route::get('/unread-count', [NotificationController::class, 'getUnreadCount'])->name('unread-count');
 });
 
