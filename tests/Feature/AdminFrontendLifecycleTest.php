@@ -49,4 +49,35 @@ class AdminFrontendLifecycleTest extends TestCase
         $this->assertStringNotContainsString("attributeFilter: ['class', 'aria-hidden', 'style']", $source);
         $this->assertStringNotContainsString('aria-hidden="true"', $sidebar);
     }
+
+    public function test_admin_dashboard_content_uses_normal_grid_flow_below_topbar(): void
+    {
+        $adminDashboard = file_get_contents(resource_path('views/admin/dashboard.blade.php'));
+        $adminLayout = file_get_contents(resource_path('views/layouts/app.blade.php'));
+        $adminTopbar = file_get_contents(resource_path('views/components/admin/topbar.blade.php'));
+        $pengajarLayout = file_get_contents(resource_path('views/layouts/pengajar/app.blade.php'));
+        $pengajarDashboard = file_get_contents(resource_path('views/pengajar/dashboard.blade.php'));
+        $waliLayout = file_get_contents(resource_path('views/layouts/wali_kelas/app.blade.php'));
+        $waliDashboard = file_get_contents(resource_path('views/wali_kelas/dashboard.blade.php'));
+
+        $this->assertStringContainsString('class="fixed top-0 z-50 w-full bg-white border-b border-gray-200"', $adminTopbar);
+        $this->assertStringContainsString('class="p-4 sm:ml-64 min-h-screen bg-white relative"', $adminLayout);
+        $this->assertStringContainsString('class="mt-14"', $adminLayout);
+        $this->assertStringContainsString('class="mt-16"', $pengajarLayout);
+        $this->assertStringContainsString('class="mt-16"', $waliLayout);
+
+        $adminContentStartPixels = 16 + 56 + 8; // layout p-4 + layout mt-14 + dashboard pt-2
+        $teacherContentStartPixels = 16 + 64; // layout p-4 + layout mt-16
+        $this->assertSame(80, $adminContentStartPixels);
+        $this->assertSame($teacherContentStartPixels, $adminContentStartPixels);
+
+        $this->assertStringNotContainsString('flex flex-col lg:flex-row gap-4 mt-14', $adminDashboard);
+        $this->assertStringContainsString('data-page="admin-dashboard" data-overall-progress="{{ number_format($overallProgress ?? 0, 2) }}" class="pt-2"', $adminDashboard);
+        $this->assertStringContainsString('grid grid-cols-1 gap-4 lg:grid-cols-3', $adminDashboard);
+        $this->assertStringContainsString('lg:col-span-2', $adminDashboard);
+        $this->assertStringContainsString('lg:col-span-1', $adminDashboard);
+
+        $this->assertStringContainsString('grid grid-cols-1 lg:grid-cols-3 gap-4', $pengajarDashboard);
+        $this->assertStringContainsString('grid grid-cols-1 lg:grid-cols-3 gap-4', $waliDashboard);
+    }
 }

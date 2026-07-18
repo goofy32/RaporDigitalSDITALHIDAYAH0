@@ -35,12 +35,12 @@
         </div>
     </div>
 @endif
-<div x-data="dashboard" data-dashboard-role="admin" data-page="admin-dashboard" data-overall-progress="{{ number_format($overallProgress ?? 0, 2) }}">
+<div x-data="dashboard" data-dashboard-role="admin" data-page="admin-dashboard" data-overall-progress="{{ number_format($overallProgress ?? 0, 2) }}" class="pt-2">
     <div x-data="notificationHandler">  
         <!-- Main Content Container -->
-        <div class="flex flex-col lg:flex-row gap-4 mt-14">
+        <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
             <!-- Statistics Grid - Takes 2/3 of the space -->
-            <div class="lg:w-2/3">
+            <div class="lg:col-span-2">
                 <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
                     <!-- Siswa Card -->
                     <div class="rounded-lg bg-white border border-gray-200 shadow-sm overflow-hidden cursor-pointer hover:bg-gray-50 transition-colors" onclick="navigateTo('{{ route('student') }}')">
@@ -86,7 +86,7 @@
             </div>
 
             <!-- Information Section - Takes 1/3 of the space -->
-            <div class="lg:w-1/3">
+            <div class="lg:col-span-1">
                 <x-notification-panel :can-create="true" />
             </div>
         </div>

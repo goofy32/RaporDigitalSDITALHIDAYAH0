@@ -15,6 +15,8 @@ use App\Models\Prestasi;
 use App\Models\Siswa;
 use App\Models\TujuanPembelajaran;
 use App\Models\User;
+use App\Services\SiswaPurgeException;
+use App\Services\SiswaPurgeService;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -95,10 +97,47 @@ class RecycleBinController extends Controller
     public function forceDelete(Request $request, string $type, int $id): JsonResponse|RedirectResponse
     {
         try {
+            if ($type === 'siswa') {
+                $purgeService = app(SiswaPurgeService::class);
+                $purgeResult = $purgeService->purge(
+                    $id,
+                    (string) $request->input('purge_confirmation', '')
+                );
+                $cleanupComplete = $purgeService->runPostCommitCleanupSafely($purgeResult);
+                $message = $cleanupComplete
+                    ? 'Siswa '.$purgeResult['siswa_name'].' berhasil dihapus permanen.'
+                    : SiswaPurgeService::FILE_CLEANUP_WARNING;
+
+                return $this->successResponse($request, $message);
+            }
+
             $message = $this->forceDeleteItem($type, $id);
 
             return $this->successResponse($request, $message);
+        } catch (SiswaPurgeException $e) {
+            Log::warning('[RecycleBinController] Siswa purge blocked', [
+                'type' => $type,
+                'id' => $id,
+                'context' => $e->context(),
+                'user_id' => auth()->id() ?? auth()->guard('guru')->id(),
+            ]);
+
+            return $this->errorResponse($request, $e->getMessage(), 422);
         } catch (\RuntimeException $e) {
+            if ($type === 'siswa') {
+                Log::error('[RecycleBinController] Siswa purge failed', [
+                    'type' => $type,
+                    'id' => $id,
+                    'exception_class' => get_class($e),
+                    'error' => $e->getMessage(),
+                    'user_id' => auth()->id() ?? auth()->guard('guru')->id(),
+                    'file' => $e->getFile(),
+                    'line' => $e->getLine(),
+                ]);
+
+                return $this->errorResponse($request, 'Terjadi kesalahan saat menghapus permanen data. Silakan coba lagi.', 500);
+            }
+
             return $this->errorResponse($request, $e->getMessage(), 422);
         } catch (\Throwable $e) {
             Log::error('[RecycleBinController] Force delete failed', [
@@ -130,7 +169,15 @@ class RecycleBinController extends Controller
         }
 
         try {
+            if ($items->contains(fn (string $item) => str_starts_with($item, 'siswa:'))) {
+                throw new \RuntimeException('Hapus permanen siswa harus dilakukan satu per satu agar konfirmasi identitas siswa dapat diverifikasi.');
+            }
+
             if ($items->isEmpty()) {
+                if (Siswa::onlyTrashed()->exists()) {
+                    throw new \RuntimeException('Hapus permanen siswa harus dilakukan satu per satu agar konfirmasi identitas siswa dapat diverifikasi.');
+                }
+
                 foreach (array_keys($this->typeMap()) as $type) {
                     $modelClass = $this->typeMap()[$type]['class'];
 
@@ -215,6 +262,10 @@ class RecycleBinController extends Controller
                 ->get();
 
             $items = $items->concat($records->map(function (Model $record) use ($type, $config) {
+                $siswaConfirmation = $type === 'siswa' && $record instanceof Siswa
+                    ? app(SiswaPurgeService::class)->confirmationPhrase($record)
+                    : null;
+
                 return [
                     'id' => $record->getKey(),
                     'type' => $type,
@@ -227,6 +278,10 @@ class RecycleBinController extends Controller
                     'expires_at' => $record->deleted_at->copy()->addDays(60),
                     'parent_type' => $this->resolveParentType($type),
                     'parent_id' => $this->resolveParentId($type, $record),
+                    'force_delete_confirmation' => $siswaConfirmation,
+                    'force_delete_note' => $siswaConfirmation
+                        ? 'Hapus permanen siswa akan membersihkan enrollment dan riwayat akademik milik siswa ini. Kelas, guru, akun, dan tahun ajaran tidak ikut dihapus.'
+                        : null,
                     'children' => [],
                 ];
             }));
@@ -731,7 +786,7 @@ class RecycleBinController extends Controller
     protected function forceDeleteModel(string $type, Model $model): void
     {
         if ($type === 'siswa' && $model instanceof Siswa) {
-            $this->deletePhotoIfExists($model->photo);
+            throw new \RuntimeException('Hapus permanen siswa harus menggunakan alur konfirmasi satu data dari recycle bin.');
         }
 
         if ($type === 'guru' && $model instanceof Guru) {

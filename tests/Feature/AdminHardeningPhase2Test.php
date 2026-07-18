@@ -124,10 +124,37 @@ class AdminHardeningPhase2Test extends TestCase
             ->deleteJson(route('admin.recycle-bin.force-delete-all'), [
                 'confirmation' => 'HAPUS PERMANEN',
             ])
+            ->assertUnprocessable()
+            ->assertJsonPath('message', 'Hapus permanen siswa harus dilakukan satu per satu agar konfirmasi identitas siswa dapat diverifikasi.');
+
+        $this->assertNotNull(DB::table('siswas')->where('id', $studentId)->value('deleted_at'));
+
+        $this->actingAsAdmin()
+            ->deleteJson(route('admin.recycle-bin.force-delete', ['type' => 'siswa', 'id' => $studentId]), [
+                'purge_confirmation' => 'HAPUS PERMANEN SISWA 90001',
+            ])
+            ->assertOk()
+            ->assertJson(['success' => true]);
+
+        $guruId = DB::table('gurus')->insertGetId([
+            'nuptk' => 'delete-all-guru',
+            'nama' => 'Guru Terhapus',
+            'username' => 'delete-all-guru',
+            'password' => Hash::make('password'),
+            'deleted_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->actingAsAdmin()
+            ->deleteJson(route('admin.recycle-bin.force-delete-all'), [
+                'confirmation' => 'HAPUS PERMANEN',
+            ])
             ->assertOk()
             ->assertJson(['success' => true]);
 
         $this->assertDatabaseMissing('siswas', ['id' => $studentId]);
+        $this->assertDatabaseMissing('gurus', ['id' => $guruId]);
     }
 
     public function test_guru_cannot_force_delete_all_recycle_bin_items(): void

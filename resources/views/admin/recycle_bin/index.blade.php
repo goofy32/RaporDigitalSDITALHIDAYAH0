@@ -164,6 +164,9 @@
                                     <div>
                                         <p class="text-sm font-medium text-gray-900">{{ $item['name'] }}</p>
                                         <p class="text-sm text-gray-500 mt-1">{{ \Illuminate\Support\Str::limit($item['description'], 100) }}</p>
+                                        @if(!empty($item['force_delete_note']))
+                                            <p class="mt-2 rounded-md bg-red-50 px-3 py-2 text-xs text-red-700">{{ $item['force_delete_note'] }}</p>
+                                        @endif
                                         @if($hasChildren)
                                             <p class="text-xs text-gray-400 mt-1">{{ count($item['children']) }} item turunan</p>
                                         @endif
@@ -191,9 +194,14 @@
                                             Restore
                                         </button>
                                     </form>
-                                    <form method="POST" action="{{ route('admin.recycle-bin.force-delete', ['type' => $item['type'], 'id' => $item['id']]) }}" onsubmit="return confirm('Hapus permanen data ini? Tindakan ini tidak dapat dibatalkan.')">
+                                    <form method="POST"
+                                        action="{{ route('admin.recycle-bin.force-delete', ['type' => $item['type'], 'id' => $item['id']]) }}"
+                                        data-force-delete-form
+                                        data-item-type="{{ $item['type'] }}"
+                                        data-confirmation="{{ $item['force_delete_confirmation'] ?? '' }}">
                                         @csrf
                                         @method('DELETE')
+                                        <input type="hidden" name="purge_confirmation" value="">
                                         <button type="submit" class="px-3 py-1.5 text-xs font-medium text-white bg-red-600 rounded-lg hover:bg-red-700">
                                             Hapus Permanen
                                         </button>
@@ -361,6 +369,31 @@
             });
         }
 
+        function confirmForceDelete(form) {
+            if (form.dataset.itemType === 'siswa') {
+                var expected = form.dataset.confirmation || '';
+                var typed = prompt('Ketik "' + expected + '" untuk menghapus permanen siswa ini. Tindakan ini tidak dapat dibatalkan.');
+
+                if (typed === null) {
+                    return false;
+                }
+
+                if (typed.trim() !== expected) {
+                    alert('Konfirmasi tidak sesuai. Data siswa tidak dihapus.');
+                    return false;
+                }
+
+                var input = form.querySelector('input[name="purge_confirmation"]');
+                if (input) {
+                    input.value = typed.trim();
+                }
+
+                return true;
+            }
+
+            return confirm('Hapus permanen data ini? Tindakan ini tidak dapat dibatalkan.');
+        }
+
         function updateSelectedCount() {
             var selected = getSelectedValues();
             selectedCount.textContent = selected.length + ' item dipilih';
@@ -427,6 +460,11 @@
                 return;
             }
 
+            if (selected.some((value) => value.split(':')[0] === 'siswa')) {
+                alert('Hapus permanen siswa harus dilakukan satu per satu agar konfirmasi identitas siswa dapat diverifikasi.');
+                return;
+            }
+
             if (!confirm('Hapus permanen item yang dipilih? Tindakan ini tidak dapat dibatalkan.')) {
                 return;
             }
@@ -465,6 +503,14 @@
         });
 
         updateSelectedCount();
+
+        document.querySelectorAll('[data-force-delete-form]').forEach(function (form) {
+            form.addEventListener('submit', function (event) {
+                if (!confirmForceDelete(form)) {
+                    event.preventDefault();
+                }
+            });
+        });
     }
 
     document.addEventListener('turbo:load', initRecycleBinPage);
