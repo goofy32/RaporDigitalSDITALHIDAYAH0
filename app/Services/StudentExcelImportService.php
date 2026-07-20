@@ -253,9 +253,14 @@ class StudentExcelImportService
             }
 
             $kelasLabel = trim((string) ($row['kelas'] ?? ''));
-            $kelas = $this->resolveClass($kelasLabel, $tahunAjaran);
-            if ($kelasLabel !== '' && ! $kelas) {
-                $errors[] = $this->rowMessage($rowNumber, $row, 'kelas "'.$kelasLabel.'" tidak ditemukan. Gunakan nama kelas sesuai template.');
+            $classResolution = $this->resolveClass($kelasLabel, $tahunAjaran);
+            $kelas = $classResolution['kelas'];
+            if ($kelasLabel !== '') {
+                if ($classResolution['ambiguous']) {
+                    $errors[] = $this->rowMessage($rowNumber, $row, 'kelas "'.$kelasLabel.'" ambigu karena cocok dengan lebih dari satu data kelas. Periksa data kelas pada tahun ajaran aktif.');
+                } elseif (! $kelas) {
+                    $errors[] = $this->rowMessage($rowNumber, $row, 'kelas "'.$kelasLabel.'" tidak ditemukan. Gunakan nama kelas sesuai template.');
+                }
             }
 
             $birthDate = $this->parseDate($row['tanggal_lahir'] ?? null);
@@ -342,19 +347,28 @@ class StudentExcelImportService
         return true;
     }
 
-    private function resolveClass(string $classLabel, TahunAjaran $tahunAjaran): ?object
+    /**
+     * @return array{kelas: ?object, ambiguous: bool}
+     */
+    private function resolveClass(string $classLabel, TahunAjaran $tahunAjaran): array
     {
         $parsed = $this->parseClassLabel($classLabel);
 
         if (! $parsed) {
-            return null;
+            return ['kelas' => null, 'ambiguous' => false];
         }
 
-        return DB::table('kelas')
+        $candidates = DB::table('kelas')
             ->where('tahun_ajaran_id', $tahunAjaran->id)
-            ->whereRaw('LOWER(nomor_kelas) = ?', [strtolower($parsed['nomor_kelas'])])
-            ->whereRaw('LOWER(nama_kelas) = ?', [strtolower($parsed['nama_kelas'])])
-            ->first();
+            ->whereNull('deleted_at')
+            ->whereRaw('LOWER(TRIM(nomor_kelas)) = ?', [$this->normalizeClassLookupValue($parsed['nomor_kelas'])])
+            ->whereRaw('LOWER(TRIM(nama_kelas)) = ?', [$this->normalizeClassLookupValue($parsed['nama_kelas'])])
+            ->get();
+
+        return [
+            'kelas' => $candidates->count() === 1 ? $candidates->first() : null,
+            'ambiguous' => $candidates->count() > 1,
+        ];
     }
 
     /**
@@ -362,13 +376,13 @@ class StudentExcelImportService
      */
     private function parseClassLabel(string $classLabel): ?array
     {
-        $normalized = trim(preg_replace('/\s+/', ' ', $classLabel) ?? '');
+        $normalized = trim(preg_replace('/\s+/u', ' ', $classLabel) ?? '');
         $normalized = trim(preg_replace('/^kelas\s+/i', '', $normalized) ?? '');
 
         foreach ([
             '/^(\d+)\s*-\s*(.+)$/u',
             '/^(\d+)\s+(.+)$/u',
-            '/^(\d+)([^\d].+)$/u',
+            '/^(\d+)([^\d].*)$/u',
         ] as $pattern) {
             if (preg_match($pattern, $normalized, $matches)) {
                 return [
@@ -379,6 +393,11 @@ class StudentExcelImportService
         }
 
         return null;
+    }
+
+    private function normalizeClassLookupValue(string $value): string
+    {
+        return Str::lower(trim($value));
     }
 
     private function parseDate(mixed $value): ?string

@@ -48,6 +48,11 @@ class StudentImportTemplateService
         $sheet->setTitle('Template Siswa');
         $sheet->fromArray(self::HEADERS, null, 'A1');
 
+        $firstClass = $classes->first();
+        $secondClass = $classes->skip(1)->first();
+        $firstClassLabel = $firstClass ? $this->canonicalClassLabel($firstClass) : 'Kelas 1 A';
+        $secondClassLabel = $secondClass ? $this->canonicalClassLabel($secondClass) : $firstClassLabel;
+
         $examples = [
             [
                 '2601001',
@@ -57,7 +62,7 @@ class StudentImportTemplateService
                 'L',
                 'Islam',
                 'Jalan Contoh 1',
-                $classes->first()?->label_kelas ?? 'Kelas 1A',
+                $firstClassLabel,
                 'Ayah Contoh',
                 'Ibu Contoh',
                 'Wiraswasta',
@@ -73,7 +78,7 @@ class StudentImportTemplateService
                 'P',
                 'Islam',
                 'Jalan Contoh 2',
-                $classes->skip(1)->first()?->label_kelas ?? $classes->first()?->label_kelas ?? 'Kelas 1A',
+                $secondClassLabel,
                 'Ayah Contoh',
                 'Ibu Contoh',
                 'Karyawan',
@@ -115,7 +120,7 @@ class StudentImportTemplateService
         $row = 2;
         foreach ($classes as $class) {
             $sheet->fromArray([
-                $class->label_kelas,
+                $this->canonicalClassLabel($class),
                 $class->nomor_kelas,
                 $class->nama_kelas,
             ], null, "A{$row}");
@@ -188,5 +193,14 @@ class StudentImportTemplateService
             ->orderBy('nomor_kelas')
             ->orderBy('nama_kelas')
             ->get();
+    }
+
+    private function canonicalClassLabel(Kelas $class): string
+    {
+        $number = trim((string) $class->nomor_kelas);
+        $name = trim(preg_replace('/\s+/u', ' ', (string) $class->nama_kelas) ?? '');
+        $label = trim('Kelas '.$number);
+
+        return $name === '' ? $label : $label.' '.$name;
     }
 }

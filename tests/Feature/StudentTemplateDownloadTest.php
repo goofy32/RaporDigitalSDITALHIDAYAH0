@@ -77,27 +77,34 @@ class StudentTemplateDownloadTest extends TestCase
         $this->assertSame(StudentImportTemplateService::HEADERS, $headers);
     }
 
-    public function test_template_includes_only_active_year_classes_and_dropdown_validation(): void
+    public function test_template_includes_only_active_year_classes_with_canonical_labels_and_dropdown_validation(): void
     {
         $workbook = $this->workbookFromResponse(
             $this->actingAs($this->admin, 'web')->get(route('student.template'))
         );
 
         $classSheet = $workbook->getSheetByName('Daftar Kelas');
-        $classLabels = collect($classSheet->rangeToArray('A2:A10'))
-            ->flatten()
-            ->filter()
+        $classRows = collect($classSheet->rangeToArray('A2:C10'))
+            ->filter(fn (array $row) => filled($row[0] ?? null))
+            ->map(fn (array $row) => array_map(fn ($value) => (string) $value, $row))
             ->values()
             ->all();
+        $classLabels = collect($classRows)->pluck(0)->all();
 
-        $this->assertContains('Kelas 1A', $classLabels);
-        $this->assertContains('Kelas 2 Abu Ubaidah', $classLabels);
+        $this->assertContains(['Kelas 1 A', '1', 'A'], $classRows);
+        $this->assertContains(['Kelas 2 a', '2', 'a'], $classRows);
+        $this->assertContains(['Kelas 1 AA', '1', 'AA'], $classRows);
+        $this->assertNotContains('Kelas 1A', $classLabels);
+        $this->assertNotContains('Kelas 1 Aa', $classLabels);
         $this->assertNotContains('Kelas 6 Alumni', $classLabels);
 
-        $validation = $workbook->getSheetByName('Template Siswa')->getCell('H2')->getDataValidation();
+        $templateSheet = $workbook->getSheetByName('Template Siswa');
+        $validation = $templateSheet->getCell('H2')->getDataValidation();
 
         $this->assertSame(DataValidation::TYPE_LIST, $validation->getType());
-        $this->assertStringContainsString('Daftar Kelas', $validation->getFormula1());
+        $this->assertSame("'Daftar Kelas'!".'$A$2:$A$4', $validation->getFormula1());
+        $this->assertSame($classSheet->getCell('A2')->getValue(), $templateSheet->getCell('H2')->getValue());
+        $this->assertSame($classSheet->getCell('A3')->getValue(), $templateSheet->getCell('H3')->getValue());
     }
 
     public function test_template_download_handles_active_year_with_no_classes(): void
@@ -236,7 +243,14 @@ class StudentTemplateDownloadTest extends TestCase
             ],
             [
                 'nomor_kelas' => '2',
-                'nama_kelas' => 'abu ubaidah',
+                'nama_kelas' => 'a',
+                'tahun_ajaran_id' => $this->activeYearId,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+            [
+                'nomor_kelas' => '1',
+                'nama_kelas' => 'AA',
                 'tahun_ajaran_id' => $this->activeYearId,
                 'created_at' => now(),
                 'updated_at' => now(),

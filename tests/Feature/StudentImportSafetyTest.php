@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\Kelas;
 use App\Models\User;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
@@ -118,6 +119,200 @@ class StudentImportSafetyTest extends TestCase
             'tahun_ajaran_id' => $this->activeYearId,
             'semester' => 1,
         ]);
+    }
+
+    public function test_import_accepts_canonical_and_legacy_class_aliases(): void
+    {
+        $classId = $this->insertActiveClass('1', 'A');
+        $aliases = [
+            'Kelas 1 A',
+            'Kelas 1A',
+            'kelas 1 a',
+            '1 A',
+            '1A',
+            '1 - A',
+        ];
+
+        $rows = collect($aliases)
+            ->map(fn (string $alias, int $index) => $this->validRow([
+                'nis' => '26011'.str_pad((string) ($index + 1), 2, '0', STR_PAD_LEFT),
+                'nisn' => '99000001'.str_pad((string) ($index + 1), 2, '0', STR_PAD_LEFT),
+                'nama' => 'Siswa Alias '.($index + 1),
+                'kelas' => $alias,
+            ]))
+            ->all();
+
+        $response = $this->postImport($rows);
+
+        $response->assertRedirect(route('student'));
+        $this->assertSame(count($aliases), DB::table('siswas')->count());
+        $this->assertSame(count($aliases), DB::table('siswa_kelas_semester')->count());
+
+        foreach ($rows as $row) {
+            $siswa = DB::table('siswas')->where('nis', $row['nis'])->first();
+
+            $this->assertNotNull($siswa);
+            $this->assertSame($classId, (int) $siswa->kelas_id);
+            $this->assertDatabaseHas('siswa_kelas_semester', [
+                'siswa_id' => $siswa->id,
+                'kelas_id' => $classId,
+                'tahun_ajaran_id' => $this->activeYearId,
+                'semester' => 1,
+            ]);
+        }
+    }
+
+    public function test_import_preserves_lowercase_class_name_matching_while_accepting_legacy_uppercase_alias(): void
+    {
+        $classId = $this->insertActiveClass('2', 'a');
+        $rows = [
+            $this->validRow([
+                'nis' => '2601201',
+                'nisn' => '9900000201',
+                'nama' => 'Siswa Canonical Lowercase',
+                'kelas' => 'Kelas 2 a',
+            ]),
+            $this->validRow([
+                'nis' => '2601202',
+                'nisn' => '9900000202',
+                'nama' => 'Siswa Legacy Uppercase',
+                'kelas' => 'Kelas 2A',
+            ]),
+        ];
+
+        $response = $this->postImport($rows);
+
+        $response->assertRedirect(route('student'));
+
+        foreach ($rows as $row) {
+            $siswa = DB::table('siswas')->where('nis', $row['nis'])->first();
+
+            $this->assertNotNull($siswa);
+            $this->assertSame($classId, (int) $siswa->kelas_id);
+            $this->assertDatabaseHas('siswa_kelas_semester', [
+                'siswa_id' => $siswa->id,
+                'kelas_id' => $classId,
+                'tahun_ajaran_id' => $this->activeYearId,
+                'semester' => 1,
+            ]);
+        }
+    }
+
+    public function test_import_rejects_ambiguous_class_aliases_without_writing_students_or_enrollments(): void
+    {
+        $this->insertActiveClass('1', 'A');
+        $this->insertActiveClass('1', ' a ');
+        $classCount = DB::table('kelas')->count();
+
+        $response = $this->postImport([
+            $this->validRow(['kelas' => 'Kelas 1A']),
+        ]);
+
+        $response->assertRedirect();
+        $response->assertSessionHas('import_errors');
+        $this->assertStringContainsString(
+            'Baris 2, Siswa Aman: kelas "Kelas 1A" ambigu karena cocok dengan lebih dari satu data kelas. Periksa data kelas pada tahun ajaran aktif.',
+            $this->importErrorText()
+        );
+        $this->assertSame(0, DB::table('siswas')->count());
+        $this->assertSame(0, DB::table('siswa_kelas_semester')->count());
+        $this->assertSame($classCount, DB::table('kelas')->count());
+    }
+
+    public function test_import_ignores_matching_soft_deleted_class_as_not_found(): void
+    {
+        $classId = $this->insertActiveClass('3', 'Zaid');
+        $this->softDeleteClass($classId);
+
+        $response = $this->postImport([
+            $this->validRow([
+                'kelas' => 'Kelas 3 Zaid',
+                'nis' => '2601301',
+                'nisn' => '9900000301',
+                'nama' => 'Siswa Kelas Terhapus',
+            ]),
+        ]);
+
+        $response->assertRedirect();
+        $response->assertSessionHas('import_errors');
+        $this->assertStringContainsString(
+            'Baris 2, Siswa Kelas Terhapus: kelas "Kelas 3 Zaid" tidak ditemukan. Gunakan nama kelas sesuai template.',
+            $this->importErrorText()
+        );
+        $this->assertStringNotContainsString('ambigu', $this->importErrorText());
+        $this->assertSame(0, DB::table('siswas')->count());
+        $this->assertSame(0, DB::table('siswa_kelas_semester')->count());
+        $this->assertNotNull(Kelas::withTrashed()->findOrFail($classId)->deleted_at);
+    }
+
+    public function test_import_uses_active_class_when_matching_soft_deleted_class_would_otherwise_be_ambiguous(): void
+    {
+        $activeClassId = $this->insertActiveClass('4', 'B');
+        $deletedClassId = $this->insertActiveClass('4', ' b ');
+        $this->softDeleteClass($deletedClassId);
+
+        $response = $this->postImport([
+            $this->validRow([
+                'kelas' => 'Kelas 4B',
+                'nis' => '2601401',
+                'nisn' => '9900000401',
+                'nama' => 'Siswa Kelas Aktif',
+            ]),
+        ]);
+
+        $response->assertRedirect(route('student'));
+        $siswa = DB::table('siswas')->where('nis', '2601401')->first();
+
+        $this->assertNotNull($siswa);
+        $this->assertSame($activeClassId, (int) $siswa->kelas_id);
+        $this->assertDatabaseHas('siswa_kelas_semester', [
+            'siswa_id' => $siswa->id,
+            'kelas_id' => $activeClassId,
+            'tahun_ajaran_id' => $this->activeYearId,
+            'semester' => 1,
+        ]);
+        $this->assertNotNull(Kelas::withTrashed()->findOrFail($deletedClassId)->deleted_at);
+    }
+
+    public function test_import_supports_compact_multi_character_class_aliases_without_splitting_two_digit_numbers(): void
+    {
+        $cases = [
+            ['alias' => '1AA', 'number' => '1', 'name' => 'AA', 'nis' => '2601501', 'nisn' => '9900000501'],
+            ['alias' => '10A', 'number' => '10', 'name' => 'A', 'nis' => '2601502', 'nisn' => '9900000502'],
+            ['alias' => '10AA', 'number' => '10', 'name' => 'AA', 'nis' => '2601503', 'nisn' => '9900000503'],
+        ];
+
+        $classIdsByNis = [];
+        foreach ($cases as $case) {
+            $classIdsByNis[$case['nis']] = $this->insertActiveClass($case['number'], $case['name']);
+        }
+
+        $rows = collect($cases)
+            ->map(fn (array $case) => $this->validRow([
+                'nis' => $case['nis'],
+                'nisn' => $case['nisn'],
+                'nama' => 'Siswa Compact '.$case['alias'],
+                'kelas' => $case['alias'],
+            ]))
+            ->all();
+
+        $response = $this->postImport($rows);
+
+        $response->assertRedirect(route('student'));
+
+        foreach ($rows as $row) {
+            $siswa = DB::table('siswas')->where('nis', $row['nis'])->first();
+            $expectedClassId = $classIdsByNis[$row['nis']];
+
+            $this->assertNotNull($siswa);
+            $this->assertSame($expectedClassId, (int) $siswa->kelas_id);
+            $this->assertDatabaseHas('siswa_kelas_semester', [
+                'siswa_id' => $siswa->id,
+                'kelas_id' => $expectedClassId,
+                'tahun_ajaran_id' => $this->activeYearId,
+                'semester' => 1,
+            ]);
+        }
     }
 
     public function test_existing_database_nis_is_rejected_atomically(): void
@@ -517,6 +712,7 @@ class StudentImportSafetyTest extends TestCase
             'mata_pelajarans',
             'guru_kelas',
             'kelas',
+            'prestasis',
             'gurus',
             'audit_logs',
             'profil_sekolah',
@@ -585,6 +781,17 @@ class StudentImportSafetyTest extends TestCase
             $table->string('nomor_kelas');
             $table->string('nama_kelas');
             $table->foreignId('tahun_ajaran_id')->nullable();
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('prestasis', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('kelas_id')->nullable();
+            $table->foreignId('siswa_id')->nullable();
+            $table->foreignId('tahun_ajaran_id')->nullable();
+            $table->string('jenis_prestasi')->nullable();
+            $table->text('keterangan')->nullable();
             $table->timestamps();
             $table->softDeletes();
         });
@@ -699,6 +906,24 @@ class StudentImportSafetyTest extends TestCase
             'created_at' => now(),
             'updated_at' => now(),
         ]);
+    }
+
+    private function insertActiveClass(string $number, string $name): int
+    {
+        return DB::table('kelas')->insertGetId([
+            'nomor_kelas' => $number,
+            'nama_kelas' => $name,
+            'tahun_ajaran_id' => $this->activeYearId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function softDeleteClass(int $classId): void
+    {
+        Kelas::findOrFail($classId)->delete();
+
+        $this->assertNotNull(Kelas::withTrashed()->findOrFail($classId)->deleted_at);
     }
 
     private function insertExistingStudent(string $nis, string $nisn, string $name): int
