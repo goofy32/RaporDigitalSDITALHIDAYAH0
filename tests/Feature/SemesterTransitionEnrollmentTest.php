@@ -104,6 +104,63 @@ class SemesterTransitionEnrollmentTest extends TestCase
         );
     }
 
+    public function test_manually_created_student_receives_ganjil_enrollment_and_continues_to_genap(): void
+    {
+        $this->actingAs($this->admin)
+            ->withSession([
+                'tahun_ajaran_id' => $this->sourceYearId,
+                'selected_semester' => 1,
+                'no_tahun_ajaran' => false,
+            ])
+            ->post(route('student.store'), $this->manualStudentPayload())
+            ->assertRedirect(route('student'));
+
+        $manualStudentId = (int) DB::table('siswas')->where('nis', '2605990')->value('id');
+        $this->assertGreaterThan(0, $manualStudentId);
+        $this->assertDatabaseHas('siswa_kelas_semester', [
+            'siswa_id' => $manualStudentId,
+            'kelas_id' => $this->class5AId,
+            'tahun_ajaran_id' => $this->sourceYearId,
+            'semester' => 1,
+        ]);
+
+        $this->runTransition()
+            ->assertRedirect(route('tahun.ajaran.index'))
+            ->assertSessionHas('success');
+
+        $targetYear = $this->targetYear();
+        $targetClass5A = $this->targetClass('5', 'A');
+
+        $this->assertDatabaseHas('siswas', [
+            'id' => $manualStudentId,
+            'nis' => '2605990',
+            'kelas_id' => $this->class5AId,
+        ]);
+        $this->assertDatabaseHas('siswa_kelas_semester', [
+            'siswa_id' => $manualStudentId,
+            'kelas_id' => $this->class5AId,
+            'tahun_ajaran_id' => $this->sourceYearId,
+            'semester' => 1,
+        ]);
+        $this->assertDatabaseHas('siswa_kelas_semester', [
+            'siswa_id' => $manualStudentId,
+            'kelas_id' => $targetClass5A->id,
+            'tahun_ajaran_id' => $targetYear->id,
+            'semester' => 2,
+        ]);
+
+        $this->actingAs($this->admin)
+            ->withSession([
+                'tahun_ajaran_id' => $targetYear->id,
+                'selected_semester' => 2,
+                'no_tahun_ajaran' => false,
+            ])
+            ->get(route('student', ['search' => 'Manual Transisi']))
+            ->assertOk()
+            ->assertSee('Siswa Manual Transisi')
+            ->assertSee('Kelas 5 A');
+    }
+
     public function test_transition_copies_structural_data_without_copying_student_work_data(): void
     {
         $this->runTransition();
@@ -725,6 +782,27 @@ class SemesterTransitionEnrollmentTest extends TestCase
             ->post(route('tahun.ajaran.advance-semester', $this->sourceYearId), [
                 'transition_confirmation' => 'LANJUTKAN KE SEMESTER GENAP',
             ]);
+    }
+
+    private function manualStudentPayload(array $overrides = []): array
+    {
+        return array_merge([
+            'nis' => '2605990',
+            'nisn' => '9000000990',
+            'nama' => 'Siswa Manual Transisi',
+            'tanggal_lahir' => '2015-01-01',
+            'jenis_kelamin' => 'Laki-laki',
+            'agama' => 'Islam',
+            'alamat' => 'Jl. Manual',
+            'kelas_id' => $this->class5AId,
+            'nama_ayah' => 'Ayah Manual',
+            'nama_ibu' => 'Ibu Manual',
+            'pekerjaan_ayah' => 'Guru',
+            'pekerjaan_ibu' => 'Guru',
+            'alamat_orangtua' => 'Jl. Orang Tua',
+            'wali_siswa' => '',
+            'pekerjaan_wali' => '',
+        ], $overrides);
     }
 
     private function targetYear(): ?object

@@ -10,6 +10,7 @@ use App\Models\Siswa;
 use App\Models\User;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
@@ -347,7 +348,7 @@ class AdminHardeningPhase2Test extends TestCase
         ]);
     }
 
-    public function test_manual_student_uses_siswas_kelas_id_as_active_class_source_of_truth(): void
+    public function test_manual_student_creates_and_updates_active_semester_enrollment(): void
     {
         $this->actingAsAdmin()
             ->post(route('student.store'), $this->studentPayload([
@@ -364,7 +365,12 @@ class AdminHardeningPhase2Test extends TestCase
             'kelas_id' => $this->activeClassId,
             'tahun_ajaran_id' => $this->activeYearId,
         ]);
-        $this->assertDatabaseCount('siswa_kelas_semester', 0);
+        $this->assertDatabaseHas('siswa_kelas_semester', [
+            'siswa_id' => $studentId,
+            'kelas_id' => $this->activeClassId,
+            'tahun_ajaran_id' => $this->activeYearId,
+            'semester' => 1,
+        ]);
 
         $this->actingAsAdmin()
             ->put(route('student.update', $studentId), $this->studentPayload([
@@ -380,13 +386,195 @@ class AdminHardeningPhase2Test extends TestCase
             'kelas_id' => $this->activeClassBId,
             'tahun_ajaran_id' => $this->activeYearId,
         ]);
-        $this->assertDatabaseCount('siswa_kelas_semester', 0);
+        $this->assertSame(
+            1,
+            DB::table('siswa_kelas_semester')
+                ->where('siswa_id', $studentId)
+                ->where('tahun_ajaran_id', $this->activeYearId)
+                ->where('semester', 1)
+                ->count()
+        );
+        $this->assertDatabaseHas('siswa_kelas_semester', [
+            'siswa_id' => $studentId,
+            'kelas_id' => $this->activeClassBId,
+            'tahun_ajaran_id' => $this->activeYearId,
+            'semester' => 1,
+        ]);
 
         $this->actingAsAdmin()
             ->get(route('student', ['search' => 'Manual Update']))
             ->assertOk()
             ->assertSee('Siswa Manual Update')
             ->assertSee('Kelas 2 B');
+    }
+
+    public function test_manual_student_create_rolls_back_when_active_enrollment_fails(): void
+    {
+        DB::statement("
+            CREATE TRIGGER fail_manual_student_enrollment
+            BEFORE INSERT ON siswa_kelas_semester
+            BEGIN
+                SELECT RAISE(ABORT, 'forced enrollment failure');
+            END
+        ");
+
+        $this->actingAsAdmin()
+            ->from(route('student.create'))
+            ->post(route('student.store'), $this->studentPayload([
+                'nis' => '13009',
+                'nisn' => '1300900009',
+                'nama' => 'Siswa Atomic',
+            ]))
+            ->assertRedirect(route('student.create'))
+            ->assertSessionHas('error');
+
+        $this->assertDatabaseMissing('siswas', ['nis' => '13009']);
+        $this->assertSame(0, DB::table('siswa_kelas_semester')->count());
+    }
+
+    public function test_manual_student_identity_update_preserves_active_enrollment_created_at(): void
+    {
+        $studentId = $this->insertStudent([
+            'nis' => '13015',
+            'nisn' => '1301500015',
+            'nama' => 'Siswa Timestamp',
+            'kelas_id' => $this->activeClassId,
+            'tahun_ajaran_id' => $this->activeYearId,
+        ]);
+
+        DB::table('siswa_kelas_semester')->insert([
+            'siswa_id' => $studentId,
+            'kelas_id' => $this->activeClassId,
+            'tahun_ajaran_id' => $this->activeYearId,
+            'semester' => 1,
+            'created_at' => '2025-01-01 08:00:00',
+            'updated_at' => '2025-01-01 08:00:00',
+        ]);
+
+        Carbon::setTestNow(Carbon::parse('2025-01-02 09:30:00'));
+
+        try {
+            $this->actingAsAdmin()
+                ->put(route('student.update', $studentId), $this->studentPayload([
+                    'nis' => '13015',
+                    'nisn' => '1301500015',
+                    'nama' => 'Siswa Timestamp Update',
+                    'kelas_id' => $this->activeClassId,
+                ]))
+                ->assertRedirect(route('student'));
+        } finally {
+            Carbon::setTestNow();
+        }
+
+        $activeEnrollments = DB::table('siswa_kelas_semester')
+            ->where('siswa_id', $studentId)
+            ->where('tahun_ajaran_id', $this->activeYearId)
+            ->where('semester', 1)
+            ->get();
+
+        $this->assertCount(1, $activeEnrollments);
+
+        $activeEnrollment = $activeEnrollments->first();
+
+        $this->assertSame($this->activeClassId, (int) $activeEnrollment->kelas_id);
+        $this->assertSame('2025-01-01 08:00:00', (string) $activeEnrollment->created_at);
+        $this->assertSame('2025-01-02 09:30:00', (string) $activeEnrollment->updated_at);
+    }
+
+    public function test_manual_student_update_only_changes_active_semester_enrollment_and_preserves_history(): void
+    {
+        $studentId = $this->insertStudent([
+            'nis' => '13010',
+            'nisn' => '1301000010',
+            'nama' => 'Siswa History',
+            'kelas_id' => $this->activeClassId,
+            'tahun_ajaran_id' => $this->activeYearId,
+        ]);
+
+        DB::table('siswa_kelas_semester')->insert([
+            'siswa_id' => $studentId,
+            'kelas_id' => $this->oldClassId,
+            'tahun_ajaran_id' => $this->oldYearId,
+            'semester' => 2,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('siswa_kelas_semester')->insert([
+            'siswa_id' => $studentId,
+            'kelas_id' => $this->activeClassId,
+            'tahun_ajaran_id' => $this->activeYearId,
+            'semester' => 1,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->actingAsAdmin()
+            ->put(route('student.update', $studentId), $this->studentPayload([
+                'nis' => '13010',
+                'nisn' => '1301000010',
+                'nama' => 'Siswa History Update',
+                'kelas_id' => $this->activeClassBId,
+            ]))
+            ->assertRedirect(route('student'));
+
+        $this->assertDatabaseHas('siswas', [
+            'id' => $studentId,
+            'kelas_id' => $this->activeClassBId,
+            'tahun_ajaran_id' => $this->activeYearId,
+        ]);
+        $this->assertDatabaseHas('siswa_kelas_semester', [
+            'siswa_id' => $studentId,
+            'kelas_id' => $this->oldClassId,
+            'tahun_ajaran_id' => $this->oldYearId,
+            'semester' => 2,
+        ]);
+        $this->assertDatabaseHas('siswa_kelas_semester', [
+            'siswa_id' => $studentId,
+            'kelas_id' => $this->activeClassBId,
+            'tahun_ajaran_id' => $this->activeYearId,
+            'semester' => 1,
+        ]);
+        $this->assertSame(
+            1,
+            DB::table('siswa_kelas_semester')
+                ->where('siswa_id', $studentId)
+                ->where('tahun_ajaran_id', $this->activeYearId)
+                ->where('semester', 1)
+                ->count()
+        );
+    }
+
+    public function test_manual_student_update_creates_active_enrollment_for_legacy_student_without_enrollment(): void
+    {
+        $studentId = $this->insertStudent([
+            'nis' => '13011',
+            'nisn' => '1301100011',
+            'nama' => 'Siswa Legacy',
+            'kelas_id' => $this->activeClassId,
+            'tahun_ajaran_id' => $this->activeYearId,
+        ]);
+
+        $this->assertSame(0, DB::table('siswa_kelas_semester')->where('siswa_id', $studentId)->count());
+
+        $this->actingAsAdmin()
+            ->put(route('student.update', $studentId), $this->studentPayload([
+                'nis' => '13011',
+                'nisn' => '1301100011',
+                'nama' => 'Siswa Legacy Update',
+                'kelas_id' => $this->activeClassBId,
+            ]))
+            ->assertRedirect(route('student'));
+
+        $this->assertDatabaseHas('siswas', [
+            'id' => $studentId,
+            'kelas_id' => $this->activeClassBId,
+        ]);
+        $this->assertDatabaseHas('siswa_kelas_semester', [
+            'siswa_id' => $studentId,
+            'kelas_id' => $this->activeClassBId,
+            'tahun_ajaran_id' => $this->activeYearId,
+            'semester' => 1,
+        ]);
     }
 
     public function test_student_create_rejects_class_from_another_year_context(): void
@@ -402,6 +590,90 @@ class AdminHardeningPhase2Test extends TestCase
             ->assertSessionHasErrors('kelas_id');
 
         $this->assertDatabaseMissing('siswas', ['nis' => '13002']);
+
+        $studentId = $this->insertStudent([
+            'nis' => '13012',
+            'nisn' => '1301200012',
+            'nama' => 'Siswa Cross Year',
+            'kelas_id' => $this->activeClassId,
+            'tahun_ajaran_id' => $this->activeYearId,
+        ]);
+
+        $this->actingAsAdmin()
+            ->from(route('student.edit', $studentId))
+            ->put(route('student.update', $studentId), $this->studentPayload([
+                'nis' => '13012',
+                'nisn' => '1301200012',
+                'nama' => 'Siswa Cross Year Update',
+                'kelas_id' => $this->oldClassId,
+            ]))
+            ->assertRedirect(route('student.edit', $studentId))
+            ->assertSessionHasErrors('kelas_id');
+
+        $this->assertDatabaseHas('siswas', [
+            'id' => $studentId,
+            'kelas_id' => $this->activeClassId,
+        ]);
+        $this->assertSame(0, DB::table('siswa_kelas_semester')->where('siswa_id', $studentId)->count());
+    }
+
+    public function test_student_create_and_update_reject_soft_deleted_active_year_class(): void
+    {
+        DB::table('kelas')
+            ->where('id', $this->activeClassBId)
+            ->update(['deleted_at' => now()]);
+
+        $this->actingAsAdmin()
+            ->from(route('student.create'))
+            ->post(route('student.store'), $this->studentPayload([
+                'nis' => '13013',
+                'nisn' => '1301300013',
+                'nama' => 'Siswa Kelas Terhapus',
+                'kelas_id' => $this->activeClassBId,
+            ]))
+            ->assertRedirect(route('student.create'))
+            ->assertSessionHasErrors('kelas_id');
+
+        $this->assertDatabaseMissing('siswas', ['nis' => '13013']);
+        $this->assertSame(0, DB::table('siswa_kelas_semester')->count());
+
+        $studentId = $this->insertStudent([
+            'nis' => '13014',
+            'nisn' => '1301400014',
+            'nama' => 'Siswa Update Kelas Terhapus',
+            'kelas_id' => $this->activeClassId,
+            'tahun_ajaran_id' => $this->activeYearId,
+        ]);
+        DB::table('siswa_kelas_semester')->insert([
+            'siswa_id' => $studentId,
+            'kelas_id' => $this->activeClassId,
+            'tahun_ajaran_id' => $this->activeYearId,
+            'semester' => 1,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->actingAsAdmin()
+            ->from(route('student.edit', $studentId))
+            ->put(route('student.update', $studentId), $this->studentPayload([
+                'nis' => '13014',
+                'nisn' => '1301400014',
+                'nama' => 'Siswa Update Kelas Terhapus',
+                'kelas_id' => $this->activeClassBId,
+            ]))
+            ->assertRedirect(route('student.edit', $studentId))
+            ->assertSessionHasErrors('kelas_id');
+
+        $this->assertDatabaseHas('siswas', [
+            'id' => $studentId,
+            'kelas_id' => $this->activeClassId,
+        ]);
+        $this->assertDatabaseHas('siswa_kelas_semester', [
+            'siswa_id' => $studentId,
+            'kelas_id' => $this->activeClassId,
+            'tahun_ajaran_id' => $this->activeYearId,
+            'semester' => 1,
+        ]);
     }
 
     public function test_valid_kkm_batch_save_accepts_class_subject_active_year(): void

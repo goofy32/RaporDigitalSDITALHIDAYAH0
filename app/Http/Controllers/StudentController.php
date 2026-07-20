@@ -249,8 +249,9 @@ class StudentController extends Controller
     public function store(Request $request)
     {
         $tahunAjaranId = $this->getValidTahunAjaranId();
+        $tahunAjaran = $this->activeTahunAjaranForStudentMutation($tahunAjaranId);
 
-        if (!$tahunAjaranId || !$this->isActiveTahunAjaran($tahunAjaranId)) {
+        if (! $tahunAjaran) {
             return $this->failTahunAjaranNotSet($request);
         }
 
@@ -279,7 +280,7 @@ class StudentController extends Controller
             'alamat' => 'required|string|max:500',
             'kelas_id' => [
                 'required',
-                Rule::exists('kelas', 'id')->where(fn ($query) => $query->where('tahun_ajaran_id', $tahunAjaranId)),
+                $this->activeClassRule((int) $tahunAjaran->id),
             ],
             'photo' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp', 'max:2048'],
             'nama_ayah' => 'required|string|max:255',
@@ -306,12 +307,21 @@ class StudentController extends Controller
             $validated['photo'] = $this->storePublicUpload($request->file('photo'), 'photos');
         }
 
-        $validated['tahun_ajaran_id'] = $tahunAjaranId;
+        $validated['tahun_ajaran_id'] = $tahunAjaran->id;
     
         try {
-            Siswa::create($validated);
+            DB::transaction(function () use ($validated, $tahunAjaran) {
+                $student = Siswa::create($validated);
+
+                $this->syncActiveSemesterEnrollment(
+                    $student,
+                    (int) $validated['kelas_id'],
+                    $tahunAjaran
+                );
+            });
+
             return redirect()->route('student')->with('success', 'Data siswa berhasil ditambahkan!');
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('Failed to create student', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
@@ -347,8 +357,9 @@ class StudentController extends Controller
     public function update(Request $request, $id)
     {
         $tahunAjaranId = $this->getValidTahunAjaranId();
+        $tahunAjaran = $this->activeTahunAjaranForStudentMutation($tahunAjaranId);
 
-        if (!$tahunAjaranId || !$this->isActiveTahunAjaran($tahunAjaranId)) {
+        if (! $tahunAjaran) {
             return $this->failTahunAjaranNotSet($request);
         }
 
@@ -363,7 +374,7 @@ class StudentController extends Controller
             'alamat' => 'required|string|max:500',
             'kelas_id' => [
                 'required',
-                Rule::exists('kelas', 'id')->where(fn ($query) => $query->where('tahun_ajaran_id', $tahunAjaranId)),
+                $this->activeClassRule((int) $tahunAjaran->id),
             ],
             'photo' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp', 'max:2048'],
             'nama_ayah' => 'required|string|max:255',
@@ -387,10 +398,76 @@ class StudentController extends Controller
             $validated['photo'] = $this->storePublicUpload($request->file('photo'), 'photos');
         }
 
-        $validated['tahun_ajaran_id'] = $tahunAjaranId;
+        $validated['tahun_ajaran_id'] = $tahunAjaran->id;
     
-        $student->update($validated);
-        return redirect()->route('student')->with('success', 'Data siswa berhasil diperbarui!');
+        try {
+            DB::transaction(function () use ($student, $validated, $tahunAjaran) {
+                $student->update($validated);
+
+                $this->syncActiveSemesterEnrollment(
+                    $student,
+                    (int) $validated['kelas_id'],
+                    $tahunAjaran
+                );
+            });
+
+            return redirect()->route('student')->with('success', 'Data siswa berhasil diperbarui!');
+        } catch (\Throwable $e) {
+            Log::error('Failed to update student', [
+                'student_id' => $student->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'user_id' => auth()->id(),
+            ]);
+
+            return back()->with('error', 'Terjadi kesalahan. Silakan coba lagi.')
+                ->withInput();
+        }
+    }
+
+    private function activeTahunAjaranForStudentMutation(?int $tahunAjaranId): ?TahunAjaran
+    {
+        if (! $tahunAjaranId) {
+            return null;
+        }
+
+        return TahunAjaran::query()
+            ->whereKey($tahunAjaranId)
+            ->where('is_active', true)
+            ->first();
+    }
+
+    private function activeClassRule(int $tahunAjaranId)
+    {
+        return Rule::exists('kelas', 'id')->where(function ($query) use ($tahunAjaranId) {
+            $query->where('tahun_ajaran_id', $tahunAjaranId);
+
+            if (Schema::hasColumn('kelas', 'deleted_at')) {
+                $query->whereNull('deleted_at');
+            }
+        });
+    }
+
+    private function syncActiveSemesterEnrollment(Siswa $student, int $kelasId, TahunAjaran $tahunAjaran): void
+    {
+        $now = now();
+
+        DB::table('siswa_kelas_semester')->upsert(
+            [[
+                'siswa_id' => $student->id,
+                'kelas_id' => $kelasId,
+                'tahun_ajaran_id' => $tahunAjaran->id,
+                'semester' => (int) $tahunAjaran->semester,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]],
+            ['siswa_id', 'tahun_ajaran_id', 'semester'],
+            ['kelas_id', 'updated_at']
+        );
+
+        if (app()->resolved(SiswaKelasSemesterResolver::class)) {
+            app(SiswaKelasSemesterResolver::class)->resetMemoization();
+        }
     }
 
     public function destroy($id)
