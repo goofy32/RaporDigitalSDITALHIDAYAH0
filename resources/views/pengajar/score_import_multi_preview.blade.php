@@ -215,9 +215,14 @@
                                     <span @class([
                                         'rounded px-2 py-1',
                                         'bg-yellow-50 text-gray-800' => $value['raw_value'] !== null,
-                                        'text-gray-400' => $value['raw_value'] === null,
+                                        'bg-red-50 text-red-700' => $value['raw_value'] === null && ($value['existing_value'] ?? null) !== null,
+                                        'text-gray-400' => $value['raw_value'] === null && ($value['existing_value'] ?? null) === null,
                                     ])>
-                                        {{ $value['raw_value'] ?? '-' }}
+                                        @if($value['raw_value'] === null && ($value['existing_value'] ?? null) !== null)
+                                            Akan dikosongkan
+                                        @else
+                                            {{ $value['raw_value'] ?? '-' }}
+                                        @endif
                                     </span>
                                 </td>
                             @endforeach

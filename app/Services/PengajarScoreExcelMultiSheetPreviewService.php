@@ -353,7 +353,8 @@ class PengajarScoreExcelMultiSheetPreviewService
 
         foreach ($scoreColumns as $column) {
             $key = $column['key'];
-            $value = $this->valueForKey($sheet, $columnMap, $key, $rowNumber);
+            $cellPresent = array_key_exists($key, $columnMap);
+            $value = $cellPresent ? $this->valueForKey($sheet, $columnMap, $key, $rowNumber) : null;
             $rawValue = $this->normalizeRawCellValue($value);
             $normalizedValue = $this->normalizeScoreCell($value);
             $existingValue = $siswaId ? $this->existingValueForColumn($existingScores[$siswaId] ?? [], $column) : null;
@@ -364,6 +365,7 @@ class PengajarScoreExcelMultiSheetPreviewService
                 'value' => $normalizedValue,
                 'raw_value' => $rawValue,
                 'existing_value' => $existingValue,
+                'cell_present' => $cellPresent,
                 'editable' => (bool) ($column['editable'] ?? false),
                 'type' => $column['type'] ?? null,
                 'lingkup_materi_id' => $column['lingkup_materi_id'] ?? null,
@@ -371,7 +373,7 @@ class PengajarScoreExcelMultiSheetPreviewService
             ];
 
             if (($column['editable'] ?? false) === true) {
-                $payloadValue = $rawValue !== null ? $normalizedValue : ($existingValue ?? '');
+                $payloadValue = $cellPresent ? $normalizedValue : ($existingValue ?? '');
 
                 match ($column['type'] ?? null) {
                     'tp' => $scoresPayload['tp'][$column['lingkup_materi_id']][$column['tujuan_pembelajaran_id']] = $payloadValue,

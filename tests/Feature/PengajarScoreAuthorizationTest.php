@@ -830,6 +830,278 @@ class PengajarScoreAuthorizationTest extends TestCase
         $this->assertSame(0, DB::table('nilais')->count());
     }
 
+    public function test_single_score_import_blank_cell_clears_existing_score(): void
+    {
+        $existingId = $this->insertTpScore(80);
+
+        $response = $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_preview', $this->subjectId), [
+                'file' => $this->validScoreImportUpload([
+                    "tp_{$this->lingkupMateriId}_{$this->tujuanPembelajaranId}" => null,
+                ]),
+            ])
+            ->assertOk()
+            ->assertSeeText('Data Excel berhasil dimuat. Nilai belum disimpan. Periksa kembali lalu klik Simpan.');
+
+        $this->assertScoreInputValue(
+            $response->getContent(),
+            "scores[{$this->studentId}][tp][{$this->lingkupMateriId}][{$this->tujuanPembelajaranId}]",
+            ''
+        );
+
+        $this->actingAsPengajar($this->budi)
+            ->postJson(route('pengajar.score.save_scores', $this->subjectId), [
+                'scores' => $this->scoresPayloadWithComponents('', '', '', ''),
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $this->assertClearedScoreRow($existingId, 'nilai_tp');
+    }
+
+    public function test_single_score_import_zero_cell_overwrites_existing_score(): void
+    {
+        $this->insertTpScore(80);
+
+        $response = $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_preview', $this->subjectId), [
+                'file' => $this->validScoreImportUpload([
+                    "tp_{$this->lingkupMateriId}_{$this->tujuanPembelajaranId}" => 0,
+                ]),
+            ])
+            ->assertOk();
+
+        $this->assertScoreInputValue(
+            $response->getContent(),
+            "scores[{$this->studentId}][tp][{$this->lingkupMateriId}][{$this->tujuanPembelajaranId}]",
+            '0'
+        );
+
+        $this->actingAsPengajar($this->budi)
+            ->postJson(route('pengajar.score.save_scores', $this->subjectId), [
+                'scores' => $this->scoresPayloadWithComponents(0, '', '', ''),
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $this->assertActiveTpScore(0);
+    }
+
+    public function test_single_score_import_zero_cell_creates_score_from_blank_database(): void
+    {
+        $response = $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_preview', $this->subjectId), [
+                'file' => $this->validScoreImportUpload([
+                    "tp_{$this->lingkupMateriId}_{$this->tujuanPembelajaranId}" => '0',
+                ]),
+            ])
+            ->assertOk();
+
+        $this->assertScoreInputValue(
+            $response->getContent(),
+            "scores[{$this->studentId}][tp][{$this->lingkupMateriId}][{$this->tujuanPembelajaranId}]",
+            '0'
+        );
+
+        $this->actingAsPengajar($this->budi)
+            ->postJson(route('pengajar.score.save_scores', $this->subjectId), [
+                'scores' => $this->scoresPayloadWithComponents('0', '', '', ''),
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $this->assertActiveTpScore(0);
+    }
+
+    public function test_single_score_import_normal_number_updates_existing_score(): void
+    {
+        $this->insertTpScore(80);
+
+        $response = $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_preview', $this->subjectId), [
+                'file' => $this->validScoreImportUpload([
+                    "tp_{$this->lingkupMateriId}_{$this->tujuanPembelajaranId}" => 90,
+                ]),
+            ])
+            ->assertOk();
+
+        $this->assertScoreInputValue(
+            $response->getContent(),
+            "scores[{$this->studentId}][tp][{$this->lingkupMateriId}][{$this->tujuanPembelajaranId}]",
+            '90'
+        );
+
+        $this->actingAsPengajar($this->budi)
+            ->postJson(route('pengajar.score.save_scores', $this->subjectId), [
+                'scores' => $this->scoresPayloadWithComponents(90, '', '', ''),
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $this->assertActiveTpScore(90);
+    }
+
+    public function test_single_score_import_formula_empty_string_clears_existing_score(): void
+    {
+        $existingId = $this->insertTpScore(80);
+
+        $response = $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_preview', $this->subjectId), [
+                'file' => $this->validScoreImportUpload([
+                    "tp_{$this->lingkupMateriId}_{$this->tujuanPembelajaranId}" => '=""',
+                ]),
+            ])
+            ->assertOk();
+
+        $this->assertScoreInputValue(
+            $response->getContent(),
+            "scores[{$this->studentId}][tp][{$this->lingkupMateriId}][{$this->tujuanPembelajaranId}]",
+            ''
+        );
+
+        $this->actingAsPengajar($this->budi)
+            ->postJson(route('pengajar.score.save_scores', $this->subjectId), [
+                'scores' => $this->scoresPayloadWithComponents('', '', '', ''),
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $this->assertClearedScoreRow($existingId, 'nilai_tp');
+    }
+
+    public function test_single_score_import_formula_zero_saves_zero(): void
+    {
+        $this->insertTpScore(80);
+
+        $response = $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_preview', $this->subjectId), [
+                'file' => $this->validScoreImportUpload([
+                    "tp_{$this->lingkupMateriId}_{$this->tujuanPembelajaranId}" => '=0',
+                ]),
+            ])
+            ->assertOk();
+
+        $this->assertScoreInputValue(
+            $response->getContent(),
+            "scores[{$this->studentId}][tp][{$this->lingkupMateriId}][{$this->tujuanPembelajaranId}]",
+            '0'
+        );
+
+        $this->actingAsPengajar($this->budi)
+            ->postJson(route('pengajar.score.save_scores', $this->subjectId), [
+                'scores' => $this->scoresPayloadWithComponents(0, '', '', ''),
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $this->assertActiveTpScore(0);
+    }
+
+    public function test_single_score_import_whitespace_clears_existing_score(): void
+    {
+        $existingId = $this->insertTpScore(80);
+
+        $response = $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_preview', $this->subjectId), [
+                'file' => $this->validScoreImportUpload([
+                    "tp_{$this->lingkupMateriId}_{$this->tujuanPembelajaranId}" => '   ',
+                ]),
+            ])
+            ->assertOk();
+
+        $this->assertScoreInputValue(
+            $response->getContent(),
+            "scores[{$this->studentId}][tp][{$this->lingkupMateriId}][{$this->tujuanPembelajaranId}]",
+            ''
+        );
+
+        $this->actingAsPengajar($this->budi)
+            ->postJson(route('pengajar.score.save_scores', $this->subjectId), [
+                'scores' => $this->scoresPayloadWithComponents('', '', '', ''),
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $this->assertClearedScoreRow($existingId, 'nilai_tp');
+    }
+
+    public function test_single_score_import_can_clear_one_tp_and_update_another_tp(): void
+    {
+        $secondTpId = DB::table('tujuan_pembelajarans')->insertGetId([
+            'lingkup_materi_id' => $this->lingkupMateriId,
+            'kode_tp' => '2',
+            'deskripsi_tp' => 'Menyelesaikan soal bilangan',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $firstScoreId = $this->insertTpScore(80);
+        $this->insertTpScore(70, $this->subjectId, $this->studentId, $this->lingkupMateriId, $secondTpId);
+
+        $response = $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_preview', $this->subjectId), [
+                'file' => $this->validScoreImportUpload([
+                    "tp_{$this->lingkupMateriId}_{$this->tujuanPembelajaranId}" => null,
+                    "tp_{$this->lingkupMateriId}_{$secondTpId}" => 90,
+                ]),
+            ])
+            ->assertOk();
+
+        $this->assertScoreInputValue(
+            $response->getContent(),
+            "scores[{$this->studentId}][tp][{$this->lingkupMateriId}][{$this->tujuanPembelajaranId}]",
+            ''
+        );
+        $this->assertScoreInputValue(
+            $response->getContent(),
+            "scores[{$this->studentId}][tp][{$this->lingkupMateriId}][{$secondTpId}]",
+            '90'
+        );
+
+        $this->actingAsPengajar($this->budi)
+            ->postJson(route('pengajar.score.save_scores', $this->subjectId), [
+                'scores' => [
+                    $this->studentId => [
+                        'tp' => [
+                            $this->lingkupMateriId => [
+                                $this->tujuanPembelajaranId => '',
+                                $secondTpId => 90,
+                            ],
+                        ],
+                        'lm' => [
+                            $this->lingkupMateriId => '',
+                        ],
+                        'nilai_tes' => '',
+                        'nilai_non_tes' => '',
+                    ],
+                ],
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $this->assertClearedScoreRow($firstScoreId, 'nilai_tp');
+        $this->assertActiveTpScore(90, $this->subjectId, $this->studentId, $this->lingkupMateriId, $secondTpId);
+    }
+
+    public function test_score_import_missing_score_key_does_not_modify_existing_score(): void
+    {
+        $this->insertTpScore(80);
+        $workbook = $this->templateWorkbook();
+        $this->clearTemplateColumnKey(
+            $this->scoreSheet($workbook),
+            "tp_{$this->lingkupMateriId}_{$this->tujuanPembelajaranId}"
+        );
+
+        $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_preview', $this->subjectId), [
+                'file' => $this->uploadedWorkbook($workbook),
+            ])
+            ->assertOk()
+            ->assertSeeText('Format template Excel tidak sesuai atau sudah berubah.')
+            ->assertSee('data-import-blocking-errors="true"', false);
+
+        $this->assertActiveTpScore(80);
+    }
+
     public function test_score_import_preview_rejects_student_from_another_class(): void
     {
         $otherClassId = DB::table('kelas')->insertGetId([
@@ -1174,6 +1446,173 @@ class PengajarScoreAuthorizationTest extends TestCase
         $this->assertSame(0, DB::table('nilais')->count());
     }
 
+    public function test_multi_sheet_import_blank_cell_clears_existing_score_and_keeps_null_payload(): void
+    {
+        $existingId = $this->insertTpScore(80);
+        $this->insertReadySecondSubjectForBudi();
+        $workbook = $this->workbookFromResponse(
+            $this->actingAsPengajar($this->budi)
+                ->get(route('pengajar.score.import_templates'))
+        );
+
+        $response = $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_templates.preview'), [
+                'file' => $this->uploadedWorkbook($workbook),
+            ]);
+        $token = $this->tokenFromPreviewRedirect($response);
+        $state = $this->multiSheetImportState($token);
+
+        $payload = $state['sheets'][0]['scores_payload'][$this->studentId]['tp'][$this->lingkupMateriId] ?? [];
+        $this->assertArrayHasKey($this->tujuanPembelajaranId, $payload);
+        $this->assertNull($payload[$this->tujuanPembelajaranId]);
+
+        $this->actingAsPengajar($this->budi)
+            ->get(route('pengajar.score.import_templates.preview_sheet', ['token' => $token]))
+            ->assertOk()
+            ->assertSeeText('Akan dikosongkan');
+
+        $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_templates.save_sheet', ['token' => $token, 'sheet' => 1]))
+            ->assertRedirect(route('pengajar.score.import_templates.preview_sheet', ['token' => $token, 'sheet' => 2]))
+            ->assertSessionHas('success');
+
+        $this->assertClearedScoreRow($existingId, 'nilai_tp');
+    }
+
+    public function test_multi_sheet_import_zero_cell_persists_zero(): void
+    {
+        $this->insertTpScore(80);
+        $this->insertReadySecondSubjectForBudi();
+        $workbook = $this->workbookFromResponse(
+            $this->actingAsPengajar($this->budi)
+                ->get(route('pengajar.score.import_templates'))
+        );
+        $this->setValueByKey(
+            $workbook->getSheetByName('5 A - Matematika'),
+            "tp_{$this->lingkupMateriId}_{$this->tujuanPembelajaranId}",
+            6,
+            0
+        );
+
+        $response = $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_templates.preview'), [
+                'file' => $this->uploadedWorkbook($workbook),
+            ]);
+        $token = $this->tokenFromPreviewRedirect($response);
+        $state = $this->multiSheetImportState($token);
+
+        $payload = $state['sheets'][0]['scores_payload'][$this->studentId]['tp'][$this->lingkupMateriId] ?? [];
+        $this->assertArrayHasKey($this->tujuanPembelajaranId, $payload);
+        $this->assertSame(0.0, $payload[$this->tujuanPembelajaranId]);
+
+        $this->actingAsPengajar($this->budi)
+            ->get(route('pengajar.score.import_templates.preview_sheet', ['token' => $token]))
+            ->assertOk()
+            ->assertSeeText('0');
+
+        $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_templates.save_sheet', ['token' => $token, 'sheet' => 1]))
+            ->assertRedirect(route('pengajar.score.import_templates.preview_sheet', ['token' => $token, 'sheet' => 2]))
+            ->assertSessionHas('success');
+
+        $this->assertActiveTpScore(0);
+    }
+
+    public function test_multi_sheet_import_processes_clear_and_numeric_update_on_separate_sheets(): void
+    {
+        $existingId = $this->insertTpScore(80);
+        $second = $this->insertReadySecondSubjectForBudi();
+        $workbook = $this->workbookFromResponse(
+            $this->actingAsPengajar($this->budi)
+                ->get(route('pengajar.score.import_templates'))
+        );
+        $this->setValueByKey(
+            $workbook->getSheetByName('6 B - Bahasa Indonesia'),
+            "tp_{$second['lingkup_materi_id']}_{$second['tujuan_pembelajaran_id']}",
+            6,
+            92
+        );
+
+        $response = $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_templates.preview'), [
+                'file' => $this->uploadedWorkbook($workbook),
+            ]);
+        $token = $this->tokenFromPreviewRedirect($response);
+
+        $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_templates.save_sheet', ['token' => $token, 'sheet' => 1]))
+            ->assertRedirect(route('pengajar.score.import_templates.preview_sheet', ['token' => $token, 'sheet' => 2]))
+            ->assertSessionHas('success');
+
+        $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_templates.save_sheet', ['token' => $token, 'sheet' => 2]))
+            ->assertRedirect(route('pengajar.score.import_templates.preview_sheet', ['token' => $token]))
+            ->assertSessionHas('success');
+
+        $this->assertClearedScoreRow($existingId, 'nilai_tp');
+        $this->assertActiveTpScore(
+            92,
+            $second['subject_id'],
+            $second['student_id'],
+            $second['lingkup_materi_id'],
+            $second['tujuan_pembelajaran_id']
+        );
+    }
+
+    public function test_multi_sheet_import_invalid_row_keeps_existing_score_unchanged(): void
+    {
+        $this->insertTpScore(80);
+        $second = $this->insertReadySecondSubjectForBudi();
+        $workbook = $this->validMultiSheetWorkbook($second);
+        $this->setValueByKey($workbook->getSheetByName('5 A - Matematika'), "tp_{$this->lingkupMateriId}_{$this->tujuanPembelajaranId}", 6, -1);
+
+        $response = $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_templates.preview'), [
+                'file' => $this->uploadedWorkbook($workbook),
+            ]);
+        $token = $this->tokenFromPreviewRedirect($response);
+
+        $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_templates.save_sheet', ['token' => $token, 'sheet' => 1]))
+            ->assertRedirect(route('pengajar.score.import_templates.preview_sheet', ['token' => $token, 'sheet' => 1]))
+            ->assertSessionHas('error', 'Sheet ini belum bisa disimpan karena masih ada nilai yang perlu diperbaiki.');
+
+        $this->assertActiveTpScore(80);
+        $this->assertSame(0, DB::table('nilais')->where('mata_pelajaran_id', $second['subject_id'])->count());
+    }
+
+    public function test_multi_sheet_import_missing_score_key_keeps_existing_score_unchanged(): void
+    {
+        $this->insertTpScore(80);
+        $this->insertReadySecondSubjectForBudi();
+        $workbook = $this->workbookFromResponse(
+            $this->actingAsPengajar($this->budi)
+                ->get(route('pengajar.score.import_templates'))
+        );
+        $this->clearTemplateColumnKey(
+            $workbook->getSheetByName('5 A - Matematika'),
+            "tp_{$this->lingkupMateriId}_{$this->tujuanPembelajaranId}"
+        );
+
+        $response = $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_templates.preview'), [
+                'file' => $this->uploadedWorkbook($workbook),
+            ]);
+        $token = $this->tokenFromPreviewRedirect($response);
+
+        $this->actingAsPengajar($this->budi)
+            ->get(route('pengajar.score.import_templates.preview_sheet', ['token' => $token]))
+            ->assertOk()
+            ->assertSeeText('Format template Excel tidak sesuai atau sudah berubah. Silakan download ulang template terbaru dari Download Semua Template Siap');
+
+        $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_templates.save_sheet', ['token' => $token, 'sheet' => 1]))
+            ->assertRedirect(route('pengajar.score.import_templates.preview_sheet', ['token' => $token, 'sheet' => 1]))
+            ->assertSessionHas('error', 'Sheet ini belum bisa disimpan karena masih ada nilai yang perlu diperbaiki.');
+
+        $this->assertActiveTpScore(80);
+    }
+
     public function test_multi_sheet_save_does_not_advance_or_mark_saved_when_database_persistence_fails(): void
     {
         $second = $this->insertReadySecondSubjectForBudi();
@@ -1432,6 +1871,62 @@ class PengajarScoreAuthorizationTest extends TestCase
         $this->assertSame((float) $lm, (float) $lmRow->nilai_lm);
         $this->assertSame((float) $nilaiTes, (float) $semesterRow->nilai_tes);
         $this->assertSame((float) $nilaiNonTes, (float) $semesterRow->nilai_non_tes);
+    }
+
+    private function insertTpScore(
+        mixed $score,
+        ?int $subjectId = null,
+        ?int $studentId = null,
+        ?int $lingkupMateriId = null,
+        ?int $tujuanPembelajaranId = null
+    ): int {
+        return DB::table('nilais')->insertGetId([
+            'siswa_id' => $studentId ?? $this->studentId,
+            'mata_pelajaran_id' => $subjectId ?? $this->subjectId,
+            'lingkup_materi_id' => $lingkupMateriId ?? $this->lingkupMateriId,
+            'tujuan_pembelajaran_id' => $tujuanPembelajaranId ?? $this->tujuanPembelajaranId,
+            'nilai_tp' => $score,
+            'tahun_ajaran_id' => $this->activeYearId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function assertActiveTpScore(
+        mixed $expected,
+        ?int $subjectId = null,
+        ?int $studentId = null,
+        ?int $lingkupMateriId = null,
+        ?int $tujuanPembelajaranId = null
+    ): void {
+        $row = DB::table('nilais')
+            ->where('siswa_id', $studentId ?? $this->studentId)
+            ->where('mata_pelajaran_id', $subjectId ?? $this->subjectId)
+            ->where('lingkup_materi_id', $lingkupMateriId ?? $this->lingkupMateriId)
+            ->where('tujuan_pembelajaran_id', $tujuanPembelajaranId ?? $this->tujuanPembelajaranId)
+            ->where('tahun_ajaran_id', $this->activeYearId)
+            ->whereNull('deleted_at')
+            ->first();
+
+        $this->assertNotNull($row);
+        $this->assertSame((float) $expected, (float) $row->nilai_tp);
+    }
+
+    private function assertClearedScoreRow(int $rowId, string $column): void
+    {
+        $row = DB::table('nilais')->where('id', $rowId)->first();
+
+        $this->assertNotNull($row);
+        $this->assertNull($row->{$column});
+        $this->assertNotNull($row->deleted_at);
+        $this->assertSame(0, DB::table('nilais')->where('id', $rowId)->whereNull('deleted_at')->count());
+    }
+
+    private function assertScoreInputValue(string $html, string $name, string $expected): void
+    {
+        $pattern = '/<input\b(?=[^>]*\bname="'.preg_quote($name, '/').'")(?=[^>]*\bvalue="'.preg_quote($expected, '/').'")[^>]*>/s';
+
+        $this->assertMatchesRegularExpression($pattern, $html);
     }
 
     private function workbookFromResponse($response)

@@ -986,7 +986,7 @@ class ScoreController extends Controller
             }
 
             foreach ($row['uploaded_values'] as $value) {
-                if (! ($value['editable'] ?? false) || $value['value'] === null) {
+                if (! ($value['editable'] ?? false) || ! ($value['cell_present'] ?? false)) {
                     continue;
                 }
 
@@ -1893,15 +1893,11 @@ class ScoreController extends Controller
             }
 
             foreach (($row['uploaded_values'] ?? []) as $value) {
-                if (! ($value['editable'] ?? false) || ($value['raw_value'] ?? null) === null) {
+                if (! ($value['editable'] ?? false) || ! ($value['cell_present'] ?? false)) {
                     continue;
                 }
 
                 $expected = $value['value'] ?? null;
-
-                if ($expected === null) {
-                    return false;
-                }
 
                 $query = Nilai::where('siswa_id', $siswaId)
                     ->where('mata_pelajaran_id', $mataPelajaranId)
@@ -1926,6 +1922,14 @@ class ScoreController extends Controller
                         ->whereNull('tujuan_pembelajaran_id')
                         ->first();
                     $actual = $nilai?->{$value['key']};
+                }
+
+                if ($expected === null) {
+                    if ($actual !== null) {
+                        return false;
+                    }
+
+                    continue;
                 }
 
                 if ($actual === null || abs((float) $actual - (float) $expected) > 0.01) {

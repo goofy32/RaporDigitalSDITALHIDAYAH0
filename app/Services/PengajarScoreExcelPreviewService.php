@@ -317,7 +317,8 @@ class PengajarScoreExcelPreviewService
 
         foreach ($scoreColumns as $column) {
             $key = $column['key'];
-            $value = $this->valueForKey($sheet, $columnMap, $key, $rowNumber);
+            $cellPresent = array_key_exists($key, $columnMap);
+            $value = $cellPresent ? $this->valueForKey($sheet, $columnMap, $key, $rowNumber) : null;
             $normalizedValue = $this->normalizeScoreCell($value);
 
             $uploadedValues[] = [
@@ -325,6 +326,7 @@ class PengajarScoreExcelPreviewService
                 'label' => $column['label'],
                 'value' => $normalizedValue,
                 'raw_value' => $this->normalizeRawCellValue($value),
+                'cell_present' => $cellPresent,
                 'editable' => (bool) ($column['editable'] ?? false),
                 'type' => $column['type'] ?? null,
                 'lingkup_materi_id' => $column['lingkup_materi_id'] ?? null,
