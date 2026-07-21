@@ -1,11 +1,6 @@
 @php
-    $guru = Auth::guard('guru')->user();
-    $tahunAjaran = session('tahun_ajaran_id')
-        ? \App\Models\TahunAjaran::find(session('tahun_ajaran_id'))
-        : \App\Models\TahunAjaran::where('is_active', true)->first();
-    $roles = $guru
-        ? $guru->availableRoles($tahunAjaran?->id, $tahunAjaran?->semester)
-        : [];
+    $guru = $currentGuru ?? Auth::guard('guru')->user();
+    $roles = $currentGuruAvailableRoles ?? [];
     $currentRole = session('selected_role', 'pengajar');
     $roleLabels = [
         'pengajar' => 'Pengajar',

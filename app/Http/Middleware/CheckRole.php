@@ -4,6 +4,7 @@ namespace App\Http\Middleware;
 
 use App\Models\Guru;
 use App\Models\TahunAjaran;
+use App\Services\TahunAjaranContext;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -99,6 +100,12 @@ class CheckRole
 
     private function currentTahunAjaran(): ?TahunAjaran
     {
+        $context = app(TahunAjaranContext::class);
+
+        if ($context->selected()) {
+            return $context->selected();
+        }
+
         $tahunAjaranId = session('tahun_ajaran_id');
 
         if ($tahunAjaranId) {

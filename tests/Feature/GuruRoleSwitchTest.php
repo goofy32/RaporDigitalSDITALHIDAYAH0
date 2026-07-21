@@ -3,7 +3,9 @@
 namespace Tests\Feature;
 
 use App\Http\Middleware\CheckRole;
+use App\Http\Middleware\TahunAjaranMiddleware;
 use App\Models\Guru;
+use App\Services\TahunAjaranContext;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
 use Illuminate\Support\Facades\Cache;
@@ -255,6 +257,83 @@ class GuruRoleSwitchTest extends TestCase
         $this->assertTrue($response->isRedirect(route('login')));
         $this->assertSame('Akun guru sudah tidak aktif. Silakan hubungi admin.', session('error'));
         $this->assertFalse(session()->has('selected_role'));
+    }
+
+    public function test_tahun_ajaran_middleware_initializes_reusable_request_context(): void
+    {
+        session([
+            'tahun_ajaran_id' => $this->tahunAjaranId,
+            'selected_semester' => 1,
+            'no_tahun_ajaran' => false,
+        ]);
+
+        $request = Request::create('/_test/context', 'GET');
+        $request->setLaravelSession(app('session.store'));
+
+        $response = app(TahunAjaranMiddleware::class)->handle($request, function (Request $request) {
+            /** @var TahunAjaranContext $context */
+            $context = app(TahunAjaranContext::class);
+
+            $this->assertTrue($context->isInitialized());
+            $this->assertSame($this->tahunAjaranId, $context->selectedId());
+            $this->assertSame(1, $context->semester());
+            $this->assertSame($this->tahunAjaranId, $context->systemActive()?->id);
+            $this->assertTrue($context->hasActiveTahunAjaran());
+            $this->assertTrue($context->hasAnyTahunAjaran());
+            $this->assertSame($context, $request->attributes->get('tahun_ajaran_context'));
+
+            return response('ok');
+        });
+
+        $this->assertSame('ok', $response->getContent());
+    }
+
+    public function test_tahun_ajaran_context_handles_empty_year_state_without_exception(): void
+    {
+        DB::table('nilais')->delete();
+        DB::table('kkms')->delete();
+        DB::table('mata_pelajarans')->delete();
+        DB::table('guru_kelas')->delete();
+        DB::table('kelas')->delete();
+        DB::table('tahun_ajarans')->delete();
+        Cache::flush();
+        session()->flush();
+
+        $request = Request::create('/_test/no-year', 'GET');
+        $request->setLaravelSession(app('session.store'));
+
+        $response = app(TahunAjaranMiddleware::class)->handle($request, function () {
+            /** @var TahunAjaranContext $context */
+            $context = app(TahunAjaranContext::class);
+
+            $this->assertTrue($context->isInitialized());
+            $this->assertNull($context->selected());
+            $this->assertNull($context->systemActive());
+            $this->assertFalse($context->hasActiveTahunAjaran());
+            $this->assertFalse($context->hasAnyTahunAjaran());
+            $this->assertTrue(session('no_tahun_ajaran'));
+
+            return response('ok');
+        });
+
+        $this->assertSame('ok', $response->getContent());
+    }
+
+    public function test_available_roles_are_memoized_for_the_same_guru_year_and_semester(): void
+    {
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+
+        $roles = $this->multiRoleGuru->availableRoles($this->tahunAjaranId, 1);
+        $queryCountAfterFirstCall = count(DB::getQueryLog());
+
+        $this->assertSame(['pengajar', 'wali_kelas'], $roles);
+        $this->assertGreaterThan(0, $queryCountAfterFirstCall);
+
+        $this->assertSame(['pengajar', 'wali_kelas'], $this->multiRoleGuru->availableRoles($this->tahunAjaranId, 1));
+        $this->assertSame($queryCountAfterFirstCall, count(DB::getQueryLog()));
+
+        DB::disableQueryLog();
     }
 
     private function createSchema(): void

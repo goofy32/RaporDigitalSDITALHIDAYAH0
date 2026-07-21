@@ -26,7 +26,7 @@ class CheckWaliKelas
                 ->with('error', 'Silakan login terlebih dahulu');
         }
         
-        Log::info('Check Wali Kelas middleware', [
+        Log::debug('Check Wali Kelas middleware', [
             'guru_id' => $guru->id,
             'tahun_ajaran_id' => $tahunAjaranId
         ]);
@@ -40,17 +40,19 @@ class CheckWaliKelas
             ->where('kelas.tahun_ajaran_id', $tahunAjaranId)
             ->exists();
             
-        Log::info('Wali kelas check result', ['isWaliKelas' => $isWaliKelas]);
+        Log::debug('Wali kelas check result', ['is_wali_kelas' => $isWaliKelas]);
         
         if (!$isWaliKelas) {
-            // Coba dapatkan semua relasi guru-kelas untuk debugging
-            $allRelations = DB::table('guru_kelas')
+            $relationCount = DB::table('guru_kelas')
                 ->join('kelas', 'guru_kelas.kelas_id', '=', 'kelas.id')
                 ->where('guru_kelas.guru_id', $guru->id)
-                ->select('guru_kelas.*', 'kelas.tahun_ajaran_id')
-                ->get();
+                ->count();
                 
-            Log::info('All guru-kelas relations', ['relations' => $allRelations]);
+            Log::warning('Guru is not assigned as wali kelas for selected academic year.', [
+                'guru_id' => $guru->id,
+                'tahun_ajaran_id' => $tahunAjaranId,
+                'relation_count' => $relationCount,
+            ]);
             
             return redirect()->route('pengajar.dashboard')
                 ->with('error', 'Anda tidak terdaftar sebagai wali kelas untuk tahun ajaran yang aktif.');

@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Hash;
 use App\Models\User;
 use App\Models\TahunAjaran;
 use App\Services\AuditService;
+use App\Services\TahunAjaranContext;
 
 class LoginController extends Controller
 {
@@ -112,6 +113,12 @@ class LoginController extends Controller
 
     private function currentTahunAjaran(): ?TahunAjaran
     {
+        $context = app(TahunAjaranContext::class);
+
+        if ($context->selected()) {
+            return $context->selected();
+        }
+
         $tahunAjaranId = session('tahun_ajaran_id');
 
         if ($tahunAjaranId) {

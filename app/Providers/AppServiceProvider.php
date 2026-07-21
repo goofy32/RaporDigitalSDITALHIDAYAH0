@@ -7,6 +7,8 @@ use Illuminate\Support\Facades\View;
 use App\Models\ProfilSekolah;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\URL;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use App\Services\RaporTemplateProcessor;
 
 // Add these imports for the audit system
@@ -16,6 +18,7 @@ use App\Models\User;
 use App\Models\Guru;
 use App\Models\Siswa;
 use App\Models\Kelas;
+use App\Models\TahunAjaran;
 use App\Models\MataPelajaran;
 use App\Models\LingkupMateri;
 use App\Models\Nilai;
@@ -29,9 +32,11 @@ use App\Models\CatatanSiswa;
 use App\Models\CatatanMataPelajaran;
 use App\Models\CapaianKompetensiCustom;
 use App\Services\DocumentConversionService;
+use App\Services\GuruRoleAvailability;
 use App\Services\SiswaKelasSemesterResolver;
 use App\Services\ReportPerformanceTracker;
 use App\Services\ReportPdfAutoPrepareService;
+use App\Services\TahunAjaranContext;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -44,6 +49,8 @@ class AppServiceProvider extends ServiceProvider
         $this->app->scoped(ReportPerformanceTracker::class);
         $this->app->scoped(DocumentConversionService::class);
         $this->app->scoped(ReportPdfAutoPrepareService::class);
+        $this->app->scoped(TahunAjaranContext::class);
+        $this->app->scoped(GuruRoleAvailability::class);
 
         $this->app->bind(RaporTemplateProcessor::class, function ($app) {
             return new RaporTemplateProcessor();
@@ -64,6 +71,55 @@ class AppServiceProvider extends ServiceProvider
 
             $view->with('schoolProfile', $schoolProfile);
             $view->with('profilSekolah', $schoolProfile);
+        });
+
+        View::composer(['components.admin.topbar', 'components.guru.role-switcher'], function ($view) {
+            $guru = Auth::guard('guru')->user();
+            $context = app(TahunAjaranContext::class);
+            $tahunAjaran = $context->selected() ?: $context->systemActive();
+
+            if (!$tahunAjaran) {
+                $tahunAjaranId = session('tahun_ajaran_id');
+                $tahunAjaran = $tahunAjaranId
+                    ? TahunAjaran::find($tahunAjaranId)
+                    : TahunAjaran::where('is_active', true)->first();
+            }
+
+            $availableRoles = $guru
+                ? app(GuruRoleAvailability::class)->availableRoles($guru, $tahunAjaran?->id, $tahunAjaran?->semester)
+                : [];
+
+            $view->with('currentGuru', $guru);
+            $view->with('currentGuruAvailableRoles', $availableRoles);
+        });
+
+        View::composer('components.pengajar.sidebar', function ($view) {
+            $guru = Auth::guard('guru')->user();
+            $tahunAjaranId = app(TahunAjaranContext::class)->selectedId() ?: session('tahun_ajaran_id');
+            $lowScoreCount = 0;
+
+            if ($guru) {
+                $query = DB::table('nilais')
+                    ->join('mata_pelajarans', 'nilais.mata_pelajaran_id', '=', 'mata_pelajarans.id')
+                    ->join('kkms', 'mata_pelajarans.id', '=', 'kkms.mata_pelajaran_id')
+                    ->where('mata_pelajarans.guru_id', $guru->id)
+                    ->whereNull('nilais.deleted_at')
+                    ->whereNull('mata_pelajarans.deleted_at')
+                    ->whereColumn('nilais.nilai_akhir_rapor', '<', 'kkms.nilai');
+
+                if ($tahunAjaranId) {
+                    $query->where(function ($query) use ($tahunAjaranId) {
+                        $query->where('nilais.tahun_ajaran_id', $tahunAjaranId)
+                            ->where('mata_pelajarans.tahun_ajaran_id', $tahunAjaranId)
+                            ->where('kkms.tahun_ajaran_id', $tahunAjaranId);
+                    });
+                }
+
+                $lowScoreCount = (int) $query->count();
+            }
+
+            $view->with('pengajarLowScoreCount', $lowScoreCount);
+            $view->with('pengajarHasLowScores', $lowScoreCount > 0);
         });
 
         // Register the audit observers for various models

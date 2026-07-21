@@ -8,6 +8,7 @@ use Laravel\Sanctum\HasApiTokens;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Facades\DB;
+use App\Services\GuruRoleAvailability;
 
 class Guru extends Authenticatable
 {
@@ -110,17 +111,7 @@ class Guru extends Authenticatable
 
     public function availableRoles(?int $tahunAjaranId = null, ?int $semester = null): array
     {
-        $roles = [];
-
-        if ($this->hasPengajarAssignment($tahunAjaranId, $semester)) {
-            $roles[] = 'pengajar';
-        }
-
-        if ($this->hasWaliKelasAssignment($tahunAjaranId)) {
-            $roles[] = 'wali_kelas';
-        }
-
-        return $roles;
+        return app(GuruRoleAvailability::class)->availableRoles($this, $tahunAjaranId, $semester);
     }
 
     /**

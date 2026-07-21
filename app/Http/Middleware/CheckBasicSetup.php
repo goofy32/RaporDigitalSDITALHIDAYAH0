@@ -6,6 +6,8 @@ use Closure;
 use Illuminate\Http\Request;
 use App\Models\TahunAjaran;
 use App\Models\ProfilSekolah;
+use App\Services\TahunAjaranContext;
+use Illuminate\Support\Facades\Cache;
 
 class CheckBasicSetup
 {
@@ -35,15 +37,24 @@ class CheckBasicSetup
         }
 
         // Check if Profil Sekolah exists
-        $profilSekolah = ProfilSekolah::first();
+        $profilSekolah = Cache::remember(
+            'profil_sekolah',
+            now()->addHours(24),
+            fn () => ProfilSekolah::first()
+        );
+
         if (!$profilSekolah) {
             return redirect()->route('profile.edit')
                 ->with('warning', 'Silakan lengkapi data Profil Sekolah terlebih dahulu sebelum menggunakan fitur lain.');
         }
 
         // Check if Tahun Ajaran exists
-        $tahunAjaran = TahunAjaran::first();
-        if (!$tahunAjaran) {
+        $context = app(TahunAjaranContext::class);
+        $hasTahunAjaran = $context->isInitialized()
+            ? $context->hasAnyTahunAjaran()
+            : TahunAjaran::query()->exists();
+
+        if (!$hasTahunAjaran) {
             return redirect()->route('tahun.ajaran.create')
                 ->with('warning', 'Silakan buat Tahun Ajaran terlebih dahulu sebelum menggunakan fitur lain.');
         }

@@ -483,7 +483,7 @@ class StudentController extends Controller
         $guru = auth()->guard('guru')->user();
         $tahunAjaranId = session('tahun_ajaran_id');
         
-        \Log::info("Wali Kelas Index", [
+        Log::debug('Wali Kelas Index', [
             'guru_id' => $guru->id,
             'tahun_ajaran_id' => $tahunAjaranId
         ]);
@@ -509,7 +509,10 @@ class StudentController extends Controller
             ->select('kelas.id as kelas_id', 'kelas.nomor_kelas', 'kelas.nama_kelas')
             ->first();
         
-        \Log::info("Kelas wali result:", ['kelas_wali' => $kelasWali]);
+        Log::debug('Kelas wali result', [
+            'kelas_id' => $kelasWali?->kelas_id,
+            'found' => (bool) $kelasWali,
+        ]);
         
         if (!$kelasWali) {
             // Log all guru-kelas relations for this guru
@@ -519,7 +522,9 @@ class StudentController extends Controller
                 ->select('guru_kelas.*', 'kelas.tahun_ajaran_id', 'kelas.nomor_kelas', 'kelas.nama_kelas')
                 ->get();
                 
-            \Log::info("All guru-kelas relations:", ['relations' => $relations]);
+            Log::debug('All guru-kelas relations for wali student index', [
+                'relation_count' => $relations->count(),
+            ]);
             
             return redirect()->route('wali_kelas.dashboard')
                 ->with('error', 'Anda belum ditugaskan sebagai wali kelas untuk tahun ajaran yang dipilih.');
@@ -528,7 +533,7 @@ class StudentController extends Controller
         $query = $enrollmentResolver
             ->studentQueryForClass((int) $kelasWali->kelas_id, (int) $tahunAjaranId, (int) $tahunAjaran->semester, true);
         
-        \Log::info("Query students for kelas_id: " . $kelasWali->kelas_id);
+        Log::debug('Query students for wali kelas', ['kelas_id' => $kelasWali->kelas_id]);
         
         if ($request->has('search')) {
             $search = $request->search;
@@ -571,7 +576,7 @@ class StudentController extends Controller
             }
         });
         
-        \Log::info("Students found:", ['count' => $students->count()]);
+        Log::debug('Students found for wali kelas', ['count' => $students->count()]);
         
         return $this->liveListResponse(
             $request,

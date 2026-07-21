@@ -3,8 +3,8 @@
     aria-label="Sidebar"
     data-turbo-permanent>
     @php
-        $hasTahunAjaran = \App\Models\TahunAjaran::count() > 0;
-        $hasProfilSekolah = \App\Models\ProfilSekolah::count() > 0;
+        $hasTahunAjaran = $hasAnyTahunAjaran ?? (isset($tahunAjarans) && $tahunAjarans->isNotEmpty());
+        $hasProfilSekolah = isset($profilSekolah) && $profilSekolah !== null;
         $menuLinkClasses = 'flex items-center p-2 text-gray-700 rounded-lg hover:bg-gray-100 hover:text-gray-900 transition-colors duration-150 group';
     @endphp
     <div x-data="{ 

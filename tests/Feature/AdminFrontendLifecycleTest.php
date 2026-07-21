@@ -80,4 +80,37 @@ class AdminFrontendLifecycleTest extends TestCase
         $this->assertStringContainsString('grid grid-cols-1 lg:grid-cols-3 gap-4', $pengajarDashboard);
         $this->assertStringContainsString('grid grid-cols-1 lg:grid-cols-3 gap-4', $waliDashboard);
     }
+
+    public function test_global_navigation_blades_do_not_run_direct_model_queries(): void
+    {
+        $files = [
+            'views/layouts/app.blade.php',
+            'views/layouts/pengajar/app.blade.php',
+            'views/layouts/wali_kelas/app.blade.php',
+            'views/components/admin/sidebar.blade.php',
+            'views/components/admin/topbar.blade.php',
+            'views/components/guru/role-switcher.blade.php',
+            'views/components/pengajar/sidebar.blade.php',
+            'views/components/tahun-ajaran-warning.blade.php',
+        ];
+
+        $forbiddenSnippets = [
+            '\\App\\Models\\',
+            '::where(',
+            '::first(',
+            '::count(',
+            '::exists(',
+            '::find(',
+            'DB::table(',
+            'availableRoles(',
+        ];
+
+        foreach ($files as $file) {
+            $source = file_get_contents(resource_path($file));
+
+            foreach ($forbiddenSnippets as $snippet) {
+                $this->assertStringNotContainsString($snippet, $source, "{$file} still contains {$snippet}");
+            }
+        }
+    }
 }

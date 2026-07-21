@@ -213,11 +213,7 @@
                             <div class="border-t border-gray-100">
                                 @if(Auth::guard('guru')->check())
                                     @php
-                                        $guru = Auth::guard('guru')->user();
-                                        $tahunAjaran = session('tahun_ajaran_id')
-                                            ? \App\Models\TahunAjaran::find(session('tahun_ajaran_id'))
-                                            : \App\Models\TahunAjaran::where('is_active', true)->first();
-                                        $availableRoles = $guru->availableRoles($tahunAjaran?->id, $tahunAjaran?->semester);
+                                        $availableRoles = $currentGuruAvailableRoles ?? [];
                                     @endphp
 
                                     @if(count($availableRoles) > 1)
