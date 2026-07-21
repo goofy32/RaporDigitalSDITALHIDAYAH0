@@ -5,7 +5,7 @@
 @endsection
 
 @section('sidebar')
-    <x-wali-kelas.sidebar data-turbo-permanent id="sidebar"></x-wali-kelas.sidebar>
+    <x-wali-kelas.sidebar></x-wali-kelas.sidebar>
 @endsection
 
 @push('styles')

@@ -1,5 +1,5 @@
 <!-- resources/views/components/admin/topbar.blade.php -->
-<div id="topbar" data-turbo-permanent class="fixed top-0 z-50 w-full bg-white border-b border-gray-200"
+<div id="topbar" class="fixed top-0 z-50 w-full bg-white border-b border-gray-200"
      x-data="{ 
          initImages() {
              this.$el.querySelectorAll('img').forEach(img => {
@@ -36,7 +36,6 @@
             <div class="flex items-center justify-start">
                 <button data-drawer-target="logo-sidebar" 
                         data-drawer-toggle="logo-sidebar" 
-                        data-turbo-permanent
                         aria-controls="logo-sidebar" 
                         type="button" 
                         class="inline-flex items-center p-2 text-sm text-gray-500 rounded-lg md:hidden hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-gray-200">

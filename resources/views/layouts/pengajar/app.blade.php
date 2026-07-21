@@ -6,7 +6,7 @@
 @endsection
 
 @section('sidebar')
-    <x-pengajar.sidebar data-turbo-permanent id="sidebar"></x-pengajar.sidebar>
+    <x-pengajar.sidebar></x-pengajar.sidebar>
 @endsection
 
 @section('layout-content')

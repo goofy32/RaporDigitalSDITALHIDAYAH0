@@ -24,7 +24,7 @@
     @stack('styles')
 </head>
 <body @yield('layout-body')>
-    <x-admin.topbar data-turbo-permanent id="topbar"></x-admin.topbar>
+    <x-admin.topbar></x-admin.topbar>
     @yield('sidebar')
     <x-session-timeout-alert data-turbo-permanent id="session-alert" />
 
