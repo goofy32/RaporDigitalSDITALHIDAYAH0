@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\ViewErrorBag;
 use Tests\TestCase;
 
 class GuruRoleSwitchTest extends TestCase
@@ -43,7 +44,7 @@ class GuruRoleSwitchTest extends TestCase
 
     public function test_valid_pengajar_switch_redirects_to_pengajar_dashboard(): void
     {
-        $this->actingAs($this->multiRoleGuru, 'guru')
+        $response = $this->actingAs($this->multiRoleGuru, 'guru')
             ->withSession([
                 'selected_role' => 'wali_kelas',
                 'tahun_ajaran_id' => $this->tahunAjaranId,
@@ -53,11 +54,16 @@ class GuruRoleSwitchTest extends TestCase
             ->get(route('auth.switch.role', ['role' => 'pengajar']))
             ->assertRedirect(route('pengajar.dashboard'))
             ->assertSessionHas('selected_role', 'pengajar');
+
+        $this->get($response->headers->get('Location'))
+            ->assertOk()
+            ->assertDontSee('Akses Tidak Sesuai Role')
+            ->assertDontSee('Pilih Role Pengajar');
     }
 
     public function test_valid_wali_switch_redirects_to_wali_dashboard(): void
     {
-        $this->actingAs($this->multiRoleGuru, 'guru')
+        $response = $this->actingAs($this->multiRoleGuru, 'guru')
             ->withSession([
                 'selected_role' => 'pengajar',
                 'tahun_ajaran_id' => $this->tahunAjaranId,
@@ -67,6 +73,10 @@ class GuruRoleSwitchTest extends TestCase
             ->get(route('auth.switch.role', ['role' => 'wali_kelas']))
             ->assertRedirect(route('wali_kelas.dashboard'))
             ->assertSessionHas('selected_role', 'wali_kelas');
+
+        $this->get($response->headers->get('Location'))
+            ->assertOk()
+            ->assertDontSee('Akses Tidak Sesuai Role');
     }
 
     public function test_invalid_role_switch_is_denied(): void
@@ -141,6 +151,124 @@ class GuruRoleSwitchTest extends TestCase
 
         $this->assertStringContainsString('Beralih ke Wali Kelas', $html);
         $this->assertStringContainsString(route('auth.switch.role', ['role' => 'wali_kelas']), $html);
+    }
+
+    public function test_profile_dropdown_switches_from_wali_to_pengajar(): void
+    {
+        $this->actingAs($this->multiRoleGuru, 'guru');
+        session([
+            'selected_role' => 'wali_kelas',
+            'tahun_ajaran_id' => $this->tahunAjaranId,
+            'selected_semester' => 1,
+            'no_tahun_ajaran' => false,
+        ]);
+
+        $html = view('components.admin.topbar')->render();
+
+        $this->assertStringContainsString('Beralih ke Pengajar', $html);
+        $this->assertStringContainsString(route('auth.switch.role', ['role' => 'pengajar']), $html);
+    }
+
+    public function test_role_specific_navigation_is_not_turbo_permanent(): void
+    {
+        $this->actingAs($this->multiRoleGuru, 'guru');
+        session([
+            'selected_role' => 'wali_kelas',
+            'tahun_ajaran_id' => $this->tahunAjaranId,
+            'selected_semester' => 1,
+            'no_tahun_ajaran' => false,
+        ]);
+
+        $this->assertStringNotContainsString('data-turbo-permanent', view('components.admin.topbar')->render());
+        $this->assertStringNotContainsString(
+            'data-turbo-permanent',
+            view('components.wali-kelas.sidebar')->render()
+        );
+        $this->assertStringNotContainsString(
+            'data-turbo-permanent',
+            view('components.pengajar.sidebar')->render()
+        );
+    }
+
+    public function test_direct_pengajar_dashboard_request_with_wali_role_is_still_rejected(): void
+    {
+        $this->actingAs($this->multiRoleGuru, 'guru')
+            ->withSession([
+                'selected_role' => 'wali_kelas',
+                'tahun_ajaran_id' => $this->tahunAjaranId,
+                'selected_semester' => 1,
+                'no_tahun_ajaran' => false,
+            ])
+            ->get(route('pengajar.dashboard'))
+            ->assertForbidden()
+            ->assertSee('Akses Tidak Sesuai Role');
+    }
+
+    public function test_direct_wali_dashboard_request_with_pengajar_role_is_still_rejected(): void
+    {
+        $this->actingAs($this->multiRoleGuru, 'guru')
+            ->withSession([
+                'selected_role' => 'pengajar',
+                'tahun_ajaran_id' => $this->tahunAjaranId,
+                'selected_semester' => 1,
+                'no_tahun_ajaran' => false,
+            ])
+            ->get(route('wali_kelas.dashboard'))
+            ->assertForbidden()
+            ->assertSee('Akses Tidak Sesuai Role');
+    }
+
+    public function test_wali_student_edit_actions_render_in_header_and_submit_the_form(): void
+    {
+        $this->actingAs($this->multiRoleGuru, 'guru');
+        session([
+            'selected_role' => 'wali_kelas',
+            'tahun_ajaran_id' => $this->tahunAjaranId,
+            'selected_semester' => 1,
+            'no_tahun_ajaran' => false,
+        ]);
+        view()->share('errors', new ViewErrorBag());
+
+        $html = view('wali_kelas.edit_student', [
+            'student' => (object) [
+                'id' => 10,
+                'nis' => '1001',
+                'nisn' => '2001',
+                'nama' => 'Siswa Contoh',
+                'tanggal_lahir' => '2015-01-01',
+                'jenis_kelamin' => 'Laki-laki',
+                'agama' => 'Islam',
+                'alamat' => 'Alamat',
+                'photo' => null,
+                'nama_ayah' => 'Ayah',
+                'nama_ibu' => 'Ibu',
+                'pekerjaan_ayah' => null,
+                'pekerjaan_ibu' => null,
+                'alamat_orangtua' => null,
+                'wali_siswa' => null,
+                'pekerjaan_wali' => null,
+            ],
+            'kelas' => (object) [
+                'id' => 5,
+                'nomor_kelas' => 5,
+                'nama_kelas' => 'A',
+            ],
+        ])->render();
+
+        $titlePosition = strpos($html, 'Form Edit Data Siswa');
+        $formPosition = strpos($html, 'id="wali-student-edit-form"');
+        $buttonPosition = strpos($html, 'form="wali-student-edit-form"');
+        $backPosition = strpos($html, route('wali_kelas.student.index'));
+
+        $this->assertNotFalse($titlePosition);
+        $this->assertNotFalse($formPosition);
+        $this->assertNotFalse($buttonPosition);
+        $this->assertNotFalse($backPosition);
+        $this->assertLessThan($formPosition, $buttonPosition);
+        $this->assertLessThan($formPosition, $backPosition);
+        $this->assertSame(1, substr_count($html, 'form="wali-student-edit-form"'));
+        $this->assertSame(1, substr_count($html, '>Update</button>'));
+        $this->assertSame(1, substr_count($html, '>Kembali</a>'));
     }
 
     public function test_role_mismatch_warning_offers_valid_role_switch_without_useless_back_button(): void
@@ -339,7 +467,13 @@ class GuruRoleSwitchTest extends TestCase
     private function createSchema(): void
     {
         foreach ([
+            'nilai_ekstrakurikuler',
+            'absensis',
+            'siswa_kelas_semester',
+            'siswas',
             'nilais',
+            'tujuan_pembelajarans',
+            'lingkup_materis',
             'kkms',
             'mata_pelajarans',
             'guru_kelas',
@@ -410,6 +544,22 @@ class GuruRoleSwitchTest extends TestCase
             $table->softDeletes();
         });
 
+        Schema::create('lingkup_materis', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('mata_pelajaran_id')->nullable();
+            $table->string('judul_lingkup_materi')->nullable();
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('tujuan_pembelajarans', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('lingkup_materi_id')->nullable();
+            $table->string('tujuan_pembelajaran')->nullable();
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
         Schema::create('kkms', function (Blueprint $table) {
             $table->id();
             $table->foreignId('mata_pelajaran_id');
@@ -420,9 +570,50 @@ class GuruRoleSwitchTest extends TestCase
 
         Schema::create('nilais', function (Blueprint $table) {
             $table->id();
+            $table->foreignId('siswa_id')->nullable();
             $table->foreignId('mata_pelajaran_id')->nullable();
             $table->foreignId('tahun_ajaran_id')->nullable();
+            $table->decimal('nilai_tp', 5, 2)->nullable();
+            $table->decimal('nilai_lm', 5, 2)->nullable();
             $table->decimal('nilai_akhir_rapor', 5, 2)->nullable();
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('siswas', function (Blueprint $table) {
+            $table->id();
+            $table->string('nama');
+            $table->foreignId('kelas_id')->nullable();
+            $table->foreignId('tahun_ajaran_id')->nullable();
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('siswa_kelas_semester', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('siswa_id');
+            $table->foreignId('kelas_id');
+            $table->foreignId('tahun_ajaran_id');
+            $table->integer('semester');
+            $table->timestamps();
+            $table->unique(['siswa_id', 'tahun_ajaran_id', 'semester'], 'siswa_kelas_semester_unique_context');
+        });
+
+        Schema::create('absensis', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('siswa_id')->nullable();
+            $table->foreignId('tahun_ajaran_id')->nullable();
+            $table->integer('semester')->nullable();
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('nilai_ekstrakurikuler', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('siswa_id')->nullable();
+            $table->foreignId('ekstrakurikuler_id')->nullable();
+            $table->foreignId('tahun_ajaran_id')->nullable();
+            $table->integer('semester')->nullable();
             $table->timestamps();
             $table->softDeletes();
         });

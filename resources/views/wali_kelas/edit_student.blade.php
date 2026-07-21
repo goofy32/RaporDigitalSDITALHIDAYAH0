@@ -4,11 +4,15 @@
 
 @section('content')
 <div class="p-4 bg-white rounded-lg shadow-sm mt-14">
-    <div class="flex justify-between items-center mb-6">
+    <div class="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h2 class="text-2xl font-bold text-green-700">Form Edit Data Siswa</h2>
+        <div class="flex flex-wrap gap-2 sm:justify-end">
+            <button type="submit" form="wali-student-edit-form" class="bg-green-700 text-white px-4 py-2 rounded hover:bg-green-800">Update</button>
+            <a href="{{ route('wali_kelas.student.index') }}" class="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700">Kembali</a>
+        </div>
     </div>
 
-    <form action="{{ route('wali_kelas.student.update', $student->id) }}" method="POST" enctype="multipart/form-data" x-data="formProtection" @submit="handleSubmit" class="grid grid-cols-1 md:grid-cols-2 gap-6">
+    <form id="wali-student-edit-form" action="{{ route('wali_kelas.student.update', $student->id) }}" method="POST" enctype="multipart/form-data" x-data="formProtection" @submit="handleSubmit" class="grid grid-cols-1 md:grid-cols-2 gap-6">
         @csrf
         @method('PUT')
 
@@ -173,11 +177,6 @@
             </div>
         </div>
 
-        <!-- Tombol Submit -->
-        <div class="col-span-2 flex justify-end space-x-2 mt-4">
-            <button type="submit" class="bg-green-700 text-white px-4 py-2 rounded hover:bg-green-800">Update</button>
-            <a href="{{ route('wali_kelas.student.index') }}" class="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700">Kembali</a>
-        </div>
     </form>
 </div>
 
