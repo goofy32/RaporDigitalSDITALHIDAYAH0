@@ -4,9 +4,11 @@ use App\Http\Middleware\CheckMataPelajaranOwnership;
 use App\Http\Middleware\SessionTimeout;
 use App\Http\Middleware\CacheControl;
 use App\Http\Middleware\SlowRequestMonitor;
+use App\Http\Middleware\SyncGuruSelectedRoleSession;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Session\Middleware\StartSession;
 use App\Http\Middleware\TahunAjaranMiddleware;
 
 return Application::configure(basePath: dirname(__DIR__))
@@ -23,8 +25,11 @@ return Application::configure(basePath: dirname(__DIR__))
             \App\Http\Middleware\SecurityHeaders::class,
             SlowRequestMonitor::class,
             TahunAjaranMiddleware::class,
-            \App\Http\Middleware\HandleValidationErrors::class
+            \App\Http\Middleware\HandleValidationErrors::class,
+            SyncGuruSelectedRoleSession::class,
         ]);
+
+        $middleware->appendToPriorityList(StartSession::class, SyncGuruSelectedRoleSession::class);
 
         $middleware->alias([
             'auth' => \App\Http\Middleware\Authenticate::class,

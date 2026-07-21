@@ -242,7 +242,7 @@ class GuruPasswordResetTest extends TestCase
 
         $this->actingAs($this->guru->fresh(), 'guru')
             ->withSession($this->guruSession('pengajar'))
-            ->get(route('auth.switch.role', ['role' => 'wali_kelas']))
+            ->post(route('auth.switch.role', ['role' => 'wali_kelas']))
             ->assertRedirect(route('wali_kelas.dashboard'))
             ->assertSessionHas('selected_role', 'wali_kelas');
     }

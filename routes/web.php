@@ -137,7 +137,9 @@ Route::middleware('auth:guru')->prefix('guru')->name('guru.')->group(function ()
 });
 
 Route::middleware(['auth:guru', 'force.guru.password'])->group(function () {
-    Route::get('/switch-role/{role}', [LoginController::class, 'switchRole'])
+    Route::get('/switch-role/{role}', fn () => abort(405));
+
+    Route::post('/switch-role/{role}', [LoginController::class, 'switchRole'])
         ->name('auth.switch.role');
 });
 

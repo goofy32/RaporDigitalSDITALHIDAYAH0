@@ -3,8 +3,10 @@
 namespace Tests\Feature;
 
 use App\Http\Middleware\CheckRole;
+use App\Http\Middleware\SyncGuruSelectedRoleSession;
 use App\Http\Middleware\TahunAjaranMiddleware;
 use App\Models\Guru;
+use App\Services\GuruSelectedRoleSessionState;
 use App\Services\TahunAjaranContext;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
@@ -12,6 +14,7 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\ViewErrorBag;
 use Tests\TestCase;
@@ -28,8 +31,6 @@ class GuruRoleSwitchTest extends TestCase
     {
         parent::setUp();
 
-        $this->withoutMiddleware(ValidateCsrfToken::class);
-
         config()->set('database.default', 'sqlite');
         config()->set('database.connections.sqlite.database', ':memory:');
         config()->set('cache.default', 'array');
@@ -45,13 +46,8 @@ class GuruRoleSwitchTest extends TestCase
     public function test_valid_pengajar_switch_redirects_to_pengajar_dashboard(): void
     {
         $response = $this->actingAs($this->multiRoleGuru, 'guru')
-            ->withSession([
-                'selected_role' => 'wali_kelas',
-                'tahun_ajaran_id' => $this->tahunAjaranId,
-                'selected_semester' => 1,
-                'no_tahun_ajaran' => false,
-            ])
-            ->get(route('auth.switch.role', ['role' => 'pengajar']))
+            ->withSession($this->roleSession('wali_kelas'))
+            ->post(route('auth.switch.role', ['role' => 'pengajar']), $this->csrfPayload())
             ->assertRedirect(route('pengajar.dashboard'))
             ->assertSessionHas('selected_role', 'pengajar');
 
@@ -64,13 +60,8 @@ class GuruRoleSwitchTest extends TestCase
     public function test_valid_wali_switch_redirects_to_wali_dashboard(): void
     {
         $response = $this->actingAs($this->multiRoleGuru, 'guru')
-            ->withSession([
-                'selected_role' => 'pengajar',
-                'tahun_ajaran_id' => $this->tahunAjaranId,
-                'selected_semester' => 1,
-                'no_tahun_ajaran' => false,
-            ])
-            ->get(route('auth.switch.role', ['role' => 'wali_kelas']))
+            ->withSession($this->roleSession('pengajar'))
+            ->post(route('auth.switch.role', ['role' => 'wali_kelas']), $this->csrfPayload())
             ->assertRedirect(route('wali_kelas.dashboard'))
             ->assertSessionHas('selected_role', 'wali_kelas');
 
@@ -79,8 +70,25 @@ class GuruRoleSwitchTest extends TestCase
             ->assertDontSee('Akses Tidak Sesuai Role');
     }
 
-    public function test_invalid_role_switch_is_denied(): void
+    public function test_get_switch_route_no_longer_changes_role(): void
     {
+        $this->actingAs($this->multiRoleGuru, 'guru')
+            ->withSession([
+                'selected_role' => 'wali_kelas',
+                'tahun_ajaran_id' => $this->tahunAjaranId,
+                'selected_semester' => 1,
+                'no_tahun_ajaran' => false,
+            ])
+            ->get(route('auth.switch.role', ['role' => 'pengajar']))
+            ->assertStatus(405)
+            ->assertSessionHas('selected_role', 'wali_kelas');
+    }
+
+    public function test_post_switch_without_csrf_is_rejected(): void
+    {
+        $this->withMiddleware(ValidateCsrfToken::class);
+        $this->app->instance('env', 'production');
+
         $this->actingAs($this->multiRoleGuru, 'guru')
             ->withSession([
                 'selected_role' => 'pengajar',
@@ -88,20 +96,24 @@ class GuruRoleSwitchTest extends TestCase
                 'selected_semester' => 1,
                 'no_tahun_ajaran' => false,
             ])
-            ->get(route('auth.switch.role', ['role' => 'admin']))
+            ->post(route('auth.switch.role', ['role' => 'wali_kelas']))
+            ->assertStatus(419)
+            ->assertSessionHas('selected_role', 'pengajar');
+    }
+
+    public function test_invalid_role_switch_is_denied(): void
+    {
+        $this->actingAs($this->multiRoleGuru, 'guru')
+            ->withSession($this->roleSession('pengajar'))
+            ->post(route('auth.switch.role', ['role' => 'admin']), $this->csrfPayload())
             ->assertForbidden();
     }
 
     public function test_guru_without_active_year_wali_assignment_cannot_switch_to_wali(): void
     {
         $this->actingAs($this->pengajarOnlyGuru, 'guru')
-            ->withSession([
-                'selected_role' => 'pengajar',
-                'tahun_ajaran_id' => $this->tahunAjaranId,
-                'selected_semester' => 1,
-                'no_tahun_ajaran' => false,
-            ])
-            ->get(route('auth.switch.role', ['role' => 'wali_kelas']))
+            ->withSession($this->roleSession('pengajar'))
+            ->post(route('auth.switch.role', ['role' => 'wali_kelas']), $this->csrfPayload())
             ->assertForbidden();
     }
 
@@ -151,6 +163,10 @@ class GuruRoleSwitchTest extends TestCase
 
         $this->assertStringContainsString('Beralih ke Wali Kelas', $html);
         $this->assertStringContainsString(route('auth.switch.role', ['role' => 'wali_kelas']), $html);
+        $this->assertStringContainsString('method="POST"', $html);
+        $this->assertStringContainsString('data-turbo="false"', $html);
+        $this->assertStringContainsString('data-turbo-prefetch="false"', $html);
+        $this->assertStringContainsString('data-role-switch-submit', $html);
     }
 
     public function test_profile_dropdown_switches_from_wali_to_pengajar(): void
@@ -167,6 +183,10 @@ class GuruRoleSwitchTest extends TestCase
 
         $this->assertStringContainsString('Beralih ke Pengajar', $html);
         $this->assertStringContainsString(route('auth.switch.role', ['role' => 'pengajar']), $html);
+        $this->assertStringContainsString('method="POST"', $html);
+        $this->assertStringContainsString('data-turbo="false"', $html);
+        $this->assertStringContainsString('data-turbo-prefetch="false"', $html);
+        $this->assertStringContainsString('data-role-switch-submit', $html);
     }
 
     public function test_role_specific_navigation_is_not_turbo_permanent(): void
@@ -288,6 +308,9 @@ class GuruRoleSwitchTest extends TestCase
         $this->assertStringContainsString('Akses halaman ini membutuhkan role Pengajar.', $content);
         $this->assertStringContainsString('Pilih Role Pengajar', $content);
         $this->assertStringContainsString(route('auth.switch.role', ['role' => 'pengajar']), $content);
+        $this->assertStringContainsString('method="POST"', $content);
+        $this->assertStringContainsString('data-turbo="false"', $content);
+        $this->assertStringContainsString('data-turbo-prefetch="false"', $content);
         $this->assertStringContainsString('Kembali ke Dashboard', $content);
         $this->assertStringNotContainsString('>Kembali</a>', $content);
         $this->assertStringNotContainsString('logout terlebih dahulu', $content);
@@ -462,6 +485,132 @@ class GuruRoleSwitchTest extends TestCase
         $this->assertSame($queryCountAfterFirstCall, count(DB::getQueryLog()));
 
         DB::disableQueryLog();
+    }
+
+    public function test_overlapping_successful_request_cannot_restore_previous_selected_role(): void
+    {
+        $this->useStableSession('role-overlap-session');
+
+        Route::middleware('web')->get('/_test/role-overlap-background', function (Request $request) {
+            app(GuruSelectedRoleSessionState::class)->publish($request->session(), 'pengajar');
+
+            // Simulates the stale in-memory payload from a request that started
+            // before the switch and finishes after the switch.
+            $request->session()->put(GuruSelectedRoleSessionState::ROLE_KEY, 'wali_kelas');
+            $request->session()->put(GuruSelectedRoleSessionState::VERSION_KEY, 1);
+
+            return response()->json(['ok' => true]);
+        });
+
+        $this->actingAs($this->multiRoleGuru, 'guru')
+            ->withSession($this->roleSession('wali_kelas'))
+            ->get('/_test/role-overlap-background')
+            ->assertOk()
+            ->assertSessionHas('selected_role', 'pengajar');
+
+        $this->get(route('pengajar.dashboard'))
+            ->assertOk()
+            ->assertDontSee('Akses Tidak Sesuai Role');
+    }
+
+    public function test_stale_dashboard_request_reconciles_before_role_middleware(): void
+    {
+        $this->useStableSession('role-stale-dashboard-session');
+
+        Route::middleware('web')->get('/_test/prime-authoritative-role', function (Request $request) {
+            app(GuruSelectedRoleSessionState::class)->publish($request->session(), 'pengajar');
+
+            return response('ok');
+        });
+
+        $this->actingAs($this->multiRoleGuru, 'guru')
+            ->withSession($this->roleSession('wali_kelas'))
+            ->get('/_test/prime-authoritative-role')
+            ->assertOk()
+            ->assertSessionHas('selected_role', 'pengajar');
+
+        $session = app('session.store');
+        $session->put(GuruSelectedRoleSessionState::ROLE_KEY, 'wali_kelas');
+        $session->put(GuruSelectedRoleSessionState::VERSION_KEY, 1);
+        $session->save();
+
+        $this->get(route('pengajar.dashboard'))
+            ->assertOk()
+            ->assertDontSee('Akses Tidak Sesuai Role')
+            ->assertSessionHas('selected_role', 'pengajar');
+    }
+
+    public function test_forbidden_response_can_reconcile_without_changing_status(): void
+    {
+        $session = app('session.store');
+        $session->setId('role-forbidden-session');
+        $session->start();
+        $session->put(GuruSelectedRoleSessionState::ROLE_KEY, 'wali_kelas');
+        $session->put(GuruSelectedRoleSessionState::VERSION_KEY, 1);
+
+        $state = app(GuruSelectedRoleSessionState::class);
+        $state->publish($session, 'pengajar');
+
+        $session->put(GuruSelectedRoleSessionState::ROLE_KEY, 'wali_kelas');
+        $session->put(GuruSelectedRoleSessionState::VERSION_KEY, 1);
+
+        $request = Request::create('/wali-kelas/dashboard', 'GET');
+        $request->setLaravelSession($session);
+
+        $response = app(SyncGuruSelectedRoleSession::class)->handle(
+            $request,
+            fn () => response('forbidden', 403)
+        );
+
+        $this->assertSame(403, $response->getStatusCode());
+        $this->assertSame('pengajar', $session->get(GuruSelectedRoleSessionState::ROLE_KEY));
+    }
+
+    public function test_role_publish_versions_are_monotonic_and_payload_is_consistent(): void
+    {
+        $session = app('session.store');
+        $session->setId('role-publish-session');
+        $session->start();
+
+        $state = app(GuruSelectedRoleSessionState::class);
+        $firstVersion = $state->publish($session, 'pengajar');
+        $secondVersion = $state->publish($session, 'wali_kelas');
+
+        $this->assertGreaterThan($firstVersion, $secondVersion);
+
+        $session->put(GuruSelectedRoleSessionState::ROLE_KEY, 'pengajar');
+        $session->put(GuruSelectedRoleSessionState::VERSION_KEY, $firstVersion);
+
+        $this->assertTrue($state->reconcile($session));
+        $this->assertSame('wali_kelas', $session->get(GuruSelectedRoleSessionState::ROLE_KEY));
+        $this->assertSame($secondVersion, $session->get(GuruSelectedRoleSessionState::VERSION_KEY));
+    }
+
+    private function roleSession(string $role): array
+    {
+        return [
+            'selected_role' => $role,
+            'tahun_ajaran_id' => $this->tahunAjaranId,
+            'selected_semester' => 1,
+            'no_tahun_ajaran' => false,
+            '_token' => 'role-switch-token',
+        ];
+    }
+
+    private function csrfPayload(): array
+    {
+        return [
+            '_token' => 'role-switch-token',
+        ];
+    }
+
+    private function useStableSession(string $id): void
+    {
+        $id = substr(hash('sha256', $id), 0, 40);
+        $session = app('session.store');
+        $session->setId($id);
+
+        $this->withCookie($session->getName(), $id);
     }
 
     private function createSchema(): void

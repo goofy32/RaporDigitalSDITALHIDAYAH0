@@ -10,11 +10,14 @@ use Illuminate\Support\Facades\Hash;
 use App\Models\User;
 use App\Models\TahunAjaran;
 use App\Services\AuditService;
+use App\Services\GuruSelectedRoleSessionState;
 use App\Services\TahunAjaranContext;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 class LoginController extends Controller
 {
-    public function login(Request $request)
+    public function login(Request $request, GuruSelectedRoleSessionState $roleSessionState)
     {
         $credentials = $request->validate([
             'username' => 'required|string',
@@ -43,10 +46,8 @@ class LoginController extends Controller
 
             $selectedRole = $this->defaultGuruRole($guru);
 
-            session([
-                'selected_role' => $selectedRole,
-                'last_activity' => time(),
-            ]);
+            $roleSessionState->publish($request->session(), $selectedRole);
+            $request->session()->put('last_activity', time());
 
             AuditService::logLogin('success', $identifier);
 
@@ -65,7 +66,7 @@ class LoginController extends Controller
         ])->withInput($request->except('password'));
     }
 
-    public function switchRole(string $role)
+    public function switchRole(Request $request, string $role, GuruSelectedRoleSessionState $roleSessionState)
     {
         $guru = Auth::guard('guru')->user();
 
@@ -81,7 +82,17 @@ class LoginController extends Controller
             abort(403);
         }
 
-        session(['selected_role' => $role]);
+        $selectedRoleBefore = $request->session()->get(GuruSelectedRoleSessionState::ROLE_KEY);
+        $roleSessionState->publish($request->session(), $role);
+
+        Log::info('Guru mengganti role aktif.', [
+            'request_id' => (string) Str::uuid(),
+            'route_name' => $request->route()?->getName(),
+            'route_uri' => $request->route()?->uri(),
+            'selected_role_before' => $selectedRoleBefore,
+            'target_role' => $role,
+            'selected_role_after' => $request->session()->get(GuruSelectedRoleSessionState::ROLE_KEY),
+        ]);
 
         return redirect()->route($this->dashboardRouteForRole($role));
     }
@@ -141,6 +152,10 @@ class LoginController extends Controller
         
         // Log logout event before actually logging out
         AuditService::logLogout();
+
+        if ($request->hasSession()) {
+            app(GuruSelectedRoleSessionState::class)->forget($request->session());
+        }
         
         // Clear all possible auth guards
         Auth::guard('web')->logout();

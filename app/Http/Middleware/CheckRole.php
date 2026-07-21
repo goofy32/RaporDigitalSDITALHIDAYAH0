@@ -4,10 +4,13 @@ namespace App\Http\Middleware;
 
 use App\Models\Guru;
 use App\Models\TahunAjaran;
+use App\Services\GuruSelectedRoleSessionState;
 use App\Services\TahunAjaranContext;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 class CheckRole
 {
@@ -30,9 +33,11 @@ class CheckRole
 
             /** @var Guru|null $guru */
             $guru = Auth::guard('guru')->user();
+            $roleSessionState = app(GuruSelectedRoleSessionState::class);
 
             if (!$guru || (method_exists($guru, 'trashed') && $guru->trashed())) {
                 Auth::guard('guru')->logout();
+                $roleSessionState->forget($request->session());
                 $request->session()->forget('selected_role');
 
                 if ($request->expectsJson()) {
@@ -44,6 +49,8 @@ class CheckRole
                 return redirect()->route('login')
                     ->with('error', 'Akun guru sudah tidak aktif. Silakan hubungi admin.');
             }
+
+            $roleSessionState->reconcile($request->session());
 
             $selectedRole = session('selected_role');
             $normalizedRequestedRole = $this->normalizeGuruRole($role);
@@ -58,6 +65,7 @@ class CheckRole
             }
 
             if (!$normalizedSelectedRole || !in_array($normalizedSelectedRole, $availableRoles, true)) {
+                $roleSessionState->forget($request->session());
                 $request->session()->forget('selected_role');
 
                 return $this->roleMismatchResponse(
@@ -124,6 +132,15 @@ class CheckRole
     ) {
         $normalizedAttemptedRole = $this->normalizeGuruRole($attemptedRole);
         $normalizedSelectedRole = $this->normalizeGuruRole($selectedRole);
+
+        Log::warning('Akses guru ditolak karena role session tidak sesuai.', [
+            'request_id' => (string) Str::uuid(),
+            'route_name' => $request->route()?->getName(),
+            'route_uri' => $request->route()?->uri(),
+            'required_role' => $normalizedAttemptedRole,
+            'selected_role' => $normalizedSelectedRole,
+            'status' => 'mismatch',
+        ]);
 
         if ($request->expectsJson()) {
             return response()->json([

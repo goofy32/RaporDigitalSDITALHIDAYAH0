@@ -62,10 +62,18 @@
                 @endif
 
                 @if($canSwitchToAttemptedRole)
-                    <a href="{{ route('auth.switch.role', ['role' => $attempted_role]) }}"
-                       class="inline-flex items-center justify-center rounded-lg bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 focus:outline-none focus:ring-2 focus:ring-green-300">
-                        Pilih Role {{ $attemptedRoleLabel }}
-                    </a>
+                    <form method="POST"
+                          action="{{ route('auth.switch.role', ['role' => $attempted_role]) }}"
+                          data-turbo="false"
+                          data-turbo-prefetch="false"
+                          onsubmit="this.querySelector('[data-role-switch-submit]').disabled = true">
+                        @csrf
+                        <button type="submit"
+                                data-role-switch-submit
+                                class="inline-flex w-full items-center justify-center rounded-lg bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 focus:outline-none focus:ring-2 focus:ring-green-300 disabled:cursor-wait disabled:opacity-70 sm:w-auto">
+                            Pilih Role {{ $attemptedRoleLabel }}
+                        </button>
+                    </form>
                 @endif
 
                 <form method="POST" action="{{ route('logout') }}">

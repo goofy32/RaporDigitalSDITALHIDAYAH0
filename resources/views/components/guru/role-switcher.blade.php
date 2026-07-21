@@ -17,10 +17,18 @@
             <div class="mt-3 space-y-2">
                 @foreach($roles as $role)
                     @if($role !== $currentRole)
-                        <a href="{{ route('auth.switch.role', ['role' => $role]) }}"
-                           class="block rounded-md border border-green-600 px-3 py-2 text-center text-xs font-semibold text-green-700 transition-colors hover:bg-green-50">
-                            Beralih ke {{ $roleLabels[$role] }}
-                        </a>
+                        <form method="POST"
+                              action="{{ route('auth.switch.role', ['role' => $role]) }}"
+                              data-turbo="false"
+                              data-turbo-prefetch="false"
+                              onsubmit="this.querySelector('[data-role-switch-submit]').disabled = true">
+                            @csrf
+                            <button type="submit"
+                                    data-role-switch-submit
+                                    class="block w-full rounded-md border border-green-600 px-3 py-2 text-center text-xs font-semibold text-green-700 transition-colors hover:bg-green-50 disabled:cursor-wait disabled:opacity-70">
+                                Beralih ke {{ $roleLabels[$role] }}
+                            </button>
+                        </form>
                     @endif
                 @endforeach
             </div>

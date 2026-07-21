@@ -217,23 +217,39 @@
 
                                     @if(count($availableRoles) > 1)
                                         @if(session('selected_role') === 'wali_kelas' && in_array('pengajar', $availableRoles, true))
-                                            <a href="{{ route('auth.switch.role', ['role' => 'pengajar']) }}"
-                                            class="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                                            role="menuitem">
+                                            <form method="POST"
+                                                  action="{{ route('auth.switch.role', ['role' => 'pengajar']) }}"
+                                                  data-turbo="false"
+                                                  data-turbo-prefetch="false"
+                                                  onsubmit="this.querySelector('[data-role-switch-submit]').disabled = true">
+                                                @csrf
+                                                <button type="submit"
+                                                        data-role-switch-submit
+                                                        class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 disabled:cursor-wait disabled:opacity-70"
+                                                        role="menuitem">
                                                 <!-- <svg class="h-4 w-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h11m0 0l-3-3m3 3l-3 3m9 7H10m0 0l3-3m-3 3l3 3" />
                                                 </svg> -->
-                                                Beralih ke Pengajar
-                                            </a>
+                                                    Beralih ke Pengajar
+                                                </button>
+                                            </form>
                                         @elseif(session('selected_role') !== 'wali_kelas' && in_array('wali_kelas', $availableRoles, true))
-                                            <a href="{{ route('auth.switch.role', ['role' => 'wali_kelas']) }}"
-                                            class="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                                            role="menuitem">
+                                            <form method="POST"
+                                                  action="{{ route('auth.switch.role', ['role' => 'wali_kelas']) }}"
+                                                  data-turbo="false"
+                                                  data-turbo-prefetch="false"
+                                                  onsubmit="this.querySelector('[data-role-switch-submit]').disabled = true">
+                                                @csrf
+                                                <button type="submit"
+                                                        data-role-switch-submit
+                                                        class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 disabled:cursor-wait disabled:opacity-70"
+                                                        role="menuitem">
                                                 <!-- <svg class="h-4 w-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h11m0 0l-3-3m3 3l-3 3m9 7H10m0 0l3-3m-3 3l3 3" />
                                                 </svg> -->
-                                                Beralih ke Wali Kelas
-                                            </a>
+                                                    Beralih ke Wali Kelas
+                                                </button>
+                                            </form>
                                         @endif
                                     @endif
 
