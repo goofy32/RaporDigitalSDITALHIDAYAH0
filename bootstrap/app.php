@@ -3,6 +3,7 @@
 use App\Http\Middleware\CheckMataPelajaranOwnership;
 use App\Http\Middleware\SessionTimeout;
 use App\Http\Middleware\CacheControl;
+use App\Http\Middleware\SlowRequestMonitor;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -20,6 +21,7 @@ return Application::configure(basePath: dirname(__DIR__))
             SessionTimeout::class,
             CacheControl::class,
             \App\Http\Middleware\SecurityHeaders::class,
+            SlowRequestMonitor::class,
             TahunAjaranMiddleware::class,
             \App\Http\Middleware\HandleValidationErrors::class
         ]);
