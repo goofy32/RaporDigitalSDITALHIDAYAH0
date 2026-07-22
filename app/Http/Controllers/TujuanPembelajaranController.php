@@ -11,6 +11,18 @@ use Illuminate\Support\Facades\DB;
 
 class TujuanPembelajaranController extends Controller
 {
+    private function clearSubjectProgressCache(?MataPelajaran $mataPelajaran): void
+    {
+        if (! $mataPelajaran || ! $mataPelajaran->kelas_id) {
+            return;
+        }
+
+        DashboardController::clearProgressCacheForKelas(
+            (int) $mataPelajaran->kelas_id,
+            $mataPelajaran->guru_id ? (int) $mataPelajaran->guru_id : null
+        );
+    }
+
     // Method untuk menampilkan halaman tambah tujuan pembelajaran
     public function create($mataPelajaranId)
     {
@@ -91,6 +103,8 @@ class TujuanPembelajaranController extends Controller
             }
 
             DB::commit();
+            $this->clearSubjectProgressCache(MataPelajaran::find($request->mataPelajaranId));
+
             return response()->json(['success' => true, 'message' => 'Data berhasil disimpan!']);
         } catch (\Exception $e) {
             DB::rollBack();
@@ -103,6 +117,7 @@ class TujuanPembelajaranController extends Controller
     {
         try {
             $tp = TujuanPembelajaran::findOrFail($id);
+            $mataPelajaran = $tp->lingkupMateri?->mataPelajaran;
             
             // Start a transaction to ensure all related data is deleted properly
             DB::beginTransaction();
@@ -112,6 +127,7 @@ class TujuanPembelajaranController extends Controller
             $tp->delete();
             
             DB::commit();
+            $this->clearSubjectProgressCache($mataPelajaran);
             
             return response()->json([
                 'success' => true,
@@ -205,6 +221,8 @@ class TujuanPembelajaranController extends Controller
             }
 
             DB::commit();
+            $this->clearSubjectProgressCache($mataPelajaran);
+
             return response()->json(['success' => true, 'message' => 'Data berhasil disimpan!']);
         } catch (\Exception $e) {
             DB::rollBack();
@@ -231,6 +249,7 @@ class TujuanPembelajaranController extends Controller
         try {
             $guruId = Auth::guard('guru')->id();
             $tp = TujuanPembelajaran::findOrFail($id);
+            $mataPelajaran = $tp->lingkupMateri?->mataPelajaran;
             
             // Verifikasi kepemilikan
             if (!$tp->belongsToGuru($guruId)) {
@@ -251,6 +270,7 @@ class TujuanPembelajaranController extends Controller
             }
             
             $tp->delete();
+            $this->clearSubjectProgressCache($mataPelajaran);
             
             return response()->json([
                 'success' => true,

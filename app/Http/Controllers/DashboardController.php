@@ -5,13 +5,13 @@ namespace App\Http\Controllers;
 use App\Models\Kelas;
 use App\Models\MataPelajaran;
 use App\Models\Siswa;
-use App\Models\Nilai;
 use App\Models\Guru;
 use App\Models\Ekstrakurikuler;
 use App\Models\Notification;
 use App\Models\TahunAjaran;
 use App\Models\ProfilSekolah;
 use App\Services\ReportPdfAutoPrepareService;
+use App\Services\ScoreCompletionService;
 use App\Services\SiswaKelasSemesterResolver;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
@@ -59,6 +59,11 @@ class DashboardController extends Controller
             ->flatMap(fn ($kelasId) => $this->studentIdsForClass((int) $kelasId, $tahunAjaranId, $semester))
             ->unique()
             ->values();
+    }
+
+    private function scoreCompletion(): ScoreCompletionService
+    {
+        return app(ScoreCompletionService::class);
     }
 
     public function adminDashboard()
@@ -203,25 +208,11 @@ class DashboardController extends Controller
             return collect();
         }
 
-        $completedRows = Nilai::select('mata_pelajaran_id', 'siswa_id')
-            ->whereIn('mata_pelajaran_id', $subjectIds)
-            ->whereNull('deleted_at')
-            ->when($tahunAjaranId, function ($query) use ($tahunAjaranId) {
-                return $query->where('tahun_ajaran_id', $tahunAjaranId);
-            })
-            ->when($studentIds !== null, function ($query) use ($studentIds) {
-                return $query->whereIn('siswa_id', $studentIds);
-            })
-            ->groupBy('mata_pelajaran_id', 'siswa_id')
-            ->havingRaw('COUNT(CASE WHEN nilai_tp IS NOT NULL THEN 1 END) > 0')
-            ->havingRaw('COUNT(CASE WHEN nilai_lm IS NOT NULL THEN 1 END) > 0')
-            ->havingRaw('COUNT(CASE WHEN nilai_akhir_rapor IS NOT NULL THEN 1 END) > 0');
-
-        return DB::query()
-            ->fromSub($completedRows, 'completed_scores')
-            ->select('mata_pelajaran_id', DB::raw('COUNT(*) as total'))
-            ->groupBy('mata_pelajaran_id')
-            ->pluck('total', 'mata_pelajaran_id');
+        return $this->scoreCompletion()->completedCountsBySubject(
+            $subjectIds->all(),
+            $tahunAjaranId ? (int) $tahunAjaranId : null,
+            $studentIds?->all()
+        );
     }
 
     public static function clearProgressCache(?int $guruId = null, ?int $waliKelasId = null, ?int $tahunAjaranId = null, ?int $semester = null): void
@@ -278,21 +269,11 @@ class DashboardController extends Controller
             return 0;
         }
 
-        return Nilai::where('mata_pelajaran_id', $mataPelajaranId)
-            ->whereNull('deleted_at')
-            ->when($tahunAjaranId, function ($query) use ($tahunAjaranId) {
-                return $query->where('tahun_ajaran_id', $tahunAjaranId);
-            })
-            ->when($studentIds !== null, function ($query) use ($studentIds) {
-                return $query->whereIn('siswa_id', $studentIds);
-            })
-            ->select('siswa_id')
-            ->groupBy('siswa_id')
-            ->havingRaw('COUNT(CASE WHEN nilai_tp IS NOT NULL THEN 1 END) > 0')
-            ->havingRaw('COUNT(CASE WHEN nilai_lm IS NOT NULL THEN 1 END) > 0')
-            ->havingRaw('COUNT(CASE WHEN nilai_akhir_rapor IS NOT NULL THEN 1 END) > 0')
-            ->get()
-            ->count();
+        return $this->scoreCompletion()->countCompletedStudentsForSubject(
+            $mataPelajaranId,
+            $tahunAjaranId,
+            $studentIds?->all()
+        );
     }
 
     public function pengajarDashboard()
@@ -712,16 +693,16 @@ class DashboardController extends Controller
                 return response()->json(['progress' => 0]);
             }
 
-            // Count completed scores for this subject
-            $completedCount = $this->countCompletedStudentsForSubject($mataPelajaranId, $mataPelajaran->tahun_ajaran_id ?: $tahunAjaranId, $studentIds->all());
-
-            // Calculate progress percentage (handle division by zero)
-            $progress = $siswaCount > 0 ? ($completedCount / $siswaCount) * 100 : 0;
+            $progressData = $this->scoreCompletion()->progressForSubject(
+                (int) $mataPelajaranId,
+                $mataPelajaran->tahun_ajaran_id ?: $tahunAjaranId,
+                $studentIds->all()
+            );
 
             return response()->json([
-                'progress' => round($progress, 2),
-                'completed' => $completedCount,
-                'total' => $siswaCount
+                'progress' => round($progressData['progress'], 2),
+                'completed' => $progressData['completed'],
+                'total' => $progressData['total']
             ]);
         } catch (\Exception $e) {
             \Log::error('Error calculating mata pelajaran progress for wali kelas: ' . $e->getMessage());
@@ -846,16 +827,16 @@ class DashboardController extends Controller
                 return response()->json(['progress' => 0]);
             }
 
-            // Count completed scores for this subject
-            $completedCount = $this->countCompletedStudentsForSubject($mataPelajaranId, $mataPelajaran->tahun_ajaran_id ?: $tahunAjaranId, $studentIds->all());
-
-            // Calculate progress percentage (handle division by zero)
-            $progress = $siswaCount > 0 ? ($completedCount / $siswaCount) * 100 : 0;
+            $progressData = $this->scoreCompletion()->progressForSubject(
+                (int) $mataPelajaranId,
+                $mataPelajaran->tahun_ajaran_id ?: $tahunAjaranId,
+                $studentIds->all()
+            );
 
             return response()->json([
-                'progress' => round($progress, 2),
-                'completed' => $completedCount,
-                'total' => $siswaCount
+                'progress' => round($progressData['progress'], 2),
+                'completed' => $progressData['completed'],
+                'total' => $progressData['total']
             ]);
         } catch (\Exception $e) {
             \Log::error('Error calculating mata pelajaran progress: ' . $e->getMessage());

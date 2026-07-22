@@ -398,11 +398,11 @@ class SubjectController extends Controller
     {
         try {
             $lingkupMateri = LingkupMateri::findOrFail($id);
+            $mataPelajaran = $lingkupMateri->mataPelajaran;
 
             // Validate user has permission (either admin or the assigned teacher)
             if (auth()->guard('guru')->check()) {
                 $guru = auth()->guard('guru')->user();
-                $mataPelajaran = $lingkupMateri->mataPelajaran;
 
                 if ($mataPelajaran->guru_id != $guru->id) {
                     return response()->json([
@@ -417,6 +417,7 @@ class SubjectController extends Controller
             $lingkupMateri->delete();
 
             DB::commit();
+            $this->clearProgressCacheForSubjectContext($mataPelajaran?->kelas_id, $mataPelajaran?->guru_id);
 
             return response()->json([
                 'success' => true,
@@ -483,11 +484,11 @@ class SubjectController extends Controller
     {
         try {
             $lingkupMateri = LingkupMateri::findOrFail($id);
+            $mataPelajaran = $lingkupMateri->mataPelajaran;
 
             // Validate user has permission (either admin or the assigned teacher)
             if (auth()->guard('guru')->check()) {
                 $guru = auth()->guard('guru')->user();
-                $mataPelajaran = $lingkupMateri->mataPelajaran;
 
                 if ($mataPelajaran->guru_id != $guru->id) {
                     return response()->json([
@@ -504,6 +505,7 @@ class SubjectController extends Controller
             $lingkupMateri->update([
                 'judul_lingkup_materi' => $request->judul_lingkup_materi,
             ]);
+            $this->clearProgressCacheForSubjectContext($mataPelajaran?->kelas_id, $mataPelajaran?->guru_id);
 
             return response()->json([
                 'success' => true,
@@ -531,6 +533,8 @@ class SubjectController extends Controller
         try {
             $subject = MataPelajaran::findOrFail($id);
             $tahunAjaranId = session('tahun_ajaran_id') ?: $subject->tahun_ajaran_id;
+            $oldProgressClassId = $subject->kelas_id ? (int) $subject->kelas_id : null;
+            $oldProgressGuruId = $subject->guru_id ? (int) $subject->guru_id : null;
 
             $validated = $request->validate([
                 'mata_pelajaran' => 'required|string|max:255',
@@ -669,6 +673,8 @@ class SubjectController extends Controller
             }
 
             DB::commit();
+            $this->clearProgressCacheForSubjectContext($oldProgressClassId, $oldProgressGuruId);
+            $this->clearProgressCacheForSubjectContext($subject->kelas_id, $subject->guru_id);
 
             $copyMessage = $copySummary ? $this->aggregateCopyLmTpMessage([$copySummary]) : '';
 
@@ -1157,6 +1163,8 @@ class SubjectController extends Controller
         $guru = auth()->guard('guru')->user();
         $subject = MataPelajaran::where('guru_id', $guru->id)
             ->findOrFail($id);
+        $oldProgressClassId = $subject->kelas_id ? (int) $subject->kelas_id : null;
+        $oldProgressGuruId = $subject->guru_id ? (int) $subject->guru_id : null;
 
         $validated = $request->validate([
             'mata_pelajaran' => 'required|string|max:255',
@@ -1300,6 +1308,8 @@ class SubjectController extends Controller
             }
 
             DB::commit();
+            $this->clearProgressCacheForSubjectContext($oldProgressClassId, $oldProgressGuruId);
+            $this->clearProgressCacheForSubjectContext($subject->kelas_id, $subject->guru_id);
 
             $copyMessage = $copySummary ? $this->aggregateCopyLmTpMessage([$copySummary]) : '';
 
@@ -1350,6 +1360,15 @@ class SubjectController extends Controller
             return redirect()->back()
                 ->with('error', 'Terjadi kesalahan saat menghapus data. Silakan coba lagi.');
         }
+    }
+
+    private function clearProgressCacheForSubjectContext(?int $kelasId, ?int $guruId): void
+    {
+        if (! $kelasId) {
+            return;
+        }
+
+        DashboardController::clearProgressCacheForKelas($kelasId, $guruId);
     }
 
     /**

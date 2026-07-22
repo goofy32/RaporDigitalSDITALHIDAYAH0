@@ -226,6 +226,192 @@ class ReportDashboardSemesterContextTest extends TestCase
             ->assertJsonPath('total', 1);
     }
 
+    public function test_wali_subject_progress_drops_when_new_active_tp_has_no_scores(): void
+    {
+        $secondStudentId = $this->insertStudentWithEnrollment('Fatimah Zahra', '1002', $this->ganjilClassId, $this->ganjilYearId, 1);
+        $lmId = $this->firstLingkupMateriId($this->ganjilSubjectId);
+        $this->insertCompleteScore($secondStudentId, $this->ganjilSubjectId, $lmId, $this->ganjilYearId);
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->get(route('wali_kelas.mata_pelajaran.progress', $this->ganjilSubjectId))
+            ->assertOk()
+            ->assertJsonPath('progress', 100)
+            ->assertJsonPath('completed', 2)
+            ->assertJsonPath('total', 2);
+
+        $newTpId = $this->insertTujuanPembelajaran($lmId, 'TP2');
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->get(route('wali_kelas.mata_pelajaran.progress', $this->ganjilSubjectId))
+            ->assertOk()
+            ->assertJsonPath('progress', 0)
+            ->assertJsonPath('completed', 0)
+            ->assertJsonPath('total', 2);
+
+        $this->insertTpScore($this->studentId, $this->ganjilSubjectId, $lmId, $newTpId, $this->ganjilYearId, 91);
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->get(route('wali_kelas.mata_pelajaran.progress', $this->ganjilSubjectId))
+            ->assertOk()
+            ->assertJsonPath('progress', 50)
+            ->assertJsonPath('completed', 1)
+            ->assertJsonPath('total', 2);
+
+        $this->insertTpScore($secondStudentId, $this->ganjilSubjectId, $lmId, $newTpId, $this->ganjilYearId, 92);
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->get(route('wali_kelas.mata_pelajaran.progress', $this->ganjilSubjectId))
+            ->assertOk()
+            ->assertJsonPath('progress', 100)
+            ->assertJsonPath('completed', 2)
+            ->assertJsonPath('total', 2);
+    }
+
+    public function test_wali_subject_progress_drops_when_new_active_lm_has_no_scores(): void
+    {
+        $secondStudentId = $this->insertStudentWithEnrollment('Hasan Basri', '1003', $this->ganjilClassId, $this->ganjilYearId, 1);
+        $existingLmId = $this->firstLingkupMateriId($this->ganjilSubjectId);
+        $this->insertCompleteScore($secondStudentId, $this->ganjilSubjectId, $existingLmId, $this->ganjilYearId);
+        $newLmId = $this->insertLingkupMateri($this->ganjilSubjectId, 'Pengukuran');
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->get(route('wali_kelas.mata_pelajaran.progress', $this->ganjilSubjectId))
+            ->assertOk()
+            ->assertJsonPath('progress', 0)
+            ->assertJsonPath('completed', 0)
+            ->assertJsonPath('total', 2);
+
+        $this->insertLmScore($this->studentId, $this->ganjilSubjectId, $newLmId, $this->ganjilYearId, 87);
+        $this->insertLmScore($secondStudentId, $this->ganjilSubjectId, $newLmId, $this->ganjilYearId, 88);
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->get(route('wali_kelas.mata_pelajaran.progress', $this->ganjilSubjectId))
+            ->assertOk()
+            ->assertJsonPath('progress', 100)
+            ->assertJsonPath('completed', 2)
+            ->assertJsonPath('total', 2);
+    }
+
+    public function test_wali_subject_progress_treats_zero_as_filled_but_null_and_missing_as_incomplete(): void
+    {
+        $lmId = $this->firstLingkupMateriId($this->ganjilSubjectId);
+        $tpId = $this->firstTujuanPembelajaranId($lmId);
+
+        DB::table('nilais')
+            ->where('siswa_id', $this->studentId)
+            ->where('mata_pelajaran_id', $this->ganjilSubjectId)
+            ->where('tujuan_pembelajaran_id', $tpId)
+            ->update(['nilai_tp' => 0]);
+
+        DB::table('nilais')
+            ->where('siswa_id', $this->studentId)
+            ->where('mata_pelajaran_id', $this->ganjilSubjectId)
+            ->where('lingkup_materi_id', $lmId)
+            ->whereNull('tujuan_pembelajaran_id')
+            ->update(['nilai_lm' => 0, 'nilai_akhir_rapor' => 0]);
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->get(route('wali_kelas.mata_pelajaran.progress', $this->ganjilSubjectId))
+            ->assertOk()
+            ->assertJsonPath('progress', 100)
+            ->assertJsonPath('completed', 1);
+
+        DB::table('nilais')
+            ->where('siswa_id', $this->studentId)
+            ->where('mata_pelajaran_id', $this->ganjilSubjectId)
+            ->where('tujuan_pembelajaran_id', $tpId)
+            ->update(['nilai_tp' => null]);
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->get(route('wali_kelas.mata_pelajaran.progress', $this->ganjilSubjectId))
+            ->assertOk()
+            ->assertJsonPath('progress', 0)
+            ->assertJsonPath('completed', 0);
+
+        DB::table('nilais')
+            ->where('siswa_id', $this->studentId)
+            ->where('mata_pelajaran_id', $this->ganjilSubjectId)
+            ->where('tujuan_pembelajaran_id', $tpId)
+            ->update(['nilai_tp' => 0]);
+
+        DB::table('nilais')
+            ->where('siswa_id', $this->studentId)
+            ->where('mata_pelajaran_id', $this->ganjilSubjectId)
+            ->where('lingkup_materi_id', $lmId)
+            ->whereNull('tujuan_pembelajaran_id')
+            ->delete();
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->get(route('wali_kelas.mata_pelajaran.progress', $this->ganjilSubjectId))
+            ->assertOk()
+            ->assertJsonPath('progress', 0)
+            ->assertJsonPath('completed', 0);
+    }
+
+    public function test_soft_deleted_and_other_context_learning_structure_does_not_affect_subject_progress(): void
+    {
+        $lmId = $this->firstLingkupMateriId($this->ganjilSubjectId);
+        $softDeletedTpId = $this->insertTujuanPembelajaran($lmId, 'TP-SOFT');
+        DB::table('tujuan_pembelajarans')->where('id', $softDeletedTpId)->update(['deleted_at' => now()]);
+
+        $softDeletedLmId = $this->insertLingkupMateri($this->ganjilSubjectId, 'LM Soft');
+        DB::table('lingkup_materis')->where('id', $softDeletedLmId)->update(['deleted_at' => now()]);
+
+        $otherSubjectId = $this->insertSubject('Konteks Lain', $this->pengajar->id, $this->otherClassId, $this->ganjilYearId, 1);
+        $this->insertLearningData($otherSubjectId);
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->get(route('wali_kelas.mata_pelajaran.progress', $this->ganjilSubjectId))
+            ->assertOk()
+            ->assertJsonPath('progress', 100)
+            ->assertJsonPath('completed', 1)
+            ->assertJsonPath('total', 1);
+    }
+
+    public function test_wali_subject_progress_denominator_uses_active_enrollment_roster(): void
+    {
+        $outsideStudentId = DB::table('siswas')->insertGetId([
+            'nis' => '1999',
+            'nisn' => '9999',
+            'nama' => 'Siswa Luar Roster',
+            'kelas_id' => $this->otherClassId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $lmId = $this->firstLingkupMateriId($this->ganjilSubjectId);
+        $this->insertCompleteScore($outsideStudentId, $this->ganjilSubjectId, $lmId, $this->ganjilYearId);
+
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->get(route('wali_kelas.mata_pelajaran.progress', $this->ganjilSubjectId))
+            ->assertOk()
+            ->assertJsonPath('progress', 100)
+            ->assertJsonPath('completed', 1)
+            ->assertJsonPath('total', 1);
+    }
+
+    public function test_pengajar_subject_progress_uses_active_learning_structure_completion(): void
+    {
+        $lmId = $this->firstLingkupMateriId($this->ganjilSubjectId);
+        $newTpId = $this->insertTujuanPembelajaran($lmId, 'TP3');
+
+        $this->actingAsPengajar($this->ganjilYearId, 1)
+            ->get(route('pengajar.mata_pelajaran.progress', $this->ganjilSubjectId))
+            ->assertOk()
+            ->assertJsonPath('progress', 0)
+            ->assertJsonPath('completed', 0)
+            ->assertJsonPath('total', 1);
+
+        $this->insertTpScore($this->studentId, $this->ganjilSubjectId, $lmId, $newTpId, $this->ganjilYearId, 90);
+
+        $this->actingAsPengajar($this->ganjilYearId, 1)
+            ->get(route('pengajar.mata_pelajaran.progress', $this->ganjilSubjectId))
+            ->assertOk()
+            ->assertJsonPath('progress', 100)
+            ->assertJsonPath('completed', 1)
+            ->assertJsonPath('total', 1);
+    }
+
     public function test_wali_genap_dashboard_supporting_progress_starts_zero_when_only_ganjil_data_exists(): void
     {
         DB::table('absensis')->where('tahun_ajaran_id', $this->genapYearId)->delete();
@@ -728,6 +914,27 @@ class ReportDashboardSemesterContextTest extends TestCase
         ]);
     }
 
+    private function insertStudentWithEnrollment(
+        string $name,
+        string $nis,
+        int $kelasId,
+        int $tahunAjaranId,
+        int $semester
+    ): int {
+        $studentId = DB::table('siswas')->insertGetId([
+            'nis' => $nis,
+            'nisn' => $nis.'9',
+            'nama' => $name,
+            'kelas_id' => $kelasId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->insertEnrollment($studentId, $kelasId, $tahunAjaranId, $semester);
+
+        return $studentId;
+    }
+
     private function insertClass(int $nomor, string $nama, int $tahunAjaranId): int
     {
         return DB::table('kelas')->insertGetId([
@@ -773,6 +980,88 @@ class ReportDashboardSemesterContextTest extends TestCase
         ]);
 
         return $lmId;
+    }
+
+    private function firstLingkupMateriId(int $subjectId): int
+    {
+        return (int) DB::table('lingkup_materis')
+            ->where('mata_pelajaran_id', $subjectId)
+            ->whereNull('deleted_at')
+            ->value('id');
+    }
+
+    private function firstTujuanPembelajaranId(int $lingkupMateriId): int
+    {
+        return (int) DB::table('tujuan_pembelajarans')
+            ->where('lingkup_materi_id', $lingkupMateriId)
+            ->whereNull('deleted_at')
+            ->value('id');
+    }
+
+    private function insertLingkupMateri(int $subjectId, string $title): int
+    {
+        return DB::table('lingkup_materis')->insertGetId([
+            'mata_pelajaran_id' => $subjectId,
+            'judul_lingkup_materi' => $title,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function insertTujuanPembelajaran(int $lingkupMateriId, string $code): int
+    {
+        return DB::table('tujuan_pembelajarans')->insertGetId([
+            'lingkup_materi_id' => $lingkupMateriId,
+            'kode_tp' => $code,
+            'deskripsi_tp' => 'Kompetensi tambahan '.$code,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function insertTpScore(
+        int $studentId,
+        int $subjectId,
+        int $lingkupMateriId,
+        int $tujuanPembelajaranId,
+        int $tahunAjaranId,
+        float|int $score
+    ): void {
+        DB::table('nilais')->insert([
+            'siswa_id' => $studentId,
+            'mata_pelajaran_id' => $subjectId,
+            'lingkup_materi_id' => $lingkupMateriId,
+            'tujuan_pembelajaran_id' => $tujuanPembelajaranId,
+            'nilai_tp' => $score,
+            'nilai_lm' => null,
+            'nilai_akhir_rapor' => null,
+            'is_submitted' => false,
+            'tahun_ajaran_id' => $tahunAjaranId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function insertLmScore(
+        int $studentId,
+        int $subjectId,
+        int $lingkupMateriId,
+        int $tahunAjaranId,
+        float|int $score
+    ): void {
+        DB::table('nilais')->insert([
+            'siswa_id' => $studentId,
+            'mata_pelajaran_id' => $subjectId,
+            'lingkup_materi_id' => $lingkupMateriId,
+            'tujuan_pembelajaran_id' => null,
+            'nilai_tp' => null,
+            'nilai_lm' => $score,
+            'nilai_akhir_rapor' => null,
+            'is_submitted' => false,
+            'tahun_ajaran_id' => $tahunAjaranId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
     }
 
     private function insertCompleteScore(int $studentId, int $subjectId, int $lmId, int $tahunAjaranId): void
