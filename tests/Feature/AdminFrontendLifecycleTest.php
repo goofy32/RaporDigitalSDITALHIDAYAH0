@@ -29,6 +29,69 @@ class AdminFrontendLifecycleTest extends TestCase
         $this->assertStringContainsString('<x-admin.settings-modal id="settings-modal"', $layout);
     }
 
+    public function test_admin_settings_modal_lazy_loads_and_deduplicates_data_requests(): void
+    {
+        $source = file_get_contents(resource_path('js/features/settings-modal.js'));
+        $modal = file_get_contents(resource_path('views/components/admin/settings-modal.blade.php'));
+
+        $initBlock = $this->sourceBlock($source, 'init() {', 'getFilteredKkmList()');
+        $openBlock = $this->sourceBlock($source, 'open() {', 'close()');
+
+        $this->assertStringNotContainsString('fetchKelasData', $initBlock);
+        $this->assertStringNotContainsString('fetchKkmList', $initBlock);
+        $this->assertStringNotContainsString('fetchBobotData', $initBlock);
+        $this->assertStringNotContainsString('initKkmNotificationSettings', $initBlock);
+        $this->assertStringContainsString('this.loadSettingsData();', $openBlock);
+
+        $this->assertStringContainsString('const SETTINGS_DATA_TTL_MS = 5 * 60 * 1000;', $source);
+        $this->assertStringContainsString('settingsDataPromise: null', $source);
+        $this->assertStringContainsString('if (this.settingsDataPromise)', $source);
+        $this->assertStringContainsString('Promise.allSettled([', $source);
+        $this->assertStringContainsString('new AbortController()', $source);
+        $this->assertStringContainsString('signal: options.controller?.signal', $source);
+        $this->assertStringContainsString('settingsLoadGeneration: 0', $source);
+        $this->assertStringContainsString('const sequence = this.settingsLoadGeneration + 1;', $source);
+        $this->assertStringContainsString('this.settingsLoadGeneration = sequence;', $source);
+        $this->assertStringContainsString('this.settingsLoadGeneration === sequence', $source);
+        $this->assertStringContainsString('this.invalidateActiveSettingsLoad();', $source);
+        $this->assertStringContainsString('this.settingsLoadGeneration += 1;', $source);
+        $this->assertStringContainsString('this.settingsAbortController?.abort();', $source);
+        $this->assertStringContainsString('this.$el?.isConnected', $source);
+        $this->assertStringContainsString('window.location.pathname === this.pagePath', $source);
+        $this->assertStringContainsString("document.addEventListener('turbo:before-cache'", $source);
+        $this->assertStringContainsString('prepareForCache()', $source);
+        $this->assertStringContainsString('settingsInstances.delete(this);', $source);
+        $this->assertStringContainsString('markSettingsDataStale()', $source);
+        $this->assertStringContainsString('refreshKkmListAfterMutation()', $source);
+        $this->assertStringContainsString('bobotLoaded: false', $source);
+        $this->assertStringContainsString('bobotLoadError: false', $source);
+        $this->assertStringContainsString('bobotSaving: false', $source);
+        $this->assertStringContainsString('get canSaveBobot()', $source);
+        $this->assertStringContainsString('this.bobotLoaded', $source);
+        $this->assertStringContainsString('!this.settingsLoading', $source);
+        $this->assertStringContainsString('!this.bobotLoadError', $source);
+        $this->assertStringContainsString('!this.bobotSaving', $source);
+        $this->assertStringContainsString('this.bobotLoaded = true;', $source);
+        $this->assertStringContainsString('this.bobotLoaded = false;', $source);
+        $this->assertStringContainsString('this.resetEndpointReadinessForLoad();', $source);
+        $this->assertStringContainsString('this.settingsLoadedAt = null;', $source);
+
+        foreach ([
+            '/admin/kelas/data',
+            '/admin/kkm/list',
+            '/admin/bobot-nilai/data',
+            '/admin/kkm/notification-settings',
+        ] as $endpoint) {
+            $this->assertStringContainsString($endpoint, $source);
+        }
+
+        $this->assertStringContainsString('settingsLoading', $modal);
+        $this->assertStringContainsString('settingsLoadError', $modal);
+        $this->assertStringContainsString('Coba lagi', $modal);
+        $this->assertStringContainsString(':disabled="!canSaveBobot"', $modal);
+        $this->assertStringContainsString('Data Bobot belum berhasil dimuat. Muat ulang sebelum menyimpan.', $modal);
+    }
+
     public function test_sidebar_accessibility_state_is_synchronized_with_focus_safety(): void
     {
         $source = file_get_contents(resource_path('js/features/sidebar.js'));
@@ -112,5 +175,16 @@ class AdminFrontendLifecycleTest extends TestCase
                 $this->assertStringNotContainsString($snippet, $source, "{$file} still contains {$snippet}");
             }
         }
+    }
+
+    private function sourceBlock(string $source, string $startNeedle, string $endNeedle): string
+    {
+        $start = strpos($source, $startNeedle);
+        $this->assertNotFalse($start, "Missing source block start: {$startNeedle}");
+
+        $end = strpos($source, $endNeedle, $start);
+        $this->assertNotFalse($end, "Missing source block end: {$endNeedle}");
+
+        return substr($source, $start, $end - $start);
     }
 }

@@ -33,6 +33,17 @@
             
             <!-- Content -->
             <div class="p-4 space-y-4 overflow-y-auto max-h-[calc(100vh-200px)]">
+                <div x-show="settingsLoading" class="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">
+                    Memuat pengaturan...
+                </div>
+
+                <div x-show="settingsLoadError && !settingsLoading" class="flex items-center justify-between gap-3 rounded-lg border border-yellow-200 bg-yellow-50 px-4 py-3 text-sm text-yellow-800">
+                    <span>Sebagian data pengaturan belum berhasil dimuat.</span>
+                    <button type="button" @click="loadSettingsData({ force: true })" class="shrink-0 rounded-md bg-yellow-600 px-3 py-1 text-xs font-medium text-white hover:bg-yellow-700">
+                        Coba lagi
+                    </button>
+                </div>
+
                 <!-- Tab Controls -->
                 <div class="border-b mb-4">
                     <ul class="flex flex-wrap -mb-px text-sm font-medium text-center">
@@ -186,7 +197,9 @@
                     </div>
                     
                     <div class="mt-4 flex justify-end">
-                        <button @click="saveKkm" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">
+                        <button @click="saveKkm"
+                                :disabled="!canSaveKkm"
+                                class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed">
                             Simpan KKM
                         </button>
                     </div>
@@ -255,6 +268,9 @@
                         <p x-show="!isTotalValid" class="mt-1 text-sm text-red-600">
                             Semua bobot harus berupa bilangan bulat minimal 1.
                         </p>
+                        <p x-show="bobotLoadError || (!bobotLoaded && !settingsLoading)" class="mt-1 text-sm text-yellow-700">
+                            Data Bobot belum berhasil dimuat. Muat ulang sebelum menyimpan.
+                        </p>
                     </div>
                     
                     <div class="p-4 bg-gray-50 rounded-lg border border-gray-200 mb-4">
@@ -268,7 +284,7 @@
                     </div>
                     
                     <div class="mt-4 flex justify-end">
-                        <button @click="saveBobot" :disabled="!isTotalValid" 
+                        <button @click="saveBobot" :disabled="!canSaveBobot"
                                 class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed">
                             Simpan Bobot Nilai
                         </button>
