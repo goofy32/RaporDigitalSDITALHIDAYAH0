@@ -108,6 +108,27 @@ class LiveListSearchFilterTest extends TestCase
         $this->assertStringContainsString('liveFilterPanelsBound', $source);
     }
 
+    public function test_live_list_frontend_guards_against_stale_turbo_responses(): void
+    {
+        $source = file_get_contents(resource_path('js/features/live-list.js'));
+
+        $this->assertStringContainsString('const liveListInstances = new WeakMap();', $source);
+        $this->assertStringContainsString('const activeLiveListInstances = new Set();', $source);
+        $this->assertStringContainsString('new AbortController()', $source);
+        $this->assertStringContainsString('signal: controller.signal', $source);
+        $this->assertStringContainsString('instance.requestSequence = sequence;', $source);
+        $this->assertStringContainsString('isLatestRequest(instance, sequence, controller)', $source);
+        $this->assertStringContainsString('container.isConnected', $source);
+        $this->assertStringContainsString('document.body.contains(instance.container)', $source);
+        $this->assertStringContainsString('window.location.pathname === instance.pagePath', $source);
+        $this->assertStringContainsString("isAbortError(error)", $source);
+        $this->assertStringContainsString("document.addEventListener('turbo:before-visit', stopAllLiveListRequests);", $source);
+        $this->assertStringContainsString("document.addEventListener('turbo:before-cache', destroyAllLiveLists);", $source);
+        $this->assertStringContainsString('removeEventListener', $source);
+        $this->assertStringContainsString('instance.debouncedSearch?.cancel?.();', $source);
+        $this->assertStringContainsString('currentTarget.innerHTML = payload.html ?? \'\';', $source);
+    }
+
     public function test_ajax_search_returns_filtered_fragments_for_each_list_page(): void
     {
         $this->assertLiveHtmlContains(route('kelas.index', ['search' => 'Ubay']), 'Kelas 1 Ubay', 'Kelas 1 Zaid');
