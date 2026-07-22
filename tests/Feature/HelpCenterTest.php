@@ -51,6 +51,94 @@ class HelpCenterTest extends TestCase
         $this->assertStringNotContainsString('/gemini/send-message', $html);
     }
 
+    public function test_help_widget_lazy_loads_faq_and_guards_stale_requests(): void
+    {
+        $html = view('components.ai-chatbot')->render();
+        $js = file_get_contents(resource_path('js/features/help-center.js'));
+
+        $initBlock = $this->sourceBlock($js, 'init() {', 'togglePanel()');
+        $toggleBlock = $this->sourceBlock($js, 'togglePanel() {', 'destroy()');
+        $loadBlock = $this->sourceBlock($js, 'async loadTopics({ force = false } = {}) {', 'retryTopics()');
+
+        $this->assertStringNotContainsString('loadTopics', $initBlock);
+        $this->assertStringNotContainsString('fetchFaq', $initBlock);
+        $this->assertStringContainsString('this.loadTopics();', $toggleBlock);
+
+        $this->assertStringContainsString('const FAQ_CACHE_TTL_MS = 10 * 60 * 1000;', $js);
+        $this->assertStringContainsString('const helpCenterInstances = new Set();', $js);
+        $this->assertStringContainsString("document.addEventListener('turbo:before-cache'", $js);
+        $this->assertStringContainsString('Array.from(helpCenterInstances).forEach', $js);
+        $this->assertStringContainsString('prepareForCache()', $js);
+        $this->assertStringContainsString('helpCenterInstances.delete(this);', $js);
+        $this->assertStringContainsString('faqPromise: null', $js);
+        $this->assertStringContainsString('faqAbortController: null', $js);
+        $this->assertStringContainsString('faqLoadGeneration: 0', $js);
+        $this->assertStringContainsString('faqLoaded: false', $js);
+        $this->assertStringContainsString('faqLoadError: false', $js);
+        $this->assertStringContainsString('faqLoadedAt: null', $js);
+        $this->assertStringContainsString("const FAQ_LOAD_ERROR_MESSAGE = 'FAQ belum dapat dimuat. Silakan coba lagi.';", $js);
+        $this->assertStringContainsString('this.$el?.isConnected', $js);
+        $this->assertStringContainsString('window.location.pathname === this.pagePath', $js);
+        $this->assertStringContainsString('this.faqLoadGeneration === generation', $js);
+        $this->assertStringContainsString('this.faqAbortController === controller', $js);
+        $this->assertStringContainsString('this.faqAbortController?.abort();', $js);
+        $this->assertStringContainsString('new AbortController()', $js);
+        $this->assertStringContainsString('signal: options.controller?.signal', $js);
+        $this->assertStringContainsString('credentials: \'same-origin\'', $js);
+        $this->assertStringContainsString('return this.loadTopics({ force: true });', $js);
+
+        $this->assertStringContainsString('if (force)', $loadBlock);
+        $this->assertStringContainsString('this.invalidateActiveFaqLoad();', $loadBlock);
+        $this->assertStringContainsString('if (!force && this.isFaqCacheFresh())', $loadBlock);
+        $this->assertStringContainsString('if (this.faqPromise)', $loadBlock);
+        $this->assertStringContainsString('const generation = this.faqLoadGeneration + 1;', $loadBlock);
+        $this->assertStringContainsString('this.faqLoadGeneration = generation;', $loadBlock);
+        $this->assertStringContainsString('if (!this.isValidFaqPayload(data))', $loadBlock);
+        $this->assertStringContainsString('throw new Error(FAQ_LOAD_ERROR_MESSAGE);', $loadBlock);
+        $this->assertStringContainsString('this.topics = this.normalizeFaqTopics(data.results);', $loadBlock);
+        $this->assertStringNotContainsString('Array.isArray(data.results) ? data.results : []', $loadBlock);
+        $this->assertStringContainsString('this.faqLoaded = true;', $loadBlock);
+        $this->assertStringContainsString('this.faqLoadedAt = Date.now();', $loadBlock);
+        $this->assertStringContainsString('this.faqLoaded = false;', $loadBlock);
+        $this->assertStringContainsString('this.faqPromise = null;', $loadBlock);
+        $this->assertStringContainsString('this.faqAbortController = null;', $loadBlock);
+        $this->assertStringContainsString('this.isLoading = false;', $loadBlock);
+
+        $this->assertStringContainsString('@click="retryTopics()"', $html);
+        $this->assertStringContainsString('Coba lagi', $html);
+        $this->assertStringContainsString('!isLoading && !error && displayedTopics().length === 0', $html);
+    }
+
+    public function test_help_widget_rejects_malformed_faq_payload_contract(): void
+    {
+        $js = file_get_contents(resource_path('js/features/help-center.js'));
+        $validationBlock = $this->sourceBlock($js, 'isValidFaqPayload(data) {', 'normalizeFaqTopics(results)');
+        $normalizationBlock = $this->sourceBlock($js, 'normalizeFaqTopics(results) {', 'displayedTopics()');
+        $errorBlock = $this->sourceBlock($js, '.catch(error => {', '.finally(() => {');
+
+        $this->assertStringContainsString('data', $validationBlock);
+        $this->assertStringContainsString("typeof data === 'object'", $validationBlock);
+        $this->assertStringContainsString('!Array.isArray(data)', $validationBlock);
+        $this->assertStringContainsString('Array.isArray(data.results)', $validationBlock);
+
+        $this->assertStringContainsString("topic && typeof topic === 'object' && !Array.isArray(topic)", $normalizationBlock);
+        $this->assertStringContainsString('this.error = FAQ_LOAD_ERROR_MESSAGE;', $errorBlock);
+        $this->assertStringNotContainsString('this.error = error.message', $errorBlock);
+        $this->assertStringContainsString('this.faqLoaded = false;', $errorBlock);
+        $this->assertStringContainsString('this.faqLoadedAt = null;', $errorBlock);
+        $this->assertStringContainsString('this.faqLoadError = true;', $errorBlock);
+
+        $keywordsGuard = <<<'JS'
+const keywords = Array.isArray(topic.keywords) ? topic.keywords.join(' ') : '';
+JS;
+        $topicKeyFallback = <<<'JS'
+return `${topic?.category || 'faq'}-${topic?.question || 'topic'}-${index}`;
+JS;
+
+        $this->assertStringContainsString($keywordsGuard, $js);
+        $this->assertStringContainsString($topicKeyFallback, $js);
+    }
+
     public function test_help_widget_is_included_once_in_each_role_layout(): void
     {
         foreach ([
@@ -277,6 +365,17 @@ class HelpCenterTest extends TestCase
             $questions->unique()->count(),
             'Help center questions should stay unique so search results are not confusing.'
         );
+    }
+
+    private function sourceBlock(string $source, string $startNeedle, string $endNeedle): string
+    {
+        $start = strpos($source, $startNeedle);
+        $this->assertNotFalse($start, "Missing source block start: {$startNeedle}");
+
+        $end = strpos($source, $endNeedle, $start);
+        $this->assertNotFalse($end, "Missing source block end: {$endNeedle}");
+
+        return substr($source, $start, $end - $start);
     }
 
     private function createSchema(): void

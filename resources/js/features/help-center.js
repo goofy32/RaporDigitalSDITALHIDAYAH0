@@ -1,6 +1,32 @@
 import Alpine from 'alpinejs';
 
+const FAQ_CACHE_TTL_MS = 10 * 60 * 1000;
+const FAQ_LOAD_ERROR_MESSAGE = 'FAQ belum dapat dimuat. Silakan coba lagi.';
+const helpCenterInstances = new Set();
 let helpCenterRegistered = false;
+let helpCenterLifecycleListenersBound = false;
+
+function ensureHelpCenterLifecycleListeners() {
+    if (helpCenterLifecycleListenersBound) {
+        return;
+    }
+
+    helpCenterLifecycleListenersBound = true;
+    document.addEventListener('turbo:before-cache', () => {
+        Array.from(helpCenterInstances).forEach(instance => {
+            if (!instance.$el?.isConnected) {
+                instance.destroy?.();
+                return;
+            }
+
+            instance.prepareForCache?.();
+        });
+    });
+}
+
+function isAbortError(error) {
+    return error?.name === 'AbortError';
+}
 
 export function registerHelpCenter() {
     if (helpCenterRegistered) {
@@ -11,11 +37,20 @@ export function registerHelpCenter() {
 
     Alpine.data('helpCenter', () => ({
         isOpen: false,
+        initialized: false,
+        destroyed: false,
         searchQuery: '',
         topics: [],
         openTopicKey: '',
         isLoading: false,
         error: '',
+        faqPromise: null,
+        faqAbortController: null,
+        faqLoadGeneration: 0,
+        faqLoaded: false,
+        faqLoadError: false,
+        faqLoadedAt: null,
+        pagePath: window.location.pathname,
         preferredQuestions: [
             'Apa bedanya UTS dan UAS di aplikasi?',
             'Kenapa PDF lama disiapkan?',
@@ -30,15 +65,40 @@ export function registerHelpCenter() {
         ],
 
         init() {
-            this.loadTopics();
+            if (this.initialized) {
+                return;
+            }
+
+            this.initialized = true;
+            ensureHelpCenterLifecycleListeners();
+            helpCenterInstances.add(this);
         },
 
         togglePanel() {
             this.isOpen = !this.isOpen;
 
-            if (this.isOpen && this.topics.length === 0) {
+            if (this.isOpen) {
                 this.loadTopics();
             }
+        },
+
+        destroy() {
+            if (this.destroyed) {
+                return;
+            }
+
+            this.destroyed = true;
+            this.invalidateActiveFaqLoad();
+            helpCenterInstances.delete(this);
+        },
+
+        prepareForCache() {
+            this.isOpen = false;
+            this.error = '';
+            this.isLoading = false;
+            this.openTopicKey = '';
+            this.invalidateActiveFaqLoad();
+            this.clearFaqCache();
         },
 
         get endpoint() {
@@ -69,15 +129,114 @@ export function registerHelpCenter() {
             return '/admin/help';
         },
 
-        async loadTopics() {
-            const data = await this.fetchFaq({ all: '1' });
-            this.topics = data.results || [];
+        isComponentCurrent() {
+            return !this.destroyed
+                && this.$el?.isConnected
+                && document.body.contains(this.$el)
+                && window.location.pathname === this.pagePath;
         },
 
-        async fetchFaq(params = {}) {
-            this.error = '';
-            this.isLoading = true;
+        isCurrentFaqRequest(generation, controller) {
+            return this.isComponentCurrent()
+                && this.faqLoadGeneration === generation
+                && this.faqAbortController === controller
+                && !controller.signal.aborted;
+        },
 
+        isFaqCacheFresh() {
+            if (!this.faqLoaded || !this.faqLoadedAt) {
+                return false;
+            }
+
+            return Date.now() - this.faqLoadedAt < FAQ_CACHE_TTL_MS;
+        },
+
+        invalidateActiveFaqLoad() {
+            this.faqLoadGeneration += 1;
+            this.faqAbortController?.abort();
+            this.faqAbortController = null;
+            this.faqPromise = null;
+            this.isLoading = false;
+        },
+
+        clearFaqCache() {
+            this.faqLoaded = false;
+            this.faqLoadedAt = null;
+            this.faqLoadError = false;
+            this.topics = [];
+        },
+
+        async loadTopics({ force = false } = {}) {
+            if (force) {
+                this.invalidateActiveFaqLoad();
+                this.clearFaqCache();
+            }
+
+            if (!force && this.isFaqCacheFresh()) {
+                return Promise.resolve(true);
+            }
+
+            if (this.faqPromise) {
+                return this.faqPromise;
+            }
+
+            const controller = new AbortController();
+            const generation = this.faqLoadGeneration + 1;
+            this.faqLoadGeneration = generation;
+            this.faqAbortController = controller;
+            this.isLoading = true;
+            this.error = '';
+            this.faqLoadError = false;
+
+            this.faqPromise = this.fetchFaq({ all: '1' }, { generation, controller })
+                .then(data => {
+                    if (!this.isCurrentFaqRequest(generation, controller)) {
+                        return false;
+                    }
+
+                    if (!this.isValidFaqPayload(data)) {
+                        throw new Error(FAQ_LOAD_ERROR_MESSAGE);
+                    }
+
+                    this.topics = this.normalizeFaqTopics(data.results);
+                    this.faqLoaded = true;
+                    this.faqLoadedAt = Date.now();
+                    this.faqLoadError = false;
+
+                    return true;
+                })
+                .catch(error => {
+                    if (!this.isCurrentFaqRequest(generation, controller)) {
+                        return false;
+                    }
+
+                    if (isAbortError(error)) {
+                        return false;
+                    }
+
+                    this.faqLoaded = false;
+                    this.faqLoadedAt = null;
+                    this.faqLoadError = true;
+                    this.error = FAQ_LOAD_ERROR_MESSAGE;
+
+                    return false;
+                })
+                .finally(() => {
+                    if (this.isCurrentFaqRequest(generation, controller)) {
+                        this.isLoading = false;
+                        this.faqAbortController = null;
+                        this.faqPromise = null;
+                    }
+                });
+
+            return this.faqPromise;
+        },
+
+        retryTopics() {
+            return this.loadTopics({ force: true });
+        },
+
+        async fetchFaq(params = {}, options = {}) {
             try {
                 const url = new URL(this.endpoint, window.location.origin);
 
@@ -92,22 +251,33 @@ export function registerHelpCenter() {
                         Accept: 'application/json',
                         'X-Requested-With': 'XMLHttpRequest',
                     },
+                    credentials: 'same-origin',
+                    signal: options.controller?.signal,
                 });
 
                 if (!response.ok) {
-                    throw new Error('Panduan belum dapat dimuat.');
+                    throw new Error(FAQ_LOAD_ERROR_MESSAGE);
                 }
 
                 return await response.json();
             } catch (error) {
-                this.error = error.message || 'Panduan belum dapat dimuat.';
+                if (isAbortError(error)) {
+                    throw error;
+                }
 
-                return {
-                    results: [],
-                };
-            } finally {
-                this.isLoading = false;
+                throw new Error(FAQ_LOAD_ERROR_MESSAGE);
             }
+        },
+
+        isValidFaqPayload(data) {
+            return data
+                && typeof data === 'object'
+                && !Array.isArray(data)
+                && Array.isArray(data.results);
+        },
+
+        normalizeFaqTopics(results) {
+            return results.filter(topic => topic && typeof topic === 'object' && !Array.isArray(topic));
         },
 
         displayedTopics() {
@@ -129,11 +299,16 @@ export function registerHelpCenter() {
         },
 
         matchesQuery(topic, query) {
+            if (!topic || typeof topic !== 'object') {
+                return false;
+            }
+
+            const keywords = Array.isArray(topic.keywords) ? topic.keywords.join(' ') : '';
             const haystack = this.normalize([
                 topic.category,
                 topic.question,
                 topic.answer,
-                (topic.keywords || []).join(' '),
+                keywords,
             ].join(' '));
 
             return haystack.includes(query);
@@ -149,7 +324,7 @@ export function registerHelpCenter() {
         },
 
         topicKey(topic, index) {
-            return `${topic.category}-${topic.question}-${index}`;
+            return `${topic?.category || 'faq'}-${topic?.question || 'topic'}-${index}`;
         },
 
         toggleTopic(topic, index) {

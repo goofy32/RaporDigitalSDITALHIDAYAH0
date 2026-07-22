@@ -86,9 +86,20 @@
                 Memuat panduan...
             </div>
 
-            <div x-show="error" class="mb-3 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700" x-text="error"></div>
+            <div x-show="error" class="mb-3 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                <div class="flex items-start justify-between gap-3">
+                    <span x-text="error"></span>
+                    <button
+                        type="button"
+                        @click="retryTopics()"
+                        class="shrink-0 rounded-md bg-red-600 px-3 py-1 text-xs font-medium text-white hover:bg-red-700"
+                    >
+                        Coba lagi
+                    </button>
+                </div>
+            </div>
 
-            <div x-show="!isLoading && displayedTopics().length === 0" class="py-8 text-center">
+            <div x-show="!isLoading && !error && displayedTopics().length === 0" class="py-8 text-center">
                 <p class="text-sm font-medium text-gray-700">Bantuan belum ditemukan.</p>
                 <p class="text-xs text-gray-500 mt-1">Coba kata kunci lain atau buka panduan lengkap.</p>
             </div>
