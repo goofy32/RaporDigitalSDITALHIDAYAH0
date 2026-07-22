@@ -364,31 +364,13 @@ class StudentController extends Controller
         }
 
         $student = Siswa::findOrFail($id);
-        $validated = $request->validate([
-            'nis' => 'required|string|max:20|unique:siswas,nis,'.$id,
-            'nisn' => 'required|string|max:20|unique:siswas,nisn,'.$id,
-            'nama' => 'required|string|max:255',
-            'tanggal_lahir' => 'required|date|before:today',
-            'jenis_kelamin' => 'required|in:Laki-laki,Perempuan',
-            'agama' => 'required|string|in:Islam,Kristen,Katolik,Hindu,Buddha,Konghucu',
-            'alamat' => 'required|string|max:500',
-            'kelas_id' => [
+        $validated = $request->validate(
+            $this->studentUpdateRules($id, [
                 'required',
                 $this->activeClassRule((int) $tahunAjaran->id),
-            ],
-            'photo' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp', 'max:2048'],
-            'nama_ayah' => 'required|string|max:255',
-            'nama_ibu' => 'required|string|max:255',
-            'pekerjaan_ayah' => 'nullable|string|max:100',
-            'pekerjaan_ibu' => 'nullable|string|max:100',
-            'alamat_orangtua' => 'nullable|string|max:500',
-            'wali_siswa' => 'nullable|string|max:255',
-            'pekerjaan_wali' => 'nullable|string|max:100',
-        ], [
-            'nis.unique' => 'NIS sudah digunakan.',
-            'nisn.unique' => 'NISN sudah digunakan.',
-            'tanggal_lahir.before' => 'Tanggal lahir harus sebelum hari ini.',
-        ]);
+            ]),
+            $this->studentUpdateMessages()
+        );
     
         if ($request->hasFile('photo')) {
             // Hapus foto lama jika ada
@@ -446,6 +428,42 @@ class StudentController extends Controller
                 $query->whereNull('deleted_at');
             }
         });
+    }
+
+    private function studentUpdateRules(int|string $studentId, ?array $kelasIdRules = null): array
+    {
+        $rules = [
+            'nis' => ['required', 'string', 'max:20', Rule::unique('siswas', 'nis')->ignore($studentId)],
+            'nisn' => ['required', 'string', 'max:20', Rule::unique('siswas', 'nisn')->ignore($studentId)],
+            'nama' => ['required', 'string', 'max:255'],
+            'tanggal_lahir' => ['required', 'date', 'before:today'],
+            'jenis_kelamin' => ['required', Rule::in(['Laki-laki', 'Perempuan'])],
+            'agama' => ['required', 'string', Rule::in(['Islam', 'Kristen', 'Katolik', 'Hindu', 'Buddha', 'Konghucu'])],
+            'alamat' => ['required', 'string', 'max:500'],
+            'photo' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp', 'max:2048'],
+            'nama_ayah' => ['required', 'string', 'max:255'],
+            'nama_ibu' => ['required', 'string', 'max:255'],
+            'pekerjaan_ayah' => ['nullable', 'string', 'max:100'],
+            'pekerjaan_ibu' => ['nullable', 'string', 'max:100'],
+            'alamat_orangtua' => ['nullable', 'string', 'max:500'],
+            'wali_siswa' => ['nullable', 'string', 'max:255'],
+            'pekerjaan_wali' => ['nullable', 'string', 'max:100'],
+        ];
+
+        if ($kelasIdRules !== null) {
+            $rules['kelas_id'] = $kelasIdRules;
+        }
+
+        return $rules;
+    }
+
+    private function studentUpdateMessages(): array
+    {
+        return [
+            'nis.unique' => 'NIS sudah digunakan.',
+            'nisn.unique' => 'NISN sudah digunakan.',
+            'tanggal_lahir.before' => 'Tanggal lahir harus sebelum hari ini.',
+        ];
     }
 
     private function syncActiveSemesterEnrollment(Siswa $student, int $kelasId, TahunAjaran $tahunAjaran): void
@@ -740,23 +758,10 @@ class StudentController extends Controller
         $student = Siswa::where('kelas_id', $kelasWaliId)
             ->findOrFail($id);
 
-        $validated = $request->validate([
-            'nis' => 'required|unique:siswas,nis,' . $id,
-            'nisn' => 'required|unique:siswas,nisn,' . $id,
-            'nama' => 'required',
-            'tanggal_lahir' => 'required|date|before:today',
-            'jenis_kelamin' => 'required',
-            'agama' => 'required',
-            'alamat' => 'required',
-            'photo' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp', 'max:2048'],
-            'nama_ayah' => 'nullable',
-            'nama_ibu' => 'nullable',
-            'pekerjaan_ayah' => 'nullable',
-            'pekerjaan_ibu' => 'nullable',
-            'alamat_orangtua' => 'nullable',
-        ], [
-            'tanggal_lahir.before' => 'Tanggal lahir harus sebelum hari ini.',
-        ]);
+        $validated = $request->validate(
+            $this->studentUpdateRules($id),
+            $this->studentUpdateMessages()
+        );
 
         if ($request->hasFile('photo')) {
             if ($student->photo) {

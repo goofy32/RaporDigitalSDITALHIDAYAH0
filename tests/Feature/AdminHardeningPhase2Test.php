@@ -10,12 +10,16 @@ use App\Models\Siswa;
 use App\Models\User;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\MessageBag;
+use Illuminate\Support\ViewErrorBag;
 use Tests\TestCase;
 
 class AdminHardeningPhase2Test extends TestCase
@@ -676,6 +680,188 @@ class AdminHardeningPhase2Test extends TestCase
         ]);
     }
 
+    public function test_wali_student_update_rejects_admin_equivalent_validation_errors(): void
+    {
+        $studentId = $this->insertStudent([
+            'nis' => '14001',
+            'nisn' => '1400100001',
+            'nama' => 'Siswa Wali Validasi',
+            'kelas_id' => $this->activeClassId,
+            'tahun_ajaran_id' => $this->activeYearId,
+        ]);
+        $this->insertStudent([
+            'nis' => '14002',
+            'nisn' => '1400200002',
+            'nama' => 'Siswa Lain',
+            'kelas_id' => $this->activeClassBId,
+            'tahun_ajaran_id' => $this->activeYearId,
+        ]);
+
+        $cases = [
+            'nis terlalu panjang' => ['nis', ['nis' => str_repeat('1', 21)]],
+            'nisn terlalu panjang' => ['nisn', ['nisn' => str_repeat('2', 21)]],
+            'nis milik siswa lain' => ['nis', ['nis' => '14002']],
+            'nisn milik siswa lain' => ['nisn', ['nisn' => '1400200002']],
+            'jenis kelamin invalid' => ['jenis_kelamin', ['jenis_kelamin' => 'Lainnya']],
+            'agama invalid' => ['agama', ['agama' => 'Tidak Valid']],
+            'alamat terlalu panjang' => ['alamat', ['alamat' => str_repeat('A', 501)]],
+            'file bukan gambar diperbolehkan' => ['photo', ['photo' => UploadedFile::fake()->create('dokumen.pdf', 10, 'application/pdf')]],
+            'gambar lebih dari 2048 KB' => ['photo', ['photo' => UploadedFile::fake()->image('besar.jpg')->size(2049)]],
+        ];
+
+        foreach ($cases as $label => [$field, $overrides]) {
+            $this->actingAsWali()
+                ->from(route('wali_kelas.student.edit', $studentId))
+                ->put(route('wali_kelas.student.update', $studentId), $this->waliStudentPayload($overrides))
+                ->assertRedirect(route('wali_kelas.student.edit', $studentId))
+                ->assertSessionHasErrors($field);
+
+            $this->assertDatabaseHas('siswas', [
+                'id' => $studentId,
+                'nis' => '14001',
+                'nisn' => '1400100001',
+                'nama' => 'Siswa Wali Validasi',
+                'kelas_id' => $this->activeClassId,
+            ]);
+        }
+    }
+
+    public function test_wali_student_update_accepts_self_unique_values_saves_family_fields_photo_and_keeps_class(): void
+    {
+        Storage::fake('public');
+
+        $studentId = $this->insertStudent([
+            'nis' => '14003',
+            'nisn' => '1400300003',
+            'nama' => 'Siswa Wali Update',
+            'kelas_id' => $this->activeClassId,
+            'tahun_ajaran_id' => $this->activeYearId,
+        ]);
+
+        $this->actingAsWali()
+            ->put(route('wali_kelas.student.update', $studentId), $this->waliStudentPayload([
+                'nis' => '14003',
+                'nisn' => '1400300003',
+                'nama' => 'Siswa Wali Berhasil',
+                'kelas_id' => $this->activeClassBId,
+                'nama_ayah' => 'Ayah Baru',
+                'nama_ibu' => 'Ibu Baru',
+                'pekerjaan_ayah' => 'Dokter',
+                'pekerjaan_ibu' => 'Perawat',
+                'alamat_orangtua' => 'Alamat Orang Tua Baru',
+                'wali_siswa' => 'Paman Baru',
+                'pekerjaan_wali' => 'Wiraswasta',
+                'photo' => UploadedFile::fake()->image('foto-siswa.jpg')->size(256),
+            ]))
+            ->assertRedirect(route('wali_kelas.student.index'))
+            ->assertSessionHas('success');
+
+        $student = DB::table('siswas')->where('id', $studentId)->first();
+
+        $this->assertSame('14003', $student->nis);
+        $this->assertSame('1400300003', $student->nisn);
+        $this->assertSame('Siswa Wali Berhasil', $student->nama);
+        $this->assertSame($this->activeClassId, (int) $student->kelas_id);
+        $this->assertSame('Ayah Baru', $student->nama_ayah);
+        $this->assertSame('Ibu Baru', $student->nama_ibu);
+        $this->assertSame('Dokter', $student->pekerjaan_ayah);
+        $this->assertSame('Perawat', $student->pekerjaan_ibu);
+        $this->assertSame('Alamat Orang Tua Baru', $student->alamat_orangtua);
+        $this->assertSame('Paman Baru', $student->wali_siswa);
+        $this->assertSame('Wiraswasta', $student->pekerjaan_wali);
+        $this->assertNotNull($student->photo);
+        Storage::disk('public')->assertExists($student->photo);
+    }
+
+    public function test_admin_student_update_still_accepts_valid_shared_rules_and_photo(): void
+    {
+        Storage::fake('public');
+
+        $studentId = $this->insertStudent([
+            'nis' => '14004',
+            'nisn' => '1400400004',
+            'nama' => 'Siswa Admin Update',
+            'kelas_id' => $this->activeClassId,
+            'tahun_ajaran_id' => $this->activeYearId,
+        ]);
+
+        $this->actingAsAdmin()
+            ->put(route('student.update', $studentId), $this->studentPayload([
+                'nis' => '14004',
+                'nisn' => '1400400004',
+                'nama' => 'Siswa Admin Berhasil',
+                'agama' => 'Konghucu',
+                'kelas_id' => $this->activeClassBId,
+                'wali_siswa' => 'Wali Admin',
+                'pekerjaan_wali' => 'Pedagang',
+                'photo' => UploadedFile::fake()->image('foto-admin.png')->size(256),
+            ]))
+            ->assertRedirect(route('student'))
+            ->assertSessionHas('success');
+
+        $student = DB::table('siswas')->where('id', $studentId)->first();
+
+        $this->assertSame('Siswa Admin Berhasil', $student->nama);
+        $this->assertSame('Konghucu', $student->agama);
+        $this->assertSame($this->activeClassBId, (int) $student->kelas_id);
+        $this->assertSame('Wali Admin', $student->wali_siswa);
+        $this->assertSame('Pedagang', $student->pekerjaan_wali);
+        $this->assertNotNull($student->photo);
+        Storage::disk('public')->assertExists($student->photo);
+    }
+
+    public function test_wali_student_edit_form_renders_shared_validation_contract(): void
+    {
+        $this->actingAsWali();
+
+        $html = view('wali_kelas.edit_student', [
+            'errors' => (new ViewErrorBag())->put('default', new MessageBag([
+                'wali_siswa' => ['Nama wali terlalu panjang.'],
+                'pekerjaan_wali' => ['Pekerjaan wali terlalu panjang.'],
+                'photo' => ['Foto maksimal 2 MB.'],
+            ])),
+            'student' => (object) [
+                'id' => 10,
+                'nis' => '1001',
+                'nisn' => '2001',
+                'nama' => 'Siswa Contoh',
+                'tanggal_lahir' => '2015-01-01',
+                'jenis_kelamin' => 'Laki-laki',
+                'agama' => 'Islam',
+                'alamat' => 'Alamat',
+                'photo' => null,
+                'nama_ayah' => 'Ayah',
+                'nama_ibu' => 'Ibu',
+                'pekerjaan_ayah' => null,
+                'pekerjaan_ibu' => null,
+                'alamat_orangtua' => null,
+                'wali_siswa' => null,
+                'pekerjaan_wali' => null,
+            ],
+            'kelas' => (object) [
+                'id' => $this->activeClassId,
+                'nomor_kelas' => 1,
+                'nama_kelas' => 'A',
+            ],
+        ])->render();
+
+        $this->assertMatchesRegularExpression('/name="nis"[^>]*maxlength="20"/', $html);
+        $this->assertMatchesRegularExpression('/name="nisn"[^>]*maxlength="20"/', $html);
+        $this->assertMatchesRegularExpression('/name="nama"[^>]*maxlength="255"/', $html);
+        $this->assertMatchesRegularExpression('/name="alamat"[^>]*maxlength="500"/', $html);
+        $this->assertMatchesRegularExpression('/name="nama_ayah"[^>]*maxlength="255"/', $html);
+        $this->assertMatchesRegularExpression('/name="pekerjaan_ayah"[^>]*maxlength="100"/', $html);
+        $this->assertMatchesRegularExpression('/name="wali_siswa"[^>]*maxlength="255"/', $html);
+        $this->assertMatchesRegularExpression('/name="pekerjaan_wali"[^>]*maxlength="100"/', $html);
+        $this->assertStringContainsString('accept="image/jpeg,image/png,image/webp"', $html);
+        $this->assertStringContainsString('Format JPG, JPEG, PNG, atau WEBP. Ukuran maksimal 2 MB.', $html);
+        $this->assertStringContainsString('Nama wali terlalu panjang.', $html);
+        $this->assertStringContainsString('Pekerjaan wali terlalu panjang.', $html);
+        $this->assertStringContainsString('Foto maksimal 2 MB.', $html);
+        $this->assertSame(1, substr_count($html, '>Update</button>'));
+        $this->assertSame(1, substr_count($html, '>Kembali</a>'));
+    }
+
     public function test_valid_kkm_batch_save_accepts_class_subject_active_year(): void
     {
         $subjectId = $this->insertSubject($this->activeClassId, $this->activeYearId, 'Matematika');
@@ -880,6 +1066,13 @@ class AdminHardeningPhase2Test extends TestCase
         return $this->actingAs($this->admin, 'web')->withSession($this->adminSession());
     }
 
+    private function actingAsWali(): self
+    {
+        return $this->actingAs($this->guru, 'guru')->withSession(array_merge($this->adminSession(), [
+            'selected_role' => 'wali_kelas',
+        ]));
+    }
+
     private function adminSession(): array
     {
         return [
@@ -908,6 +1101,11 @@ class AdminHardeningPhase2Test extends TestCase
             'wali_siswa' => '',
             'pekerjaan_wali' => '',
         ], $overrides);
+    }
+
+    private function waliStudentPayload(array $overrides = []): array
+    {
+        return $this->studentPayload($overrides);
     }
 
     private function createTemplate(string $type, bool $isActive, ?int $kelasId, ?int $semester): ReportTemplate
