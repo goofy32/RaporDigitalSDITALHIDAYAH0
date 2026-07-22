@@ -85,13 +85,10 @@
                     </a>
                     <button type="submit"
                             disabled
-                            :disabled="dirtyCount === 0 || submitting"
+                            :disabled="!hasChanges || submitting"
                             class="inline-flex items-center justify-center rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-gray-600">
-                        <span x-show="!submitting">Simpan Semua Perubahan</span>
+                        <span x-show="!submitting" x-text="saveButtonLabel()"></span>
                         <span x-show="submitting" x-cloak>Menyimpan...</span>
-                        <span x-show="dirtyCount > 0 && !submitting" x-cloak class="ml-1">
-                            (<span x-text="dirtyCount"></span>)
-                        </span>
                     </button>
                 </div>
             </div>
@@ -229,7 +226,7 @@
                                 $existingRow = $existingCapaian->get($siswa->id);
                                 $row = $studentCapaianRows[$siswa->id];
                             @endphp
-                            <tr class="mb-4 block rounded-lg border border-gray-200 bg-white align-top shadow-sm lg:mb-0 lg:table-row lg:rounded-none lg:border-0 lg:border-b lg:shadow-none lg:hover:bg-gray-50">
+                            <tr data-capaian-student-id="{{ $siswa->id }}" class="mb-4 block rounded-lg border border-gray-200 bg-white align-top shadow-sm lg:mb-0 lg:table-row lg:rounded-none lg:border-0 lg:border-b lg:shadow-none lg:hover:bg-gray-50">
                                 <td class="block px-4 py-3 font-medium text-gray-900 lg:table-cell lg:py-4">
                                     <span class="mb-1 block text-xs font-semibold uppercase text-gray-500 lg:hidden">No</span>
                                     {{ $index + 1 }}
@@ -261,9 +258,10 @@
                                         <span class="mb-1 block text-xs font-semibold uppercase text-gray-500 lg:hidden">{{ $label }}</span>
                                         <div class="rounded-lg border border-gray-200 bg-white p-3 transition"
                                              x-data="capaianInlineField({
-                                                 key: @js($fieldKey),
-                                                 type: @js($type),
-                                                 initial: @js($row['resolved'][$type]),
+                                                  key: @js($fieldKey),
+                                                  studentId: @js((string) $siswa->id),
+                                                  type: @js($type),
+                                                  initial: @js($row['resolved'][$type]),
                                                  studentName: @js($siswa->nama),
                                                  lmText: @js($row['lm'][$type]),
                                                  followsDefault: @js($row['uses_default'][$type]),
@@ -337,37 +335,104 @@
 function capaianUnifiedEditor(config) {
     return {
         defaults: config.defaults,
-        dirtyFields: {},
+        rowStates: {},
+        dirtyRows: {},
         submitting: false,
+        rowStateHandler: null,
+        beforeUnloadHandler: null,
+        turboBeforeCacheHandler: null,
         init() {
-            window.addEventListener('capaian-dirty', (event) => {
-                this.setDirty(event.detail.key, event.detail.dirty);
-            });
+            this.rowStateHandler = (event) => this.captureOriginalState(event.detail || {});
+            window.addEventListener('capaian-row-state', this.rowStateHandler);
 
-            window.addEventListener('beforeunload', (event) => {
-                if (this.dirtyCount === 0 || this.submitting) {
+            this.beforeUnloadHandler = (event) => {
+                if (!this.hasChanges || this.submitting) {
                     return;
                 }
 
                 event.preventDefault();
                 event.returnValue = '';
-            });
+            };
+            window.addEventListener('beforeunload', this.beforeUnloadHandler);
+
+            this.turboBeforeCacheHandler = () => this.destroy();
+            document.addEventListener('turbo:before-cache', this.turboBeforeCacheHandler);
+        },
+        destroy() {
+            if (this.rowStateHandler) {
+                window.removeEventListener('capaian-row-state', this.rowStateHandler);
+                this.rowStateHandler = null;
+            }
+
+            if (this.beforeUnloadHandler) {
+                window.removeEventListener('beforeunload', this.beforeUnloadHandler);
+                this.beforeUnloadHandler = null;
+            }
+
+            if (this.turboBeforeCacheHandler) {
+                document.removeEventListener('turbo:before-cache', this.turboBeforeCacheHandler);
+                this.turboBeforeCacheHandler = null;
+            }
         },
         get dirtyCount() {
-            return Object.keys(this.dirtyFields).length + this.defaultDirtyCount;
+            return Object.keys(this.dirtyRows).length;
+        },
+        get hasChanges() {
+            return this.dirtyCount > 0 || this.defaultDirtyCount > 0;
         },
         get defaultDirtyCount() {
             return ['tertinggi', 'terendah'].filter((type) => this.defaultDirty(type)).length;
         },
-        setDirty(key, isDirty) {
-            if (isDirty) {
-                this.dirtyFields = { ...this.dirtyFields, [key]: true };
+        normalizeStateValue(value) {
+            return String(value ?? '');
+        },
+        captureOriginalState(detail) {
+            const studentId = String(detail.studentId || '');
+            const type = String(detail.type || '');
+
+            if (!studentId || !['tertinggi', 'terendah'].includes(type)) {
                 return;
             }
 
-            const next = { ...this.dirtyFields };
-            delete next[key];
-            this.dirtyFields = next;
+            this.rowStates = {
+                ...this.rowStates,
+                [studentId]: {
+                    ...(this.rowStates[studentId] || {}),
+                    [type]: {
+                        original: this.normalizeStateValue(detail.original),
+                        current: this.normalizeStateValue(detail.current),
+                        reset: Boolean(detail.reset),
+                    },
+                },
+            };
+
+            this.recomputeDirtyRows();
+        },
+        getCurrentRowState(studentId) {
+            return this.rowStates[String(studentId)] || {};
+        },
+        isRowDirty(studentId) {
+            return Object.values(this.getCurrentRowState(studentId)).some((field) => {
+                return Boolean(field.reset) || field.current !== field.original;
+            });
+        },
+        recomputeDirtyRows() {
+            const nextDirtyRows = {};
+
+            Object.keys(this.rowStates).forEach((studentId) => {
+                if (this.isRowDirty(studentId)) {
+                    nextDirtyRows[studentId] = true;
+                }
+            });
+
+            this.dirtyRows = nextDirtyRows;
+        },
+        saveButtonLabel() {
+            if (this.dirtyCount === 0) {
+                return 'Simpan semua perubahan';
+            }
+
+            return `Simpan semua perubahan (${this.dirtyCount} yang berubah)`;
         },
         defaultMode(type) {
             return this.defaults[type].choice === '__custom__' ? 'custom' : 'preset';
@@ -402,6 +467,7 @@ function capaianUnifiedEditor(config) {
 function capaianInlineField(config) {
     return {
         key: config.key,
+        studentId: String(config.studentId || ''),
         type: config.type,
         initial: config.initial || '',
         value: config.initial || '',
@@ -413,28 +479,50 @@ function capaianInlineField(config) {
         dirty: false,
         reset: false,
         defaultPreviewDirty: false,
+        defaultUpdateHandler: null,
+        turboBeforeCacheHandler: null,
         init() {
-            window.addEventListener('capaian-default-updated', (event) => {
-                if (event.detail.type !== this.type || this.dirty) {
-                    return;
-                }
+            this.defaultUpdateHandler = (event) => this.handleDefaultUpdated(event);
+            window.addEventListener('capaian-default-updated', this.defaultUpdateHandler);
 
-                this.defaultPhrase = event.detail.phrase || this.defaultPhrase;
+            this.turboBeforeCacheHandler = () => this.destroy();
+            document.addEventListener('turbo:before-cache', this.turboBeforeCacheHandler);
 
-                if (!this.followsDefault && !this.reset) {
-                    return;
-                }
+            this.notifyState();
+        },
+        destroy() {
+            if (this.defaultUpdateHandler) {
+                window.removeEventListener('capaian-default-updated', this.defaultUpdateHandler);
+                this.defaultUpdateHandler = null;
+            }
 
-                this.value = this.composeDefaultText();
-                this.defaultPreviewDirty = this.followsDefault && Boolean(event.detail.changed);
-                this.$nextTick(() => this.autogrow(this.$el.querySelector('textarea')));
-            });
+            if (this.turboBeforeCacheHandler) {
+                document.removeEventListener('turbo:before-cache', this.turboBeforeCacheHandler);
+                this.turboBeforeCacheHandler = null;
+            }
+        },
+        handleDefaultUpdated(event) {
+            if (event.detail.type !== this.type || this.dirty) {
+                return;
+            }
+
+            this.defaultPhrase = event.detail.phrase || this.defaultPhrase;
+
+            if (!this.followsDefault && !this.reset) {
+                this.notifyState();
+                return;
+            }
+
+            this.value = this.composeDefaultText();
+            this.defaultPreviewDirty = this.followsDefault && Boolean(event.detail.changed);
+            this.notifyState();
+            this.$nextTick(() => this.autogrow(this.$el.querySelector('textarea')));
         },
         update() {
             this.reset = false;
             this.defaultPreviewDirty = false;
             this.dirty = this.value !== this.initial;
-            this.notify();
+            this.notifyState();
         },
         resetToDefault() {
             if (this.needsConfirm && !window.confirm('Deskripsi custom yang ada akan dihapus dan capaian kembali mengikuti default. Lanjutkan?')) {
@@ -445,7 +533,7 @@ function capaianInlineField(config) {
             this.dirty = false;
             this.reset = true;
             this.defaultPreviewDirty = false;
-            this.notify();
+            this.notifyState();
             this.$nextTick(() => this.autogrow(this.$el.querySelector('textarea')));
         },
         composeDefaultText() {
@@ -458,11 +546,15 @@ function capaianInlineField(config) {
 
             return `${this.studentName} ${phrase} ${lmText}.`.replace(/\s+/gu, ' ').trim();
         },
-        notify() {
-            window.dispatchEvent(new CustomEvent('capaian-dirty', {
+        notifyState() {
+            window.dispatchEvent(new CustomEvent('capaian-row-state', {
                 detail: {
                     key: this.key,
-                    dirty: this.dirty || this.reset,
+                    studentId: this.studentId,
+                    type: this.type,
+                    original: this.initial,
+                    current: this.value,
+                    reset: this.reset,
                 },
             }));
         },

@@ -795,7 +795,7 @@ class CapaianPhraseCustomizationTest extends TestCase
             ->get(route('wali_kelas.capaian_kompetensi.edit', $this->mathGanjilSubjectId))
             ->assertOk()
             ->assertSee('Pengaturan Kalimat Awal Capaian')
-            ->assertSee('Simpan Semua Perubahan')
+            ->assertSee('Simpan semua perubahan')
             ->assertDontSee('Simpan Pengaturan Default')
             ->assertDontSee('Simpan Perubahan Capaian Siswa')
             ->assertSee('Kalimat yang diedit akan menjadi khusus untuk siswa tersebut')
@@ -814,7 +814,42 @@ class CapaianPhraseCustomizationTest extends TestCase
             ->assertSee('composeDefaultText')
             ->assertSee('followsDefault')
             ->assertSee('beforeunload')
-            ->assertSee('event.detail.type !== this.type || this.dirty');
+            ->assertSee('handleDefaultUpdated(event)')
+            ->assertSee('notifyState()');
+    }
+
+    public function test_edit_page_tracks_dirty_count_by_unique_student_rows(): void
+    {
+        $response = $this->actingAsWali($this->ganjilYearId, 1)
+            ->get(route('wali_kelas.capaian_kompetensi.edit', $this->mathGanjilSubjectId))
+            ->assertOk();
+
+        $response
+            ->assertSee('data-capaian-student-id="'.$this->ahmadId.'"', false)
+            ->assertSee('data-capaian-student-id="'.$this->sitiId.'"', false)
+            ->assertSee('studentId:', false)
+            ->assertSee('rowStates: {}', false)
+            ->assertSee('dirtyRows: {}', false)
+            ->assertSee('captureOriginalState(event.detail || {})', false)
+            ->assertSee('getCurrentRowState(studentId)', false)
+            ->assertSee('isRowDirty(studentId)', false)
+            ->assertSee('recomputeDirtyRows()', false)
+            ->assertSee('Object.keys(this.dirtyRows).length', false)
+            ->assertSee('Simpan semua perubahan (${this.dirtyCount} yang berubah)', false)
+            ->assertDontSee('dirtyFields', false)
+            ->assertDontSee('capaian-dirty', false);
+    }
+
+    public function test_edit_page_cleans_inline_capaian_event_listeners_for_turbo_cache(): void
+    {
+        $this->actingAsWali($this->ganjilYearId, 1)
+            ->get(route('wali_kelas.capaian_kompetensi.edit', $this->mathGanjilSubjectId))
+            ->assertOk()
+            ->assertSee('turbo:before-cache', false)
+            ->assertSee("window.removeEventListener('capaian-row-state'", false)
+            ->assertSee("window.removeEventListener('capaian-default-updated'", false)
+            ->assertSee("window.removeEventListener('beforeunload'", false)
+            ->assertSee("document.removeEventListener('turbo:before-cache'", false);
     }
 
     public function test_initially_rendered_resolved_text_is_not_automatically_persisted_as_full_custom_text(): void
