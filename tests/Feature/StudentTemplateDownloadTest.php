@@ -10,8 +10,10 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
+use PhpOffice\PhpSpreadsheet\Cell\DataType;
 use PhpOffice\PhpSpreadsheet\Cell\DataValidation;
 use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\Style\NumberFormat;
 use Tests\TestCase;
 
 class StudentTemplateDownloadTest extends TestCase
@@ -105,6 +107,26 @@ class StudentTemplateDownloadTest extends TestCase
         $this->assertSame("'Daftar Kelas'!".'$A$2:$A$4', $validation->getFormula1());
         $this->assertSame($classSheet->getCell('A2')->getValue(), $templateSheet->getCell('H2')->getValue());
         $this->assertSame($classSheet->getCell('A3')->getValue(), $templateSheet->getCell('H3')->getValue());
+    }
+
+    public function test_template_formats_nis_and_nisn_as_text_and_documents_ten_digit_limit(): void
+    {
+        $workbook = $this->workbookFromResponse(
+            $this->actingAs($this->admin, 'web')->get(route('student.template'))
+        );
+
+        $templateSheet = $workbook->getSheetByName('Template Siswa');
+        $instructionText = collect($workbook->getSheetByName('Petunjuk')->rangeToArray('A1:A20'))
+            ->flatten()
+            ->filter()
+            ->implode("\n");
+
+        $this->assertSame(NumberFormat::FORMAT_TEXT, $templateSheet->getStyle('A2')->getNumberFormat()->getFormatCode());
+        $this->assertSame(NumberFormat::FORMAT_TEXT, $templateSheet->getStyle('B2')->getNumberFormat()->getFormatCode());
+        $this->assertSame(DataType::TYPE_STRING, $templateSheet->getCell('A2')->getDataType());
+        $this->assertSame(DataType::TYPE_STRING, $templateSheet->getCell('B2')->getDataType());
+        $this->assertStringContainsString('maksimal 10 digit angka', $instructionText);
+        $this->assertStringContainsString('disimpan sebagai teks', $instructionText);
     }
 
     public function test_template_download_handles_active_year_with_no_classes(): void

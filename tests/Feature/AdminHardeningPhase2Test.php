@@ -569,6 +569,183 @@ class AdminHardeningPhase2Test extends TestCase
             ->assertSee('Kelas 2 B');
     }
 
+    public function test_admin_student_identifier_rules_accept_one_to_ten_digits_and_preserve_leading_zero(): void
+    {
+        $this->actingAsAdmin()
+            ->post(route('student.store'), $this->studentPayload([
+                'nis' => '1',
+                'nisn' => '0012345678',
+                'nama' => 'Siswa Satu Digit',
+            ]))
+            ->assertRedirect(route('student'))
+            ->assertSessionHas('success');
+
+        $this->actingAsAdmin()
+            ->post(route('student.store'), $this->studentPayload([
+                'nis' => '1234567890',
+                'nisn' => '0000000001',
+                'nama' => 'Siswa Sepuluh Digit',
+            ]))
+            ->assertRedirect(route('student'))
+            ->assertSessionHas('success');
+
+        $this->assertDatabaseHas('siswas', [
+            'nis' => '1',
+            'nisn' => '0012345678',
+            'nama' => 'Siswa Satu Digit',
+        ]);
+        $this->assertDatabaseHas('siswas', [
+            'nis' => '1234567890',
+            'nisn' => '0000000001',
+            'nama' => 'Siswa Sepuluh Digit',
+        ]);
+    }
+
+    public function test_admin_student_identifier_rules_reject_more_than_ten_digits_and_non_digits(): void
+    {
+        $cases = [
+            'nis sebelas digit' => ['nis', ['nis' => '12345678901']],
+            'nis huruf' => ['nis', ['nis' => 'ABC123']],
+            'nis spasi internal' => ['nis', ['nis' => '12 345']],
+            'nis simbol plus' => ['nis', ['nis' => '+123']],
+            'nisn sebelas digit' => ['nisn', ['nisn' => '12345678901']],
+            'nisn simbol minus' => ['nisn', ['nisn' => '123-456']],
+        ];
+
+        foreach ($cases as [$field, $overrides]) {
+            $this->actingAsAdmin()
+                ->from(route('student.create'))
+                ->post(route('student.store'), $this->studentPayload($overrides))
+                ->assertRedirect(route('student.create'))
+                ->assertSessionHasErrors($field);
+        }
+
+        $this->assertSame(0, DB::table('siswas')->count());
+        $this->assertSame(0, DB::table('siswa_kelas_semester')->count());
+    }
+
+    public function test_admin_student_identifier_malformed_form_payload_is_validation_error_not_server_error(): void
+    {
+        $this->actingAsAdmin()
+            ->from(route('student.create'))
+            ->post(route('student.store'), $this->studentPayload([
+                'nis' => ['1'],
+                'nisn' => ['2'],
+            ]))
+            ->assertRedirect(route('student.create'))
+            ->assertSessionHasErrors(['nis', 'nisn']);
+
+        $studentId = $this->insertStudent([
+            'nis' => '13016',
+            'nisn' => '1301600016',
+            'nama' => 'Siswa Malformed Update',
+            'kelas_id' => $this->activeClassId,
+            'tahun_ajaran_id' => $this->activeYearId,
+        ]);
+
+        $this->actingAsAdmin()
+            ->from(route('student.edit', $studentId))
+            ->put(route('student.update', $studentId), $this->studentPayload([
+                'nis' => ['13016'],
+                'nisn' => ['1301600016'],
+                'nama' => 'Should Not Change',
+                'kelas_id' => $this->activeClassBId,
+            ]))
+            ->assertRedirect(route('student.edit', $studentId))
+            ->assertSessionHasErrors(['nis', 'nisn']);
+
+        $this->assertDatabaseHas('siswas', [
+            'id' => $studentId,
+            'nis' => '13016',
+            'nisn' => '1301600016',
+            'nama' => 'Siswa Malformed Update',
+            'kelas_id' => $this->activeClassId,
+        ]);
+        $this->assertSame(1, DB::table('siswas')->count());
+        $this->assertSame(0, DB::table('siswa_kelas_semester')->count());
+    }
+
+    public function test_wali_student_identifier_malformed_form_payload_is_validation_error_not_server_error(): void
+    {
+        $this->actingAsWali()
+            ->from(route('wali_kelas.student.create'))
+            ->post(route('wali_kelas.student.store'), $this->waliStudentPayload([
+                'nis' => ['1'],
+                'nisn' => ['2'],
+            ]))
+            ->assertRedirect(route('wali_kelas.student.create'))
+            ->assertSessionHas('swal_validation_error');
+
+        $this->assertSame(0, DB::table('siswas')->count());
+
+        $studentId = $this->insertStudent([
+            'nis' => '14005',
+            'nisn' => '1400500005',
+            'nama' => 'Siswa Wali Malformed',
+            'kelas_id' => $this->activeClassId,
+            'tahun_ajaran_id' => $this->activeYearId,
+        ]);
+
+        $this->actingAsWali()
+            ->from(route('wali_kelas.student.edit', $studentId))
+            ->put(route('wali_kelas.student.update', $studentId), $this->waliStudentPayload([
+                'nis' => ['14005'],
+                'nisn' => ['1400500005'],
+                'nama' => 'Should Not Change',
+                'kelas_id' => $this->activeClassBId,
+            ]))
+            ->assertRedirect(route('wali_kelas.student.edit', $studentId))
+            ->assertSessionHasErrors(['nis', 'nisn']);
+
+        $this->assertDatabaseHas('siswas', [
+            'id' => $studentId,
+            'nis' => '14005',
+            'nisn' => '1400500005',
+            'nama' => 'Siswa Wali Malformed',
+            'kelas_id' => $this->activeClassId,
+        ]);
+    }
+
+    public function test_student_identifier_json_null_boolean_and_numeric_payloads_are_rejected_without_coercion(): void
+    {
+        $this->actingAsAdmin()
+            ->postJson(route('student.store'), $this->studentPayload([
+                'nis' => null,
+                'nisn' => null,
+            ]))
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['nis', 'nisn']);
+
+        $this->actingAsAdmin()
+            ->postJson(route('student.store'), $this->studentPayload([
+                'nis' => true,
+                'nisn' => 12345,
+            ]))
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['nis', 'nisn']);
+
+        $this->assertSame(0, DB::table('siswas')->count());
+        $this->assertSame(0, DB::table('siswa_kelas_semester')->count());
+    }
+
+    public function test_student_identifier_trims_outer_whitespace_and_preserves_leading_zero(): void
+    {
+        $this->actingAsAdmin()
+            ->post(route('student.store'), $this->studentPayload([
+                'nis' => ' 00123 ',
+                'nisn' => ' 0012345678 ',
+                'nama' => 'Siswa Trim Identifier',
+            ]))
+            ->assertRedirect(route('student'))
+            ->assertSessionHas('success');
+
+        $this->assertDatabaseHas('siswas', [
+            'nis' => '00123',
+            'nisn' => '0012345678',
+            'nama' => 'Siswa Trim Identifier',
+        ]);
+    }
+
     public function test_manual_student_create_rolls_back_when_active_enrollment_fails(): void
     {
         DB::statement("
@@ -962,8 +1139,11 @@ class AdminHardeningPhase2Test extends TestCase
         ]);
 
         $cases = [
-            'nis terlalu panjang' => ['nis', ['nis' => str_repeat('1', 21)]],
-            'nisn terlalu panjang' => ['nisn', ['nisn' => str_repeat('2', 21)]],
+            'nis terlalu panjang' => ['nis', ['nis' => str_repeat('1', 11)]],
+            'nis huruf/simbol' => ['nis', ['nis' => 'ABC123']],
+            'nis spasi internal' => ['nis', ['nis' => '12 345']],
+            'nisn terlalu panjang' => ['nisn', ['nisn' => str_repeat('2', 11)]],
+            'nisn huruf/simbol' => ['nisn', ['nisn' => '123-456']],
             'nis milik siswa lain' => ['nis', ['nis' => '14002']],
             'nisn milik siswa lain' => ['nisn', ['nisn' => '1400200002']],
             'jenis kelamin invalid' => ['jenis_kelamin', ['jenis_kelamin' => 'Lainnya']],
@@ -1109,8 +1289,9 @@ class AdminHardeningPhase2Test extends TestCase
             ],
         ])->render();
 
-        $this->assertMatchesRegularExpression('/name="nis"[^>]*maxlength="20"/', $html);
-        $this->assertMatchesRegularExpression('/name="nisn"[^>]*maxlength="20"/', $html);
+        $this->assertMatchesRegularExpression('/name="nis"[^>]*maxlength="10"[^>]*inputmode="numeric"[^>]*pattern="\[0-9\]\{1,10\}"/', $html);
+        $this->assertMatchesRegularExpression('/name="nisn"[^>]*maxlength="10"[^>]*inputmode="numeric"[^>]*pattern="\[0-9\]\{1,10\}"/', $html);
+        $this->assertSame(2, substr_count($html, 'Maksimal 10 digit angka.'));
         $this->assertMatchesRegularExpression('/name="nama"[^>]*maxlength="255"/', $html);
         $this->assertMatchesRegularExpression('/name="alamat"[^>]*maxlength="500"/', $html);
         $this->assertMatchesRegularExpression('/name="nama_ayah"[^>]*maxlength="255"/', $html);

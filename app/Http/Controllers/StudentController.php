@@ -11,6 +11,7 @@ use App\Models\TahunAjaran;
 use App\Services\StudentExcelImportService;
 use App\Services\StudentImportTemplateService;
 use App\Services\SiswaKelasSemesterResolver;
+use App\Support\StudentIdentifier;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
@@ -257,19 +258,11 @@ class StudentController extends Controller
             return $this->failTahunAjaranNotSet($request);
         }
 
+        $this->normalizeStudentIdentifierInputs($request);
+
         $validated = $request->validate([
-            'nis' => [
-                'required',
-                'numeric',          // Memastikan hanya angka
-                'digits_between:5,10', // Minimal 5 digit, maksimal 10 digit
-                'unique:siswas,nis'
-            ],
-            'nisn' => [
-                'required',
-                'numeric',         // Memastikan hanya angka
-                'digits:10',       // Harus 10 digit
-                'unique:siswas,nisn'
-            ],
+            'nis' => StudentIdentifier::rules('nis'),
+            'nisn' => StudentIdentifier::rules('nisn'),
             'nama' => [
                 'required',
                 'string',
@@ -292,11 +285,9 @@ class StudentController extends Controller
             'alamat_orangtua' => 'nullable|string|max:500',
             'wali_siswa' => 'nullable|string|max:255',
             'pekerjaan_wali' => 'nullable|string|max:100',
-        ], [
-            'nis.unique' => 'NIS sudah digunakan.',
-            'nisn.unique' => 'NISN sudah digunakan.',
+        ], array_merge(StudentIdentifier::messages(), [
             'tanggal_lahir.before' => 'Tanggal lahir harus sebelum hari ini.',
-        ]);
+        ]));
     
         // Set default empty string untuk field nullable
         $validated['alamat_orangtua'] = $validated['alamat_orangtua'] ?? '';
@@ -366,6 +357,8 @@ class StudentController extends Controller
         }
 
         $student = Siswa::findOrFail($id);
+        $this->normalizeStudentIdentifierInputs($request);
+
         $validated = $request->validate(
             $this->studentUpdateRules($id, [
                 'required',
@@ -435,8 +428,8 @@ class StudentController extends Controller
     private function studentUpdateRules(int|string $studentId, ?array $kelasIdRules = null): array
     {
         $rules = [
-            'nis' => ['required', 'string', 'max:20', Rule::unique('siswas', 'nis')->ignore($studentId)],
-            'nisn' => ['required', 'string', 'max:20', Rule::unique('siswas', 'nisn')->ignore($studentId)],
+            'nis' => StudentIdentifier::rules('nis', $studentId),
+            'nisn' => StudentIdentifier::rules('nisn', $studentId),
             'nama' => ['required', 'string', 'max:255'],
             'tanggal_lahir' => ['required', 'date', 'before:today'],
             'jenis_kelamin' => ['required', Rule::in(['Laki-laki', 'Perempuan'])],
@@ -461,11 +454,24 @@ class StudentController extends Controller
 
     private function studentUpdateMessages(): array
     {
-        return [
-            'nis.unique' => 'NIS sudah digunakan.',
-            'nisn.unique' => 'NISN sudah digunakan.',
+        return array_merge(StudentIdentifier::messages(), [
             'tanggal_lahir.before' => 'Tanggal lahir harus sebelum hari ini.',
-        ];
+        ]);
+    }
+
+    private function normalizeStudentIdentifierInputs(Request $request): void
+    {
+        $normalized = [];
+
+        foreach (['nis', 'nisn'] as $field) {
+            if ($request->has($field)) {
+                $normalized[$field] = StudentIdentifier::normalizeInput($request->input($field));
+            }
+        }
+
+        if ($normalized !== []) {
+            $request->merge($normalized);
+        }
     }
 
     private function syncActiveSemesterEnrollment(Siswa $student, int $kelasId, TahunAjaran $tahunAjaran): void
@@ -670,9 +676,11 @@ class StudentController extends Controller
             }
             
             // Validate the request
+            $this->normalizeStudentIdentifierInputs($request);
+
             $validated = $request->validate([
-                'nis' => 'required|unique:siswas',
-                'nisn' => 'required|unique:siswas',
+                'nis' => StudentIdentifier::rules('nis'),
+                'nisn' => StudentIdentifier::rules('nisn'),
                 'nama' => 'required',
                 'tanggal_lahir' => 'required|date|before:today',
                 'jenis_kelamin' => 'required',
@@ -686,11 +694,7 @@ class StudentController extends Controller
                 'alamat_orangtua' => 'nullable|string',
                 'wali_siswa' => 'nullable|string',
                 'pekerjaan_wali' => 'nullable|string',
-            ], [
-                'nis.required' => 'NIS wajib diisi.',
-                'nis.unique' => 'NIS sudah digunakan oleh siswa lain.',
-                'nisn.required' => 'NISN wajib diisi.',
-                'nisn.unique' => 'NISN sudah digunakan oleh siswa lain.',
+            ], array_merge(StudentIdentifier::messages(), [
                 'nama.required' => 'Nama siswa wajib diisi.',
                 'tanggal_lahir.required' => 'Tanggal lahir wajib diisi.',
                 'tanggal_lahir.before' => 'Tanggal lahir harus sebelum hari ini.',
@@ -699,7 +703,7 @@ class StudentController extends Controller
                 'alamat.required' => 'Alamat wajib diisi.',
                 'nama_ayah.required' => 'Nama ayah wajib diisi.',
                 'nama_ibu.required' => 'Nama ibu wajib diisi.',
-            ]);
+            ]));
     
             // Set kelas_id from the selected class
             $validated['kelas_id'] = $kelas->id;
@@ -771,6 +775,8 @@ class StudentController extends Controller
         
         $student = Siswa::where('kelas_id', $kelasWaliId)
             ->findOrFail($id);
+
+        $this->normalizeStudentIdentifierInputs($request);
 
         $validated = $request->validate(
             $this->studentUpdateRules($id),

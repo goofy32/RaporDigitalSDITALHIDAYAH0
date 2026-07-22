@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Kelas;
 use App\Models\User;
+use Carbon\Carbon;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
 use Illuminate\Http\UploadedFile;
@@ -13,7 +14,10 @@ use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
+use PhpOffice\PhpSpreadsheet\Cell\DataType;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Shared\Date as ExcelDate;
+use PhpOffice\PhpSpreadsheet\Style\NumberFormat;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use Psr\Log\LoggerInterface;
 use Tests\TestCase;
@@ -119,6 +123,172 @@ class StudentImportSafetyTest extends TestCase
             'tahun_ajaran_id' => $this->activeYearId,
             'semester' => 1,
         ]);
+    }
+
+    public function test_import_accepts_one_to_ten_digit_identifiers_and_preserves_text_leading_zero(): void
+    {
+        $rows = [
+            $this->validRow([
+                'nis' => '1',
+                'nisn' => '0012345678',
+                'nama' => 'Siswa Nol Depan',
+            ]),
+            $this->validRow([
+                'nis' => '1234567890',
+                'nisn' => '0000000001',
+                'nama' => 'Siswa Sepuluh Digit',
+            ]),
+        ];
+
+        $response = $this->postImport($rows);
+
+        $response->assertRedirect(route('student'));
+        $this->assertDatabaseHas('siswas', [
+            'nis' => '1',
+            'nisn' => '0012345678',
+            'nama' => 'Siswa Nol Depan',
+        ]);
+        $this->assertDatabaseHas('siswas', [
+            'nis' => '1234567890',
+            'nisn' => '0000000001',
+            'nama' => 'Siswa Sepuluh Digit',
+        ]);
+    }
+
+    public function test_import_accepts_numeric_integer_identifier_cells_as_digit_strings(): void
+    {
+        $response = $this->postImport([
+            $this->validRow([
+                'nis' => 1234567890,
+                'nisn' => 123456789,
+                'nama' => 'Siswa Numeric Cell',
+            ]),
+        ]);
+
+        $response->assertRedirect(route('student'));
+        $this->assertDatabaseHas('siswas', [
+            'nis' => '1234567890',
+            'nisn' => '123456789',
+            'nama' => 'Siswa Numeric Cell',
+        ]);
+    }
+
+    public function test_import_rejects_identifier_values_longer_than_ten_digits_or_non_digits(): void
+    {
+        $response = $this->postImport([
+            $this->validRow(['nis' => '12345678901', 'nisn' => '9000000001', 'nama' => 'NIS Terlalu Panjang']),
+            $this->validRow(['nis' => 'ABC123', 'nisn' => '9000000002', 'nama' => 'NIS Huruf']),
+            $this->validRow(['nis' => '12 345', 'nisn' => '9000000003', 'nama' => 'NIS Spasi']),
+            $this->validRow(['nis' => '2601010', 'nisn' => '12345678901', 'nama' => 'NISN Terlalu Panjang']),
+            $this->validRow(['nis' => '2601011', 'nisn' => '123-456', 'nama' => 'NISN Simbol']),
+        ]);
+
+        $response->assertRedirect();
+        $response->assertSessionHas('import_errors');
+
+        $errors = $this->importErrorText();
+        $this->assertStringContainsString('Baris 2, NIS Terlalu Panjang: NIS maksimal 10 digit.', $errors);
+        $this->assertStringContainsString('Baris 3, NIS Huruf: NIS hanya boleh berisi angka.', $errors);
+        $this->assertStringContainsString('Baris 4, NIS Spasi: NIS hanya boleh berisi angka.', $errors);
+        $this->assertStringContainsString('Baris 5, NISN Terlalu Panjang: NISN maksimal 10 digit.', $errors);
+        $this->assertStringContainsString('Baris 6, NISN Simbol: NISN hanya boleh berisi angka.', $errors);
+        $this->assertSame(0, DB::table('siswas')->count());
+        $this->assertSame(0, DB::table('siswa_kelas_semester')->count());
+    }
+
+    public function test_import_rejects_decimal_scientific_and_formula_identifier_cells_as_ambiguous(): void
+    {
+        $path = $this->createWorkbookWithCellCallbacks(function ($sheet): void {
+            $this->writeImportRow($sheet, 2, $this->validRow([
+                'nis' => null,
+                'nisn' => '9000000101',
+                'nama' => 'NIS Decimal',
+            ]));
+            $sheet->setCellValue('A2', 1.5);
+
+            $this->writeImportRow($sheet, 3, $this->validRow([
+                'nis' => '2601012',
+                'nisn' => null,
+                'nama' => 'NISN Formula',
+            ]));
+            $sheet->setCellValue('B3', '=CONCAT("12","34")');
+
+            $this->writeImportRow($sheet, 4, $this->validRow([
+                'nis' => '1E5',
+                'nisn' => '9000000103',
+                'nama' => 'NIS Scientific Text',
+            ]));
+        });
+
+        $response = $this->postWorkbook($path);
+
+        $response->assertRedirect();
+        $response->assertSessionHas('import_errors');
+
+        $errors = $this->importErrorText();
+        $this->assertStringContainsString('Baris 2, NIS Decimal: NIS harus berupa teks atau angka bulat maksimal 10 digit.', $errors);
+        $this->assertStringContainsString('Baris 3, NISN Formula: NISN tidak boleh berupa tanggal, formula, boolean, atau error cell.', $errors);
+        $this->assertStringContainsString('Baris 4, NIS Scientific Text: NIS hanya boleh berisi angka.', $errors);
+        $this->assertSame(0, DB::table('siswas')->count());
+        $this->assertSame(0, DB::table('siswa_kelas_semester')->count());
+    }
+
+    public function test_import_rejects_date_boolean_and_error_identifier_cells(): void
+    {
+        $path = $this->createWorkbookWithCellCallbacks(function ($sheet): void {
+            $this->writeImportRow($sheet, 2, $this->validRow([
+                'nis' => null,
+                'nisn' => '9000000201',
+                'nama' => 'NIS Date',
+            ]));
+            $sheet->setCellValue('A2', ExcelDate::PHPToExcel(Carbon::parse('2026-07-22')));
+            $sheet->getStyle('A2')->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_DATE_YYYYMMDD);
+            $this->assertTrue(ExcelDate::isDateTime($sheet->getCell('A2')));
+
+            $this->writeImportRow($sheet, 3, $this->validRow([
+                'nis' => '2601020',
+                'nisn' => null,
+                'nama' => 'NISN Date',
+            ]));
+            $sheet->setCellValue('B3', ExcelDate::PHPToExcel(Carbon::parse('2026-07-23')));
+            $sheet->getStyle('B3')->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_DATE_YYYYMMDD);
+            $this->assertTrue(ExcelDate::isDateTime($sheet->getCell('B3')));
+
+            $this->writeImportRow($sheet, 4, $this->validRow([
+                'nis' => null,
+                'nisn' => '9000000204',
+                'nama' => 'NIS Boolean',
+            ]));
+            $sheet->setCellValue('A4', true);
+
+            $this->writeImportRow($sheet, 5, $this->validRow([
+                'nis' => '2601021',
+                'nisn' => null,
+                'nama' => 'NISN Boolean',
+            ]));
+            $sheet->setCellValue('B5', false);
+
+            $this->writeImportRow($sheet, 6, $this->validRow([
+                'nis' => null,
+                'nisn' => '9000000206',
+                'nama' => 'NIS Error',
+            ]));
+            $sheet->setCellValueExplicit('A6', '#DIV/0!', DataType::TYPE_ERROR);
+        });
+
+        $response = $this->postWorkbook($path);
+
+        $response->assertRedirect();
+        $response->assertSessionHas('import_errors');
+
+        $errors = $this->importErrorText();
+        $this->assertStringContainsString('Baris 2, NIS Date: NIS tidak boleh berupa tanggal, formula, boolean, atau error cell.', $errors);
+        $this->assertStringContainsString('Baris 3, NISN Date: NISN tidak boleh berupa tanggal, formula, boolean, atau error cell.', $errors);
+        $this->assertStringContainsString('Baris 4, NIS Boolean: NIS tidak boleh berupa tanggal, formula, boolean, atau error cell.', $errors);
+        $this->assertStringContainsString('Baris 5, NISN Boolean: NISN tidak boleh berupa tanggal, formula, boolean, atau error cell.', $errors);
+        $this->assertStringContainsString('Baris 6, NIS Error: NIS tidak boleh berupa tanggal, formula, boolean, atau error cell.', $errors);
+        $this->assertSame(0, DB::table('siswas')->count());
+        $this->assertSame(0, DB::table('siswa_kelas_semester')->count());
     }
 
     public function test_import_accepts_canonical_and_legacy_class_aliases(): void
@@ -617,6 +787,11 @@ class StudentImportSafetyTest extends TestCase
     {
         $path = $this->createWorkbook($headers, $rows);
 
+        return $this->postWorkbook($path);
+    }
+
+    private function postWorkbook(string $path)
+    {
         return $this->actingAs($this->admin, 'web')
             ->withSession(['tahun_ajaran_id' => $this->activeYearId, 'selected_semester' => 1])
             ->post(route('student.import'), [
@@ -692,9 +867,50 @@ class StudentImportSafetyTest extends TestCase
         $sheet->fromArray($headers);
 
         foreach ($rows as $index => $row) {
-            $sheet->fromArray($row, null, 'A'.($index + 2));
+            foreach ($row as $columnIndex => $value) {
+                $cell = chr(65 + $columnIndex).($index + 2);
+
+                if (is_string($value)) {
+                    $sheet->setCellValueExplicit($cell, $value, DataType::TYPE_STRING);
+                } else {
+                    $sheet->setCellValue($cell, $value);
+                }
+            }
         }
 
+        return $this->saveWorkbook($spreadsheet);
+    }
+
+    private function createWorkbookWithCellCallbacks(callable $callback): string
+    {
+        $spreadsheet = new Spreadsheet;
+        $sheet = $spreadsheet->getActiveSheet();
+        $sheet->fromArray($this->headers());
+
+        $callback($sheet);
+
+        return $this->saveWorkbook($spreadsheet);
+    }
+
+    /**
+     * @param  array<string, mixed>  $row
+     */
+    private function writeImportRow($sheet, int $rowNumber, array $row): void
+    {
+        foreach ($this->headers() as $index => $header) {
+            $cell = chr(65 + $index).$rowNumber;
+            $value = $row[$header] ?? null;
+
+            if (is_string($value)) {
+                $sheet->setCellValueExplicit($cell, $value, DataType::TYPE_STRING);
+            } else {
+                $sheet->setCellValue($cell, $value);
+            }
+        }
+    }
+
+    private function saveWorkbook(Spreadsheet $spreadsheet): string
+    {
         $directory = storage_path('framework/testing');
         File::ensureDirectoryExists($directory);
         $path = $directory.'/student-import-'.uniqid('', true).'.xlsx';

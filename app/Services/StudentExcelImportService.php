@@ -4,12 +4,15 @@ namespace App\Services;
 
 use App\Models\TahunAjaran;
 use App\Services\SiswaKelasSemesterResolver;
+use App\Support\StudentIdentifier;
 use Carbon\Carbon;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
+use PhpOffice\PhpSpreadsheet\Cell\Cell;
+use PhpOffice\PhpSpreadsheet\Cell\DataType;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Shared\Date as ExcelDate;
 use Throwable;
@@ -45,6 +48,8 @@ class StudentExcelImportService
         'alamat_orangtua' => 'Alamat orang tua',
         'photo' => 'Foto',
     ];
+
+    private const IDENTIFIER_CELL_ERRORS_KEY = '__identifier_cell_errors';
 
     /**
      * @return array{success: bool, imported_count: int, skipped_count: int, errors: array<int, string>}
@@ -159,6 +164,19 @@ class StudentExcelImportService
 
             foreach ($headers as $column => $header) {
                 $cell = $sheet->getCell("{$column}{$rowNumber}");
+                if (in_array($header, ['nis', 'nisn'], true)) {
+                    $identifierCell = $this->readStudentIdentifierCell($cell, $header);
+                    $row[$header] = is_string($identifierCell['value'])
+                        ? trim($identifierCell['value'])
+                        : $identifierCell['value'];
+
+                    if ($identifierCell['error'] !== null) {
+                        $row[self::IDENTIFIER_CELL_ERRORS_KEY][$header] = $identifierCell['error'];
+                    }
+
+                    continue;
+                }
+
                 $value = $header === 'tanggal_lahir'
                     ? $cell->getValue()
                     : $cell->getFormattedValue();
@@ -227,8 +245,11 @@ class StudentExcelImportService
 
             $nis = trim((string) ($row['nis'] ?? ''));
             $nisn = trim((string) ($row['nisn'] ?? ''));
+            $identifierCellErrors = $row[self::IDENTIFIER_CELL_ERRORS_KEY] ?? [];
 
-            if ($nis !== '') {
+            if (isset($identifierCellErrors['nis'])) {
+                $errors[] = $this->rowMessage($rowNumber, $row, $identifierCellErrors['nis']);
+            } elseif ($nis !== '' && $this->validateStudentIdentifier('nis', $nis, $rowNumber, $row, $errors)) {
                 if (isset($seenNis[$nis])) {
                     $errors[] = $this->rowMessage($rowNumber, $row, "NIS {$nis} muncul lebih dari satu kali dalam file.");
                 }
@@ -240,7 +261,9 @@ class StudentExcelImportService
                 }
             }
 
-            if ($nisn !== '') {
+            if (isset($identifierCellErrors['nisn'])) {
+                $errors[] = $this->rowMessage($rowNumber, $row, $identifierCellErrors['nisn']);
+            } elseif ($nisn !== '' && $this->validateStudentIdentifier('nisn', $nisn, $rowNumber, $row, $errors)) {
                 if (isset($seenNisn[$nisn])) {
                     $errors[] = $this->rowMessage($rowNumber, $row, "NISN {$nisn} muncul lebih dari satu kali dalam file.");
                 }
@@ -293,6 +316,88 @@ class StudentExcelImportService
         }
 
         return ['rows' => $validRows, 'errors' => [], 'skipped_count' => $skippedCount];
+    }
+
+    /**
+     * @return array{value: mixed, error: ?string}
+     */
+    private function readStudentIdentifierCell(Cell $cell, string $field): array
+    {
+        $type = $cell->getDataType();
+        $invalidCellMessage = "{$this->fieldLabel($field)} tidak boleh berupa tanggal, formula, boolean, atau error cell.";
+        $ambiguousNumberMessage = "{$this->fieldLabel($field)} harus berupa teks atau angka bulat maksimal 10 digit.";
+
+        if ($cell->getDataType() === DataType::TYPE_FORMULA) {
+            return [
+                'value' => trim((string) $cell->getValue()),
+                'error' => $invalidCellMessage,
+            ];
+        }
+
+        if (ExcelDate::isDateTime($cell)) {
+            return [
+                'value' => $cell->getValue(),
+                'error' => $invalidCellMessage,
+            ];
+        }
+
+        if (in_array($type, [DataType::TYPE_BOOL, DataType::TYPE_ERROR], true)) {
+            return [
+                'value' => $cell->getValue(),
+                'error' => $invalidCellMessage,
+            ];
+        }
+
+        $rawValue = $cell->getValue();
+
+        if ($rawValue === null || $rawValue === '') {
+            return ['value' => $rawValue, 'error' => null];
+        }
+
+        if (is_int($rawValue) || is_float($rawValue)) {
+            $numericValue = (float) $rawValue;
+
+            if (! is_finite($numericValue) || floor($numericValue) !== $numericValue) {
+                return [
+                    'value' => trim((string) $rawValue),
+                    'error' => $ambiguousNumberMessage,
+                ];
+            }
+
+            return ['value' => number_format($numericValue, 0, '', ''), 'error' => null];
+        }
+
+        if (in_array($type, [DataType::TYPE_STRING, DataType::TYPE_INLINE], true)) {
+            return ['value' => trim((string) $cell->getFormattedValue()), 'error' => null];
+        }
+
+        return [
+            'value' => $rawValue,
+            'error' => $invalidCellMessage,
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $row
+     * @param  array<int, string>  $errors
+     */
+    private function validateStudentIdentifier(string $field, string $value, int $rowNumber, array $row, array &$errors): bool
+    {
+        $label = $this->fieldLabel($field);
+
+        if (! StudentIdentifier::hasOnlyDigits($value)) {
+            $errors[] = $this->rowMessage($rowNumber, $row, "{$label} hanya boleh berisi angka.");
+
+            return false;
+        }
+
+        if (strlen($value) > StudentIdentifier::MAX_DIGITS) {
+            $errors[] = $this->rowMessage($rowNumber, $row, "{$label} maksimal 10 digit.");
+
+            return false;
+        }
+
+        return true;
     }
 
     /**

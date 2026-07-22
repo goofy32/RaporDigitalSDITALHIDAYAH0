@@ -24,8 +24,9 @@
             <div class="border p-4 space-y-4 rounded-b">
                 <div>
                     <label for="nis" class="block font-semibold">NIS</label>
-                    <input type="text" id="nis" name="nis" maxlength="20" class="w-full p-2 border rounded @error('nis') border-red-500 @enderror"
+                    <input type="text" id="nis" name="nis" maxlength="10" inputmode="numeric" pattern="[0-9]{1,10}" class="w-full p-2 border rounded @error('nis') border-red-500 @enderror"
                            value="{{ old('nis', $student->nis) }}" required>
+                    <p class="text-xs text-gray-500 mt-1">Maksimal 10 digit angka.</p>
                     @error('nis')
                         <p class="text-red-500 text-xs mt-1">{{ $message }}</p>
                     @enderror
@@ -33,8 +34,9 @@
 
                 <div>
                     <label for="nisn" class="block font-semibold">NISN</label>
-                    <input type="text" id="nisn" name="nisn" maxlength="20" class="w-full p-2 border rounded @error('nisn') border-red-500 @enderror"
+                    <input type="text" id="nisn" name="nisn" maxlength="10" inputmode="numeric" pattern="[0-9]{1,10}" class="w-full p-2 border rounded @error('nisn') border-red-500 @enderror"
                            value="{{ old('nisn', $student->nisn) }}" required>
+                    <p class="text-xs text-gray-500 mt-1">Maksimal 10 digit angka.</p>
                     @error('nisn')
                         <p class="text-red-500 text-xs mt-1">{{ $message }}</p>
                     @enderror

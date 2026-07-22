@@ -4,10 +4,12 @@ namespace App\Services;
 
 use App\Models\Kelas;
 use App\Models\TahunAjaran;
+use PhpOffice\PhpSpreadsheet\Cell\DataType;
 use PhpOffice\PhpSpreadsheet\Cell\DataValidation;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
+use PhpOffice\PhpSpreadsheet\Style\NumberFormat;
 
 class StudentImportTemplateService
 {
@@ -89,6 +91,12 @@ class StudentImportTemplateService
         ];
 
         $sheet->fromArray($examples, null, 'A2');
+        $sheet->getStyle('A:B')->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
+        foreach ($examples as $index => $example) {
+            $row = $index + 2;
+            $sheet->setCellValueExplicit("A{$row}", (string) $example[0], DataType::TYPE_STRING);
+            $sheet->setCellValueExplicit("B{$row}", (string) $example[1], DataType::TYPE_STRING);
+        }
         $sheet->freezePane('A2');
         $sheet->getStyle('A1:N1')->getFont()->setBold(true);
         $sheet->getStyle('A1:N1')->getFill()
@@ -146,7 +154,7 @@ class StudentImportTemplateService
             ['Kolom kelas harus sama dengan salah satu kelas pada sheet "Daftar Kelas".'],
             ['Format tanggal_lahir: YYYY-MM-DD.'],
             ['jenis_kelamin: L atau P.'],
-            ['nis dan nisn wajib unik, baik di file maupun di database.'],
+            ['nis dan nisn wajib berisi maksimal 10 digit angka, disimpan sebagai teks, dan unik baik di file maupun di database.'],
             ['Kolom photo boleh dikosongkan.'],
         ];
 
