@@ -27,10 +27,10 @@
                     <a href="{{ route('student.edit', $student->id) }}" class="text-yellow-600 hover:text-yellow-800" title="Ubah Data">
                         <img src="{{ asset('images/icons/edit.png') }}" alt="Edit Icon" class="w-5 h-5">
                     </a>
-                    <form action="{{ route('student.destroy', $student->id) }}" method="POST" class="inline" onsubmit="return confirm('Apakah Anda yakin ingin menghapus data ini?');">
+                    <form action="{{ route('student.destroy', $student->id) }}" method="POST" class="inline" onsubmit="if (!confirm('Apakah Anda yakin ingin menghapus data ini?')) { return false; } const button = this.querySelector('[data-student-delete-submit]'); if (button) { button.disabled = true; button.setAttribute('aria-disabled', 'true'); button.classList.add('opacity-50', 'cursor-wait'); button.title = 'Menghapus...'; const icon = button.querySelector('img'); if (icon) { icon.alt = 'Menghapus...'; } } return true;">
                         @csrf
                         @method('DELETE')
-                        <button type="submit" class="text-red-600 hover:text-red-800" title="Hapus Data">
+                        <button type="submit" class="text-red-600 hover:text-red-800 disabled:pointer-events-none" title="Hapus Data" data-student-delete-submit>
                             <img src="{{ asset('images/icons/delete.png') }}" alt="Delete Icon" class="w-5 h-5">
                         </button>
                     </form>

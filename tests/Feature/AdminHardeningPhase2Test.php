@@ -485,6 +485,113 @@ class AdminHardeningPhase2Test extends TestCase
         $this->assertSame('2025-01-02 09:30:00', (string) $activeEnrollment->updated_at);
     }
 
+    public function test_admin_can_destroy_active_student_without_affecting_other_students(): void
+    {
+        $studentId = $this->insertStudent([
+            'nis' => '13101',
+            'nisn' => '1310100001',
+            'nama' => 'Siswa Delete Active',
+            'kelas_id' => $this->activeClassId,
+            'tahun_ajaran_id' => $this->activeYearId,
+        ]);
+        $otherStudentId = $this->insertStudent([
+            'nis' => '13102',
+            'nisn' => '1310200002',
+            'nama' => 'Siswa Delete Other',
+            'kelas_id' => $this->activeClassId,
+            'tahun_ajaran_id' => $this->activeYearId,
+        ]);
+
+        $this->actingAsAdmin()
+            ->delete(route('student.destroy', $studentId))
+            ->assertRedirect(route('student'))
+            ->assertSessionHas('success', 'Data siswa berhasil dihapus!');
+
+        $this->assertNotNull(DB::table('siswas')->where('id', $studentId)->value('deleted_at'));
+        $this->assertNull(DB::table('siswas')->where('id', $otherStudentId)->value('deleted_at'));
+        $this->assertTrue(Siswa::onlyTrashed()->whereKey($studentId)->exists());
+    }
+
+    public function test_admin_destroy_handles_already_soft_deleted_student_without_404(): void
+    {
+        $deletedAt = '2025-01-03 10:00:00';
+        $studentId = $this->insertStudent([
+            'nis' => '13103',
+            'nisn' => '1310300003',
+            'nama' => 'Siswa Delete Stale',
+            'kelas_id' => $this->activeClassId,
+            'tahun_ajaran_id' => $this->activeYearId,
+            'deleted_at' => $deletedAt,
+        ]);
+
+        $this->actingAsAdmin()
+            ->delete(route('student.destroy', $studentId))
+            ->assertRedirect(route('student'))
+            ->assertSessionHas('error', 'Data siswa sudah dihapus atau tidak lagi tersedia.');
+
+        $this->assertSame($deletedAt, (string) DB::table('siswas')->where('id', $studentId)->value('deleted_at'));
+    }
+
+    public function test_admin_destroy_handles_missing_student_without_404(): void
+    {
+        $this->actingAsAdmin()
+            ->delete(route('student.destroy', 999999))
+            ->assertRedirect(route('student'))
+            ->assertSessionHas('error', 'Data siswa sudah dihapus atau tidak lagi tersedia.');
+    }
+
+    public function test_admin_destroy_handles_force_deleted_student_without_404(): void
+    {
+        $studentId = $this->insertStudent([
+            'nis' => '13104',
+            'nisn' => '1310400004',
+            'nama' => 'Siswa Delete Gone',
+            'kelas_id' => $this->activeClassId,
+            'tahun_ajaran_id' => $this->activeYearId,
+        ]);
+        DB::table('siswas')->where('id', $studentId)->delete();
+
+        $this->actingAsAdmin()
+            ->delete(route('student.destroy', $studentId))
+            ->assertRedirect(route('student'))
+            ->assertSessionHas('error', 'Data siswa sudah dihapus atau tidak lagi tersedia.');
+    }
+
+    public function test_admin_destroy_rejects_invalid_student_id_safely(): void
+    {
+        $this->actingAsAdmin()
+            ->delete(route('student.destroy', 'not-a-number'))
+            ->assertRedirect(route('student'))
+            ->assertSessionHas('error', 'Data siswa sudah dihapus atau tidak lagi tersedia.');
+    }
+
+    public function test_non_admin_cannot_use_student_destroy_missing_target_handling(): void
+    {
+        $this->actingAsWali()
+            ->delete(route('student.destroy', 999999))
+            ->assertRedirect(route('login'));
+    }
+
+    public function test_admin_student_delete_form_uses_delete_method_and_double_submit_guard(): void
+    {
+        $studentId = $this->insertStudent([
+            'nis' => '13105',
+            'nisn' => '1310500005',
+            'nama' => 'Siswa Delete Form',
+            'kelas_id' => $this->activeClassId,
+            'tahun_ajaran_id' => $this->activeYearId,
+        ]);
+
+        $this->actingAsAdmin()
+            ->get(route('student'))
+            ->assertOk()
+            ->assertSee(route('student.destroy', $studentId), false)
+            ->assertSee('name="_token"', false)
+            ->assertSee('name="_method" value="DELETE"', false)
+            ->assertSee('data-student-delete-submit', false)
+            ->assertSee('Menghapus...', false);
+    }
+
     public function test_manual_student_update_only_changes_active_semester_enrollment_and_preserves_history(): void
     {
         $studentId = $this->insertStudent([

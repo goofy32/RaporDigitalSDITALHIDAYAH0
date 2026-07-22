@@ -23,6 +23,8 @@ class StudentController extends Controller
 {
     use RequiresTahunAjaran, RespondsWithLiveList;
 
+    private const STUDENT_UNAVAILABLE_MESSAGE = 'Data siswa sudah dihapus atau tidak lagi tersedia.';
+
     public function index(Request $request)
     {
         // Ambil tahun ajaran dari session
@@ -490,7 +492,19 @@ class StudentController extends Controller
 
     public function destroy($id)
     {
-        $student = Siswa::findOrFail($id);
+        $studentId = filter_var($id, FILTER_VALIDATE_INT, [
+            'options' => ['min_range' => 1],
+        ]);
+
+        if ($studentId === false) {
+            return redirect()->route('student')->with('error', self::STUDENT_UNAVAILABLE_MESSAGE);
+        }
+
+        $student = Siswa::withTrashed()->find($studentId);
+
+        if (! $student || $student->trashed()) {
+            return redirect()->route('student')->with('error', self::STUDENT_UNAVAILABLE_MESSAGE);
+        }
 
         $student->delete();
         return redirect()->route('student')->with('success', 'Data siswa berhasil dihapus!');
