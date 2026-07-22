@@ -176,7 +176,11 @@ class RecycleBinController extends Controller
             );
             $message = $this->bulkForceDeleteMessage($summary);
 
-            if ($summary['deleted_count'] === 0 && $summary['failed_count'] > 0) {
+            if (
+                $summary['deleted_count'] === 0
+                && $summary['skipped_already_deleted_count'] === 0
+                && $summary['failed_count'] > 0
+            ) {
                 return $this->errorResponse($request, $message, 422);
             }
 
@@ -216,7 +220,7 @@ class RecycleBinController extends Controller
                 });
         }
 
-        return $targets;
+        return $this->normalizeBulkForceDeleteTargets($targets);
     }
 
     protected function selectedForceDeleteTargets(Collection $items): Collection
@@ -231,17 +235,20 @@ class RecycleBinController extends Controller
                 ];
             })
             ->filter(fn (array $target) => $target['type'] !== '' && $target['id'] > 0)
-            ->unique(fn (array $target) => $target['type'].':'.$target['id'])
             ->values();
     }
 
     protected function processBulkForceDeleteTargets(Collection $targets, string $bulkConfirmation): array
     {
+        $targets = $this->normalizeBulkForceDeleteTargets($targets);
+
         $summary = [
             'deleted_count' => 0,
+            'skipped_already_deleted_count' => 0,
             'failed_count' => 0,
             'cleanup_warning_count' => 0,
             'failure_reasons' => [],
+            'skipped_reasons' => [],
         ];
 
         $siswaIds = $targets
@@ -262,7 +269,7 @@ class RecycleBinController extends Controller
 
             foreach ($siswaSummary['failures'] as $failure) {
                 $summary['failed_count']++;
-                $summary['failure_reasons'][] = 'Siswa #'.$failure['siswa_id'].': '.$failure['message'];
+                $summary['failure_reasons'][] = $failure['message'];
 
                 Log::warning('[RecycleBinController] Bulk Siswa purge item failed', [
                     'siswa_id' => $failure['siswa_id'] ?? null,
@@ -277,11 +284,25 @@ class RecycleBinController extends Controller
             ->reject(fn (array $target) => $target['type'] === 'siswa')
             ->each(function (array $target) use (&$summary) {
                 try {
-                    $this->forceDeleteItem($target['type'], (int) $target['id']);
-                    $summary['deleted_count']++;
+                    $result = $this->forceDeleteBulkItem($target['type'], (int) $target['id']);
+
+                    if ($result['status'] === 'deleted') {
+                        $summary['deleted_count']++;
+
+                        return;
+                    }
+
+                    if ($result['status'] === 'skipped_already_deleted') {
+                        $summary['skipped_already_deleted_count']++;
+                        $summary['skipped_reasons'][] = [
+                            'type' => $target['type'],
+                            'id' => $target['id'],
+                            'reason' => 'missing_before_processing_or_deleted_by_parent_cascade',
+                        ];
+                    }
                 } catch (\Throwable $exception) {
                     $summary['failed_count']++;
-                    $summary['failure_reasons'][] = $this->bulkFailureLabel($target).': '.$this->friendlyBulkFailureMessage($exception);
+                    $summary['failure_reasons'][] = $this->friendlyBulkFailureMessage($exception);
 
                     Log::warning('[RecycleBinController] Bulk force delete item failed', [
                         'type' => $target['type'],
@@ -296,11 +317,53 @@ class RecycleBinController extends Controller
         return $summary;
     }
 
+    protected function normalizeBulkForceDeleteTargets(Collection $targets): Collection
+    {
+        return $targets
+            ->map(function (array $target, int $index) {
+                return [
+                    'type' => (string) ($target['type'] ?? ''),
+                    'id' => (int) ($target['id'] ?? 0),
+                    '_bulk_index' => $index,
+                ];
+            })
+            ->filter(fn (array $target) => $target['type'] !== '' && $target['id'] > 0)
+            ->unique(fn (array $target) => $target['type'].':'.$target['id'])
+            ->sort(function (array $left, array $right) {
+                $priority = $this->bulkForceDeletePriority($left['type'])
+                    <=> $this->bulkForceDeletePriority($right['type']);
+
+                return $priority !== 0
+                    ? $priority
+                    : $left['_bulk_index'] <=> $right['_bulk_index'];
+            })
+            ->map(fn (array $target) => [
+                'type' => $target['type'],
+                'id' => $target['id'],
+            ])
+            ->values();
+    }
+
+    protected function bulkForceDeletePriority(string $type): int
+    {
+        return match ($type) {
+            'kelas' => 10,
+            'mata-pelajaran' => 20,
+            'lingkup-materi' => 30,
+            'tujuan-pembelajaran' => 40,
+            default => 50,
+        };
+    }
+
     protected function bulkForceDeleteMessage(array $summary): string
     {
         $parts = [
             $summary['deleted_count'].' data berhasil dihapus permanen.',
         ];
+
+        if (($summary['skipped_already_deleted_count'] ?? 0) > 0) {
+            $parts[] = $summary['skipped_already_deleted_count'].' data dilewati karena sudah ikut terhapus atau tidak lagi tersedia.';
+        }
 
         if ($summary['cleanup_warning_count'] > 0) {
             $parts[] = $summary['cleanup_warning_count'].' data berhasil dihapus, tetapi ada file atau cache rapor yang perlu dibersihkan oleh administrator sistem.';
@@ -330,7 +393,7 @@ class RecycleBinController extends Controller
 
     protected function friendlyBulkFailureMessage(\Throwable $exception): string
     {
-        if ($exception instanceof \RuntimeException && ! str_contains($exception->getMessage(), 'SQLSTATE')) {
+        if ($exception instanceof \RuntimeException && $exception->getMessage() === 'Tipe data tidak valid.') {
             return $exception->getMessage();
         }
 
@@ -904,6 +967,29 @@ class RecycleBinController extends Controller
         $this->forceDeleteModel($type, $model);
 
         return "{$config['label']} {$name} berhasil dihapus permanen.";
+    }
+
+    protected function forceDeleteBulkItem(string $type, int $id): array
+    {
+        $config = $this->typeMap()[$type] ?? null;
+
+        if (!$config) {
+            throw new \RuntimeException('Tipe data tidak valid.');
+        }
+
+        $model = $config['class']::onlyTrashed()->find($id);
+
+        if (!$model) {
+            return [
+                'status' => 'skipped_already_deleted',
+            ];
+        }
+
+        $this->forceDeleteModel($type, $model);
+
+        return [
+            'status' => 'deleted',
+        ];
     }
 
     protected function forceDeleteModel(string $type, Model $model): void

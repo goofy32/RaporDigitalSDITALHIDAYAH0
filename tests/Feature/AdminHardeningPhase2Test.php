@@ -172,6 +172,163 @@ class AdminHardeningPhase2Test extends TestCase
         $this->assertSame(1, DB::table('siswas')->whereNotNull('deleted_at')->count());
     }
 
+    public function test_recycle_bin_bulk_force_delete_child_only_deletes_child(): void
+    {
+        $tree = $this->insertDeletedLearningTree('Mapel Child Only');
+
+        $response = $this->actingAsAdmin()
+            ->deleteJson(route('admin.recycle-bin.force-delete-all'), [
+                'confirmation' => 'HAPUS PERMANEN',
+                'items' => ['tujuan-pembelajaran:'.$tree['tp_ids'][0]],
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $message = (string) $response->json('message');
+        $this->assertStringContainsString('1 data berhasil dihapus permanen.', $message);
+        $this->assertStringNotContainsString('dilewati', $message);
+        $this->assertStringNotContainsString('gagal', $message);
+        $this->assertDatabaseMissing('tujuan_pembelajarans', ['id' => $tree['tp_ids'][0]]);
+        $this->assertDatabaseHas('lingkup_materis', ['id' => $tree['lm_ids'][0]]);
+        $this->assertDatabaseHas('mata_pelajarans', ['id' => $tree['subject_id']]);
+    }
+
+    public function test_recycle_bin_bulk_force_delete_parent_only_cascades_children_without_failures(): void
+    {
+        $tree = $this->insertDeletedLearningTree('Mapel Parent Only');
+
+        $response = $this->actingAsAdmin()
+            ->deleteJson(route('admin.recycle-bin.force-delete-all'), [
+                'confirmation' => 'HAPUS PERMANEN',
+                'items' => ['mata-pelajaran:'.$tree['subject_id']],
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $message = (string) $response->json('message');
+        $this->assertStringContainsString('1 data berhasil dihapus permanen.', $message);
+        $this->assertStringNotContainsString('dilewati', $message);
+        $this->assertStringNotContainsString('gagal', $message);
+        $this->assertLearningTreeIsGone($tree);
+    }
+
+    public function test_recycle_bin_force_delete_all_skips_descendants_removed_by_parent_cascade(): void
+    {
+        $tree = $this->insertDeletedLearningTree('Mapel Delete All Cascade');
+
+        $response = $this->actingAsAdmin()
+            ->deleteJson(route('admin.recycle-bin.force-delete-all'), [
+                'confirmation' => 'HAPUS PERMANEN',
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $message = (string) $response->json('message');
+        $this->assertStringContainsString('1 data berhasil dihapus permanen.', $message);
+        $this->assertStringContainsString('2 data dilewati karena sudah ikut terhapus atau tidak lagi tersedia.', $message);
+        $this->assertStringNotContainsString('data gagal', $message);
+        $this->assertStringNotContainsString('ModelNotFound', $message);
+        $this->assertStringNotContainsString('No query results', $message);
+        $this->assertLearningTreeIsGone($tree);
+    }
+
+    public function test_recycle_bin_selected_bulk_skips_cascaded_descendants_and_deduplicates_targets(): void
+    {
+        $tree = $this->insertDeletedLearningTree('Mapel Selected Cascade', 2, 2);
+
+        $items = [
+            'tujuan-pembelajaran:'.$tree['tp_ids'][0],
+            'lingkup-materi:'.$tree['lm_ids'][0],
+            'mata-pelajaran:'.$tree['subject_id'],
+            'lingkup-materi:'.$tree['lm_ids'][0],
+            'tujuan-pembelajaran:'.$tree['tp_ids'][0],
+            'lingkup-materi:'.$tree['lm_ids'][1],
+            'tujuan-pembelajaran:'.$tree['tp_ids'][1],
+        ];
+
+        $response = $this->actingAsAdmin()
+            ->deleteJson(route('admin.recycle-bin.force-delete-all'), [
+                'confirmation' => 'HAPUS PERMANEN',
+                'items' => $items,
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $message = (string) $response->json('message');
+        $this->assertStringContainsString('1 data berhasil dihapus permanen.', $message);
+        $this->assertStringContainsString('4 data dilewati karena sudah ikut terhapus atau tidak lagi tersedia.', $message);
+        $this->assertStringNotContainsString('data gagal', $message);
+        $this->assertLearningTreeIsGone($tree);
+    }
+
+    public function test_recycle_bin_bulk_missing_target_is_skipped_not_failed(): void
+    {
+        $response = $this->actingAsAdmin()
+            ->deleteJson(route('admin.recycle-bin.force-delete-all'), [
+                'confirmation' => 'HAPUS PERMANEN',
+                'items' => ['lingkup-materi:999999'],
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $message = (string) $response->json('message');
+        $this->assertStringContainsString('0 data berhasil dihapus permanen.', $message);
+        $this->assertStringContainsString('1 data dilewati karena sudah ikut terhapus atau tidak lagi tersedia.', $message);
+        $this->assertStringNotContainsString('data gagal', $message);
+        $this->assertStringNotContainsString('999999', $message);
+    }
+
+    public function test_recycle_bin_repeated_selected_bulk_request_is_safe_after_first_delete(): void
+    {
+        $tree = $this->insertDeletedLearningTree('Mapel Repeated Delete');
+        $items = [
+            'mata-pelajaran:'.$tree['subject_id'],
+            'lingkup-materi:'.$tree['lm_ids'][0],
+            'tujuan-pembelajaran:'.$tree['tp_ids'][0],
+        ];
+
+        $this->actingAsAdmin()
+            ->deleteJson(route('admin.recycle-bin.force-delete-all'), [
+                'confirmation' => 'HAPUS PERMANEN',
+                'items' => $items,
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $response = $this->actingAsAdmin()
+            ->deleteJson(route('admin.recycle-bin.force-delete-all'), [
+                'confirmation' => 'HAPUS PERMANEN',
+                'items' => $items,
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $message = (string) $response->json('message');
+        $this->assertStringContainsString('0 data berhasil dihapus permanen.', $message);
+        $this->assertStringContainsString('3 data dilewati karena sudah ikut terhapus atau tidak lagi tersedia.', $message);
+        $this->assertStringNotContainsString('data gagal', $message);
+        $this->assertLearningTreeIsGone($tree);
+    }
+
+    public function test_recycle_bin_bulk_real_failure_stays_failed_without_raw_model_details(): void
+    {
+        $response = $this->actingAsAdmin()
+            ->deleteJson(route('admin.recycle-bin.force-delete-all'), [
+                'confirmation' => 'HAPUS PERMANEN',
+                'items' => ['unknown-type:123'],
+            ])
+            ->assertUnprocessable()
+            ->assertJsonPath('success', false);
+
+        $message = (string) $response->json('message');
+        $this->assertStringContainsString('0 data berhasil dihapus permanen.', $message);
+        $this->assertStringContainsString('1 data gagal: Tipe data tidak valid.', $message);
+        $this->assertStringNotContainsString('unknown-type', $message);
+        $this->assertStringNotContainsString('#123', $message);
+        $this->assertStringNotContainsString('ModelNotFound', $message);
+        $this->assertStringNotContainsString('No query results', $message);
+    }
+
     public function test_admin_can_delete_only_active_global_uts_template(): void
     {
         $template = $this->createTemplate('UTS', true, null, 1);
@@ -1313,6 +1470,67 @@ class AdminHardeningPhase2Test extends TestCase
         ]);
     }
 
+    private function insertDeletedLearningTree(string $subjectName, int $lingkupMateriCount = 1, int $tpPerLingkupMateri = 1): array
+    {
+        $deletedAt = now();
+        $subjectId = DB::table('mata_pelajarans')->insertGetId([
+            'nama_pelajaran' => $subjectName,
+            'kelas_id' => $this->activeClassId,
+            'guru_id' => $this->guru->id,
+            'semester' => 1,
+            'is_muatan_lokal' => false,
+            'allow_non_wali' => false,
+            'tahun_ajaran_id' => $this->activeYearId,
+            'deleted_at' => $deletedAt,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $lingkupMateriIds = [];
+        $tujuanPembelajaranIds = [];
+
+        for ($lmIndex = 1; $lmIndex <= $lingkupMateriCount; $lmIndex++) {
+            $lingkupMateriId = DB::table('lingkup_materis')->insertGetId([
+                'mata_pelajaran_id' => $subjectId,
+                'judul_lingkup_materi' => 'Lingkup '.$lmIndex.' '.$subjectName,
+                'deleted_at' => $deletedAt,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+            $lingkupMateriIds[] = $lingkupMateriId;
+
+            for ($tpIndex = 1; $tpIndex <= $tpPerLingkupMateri; $tpIndex++) {
+                $tujuanPembelajaranIds[] = DB::table('tujuan_pembelajarans')->insertGetId([
+                    'lingkup_materi_id' => $lingkupMateriId,
+                    'kode_tp' => 'TP '.$lmIndex.'.'.$tpIndex,
+                    'deskripsi_tp' => 'Tujuan '.$lmIndex.'.'.$tpIndex.' '.$subjectName,
+                    'deleted_at' => $deletedAt,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            }
+        }
+
+        return [
+            'subject_id' => $subjectId,
+            'lm_ids' => $lingkupMateriIds,
+            'tp_ids' => $tujuanPembelajaranIds,
+        ];
+    }
+
+    private function assertLearningTreeIsGone(array $tree): void
+    {
+        $this->assertDatabaseMissing('mata_pelajarans', ['id' => $tree['subject_id']]);
+
+        foreach ($tree['lm_ids'] as $lingkupMateriId) {
+            $this->assertDatabaseMissing('lingkup_materis', ['id' => $lingkupMateriId]);
+        }
+
+        foreach ($tree['tp_ids'] as $tujuanPembelajaranId) {
+            $this->assertDatabaseMissing('tujuan_pembelajarans', ['id' => $tujuanPembelajaranId]);
+        }
+    }
+
     private function createSchema(): void
     {
         foreach ([
@@ -1439,7 +1657,7 @@ class AdminHardeningPhase2Test extends TestCase
 
         Schema::create('lingkup_materis', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('mata_pelajaran_id')->nullable();
+            $table->foreignId('mata_pelajaran_id')->nullable()->constrained('mata_pelajarans')->cascadeOnDelete();
             $table->string('judul_lingkup_materi');
             $table->timestamps();
             $table->softDeletes();
@@ -1447,7 +1665,7 @@ class AdminHardeningPhase2Test extends TestCase
 
         Schema::create('tujuan_pembelajarans', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('lingkup_materi_id')->nullable();
+            $table->foreignId('lingkup_materi_id')->nullable()->constrained('lingkup_materis')->cascadeOnDelete();
             $table->string('kode_tp')->nullable();
             $table->text('deskripsi_tp')->nullable();
             $table->timestamps();
