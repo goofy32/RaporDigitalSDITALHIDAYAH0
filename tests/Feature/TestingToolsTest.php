@@ -14,6 +14,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 use Symfony\Component\Process\Process;
 use Tests\TestCase;
 
@@ -243,15 +244,61 @@ class TestingToolsTest extends TestCase
             ->assertFailed();
     }
 
+    public function test_simulation_data_command_uses_configured_credential_contract(): void
+    {
+        $commandSource = file_get_contents(app_path('Console/Commands/CreateStagingSimulationData.php'));
+        $configSource = file_get_contents(config_path('staging_test_tools.php'));
+
+        $this->assertDoesNotMatchRegularExpression('/private\s+const\s+TEACHER_'.'PASSWORD\b/', $commandSource);
+        $this->assertStringNotContainsString('Password '.'dummy:', $commandSource);
+        $this->assertStringContainsString("config('staging_test_tools.simulation_teacher_password')", $commandSource);
+        $this->assertStringContainsString("'simulation_teacher_password' => env('STAGING_SIMULATION_TEACHER_PASSWORD')", $configSource);
+    }
+
+    public function test_simulation_data_command_fails_closed_without_configured_credential(): void
+    {
+        $this->basicSetup();
+        config([
+            'app.env' => 'staging',
+            'staging_test_tools.enabled' => true,
+            'staging_test_tools.simulation_teacher_password' => null,
+        ]);
+
+        $this->artisan('staging:create-simulation-data')
+            ->expectsOutput('Password guru dummy simulasi belum dikonfigurasi. Set STAGING_SIMULATION_TEACHER_PASSWORD sebelum menjalankan command ini.')
+            ->assertFailed();
+
+        $this->assertDatabaseMissing('gurus', ['username' => 'dummy_simulasi_load']);
+        $this->assertSame(0, DB::table('kelas')->where('nama_kelas', 'Kelas Simulasi Load Test')->count());
+    }
+
+    public function test_simulation_data_command_dry_run_does_not_require_or_print_credential(): void
+    {
+        $this->basicSetup();
+        config([
+            'app.env' => 'staging',
+            'staging_test_tools.enabled' => true,
+            'staging_test_tools.simulation_teacher_password' => null,
+        ]);
+
+        $this->artisan('staging:create-simulation-data', ['--dry-run' => true])
+            ->assertSuccessful();
+
+        $this->assertDatabaseMissing('gurus', ['username' => 'dummy_simulasi_load']);
+    }
+
     public function test_simulation_data_command_creates_complete_dummy_context(): void
     {
         $tahunAjaranId = $this->basicSetup();
+        $password = $this->configureSimulationTeacherCredential();
         config([
             'app.env' => 'staging',
             'staging_test_tools.enabled' => true,
         ]);
 
         $this->artisan('staging:create-simulation-data')
+            ->doesntExpectOutputToContain($password)
+            ->expectsOutput('Credential guru dummy dikonfigurasi dari environment.')
             ->assertSuccessful();
 
         $kelas = DB::table('kelas')
@@ -263,7 +310,7 @@ class TestingToolsTest extends TestCase
 
         $guru = DB::table('gurus')->where('username', 'dummy_simulasi_load')->first();
         $this->assertNotNull($guru);
-        $this->assertTrue(Hash::check('Simulasi123!', $guru->password));
+        $this->assertTrue(Hash::check($password, $guru->password));
 
         $subject = DB::table('mata_pelajarans')
             ->where('nama_pelajaran', 'Mapel Dummy Simulasi Load Test')
@@ -328,6 +375,7 @@ class TestingToolsTest extends TestCase
     public function test_simulation_data_command_is_idempotent_and_does_not_touch_real_data(): void
     {
         $tahunAjaranId = $this->basicSetup();
+        $this->configureSimulationTeacherCredential();
         $realKelasId = $this->createClass($tahunAjaranId, 'A');
         $realGuruId = $this->createGuru($realKelasId, [
             'nama' => 'Guru Real',
@@ -394,9 +442,36 @@ class TestingToolsTest extends TestCase
         ]);
     }
 
+    public function test_simulation_data_command_rerun_rotates_managed_dummy_teacher_password(): void
+    {
+        $this->basicSetup();
+        $firstPassword = $this->configureSimulationTeacherCredential();
+        config([
+            'app.env' => 'staging',
+            'staging_test_tools.enabled' => true,
+        ]);
+
+        $this->artisan('staging:create-simulation-data')
+            ->doesntExpectOutputToContain($firstPassword)
+            ->assertSuccessful();
+
+        $secondPassword = $this->configureSimulationTeacherCredential();
+
+        $this->artisan('staging:create-simulation-data')
+            ->doesntExpectOutputToContain($secondPassword)
+            ->assertSuccessful();
+
+        $guru = DB::table('gurus')->where('username', 'dummy_simulasi_load')->first();
+
+        $this->assertNotNull($guru);
+        $this->assertFalse(Hash::check($firstPassword, $guru->password));
+        $this->assertTrue(Hash::check($secondPassword, $guru->password));
+    }
+
     public function test_simulation_page_lists_command_dummy_class_subject_and_students(): void
     {
         $this->basicSetup();
+        $this->configureSimulationTeacherCredential();
         config([
             'app.env' => 'staging',
             'staging_test_tools.enabled' => true,
@@ -1130,6 +1205,15 @@ class TestingToolsTest extends TestCase
             ->filter()
             ->values()
             ->all();
+    }
+
+    private function configureSimulationTeacherCredential(): string
+    {
+        $password = Str::random(48);
+
+        config(['staging_test_tools.simulation_teacher_password' => $password]);
+
+        return $password;
     }
 
     private function createContext(string $className, string $subjectName, string $studentName, string $nis, string $nisn): array
