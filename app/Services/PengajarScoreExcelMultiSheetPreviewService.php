@@ -9,7 +9,6 @@ use DomainException;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Collection;
 use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
-use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 
@@ -23,7 +22,8 @@ class PengajarScoreExcelMultiSheetPreviewService
     private const INCOMPLETE_WORKBOOK_MESSAGE = 'Template Upload Semua Nilai tidak lengkap. Silakan download ulang template terbaru dari Download Semua Template Siap.';
 
     public function __construct(
-        private readonly PengajarScoreExcelTemplateService $templateService
+        private readonly PengajarScoreExcelTemplateService $templateService,
+        private readonly SpreadsheetImportGuard $spreadsheetGuard
     ) {
     }
 
@@ -33,9 +33,13 @@ class PengajarScoreExcelMultiSheetPreviewService
      */
     public function preview(UploadedFile $file, Collection $contexts, TahunAjaran $tahunAjaran): array
     {
-        $spreadsheet = IOFactory::load($file->getRealPath());
+        $spreadsheet = $this->spreadsheetGuard->loadUploadedXlsx($file, SpreadsheetImportGuard::PROFILE_MULTI_SCORE);
 
         try {
+            $this->spreadsheetGuard->assertWorksheetCount(
+                $spreadsheet,
+                min(SpreadsheetImportGuard::MAX_MULTI_SCORE_WORKSHEETS, max(2, $contexts->count() + 1))
+            );
             $this->assertBulkWorkbook($spreadsheet);
 
             $contextsBySubject = $contexts->keyBy(fn (array $context) => (int) $context['mataPelajaran']->id);
@@ -279,7 +283,11 @@ class PengajarScoreExcelMultiSheetPreviewService
         $seenStudentIds = [];
         $rows = [];
         $payload = [];
-        $highestRow = $sheet->getHighestDataRow();
+        $highestRow = $this->spreadsheetGuard->assertDataRowLimit(
+            $sheet,
+            PengajarScoreExcelTemplateService::DATA_START_ROW,
+            SpreadsheetImportGuard::MAX_SCORE_IMPORT_ROWS
+        );
 
         for ($rowNumber = PengajarScoreExcelTemplateService::DATA_START_ROW; $rowNumber <= $highestRow; $rowNumber++) {
             if ($this->isBlankRow($sheet, $rowNumber, $columnMap, $requiredKeys)) {

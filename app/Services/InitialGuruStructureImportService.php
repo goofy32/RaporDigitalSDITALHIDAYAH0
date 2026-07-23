@@ -10,7 +10,6 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
-use PhpOffice\PhpSpreadsheet\IOFactory;
 use RuntimeException;
 
 class InitialGuruStructureImportService
@@ -24,15 +23,16 @@ class InitialGuruStructureImportService
         'Bahasa sunda',
     ];
 
+    public function __construct(
+        private readonly SpreadsheetImportGuard $spreadsheetGuard
+    ) {
+    }
+
     /**
      * @return array<string, int>
      */
     public function import(string $filePath, TahunAjaran $tahunAjaran, string $temporaryPassword): array
     {
-        if (! is_file($filePath)) {
-            throw new RuntimeException("File import tidak ditemukan: {$filePath}");
-        }
-
         $stats = $this->emptyStats();
         $rows = $this->readRows($filePath);
 
@@ -85,35 +85,45 @@ class InitialGuruStructureImportService
      */
     public function readRows(string $filePath): array
     {
-        $sheet = IOFactory::load($filePath)->getActiveSheet();
-        $highestRow = $sheet->getHighestDataRow();
-        $highestColumn = $sheet->getHighestDataColumn();
+        $spreadsheet = $this->spreadsheetGuard->loadXlsxFromPath($filePath, SpreadsheetImportGuard::PROFILE_INITIAL_GURU);
 
-        $rawHeaders = $sheet->rangeToArray("A1:{$highestColumn}1", null, true, true, true)[1] ?? [];
-        $headers = [];
+        try {
+            $sheet = $spreadsheet->getActiveSheet();
+            $highestRow = $this->spreadsheetGuard->assertDataRowLimit(
+                $sheet,
+                2,
+                SpreadsheetImportGuard::MAX_STUDENT_IMPORT_ROWS
+            );
+            $highestColumn = $sheet->getHighestDataColumn();
 
-        foreach ($rawHeaders as $column => $header) {
-            $headers[$column] = $this->normalizeHeader((string) $header);
-        }
+            $rawHeaders = $sheet->rangeToArray("A1:{$highestColumn}1", null, true, true, true)[1] ?? [];
+            $headers = [];
 
-        $rows = [];
-
-        for ($rowNumber = 2; $rowNumber <= $highestRow; $rowNumber++) {
-            $row = [];
-
-            foreach ($headers as $column => $header) {
-                if ($header === '') {
-                    continue;
-                }
-
-                $cell = $sheet->getCell("{$column}{$rowNumber}");
-                $row[$header] = trim($cell->getFormattedValue());
+            foreach ($rawHeaders as $column => $header) {
+                $headers[$column] = $this->normalizeHeader((string) $header);
             }
 
-            $rows[$rowNumber] = $row;
-        }
+            $rows = [];
 
-        return $rows;
+            for ($rowNumber = 2; $rowNumber <= $highestRow; $rowNumber++) {
+                $row = [];
+
+                foreach ($headers as $column => $header) {
+                    if ($header === '') {
+                        continue;
+                    }
+
+                    $cell = $sheet->getCell("{$column}{$rowNumber}");
+                    $row[$header] = trim($cell->getFormattedValue());
+                }
+
+                $rows[$rowNumber] = $row;
+            }
+
+            return $rows;
+        } finally {
+            $spreadsheet->disconnectWorksheets();
+        }
     }
 
     /**

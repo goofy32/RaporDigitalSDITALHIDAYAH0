@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Models\TahunAjaran;
 use App\Services\InitialGuruStructureImportService;
+use DomainException;
 use Illuminate\Console\Command;
 use RuntimeException;
 
@@ -49,6 +50,10 @@ class ImportInitialGuruStructure extends Command
 
         try {
             $stats = $importer->import($filePath, $tahunAjaran, $password);
+        } catch (DomainException $exception) {
+            $this->error($exception->getMessage());
+
+            return self::FAILURE;
         } catch (RuntimeException $exception) {
             $this->error($exception->getMessage());
 
@@ -88,19 +93,51 @@ class ImportInitialGuruStructure extends Command
     {
         $provided = $this->option('file');
 
-        $candidates = array_filter([
-            $provided ? base_path((string) $provided) : null,
-            $provided ? (string) $provided : null,
-            storage_path('app/imports/Data Kebutuhan Testing - Guru SDIT Al-Hidayah.xlsx'),
-            base_path('app/Imports/Data Kebutuhan Testing - Guru SDIT Al-Hidayah (1).xlsx'),
-        ]);
+        if (is_string($provided) && trim($provided) !== '') {
+            return $this->providedFilePath($provided);
+        }
 
-        foreach ($candidates as $candidate) {
+        foreach ($this->defaultFileCandidates() as $candidate) {
             if (is_file($candidate)) {
                 return $candidate;
             }
         }
 
         return null;
+    }
+
+    private function providedFilePath(string $path): string
+    {
+        $path = trim($path);
+
+        if ($path === '' || $this->looksLikeUriScheme($path) || $this->isAbsoluteLocalPath($path)) {
+            return $path;
+        }
+
+        return base_path($path);
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function defaultFileCandidates(): array
+    {
+        return [
+            storage_path('app/imports/Data Kebutuhan Testing - Guru SDIT Al-Hidayah.xlsx'),
+            base_path('app/Imports/Data Kebutuhan Testing - Guru SDIT Al-Hidayah (1).xlsx'),
+        ];
+    }
+
+    private function looksLikeUriScheme(string $path): bool
+    {
+        return preg_match('/^(?:php|phar|data|http|https|ftp|zip):/i', $path) === 1
+            || preg_match('/^[A-Za-z][A-Za-z0-9+.-]*:\/\//', $path) === 1;
+    }
+
+    private function isAbsoluteLocalPath(string $path): bool
+    {
+        return str_starts_with($path, '/')
+            || str_starts_with($path, '\\')
+            || preg_match('/^[A-Za-z]:[\/\\\\]/', $path) === 1;
     }
 }

@@ -141,7 +141,7 @@
                 @csrf
                 <div>
                     <label for="excel_import_file" class="mb-2 block text-sm font-medium text-gray-700">File Excel</label>
-                    <input id="excel_import_file" type="file" name="file" accept=".xlsx,.xls" class="block w-full rounded-lg border border-gray-300 bg-gray-50 text-sm text-gray-700 file:mr-3 file:border-0 file:bg-gray-100 file:px-3 file:py-2 file:text-sm file:font-medium file:text-gray-700 hover:file:bg-gray-200">
+                    <input id="excel_import_file" type="file" name="file" accept=".xlsx" class="block w-full rounded-lg border border-gray-300 bg-gray-50 text-sm text-gray-700 file:mr-3 file:border-0 file:bg-gray-100 file:px-3 file:py-2 file:text-sm file:font-medium file:text-gray-700 hover:file:bg-gray-200">
                     @error('file')
                         <p class="mt-2 text-sm text-red-600">{{ $message }}</p>
                     @enderror
@@ -376,4 +376,3 @@
     window.bobotNilai = @json($bobotNilai ?? ['bobot_tp' => 1, 'bobot_lm' => 1, 'bobot_as' => 2]);
 </script>
 @endsection
-
