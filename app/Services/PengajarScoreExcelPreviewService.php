@@ -8,7 +8,6 @@ use App\Models\TahunAjaran;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Collection;
 use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
-use PhpOffice\PhpSpreadsheet\IOFactory;
 
 class PengajarScoreExcelPreviewService
 {
@@ -18,7 +17,8 @@ class PengajarScoreExcelPreviewService
     private const MULTI_SHEET_MESSAGE = 'Untuk saat ini, import nilai hanya menerima template satu kelas dan satu mata pelajaran. Silakan gunakan file dari tombol Download Template Nilai, bukan Download Semua Template Siap.';
 
     public function __construct(
-        private readonly PengajarScoreExcelTemplateService $templateService
+        private readonly PengajarScoreExcelTemplateService $templateService,
+        private readonly SpreadsheetImportGuard $spreadsheetGuard
     ) {
     }
 
@@ -34,7 +34,7 @@ class PengajarScoreExcelPreviewService
         TahunAjaran $tahunAjaran,
         array $existingScores
     ): array {
-        $spreadsheet = IOFactory::load($file->getRealPath());
+        $spreadsheet = $this->spreadsheetGuard->loadUploadedXlsx($file, SpreadsheetImportGuard::PROFILE_SCORE);
 
         try {
             $scoreColumns = $this->templateService->scoreColumns($mataPelajaran);
@@ -72,7 +72,11 @@ class PengajarScoreExcelPreviewService
             $allowedStudents = $siswas->keyBy('id');
             $seenStudentIds = [];
             $previewRows = [];
-            $highestRow = $sheet->getHighestDataRow();
+            $highestRow = $this->spreadsheetGuard->assertDataRowLimit(
+                $sheet,
+                PengajarScoreExcelTemplateService::DATA_START_ROW,
+                SpreadsheetImportGuard::MAX_SCORE_IMPORT_ROWS
+            );
 
             for ($rowNumber = PengajarScoreExcelTemplateService::DATA_START_ROW; $rowNumber <= $highestRow; $rowNumber++) {
                 if ($this->isBlankRow($sheet, $rowNumber, $columnMap, $requiredKeys)) {

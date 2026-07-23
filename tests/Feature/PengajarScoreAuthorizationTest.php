@@ -6,6 +6,7 @@ use App\Http\Controllers\ScoreController;
 use App\Jobs\AutoPreparePdfReportJob;
 use App\Models\Guru;
 use App\Services\PengajarScoreExcelTemplateService;
+use App\Services\SpreadsheetImportGuard;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
 use Illuminate\Http\UploadedFile;
@@ -1301,6 +1302,61 @@ class PengajarScoreAuthorizationTest extends TestCase
         $this->assertSame(0, DB::table('nilais')->count());
     }
 
+    public function test_score_import_preview_rejects_sparse_workbook_with_row_index_above_limit(): void
+    {
+        $workbook = $this->templateWorkbook();
+        $row = PengajarScoreExcelTemplateService::DATA_START_ROW + SpreadsheetImportGuard::MAX_SCORE_IMPORT_ROWS;
+        $this->setValueByKey($this->scoreSheet($workbook), 'siswa_id', $row, $this->studentId);
+
+        $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_preview', $this->subjectId), [
+                'file' => $this->uploadedWorkbook($workbook),
+            ])
+            ->assertRedirect(route('pengajar.score.input_score', $this->subjectId))
+            ->assertSessionHas('error', 'File memiliki terlalu banyak baris untuk diproses.');
+
+        $this->assertSame(0, DB::table('nilais')->count());
+    }
+
+    public function test_score_import_preview_rejects_oversized_upload_before_parsing(): void
+    {
+        $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_preview', $this->subjectId), [
+                'file' => UploadedFile::fake()->create(
+                    'score-import.xlsx',
+                    2049,
+                    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                ),
+            ])
+            ->assertRedirect()
+            ->assertSessionHasErrors('file');
+
+        $this->assertSame(0, DB::table('nilais')->count());
+    }
+
+    public function test_score_import_preview_rejects_malformed_workbook_without_server_error(): void
+    {
+        $path = $this->rawUploadPath('malformed-score-import.xlsx', 'not an xlsx workbook');
+
+        $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_preview', $this->subjectId), [
+                'file' => new UploadedFile(
+                    $path,
+                    'score-import.xlsx',
+                    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    null,
+                    true
+                ),
+            ])
+            ->assertRedirect();
+
+        $this->assertTrue(
+            session()->has('errors') || session()->has('error'),
+            'Malformed score workbook should be rejected through validation or safe import error.'
+        );
+        $this->assertSame(0, DB::table('nilais')->count());
+    }
+
     public function test_unauthorized_guru_cannot_upload_score_import_template(): void
     {
         $uploadedFile = $this->validScoreImportUpload([
@@ -1442,6 +1498,39 @@ class PengajarScoreAuthorizationTest extends TestCase
             ->post(route('pengajar.score.import_templates.save_sheet', ['token' => $token, 'sheet' => 1]))
             ->assertRedirect(route('pengajar.score.import_templates.preview_sheet', ['token' => $token, 'sheet' => 1]))
             ->assertSessionHas('error', 'Sheet ini belum bisa disimpan karena masih ada nilai yang perlu diperbaiki.');
+
+        $this->assertSame(0, DB::table('nilais')->count());
+    }
+
+    public function test_multi_sheet_import_rejects_workbook_with_too_many_worksheets(): void
+    {
+        $second = $this->insertReadySecondSubjectForBudi();
+        $workbook = $this->validMultiSheetWorkbook($second);
+        $workbook->createSheet()->setTitle('Extra Sheet');
+
+        $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_templates.preview'), [
+                'file' => $this->uploadedWorkbook($workbook),
+            ])
+            ->assertRedirect(route('pengajar.score.index'))
+            ->assertSessionHas('error', 'Workbook memiliki terlalu banyak worksheet untuk diproses.');
+
+        $this->assertSame(0, DB::table('nilais')->count());
+    }
+
+    public function test_multi_sheet_import_rejects_sparse_row_above_limit(): void
+    {
+        $second = $this->insertReadySecondSubjectForBudi();
+        $workbook = $this->validMultiSheetWorkbook($second);
+        $row = PengajarScoreExcelTemplateService::DATA_START_ROW + SpreadsheetImportGuard::MAX_SCORE_IMPORT_ROWS;
+        $this->setValueByKey($workbook->getSheetByName('5 A - Matematika'), 'siswa_id', $row, $this->studentId);
+
+        $this->actingAsPengajar($this->budi)
+            ->post(route('pengajar.score.import_templates.preview'), [
+                'file' => $this->uploadedWorkbook($workbook),
+            ])
+            ->assertRedirect(route('pengajar.score.index'))
+            ->assertSessionHas('error', 'File memiliki terlalu banyak baris untuk diproses.');
 
         $this->assertSame(0, DB::table('nilais')->count());
     }
@@ -1939,6 +2028,17 @@ class PengajarScoreAuthorizationTest extends TestCase
         $this->workbooks[] = $path;
 
         return IOFactory::load($path);
+    }
+
+    private function rawUploadPath(string $filename, string $contents): string
+    {
+        $directory = storage_path('framework/testing');
+        File::ensureDirectoryExists($directory);
+        $path = $directory.'/'.uniqid('', true).'-'.$filename;
+        File::put($path, $contents);
+        $this->workbooks[] = $path;
+
+        return $path;
     }
 
     private function scoreSheet($workbook)

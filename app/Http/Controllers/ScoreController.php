@@ -1596,7 +1596,10 @@ class ScoreController extends Controller
     public function previewImport(Request $request, int $id, PengajarScoreExcelPreviewService $previewService)
     {
         $request->validate([
-            'file' => 'required|file|mimes:xlsx,xls|max:2048',
+            'file' => 'required|file|mimes:xlsx|max:2048',
+        ], [
+            'file.mimes' => 'File harus berformat Excel XLSX dari template aplikasi.',
+            'file.max' => 'Ukuran file Excel maksimal 2 MB.',
         ]);
 
         try {
@@ -1611,6 +1614,9 @@ class ScoreController extends Controller
             $context['existingScores'] = $this->overlayImportedScores($context['existingScores'], $preview);
 
             return $this->renderInputScoreView($context, $this->excelImportStateFromPreview($preview));
+        } catch (DomainException $exception) {
+            return redirect()->route('pengajar.score.input_score', $id)
+                ->with('error', $exception->getMessage());
         } catch (\Symfony\Component\HttpKernel\Exception\HttpExceptionInterface $exception) {
             throw $exception;
         } catch (\Throwable $exception) {
@@ -1628,7 +1634,10 @@ class ScoreController extends Controller
     public function previewAllImportTemplates(Request $request, PengajarScoreExcelMultiSheetPreviewService $previewService)
     {
         $request->validate([
-            'file' => 'required|file|mimes:xlsx,xls|max:4096',
+            'file' => 'required|file|mimes:xlsx|max:4096',
+        ], [
+            'file.mimes' => 'File harus berformat Excel XLSX dari template aplikasi.',
+            'file.max' => 'Ukuran file Excel maksimal 4 MB.',
         ]);
 
         try {

@@ -13,8 +13,8 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use PhpOffice\PhpSpreadsheet\Cell\Cell;
 use PhpOffice\PhpSpreadsheet\Cell\DataType;
-use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Shared\Date as ExcelDate;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use Throwable;
 
 class StudentExcelImportService
@@ -51,6 +51,11 @@ class StudentExcelImportService
 
     private const IDENTIFIER_CELL_ERRORS_KEY = '__identifier_cell_errors';
 
+    public function __construct(
+        private readonly SpreadsheetImportGuard $spreadsheetGuard
+    ) {
+    }
+
     /**
      * @return array{success: bool, imported_count: int, skipped_count: int, errors: array<int, string>}
      */
@@ -62,8 +67,14 @@ class StudentExcelImportService
             'semester' => $tahunAjaran->semester,
         ]);
 
-        $worksheet = $this->readWorksheet($file->getRealPath());
-        $prepared = $this->validateRows($worksheet['headers'], $worksheet['rows'], $tahunAjaran);
+        $spreadsheet = $this->spreadsheetGuard->loadUploadedXlsx($file, SpreadsheetImportGuard::PROFILE_STUDENT);
+
+        try {
+            $worksheet = $this->readWorksheet($spreadsheet);
+            $prepared = $this->validateRows($worksheet['headers'], $worksheet['rows'], $tahunAjaran);
+        } finally {
+            $spreadsheet->disconnectWorksheets();
+        }
 
         if ($prepared['errors'] !== []) {
             Log::warning('Student import rejected during validation', [
@@ -140,10 +151,14 @@ class StudentExcelImportService
     /**
      * @return array{headers: array<string, string>, rows: array<int, array<string, mixed>>}
      */
-    private function readWorksheet(string $path): array
+    private function readWorksheet(Spreadsheet $spreadsheet): array
     {
-        $sheet = IOFactory::load($path)->getActiveSheet();
-        $highestRow = $sheet->getHighestDataRow();
+        $sheet = $spreadsheet->getActiveSheet();
+        $highestRow = $this->spreadsheetGuard->assertDataRowLimit(
+            $sheet,
+            2,
+            SpreadsheetImportGuard::MAX_STUDENT_IMPORT_ROWS
+        );
         $highestColumn = $sheet->getHighestDataColumn();
 
         $rawHeaders = $sheet->rangeToArray("A1:{$highestColumn}1", null, true, true, true)[1] ?? [];
