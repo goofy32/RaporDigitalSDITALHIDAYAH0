@@ -1,4 +1,7 @@
 <div class="space-y-6">
+    @php
+        $reportKelas = $kelas ?? $report->kelas ?? $siswa->kelas;
+    @endphp
     <!-- Header Info -->
     <div class="bg-gray-50 p-4 rounded-lg">
         <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -28,7 +31,7 @@
             </div>
             <div>
                 <p class="text-sm text-gray-600">Kelas</p>
-                <p class="font-medium">{{ $siswa->kelas->nama_kelas ?? '-' }}</p>
+                <p class="font-medium">{{ $reportKelas?->nama_kelas ?? '-' }}</p>
             </div>
             <div>
                 <p class="text-sm text-gray-600">Tahun Ajaran</p>

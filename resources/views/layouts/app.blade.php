@@ -203,14 +203,15 @@
 
         <div class="mt-14">
             @php
-                $activeTahunAjaran = \App\Models\TahunAjaran::where('is_active', true)->first();
-                $hasActiveTahunAjaran = !is_null($activeTahunAjaran);
-                $fallbackTahunAjaran = !$hasActiveTahunAjaran
-                    ? \App\Models\TahunAjaran::orderBy('id', 'desc')->first()
+                $layoutSystemActiveTahunAjaran = $systemActiveTahunAjaran ?? null;
+                $layoutSelectedTahunAjaran = $selectedTahunAjaran ?? ($activeTahunAjaran ?? null);
+                $layoutHasActiveTahunAjaran = $hasActiveTahunAjaran ?? !is_null($layoutSystemActiveTahunAjaran);
+                $layoutFallbackTahunAjaran = !$layoutHasActiveTahunAjaran
+                    ? ($latestTahunAjaran ?? null)
                     : null;
             @endphp
 
-            @if(!$hasActiveTahunAjaran)
+            @if(!$layoutHasActiveTahunAjaran)
                 <div x-data="{ show: true }"
                      x-show="show"
                      x-transition.opacity.duration.150ms
@@ -223,16 +224,16 @@
                             <div>
                                 <p class="text-yellow-800 font-medium">Tidak Ada Tahun Ajaran Aktif</p>
                                 <p class="text-yellow-700 text-sm">
-                                    @if($fallbackTahunAjaran)
+                                    @if($layoutFallbackTahunAjaran)
                                         Data akan otomatis masuk ke
-                                        <strong>{{ $fallbackTahunAjaran->tahun_ajaran }} - {{ $fallbackTahunAjaran->semester }}</strong>
+                                        <strong>{{ $layoutFallbackTahunAjaran->tahun_ajaran }} - {{ $layoutFallbackTahunAjaran->semester }}</strong>
                                         (tahun ajaran terakhir).
                                         Aktifkan tahun ajaran yang benar agar data masuk ke tempat yang tepat.
                                     @else
                                         Belum ada tahun ajaran yang dibuat. Buat tahun ajaran terlebih dahulu.
                                     @endif
                                 </p>
-                                @if($fallbackTahunAjaran)
+                                @if($layoutFallbackTahunAjaran)
                                     <a href="{{ route('tahun.ajaran.index') }}" class="text-yellow-800 underline font-medium text-sm mt-1 inline-block">
                                         Aktifkan sekarang &rarr;
                                     </a>
@@ -252,7 +253,7 @@
                 </div>
             @endif
 
-            @if(session('tahun_ajaran_id') && isset($activeTahunAjaran) && $activeTahunAjaran && session('tahun_ajaran_id') != $activeTahunAjaran->id)
+            @if(session('tahun_ajaran_id') && $layoutSystemActiveTahunAjaran && session('tahun_ajaran_id') != $layoutSystemActiveTahunAjaran->id)
                 <div class="bg-blue-50 border-l-4 border-blue-400 p-4 mb-4">
                     <div class="flex">
                         <div class="flex-shrink-0">
@@ -262,7 +263,7 @@
                         </div>
                         <div class="ml-3">
                             <p class="text-sm text-blue-700">
-                                <strong>Perhatian:</strong> Anda sedang melihat data untuk tahun ajaran <strong>{{ (App\Models\TahunAjaran::find(session('tahun_ajaran_id')))->tahun_ajaran ?? 'Tidak diketahui' }}</strong>, sedangkan tahun ajaran aktif adalah <strong>{{ $activeTahunAjaran->tahun_ajaran }}</strong>.
+                                <strong>Perhatian:</strong> Anda sedang melihat data untuk tahun ajaran <strong>{{ $layoutSelectedTahunAjaran?->tahun_ajaran ?? 'Tidak diketahui' }}</strong>, sedangkan tahun ajaran aktif adalah <strong>{{ $layoutSystemActiveTahunAjaran->tahun_ajaran }}</strong>.
                             </p>
                         </div>
                     </div>

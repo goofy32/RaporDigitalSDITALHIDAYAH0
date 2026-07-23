@@ -35,12 +35,12 @@
         </div>
     </div>
 @endif
-<div x-data="dashboard" data-dashboard-role="admin" data-page="admin-dashboard" data-overall-progress="{{ number_format($overallProgress ?? 0, 2) }}">
+<div x-data="dashboard" data-dashboard-role="admin" data-page="admin-dashboard" data-overall-progress="{{ number_format($overallProgress ?? 0, 2) }}" class="pt-2">
     <div x-data="notificationHandler">  
         <!-- Main Content Container -->
-        <div class="flex flex-col lg:flex-row gap-4 mt-14">
+        <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
             <!-- Statistics Grid - Takes 2/3 of the space -->
-            <div class="lg:w-2/3">
+            <div class="lg:col-span-2">
                 <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
                     <!-- Siswa Card -->
                     <div class="rounded-lg bg-white border border-gray-200 shadow-sm overflow-hidden cursor-pointer hover:bg-gray-50 transition-colors" onclick="navigateTo('{{ route('student') }}')">
@@ -62,7 +62,8 @@
                     <div class="rounded-lg bg-white border border-gray-200 shadow-sm overflow-hidden cursor-pointer hover:bg-gray-50 transition-colors" onclick="navigateTo('{{ route('subject.index') }}')">
                         <div class="p-4">
                             <p class="text-2xl font-bold text-green-600">{{ $totalSubjects }}</p>
-                            <p class="text-sm text-green-600">Mata Pelajaran</p>
+                            <p class="text-sm text-green-600">Jenis Mata Pelajaran</p>
+                            <p class="mt-1 text-xs text-gray-500">{{ $totalSubjectAssignments ?? 0 }} penugasan mapel</p>
                         </div>
                     </div>
                     
@@ -85,114 +86,8 @@
             </div>
 
             <!-- Information Section - Takes 1/3 of the space -->
-            <div class="lg:w-1/3">
-                <div class="flex items-center justify-between mb-3">
-                    <div class="bg-green-600 text-white px-3 py-1.5 rounded-lg inline-block">
-                        <span class="flex items-center text-sm">
-                            <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"></path>
-                            </svg>
-                            Informasi
-                        </span>
-                    </div>
-                    <div class="flex items-center gap-2">
-                        <button 
-                            @click="$store.notification.toggleHideRead()"
-                            :title="$store.notification.hideRead ? 'Tampilkan semua' : 'Sembunyikan yang sudah dibaca'"
-                            class="flex min-h-10 min-w-10 items-center justify-center rounded p-2 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600">
-                            <svg x-show="!$store.notification.hideRead"
-                                class="w-4 h-4" fill="none" stroke="currentColor" 
-                                viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" 
-                                    stroke-width="2" 
-                                    d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
-                                <path stroke-linecap="round" stroke-linejoin="round" 
-                                    stroke-width="2" 
-                                    d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 
-                                       8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 
-                                       7-4.477 0-8.268-2.943-9.542-7z"/>
-                            </svg>
-                            <svg x-show="$store.notification.hideRead"
-                                class="w-4 h-4" fill="none" stroke="currentColor" 
-                                viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" 
-                                    stroke-width="2" 
-                                    d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 
-                                       0-8.268-2.943-9.542-7a9.97 9.97 0 011.563-3.029
-                                       m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 
-                                       4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29
-                                       M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 
-                                       8.268 2.943 9.542 7a10.025 10.025 0 01-4.132 
-                                       5.411m0 0L21 21"/>
-                            </svg>
-                        </button>
-                        <button type="button" 
-                                @click="showModal = true"
-                                class="flex h-10 w-10 items-center justify-center rounded-lg bg-transparent text-sm text-gray-400 hover:bg-gray-200 hover:text-gray-900">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
-                            </svg>
-                        </button>
-                    </div>
-                </div>
-
-                <!-- Information Items -->
-                <div class="h-[150px] overflow-y-auto">
-                    <div class="relative pl-14">
-                        <!-- Garis vertikal di tengah icon -->
-                        <div class="absolute left-5 top-0 bottom-0 w-[2px] bg-gray-200"></div>
-                        
-                        <!-- Tampilan saat tidak ada notifikasi -->
-                        <template x-for="item in $store.notification.visibleItems" :key="item.id">
-                            <div class="mb-4 relative min-h-[80px] notification-item">
-                                <!-- Icon on the timeline -->
-                                <div class="absolute -left-12 top-3 w-10 h-10 bg-gray-200 rounded-full flex items-center justify-center z-10">
-                                    <svg class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
-                                    </svg>
-                                </div>
-                                
-                                <!-- Notification content with improved styling and visible timestamp -->
-                                <div :class="item.is_read ? 'bg-white' : 'bg-green-50'"
-                                     class="rounded-lg border shadow-sm p-3 notification-content transition-colors">
-                                    <div class="flex justify-between items-start">
-                                        <div class="flex-1 min-w-0 pr-2">
-                                            <!-- Target info -->
-                                            <p class="text-xs text-gray-500 mb-1 truncate">
-                                                <span class="font-medium">Untuk: </span>
-                                                <span x-text="getTargetText(item)"></span>
-                                            </p>
-                                            
-                                            <!-- Title with timestamp -->
-                                            <div class="flex justify-between items-center mb-1">
-                                                <h3 class="text-sm font-medium text-gray-900 truncate" x-text="item.title"></h3>
-                                            </div>
-                                            
-                                            <!-- Content with no truncation - full text display -->
-                                            <p class="text-xs text-gray-600 break-words whitespace-normal" x-text="item.content"></p>
-                                            <p class="mt-2 text-xs text-gray-400 text-right" x-text="item.created_at_formatted"></p>
-                                        </div>
-                                        
-                                        <!-- Delete button -->
-                                        <button type="button" 
-                                                @click="$store.notification.deleteNotification(item.id)"
-                                                class="text-red-500 hover:text-red-700 flex-shrink-0 ml-2">
-                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
-                                            </svg>
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                        </template>
-
-                        <template x-if="$store.notification.visibleItems.length === 0">
-                            <div class="flex items-center justify-center h-[150px]">
-                                <p class="text-gray-500 text-sm">Tidak ada informasi baru</p>
-                            </div>
-                        </template>
-                    </div>
-                </div>
+            <div class="lg:col-span-1">
+                <x-notification-panel :can-create="true" />
             </div>
         </div>
 

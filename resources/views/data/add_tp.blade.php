@@ -17,7 +17,7 @@
         <!-- Header -->
         <div class="flex justify-between items-center mb-6">
             <h2 class="text-2xl font-bold text-green-700">Tujuan Pembelajaran untuk {{ $mataPelajaran->nama_pelajaran }}</h2>
-            <div>
+            <div class="flex flex-wrap justify-end gap-2">
                 <button onclick="window.history.back()" class="px-4 py-2 mr-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600">
                     Kembali
                 </button>

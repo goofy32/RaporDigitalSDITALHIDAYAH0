@@ -55,6 +55,36 @@ class MataPelajaran extends Model
         return $this->hasMany(Nilai::class, 'mata_pelajaran_id');
     }
 
+    public function scoreTemplateReadinessMessages(): array
+    {
+        $this->loadMissing('lingkupMateris.tujuanPembelajarans');
+
+        if ($this->lingkupMateris->isEmpty()) {
+            return [
+                'Belum lengkap: Mata pelajaran ini belum memiliki Lingkup Materi.',
+            ];
+        }
+
+        return $this->lingkupMateris
+            ->filter(fn ($lingkupMateri) => $lingkupMateri->tujuanPembelajarans->isEmpty())
+            ->map(fn ($lingkupMateri) => 'Belum lengkap: Lingkup Materi "'
+                .$lingkupMateri->judul_lingkup_materi
+                .'" belum memiliki Tujuan Pembelajaran.')
+            ->values()
+            ->all();
+    }
+
+    public function missingTpLingkupMateriNames(): array
+    {
+        $this->loadMissing('lingkupMateris.tujuanPembelajarans');
+
+        return $this->lingkupMateris
+            ->filter(fn ($lingkupMateri) => $lingkupMateri->tujuanPembelajarans->isEmpty())
+            ->pluck('judul_lingkup_materi')
+            ->values()
+            ->all();
+    }
+
     protected static function booted()
     {
         static::deleting(function ($mataPelajaran) {

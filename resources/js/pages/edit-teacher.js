@@ -56,7 +56,7 @@ function handleJabatanChange() {
 
     if (jabatan === 'guru_wali') {
         waliKelasSection.style.display = 'block';
-        kelasMengajarSection.style.display = 'block';
+        kelasMengajarSection.style.display = 'none';
         setTeacherSubmitState('editTeacherForm', availableKelasCount === 0 && !hasCurrentWaliKelas, 'Tidak dapat menyimpan karena tidak ada kelas yang tersedia untuk wali kelas');
         if (waliKelasSelect) {
             waliKelasSelect.required = availableKelasCount > 0 || hasCurrentWaliKelas;
@@ -65,7 +65,7 @@ function handleJabatanChange() {
                 waliKelasSelect.dataset.syncBound = 'true';
             }
         }
-        if (kelasMengajarSelect) kelasMengajarSelect.required = kelasListCount > 0;
+        if (kelasMengajarSelect) kelasMengajarSelect.required = false;
         if (waliKelasSelect?.value) updateKelasMengajarForWali();
         return;
     }
@@ -226,6 +226,105 @@ function bindEditTeacherValidation(form) {
     form.dataset.validationBound = 'true';
 }
 
+let signatureUploadResetBound = false;
+const signatureUploadAllowedTypes = ['image/png', 'image/jpeg', 'image/webp'];
+const signatureUploadMaxBytes = 1024 * 1024;
+const signatureUploadFormatMessage = 'Format tanda tangan harus PNG, JPG, JPEG, atau WebP.';
+const signatureUploadSizeMessage = 'Ukuran tanda tangan maksimal 1 MB.';
+
+function showSignatureUploadClientError(form, message) {
+    const errorBox = form.closest('section')?.querySelector('[data-signature-upload-client-error]');
+
+    if (!errorBox) {
+        alert(message);
+        return;
+    }
+
+    errorBox.textContent = message;
+    errorBox.classList.remove('hidden');
+}
+
+function clearSignatureUploadClientError(form) {
+    const errorBox = form.closest('section')?.querySelector('[data-signature-upload-client-error]');
+
+    if (!errorBox) return;
+
+    errorBox.textContent = '';
+    errorBox.classList.add('hidden');
+}
+
+function validateSignatureUploadFile(file) {
+    if (!signatureUploadAllowedTypes.includes(file.type)) {
+        return signatureUploadFormatMessage;
+    }
+
+    if (file.size > signatureUploadMaxBytes) {
+        return signatureUploadSizeMessage;
+    }
+
+    return '';
+}
+
+function resetSignatureUploadForm() {
+    document.querySelectorAll('[data-signature-upload-form]').forEach(form => {
+        const label = form.querySelector('[data-signature-upload-label]');
+
+        form.dataset.submitting = 'false';
+        clearSignatureUploadClientError(form);
+
+        if (label?.dataset.originalText) {
+            label.textContent = label.dataset.originalText;
+            label.classList.remove('opacity-75', 'pointer-events-none');
+        }
+    });
+}
+
+function bindSignatureUploadForm() {
+    const form = document.querySelector('[data-signature-upload-form]');
+    const input = form?.querySelector('[data-signature-upload-input]');
+    const label = form?.querySelector('[data-signature-upload-label]');
+
+    if (!form || !input || form.dataset.signatureUploadBound === 'true') {
+        return;
+    }
+
+    if (label && !label.dataset.originalText) {
+        label.dataset.originalText = label.textContent.trim();
+    }
+
+    input.addEventListener('change', () => {
+        if (!input.files?.length || form.dataset.submitting === 'true') {
+            return;
+        }
+
+        const validationMessage = validateSignatureUploadFile(input.files[0]);
+
+        if (validationMessage) {
+            input.value = '';
+            form.dataset.submitting = 'false';
+            showSignatureUploadClientError(form, validationMessage);
+            return;
+        }
+
+        clearSignatureUploadClientError(form);
+        form.dataset.submitting = 'true';
+
+        if (label) {
+            label.textContent = 'Mengunggah...';
+            label.classList.add('opacity-75', 'pointer-events-none');
+        }
+
+        form.submit();
+    });
+
+    form.dataset.signatureUploadBound = 'true';
+
+    if (!signatureUploadResetBound) {
+        document.addEventListener('turbo:before-cache', resetSignatureUploadForm);
+        signatureUploadResetBound = true;
+    }
+}
+
 export function initEditTeacherPage() {
     var pageRoot = getPageRoot();
     if (!pageRoot) return;
@@ -237,6 +336,7 @@ export function initEditTeacherPage() {
     bindNumericInputs(form);
     bindTeacherFileValidation(form);
     bindEditTeacherValidation(form);
+    bindSignatureUploadForm();
 
     document.getElementById('current_password')?.addEventListener('blur', function () {
         if (this.value && document.getElementById('new_password')?.value) {

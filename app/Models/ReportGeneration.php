@@ -29,12 +29,12 @@ class ReportGeneration extends Model
 
     public function siswa()
     {
-        return $this->belongsTo(Siswa::class);
+        return $this->belongsTo(Siswa::class)->withTrashed();
     }
 
     public function kelas()
     {
-        return $this->belongsTo(Kelas::class);
+        return $this->belongsTo(Kelas::class)->withTrashed();
     }
 
     public function tahunAjaran()
@@ -49,6 +49,6 @@ class ReportGeneration extends Model
 
     public function generator()
     {
-        return $this->belongsTo(Guru::class, 'generated_by');
+        return $this->belongsTo(Guru::class, 'generated_by')->withTrashed();
     }
 }

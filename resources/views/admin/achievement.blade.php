@@ -20,73 +20,79 @@
             </a>
         </div>
 
-        <div class="flex flex-col md:flex-row justify-between items-center gap-4 mb-6">
-            <form action="{{ route('achievement.index') }}" method="GET" class="w-full" data-turbo="false">
-                <div class="flex gap-2">
-                    <input type="text" name="search" value="{{ request('search') }}"
-                        class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-green-500 focus:border-green-500 block w-full p-2"
-                        placeholder="Cari (contoh: kelas 1, nama siswa, NIS, atau NISN)">
-                    <button type="submit" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                            <path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd" />
-                        </svg>
-                    </button>
+        <div data-live-list>
+            <form action="{{ route('achievement.index') }}" method="GET" class="mb-4" data-live-list-form data-turbo="false">
+                <div class="flex flex-col gap-3 md:flex-row">
+                    <div class="flex flex-1 gap-2">
+                        <input type="text" name="search" value="{{ request('search') }}"
+                            data-live-search-input
+                            class="block w-full rounded-lg border border-gray-300 bg-gray-50 p-2 text-sm text-gray-900 focus:border-green-500 focus:ring-green-500"
+                            placeholder="Cari (contoh: kelas 1, nama siswa, NIS, atau NISN)">
+                        <button type="submit" class="shrink-0 rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700">Cari</button>
+                    </div>
+
+                    <details class="relative" data-live-filter-panel>
+                        <x-live-list.filter-button />
+                        <div class="mt-2 w-full rounded-lg border border-gray-200 bg-white p-4 shadow-lg md:absolute md:right-0 md:z-20 md:w-80">
+                            <div class="space-y-3">
+                                <div>
+                                    <label class="mb-1 block text-sm font-medium text-gray-700">Kelas</label>
+                                    <select name="kelas_id" class="w-full rounded-lg border-gray-300 text-sm focus:border-green-500 focus:ring-green-500">
+                                        <option value="">Semua kelas</option>
+                                        @foreach($kelasOptions as $kelas)
+                                            <option value="{{ $kelas->id }}" @selected((string) request('kelas_id') === (string) $kelas->id)>{{ $kelas->label_kelas }}</option>
+                                        @endforeach
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="mb-1 block text-sm font-medium text-gray-700">Siswa</label>
+                                    <select name="siswa_id" class="w-full rounded-lg border-gray-300 text-sm focus:border-green-500 focus:ring-green-500">
+                                        <option value="">Semua siswa</option>
+                                        @foreach($siswaOptions as $siswa)
+                                            <option value="{{ $siswa->id }}" @selected((string) request('siswa_id') === (string) $siswa->id)>{{ $siswa->nama }}</option>
+                                        @endforeach
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="mb-1 block text-sm font-medium text-gray-700">Jenis prestasi</label>
+                                    <select name="jenis_prestasi" class="w-full rounded-lg border-gray-300 text-sm focus:border-green-500 focus:ring-green-500">
+                                        <option value="">Semua jenis</option>
+                                        @foreach($jenisPrestasiOptions as $jenisPrestasi)
+                                            <option value="{{ $jenisPrestasi }}" @selected(request('jenis_prestasi') === $jenisPrestasi)>{{ $jenisPrestasi }}</option>
+                                        @endforeach
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="mb-1 block text-sm font-medium text-gray-700">Urutkan</label>
+                                    <select name="sort" class="w-full rounded-lg border-gray-300 text-sm focus:border-green-500 focus:ring-green-500">
+                                        <option value="">Terbaru</option>
+                                        <option value="terlama" @selected(request('sort') === 'terlama')>Terlama</option>
+                                        <option value="az" @selected(request('sort') === 'az')>A-Z</option>
+                                    </select>
+                                </div>
+                                <div class="flex items-center justify-end gap-2 pt-2">
+                                    <a href="{{ route('achievement.index') }}" data-live-reset class="rounded-lg bg-gray-100 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200">Reset Filter</a>
+                                    <button type="submit" class="rounded-lg bg-green-700 px-3 py-2 text-sm font-medium text-white hover:bg-green-800">Terapkan</button>
+                                </div>
+                            </div>
+                        </div>
+                    </details>
                 </div>
             </form>
-        </div>
 
-        <!-- Tabel Data Prestasi -->
-        <div class="overflow-x-auto bg-white shadow-md rounded-lg">
-            <table class="w-full text-sm text-left text-gray-500">
-                <thead class="text-xs text-gray-700 uppercase bg-gray-50">
-                    <tr>
-                        <th scope="col" class="px-6 py-3">NO</th>
-                        <th scope="col" class="px-6 py-3">Kelas</th>
-                        <th scope="col" class="px-6 py-3">Nama Siswa</th>
-                        <th scope="col" class="px-6 py-3">Jenis Prestasi</th>
-                        <th scope="col" class="px-6 py-3">Keterangan</th>
-                        <th scope="col" class="px-6 py-3">Aksi</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    @if($prestasis->isEmpty())
-                        <tr class="bg-white border-b">
-                            <td colspan="6" class="px-6 py-4 text-center">Tidak ada data prestasi.</td>
-                        </tr>
-                    @else
-                        @foreach ($prestasis as $index => $prestasi)
-                        <tr class="bg-white border-b hover:bg-gray-50">
-                            <td class="px-6 py-4">{{ $index + 1 }}</td>
-                            <td class="px-6 py-4">
-                                {{ $prestasi->kelas ? 'Kelas ' . $prestasi->kelas->nomor_kelas . ' - ' . $prestasi->kelas->nama_kelas : '-' }}
-                            </td>                            
-                            <td class="px-6 py-4">{{ $prestasi->siswa->nama ?? '-' }}</td>
-                            <td class="px-6 py-4">{{ $prestasi->jenis_prestasi }}</td>
-                            <td class="px-6 py-4">{{ $prestasi->keterangan }}</td>
-                            <td class="px-6 py-4 text-center">
-                                <div class="flex space-x-2">
-                                    <a href="{{ route('achievement.edit', $prestasi->id) }}" class="text-green-600 hover:text-green-800 transition-colors duration-200">
-                                        <img src="{{ asset('images/icons/edit.png') }}" alt="Extracurricular Icon" class="w-5 h-5" title="Ubah Data">
+            @include('components.live-list.filter-chips', ['filters' => [
+                ['key' => 'search', 'label' => 'Pencarian'],
+                ['key' => 'kelas_id', 'label' => 'Kelas', 'values' => $kelasOptions->mapWithKeys(fn ($kelas) => [$kelas->id => $kelas->label_kelas])->all()],
+                ['key' => 'siswa_id', 'label' => 'Siswa', 'values' => $siswaOptions->pluck('nama', 'id')->all()],
+                ['key' => 'jenis_prestasi', 'label' => 'Jenis prestasi'],
+                ['key' => 'sort', 'label' => 'Urutan', 'values' => ['terlama' => 'Terlama', 'az' => 'A-Z']],
+            ]])
 
-                                    </a>
-                                    <form action="{{ route('achievement.destroy', $prestasi->id) }}" method="POST" onsubmit="return confirm('Yakin ingin menghapus data ini?');" class="inline">
-                                        @csrf
-                                        @method('DELETE')
-                                        <button type="submit" class="text-red-600 hover:text-red-800 transition-colors duration-200" title="Hapus Data">
-                                            <img src="{{ asset('images/icons/delete.png') }}" alt="Extracurricular Icon" class="w-5 h-5">
-                                        </button>
-                                    </form>
-                                </div>
-                            </td>
-                        </tr>
-                        @endforeach
-                    @endif
-                </tbody>
-            </table>
-        </div>
+            <div class="mb-3 hidden text-sm text-gray-500" data-live-list-loading>Memuat data...</div>
 
-        <div>
-            {{ $prestasis->links('vendor.pagination.custom') }}
+            <div data-live-list-results>
+                @include('admin.partials.achievement-results', ['prestasis' => $prestasis])
+            </div>
         </div>
     </div>
 </div>

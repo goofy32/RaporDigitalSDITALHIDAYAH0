@@ -9,11 +9,16 @@ use App\Models\Guru;
 use App\Models\MataPelajaran;
 use App\Models\Nilai;
 use App\Models\Ekstrakurikuler;
+use App\Models\TahunAjaran;
+use App\Traits\RespondsWithLiveList;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 class ClassController extends Controller
 {
+    use RespondsWithLiveList;
+
     // Menampilkan daftar kelas
     public function index(Request $request)
     {
@@ -26,6 +31,24 @@ class ClassController extends Controller
         // Filter berdasarkan tahun ajaran jika ada
         if ($tahunAjaranId) {
             $query->where('tahun_ajaran_id', $tahunAjaranId);
+        }
+
+        if ($request->filled('tingkat')) {
+            $query->where('nomor_kelas', $request->integer('tingkat'));
+        }
+
+        if ($request->filled('wali_status')) {
+            if ($request->wali_status === 'ada') {
+                $query->whereHas('waliKelas');
+            } elseif ($request->wali_status === 'belum') {
+                $query->whereDoesntHave('waliKelas');
+            }
+        }
+
+        if ($request->filled('wali_kelas_id')) {
+            $query->whereHas('waliKelas', function ($waliQuery) use ($request) {
+                $waliQuery->where('gurus.id', $request->integer('wali_kelas_id'));
+            });
         }
         
         // Handle pencarian
@@ -55,11 +78,16 @@ class ClassController extends Controller
             });
         }
         
-        // Default ordering jika tidak ada pencarian
-        if (!$request->has('search') || 
-            (isset($terms) && count($terms) === 1 && $terms[0] === 'kelas')) {
-            $query->orderBy('nomor_kelas', 'asc')
-                  ->orderBy('nama_kelas', 'asc');
+        if ($request->input('sort') === 'za') {
+            $query->orderBy('nama_kelas', 'desc')
+                ->orderBy('nomor_kelas', 'desc');
+        } else {
+            // Default ordering jika tidak ada pencarian
+            if (!$request->has('search') ||
+                (isset($terms) && count($terms) === 1 && $terms[0] === 'kelas')) {
+                $query->orderBy('nomor_kelas', 'asc')
+                    ->orderBy('nama_kelas', 'asc');
+            }
         }
         
         $kelasList = $query->paginate(10);
@@ -69,30 +97,41 @@ class ClassController extends Controller
         if ($tahunAjaranId) {
             $activeTahunAjaran = \App\Models\TahunAjaran::find($tahunAjaranId);
         }
-        
-        return view('admin.class', compact('kelasList', 'activeTahunAjaran'));
+
+        $classLevels = Kelas::query()
+            ->when($tahunAjaranId, fn ($levelQuery) => $levelQuery->where('tahun_ajaran_id', $tahunAjaranId))
+            ->select('nomor_kelas')
+            ->distinct()
+            ->orderBy('nomor_kelas')
+            ->pluck('nomor_kelas');
+
+        $waliKelasOptions = Guru::query()
+            ->whereHas('kelas', function ($kelasQuery) use ($tahunAjaranId) {
+                $kelasQuery->where('guru_kelas.is_wali_kelas', true)
+                    ->where('guru_kelas.role', 'wali_kelas')
+                    ->when($tahunAjaranId, fn ($query) => $query->where('kelas.tahun_ajaran_id', $tahunAjaranId));
+            })
+            ->orderBy('nama')
+            ->get(['id', 'nama']);
+
+        return $this->liveListResponse(
+            $request,
+            'admin.class',
+            'admin.partials.class-results',
+            compact('kelasList', 'activeTahunAjaran', 'classLevels', 'waliKelasOptions')
+        );
     }
 
     // Menampilkan form tambah data kelas
-    public function create()
+    public function create(Request $request)
     {
-        $tahunAjaranId = session('tahun_ajaran_id');
+        $tahunAjaranId = $request->integer('target_tahun_ajaran_id')
+            ?: $request->integer('tahun_ajaran_id')
+            ?: session('tahun_ajaran_id');
+        $targetTahunAjaran = $tahunAjaranId ? TahunAjaran::find($tahunAjaranId) : null;
+        $redirectTo = $request->query('redirect_to');
         
-        $assignedWaliKelasIds = DB::table('guru_kelas')
-            ->join('kelas', 'guru_kelas.kelas_id', '=', 'kelas.id')
-            ->where('guru_kelas.is_wali_kelas', true)
-            ->where('guru_kelas.role', 'wali_kelas')
-            ->when($tahunAjaranId, function ($query) use ($tahunAjaranId) {
-                $query->where('kelas.tahun_ajaran_id', $tahunAjaranId);
-            })
-            ->pluck('guru_kelas.guru_id');
-
-        $guruList = Guru::where('jabatan', 'guru_wali')
-            ->whereNotIn('id', $assignedWaliKelasIds)
-            ->orderBy('nama')
-            ->get();
-    
-        return view('data.create_class', compact('guruList'));
+        return view('data.create_class', compact('targetTahunAjaran', 'tahunAjaranId', 'redirectTo'));
     }
 
     public function store(Request $request)
@@ -100,6 +139,9 @@ class ClassController extends Controller
         $validated = $request->validate([
             'nomor_kelas' => 'required|integer|min:1|max:99',
             'nama_kelas' => 'required|string|max:255',
+            'target_tahun_ajaran_id' => 'nullable|exists:tahun_ajarans,id',
+            'tahun_ajaran_id' => 'nullable|exists:tahun_ajarans,id',
+            'redirect_to' => 'nullable|string|max:2048',
         ], [
             'nomor_kelas.required' => 'Nomor kelas harus diisi',
             'nomor_kelas.integer' => 'Nomor kelas harus berupa angka',
@@ -109,7 +151,13 @@ class ClassController extends Controller
             'nama_kelas.max' => 'Nama kelas maksimal 255 karakter'
         ]);
     
-        $tahunAjaranId = session('tahun_ajaran_id');
+        $tahunAjaranId = (int) (($validated['target_tahun_ajaran_id'] ?? null)
+            ?: ($validated['tahun_ajaran_id'] ?? null)
+            ?: session('tahun_ajaran_id'));
+
+        if (! $tahunAjaranId) {
+            return back()->withInput()->with('error', 'Tahun ajaran belum dipilih.');
+        }
 
         // Check for existing class with the same name
         $existingClass = Kelas::where('nomor_kelas', $request->nomor_kelas)
@@ -128,38 +176,14 @@ class ClassController extends Controller
             // Buat kelas baru
             $kelas = Kelas::create([
                 'nomor_kelas' => $request->nomor_kelas,
-                'nama_kelas' => $request->nama_kelas
+                'nama_kelas' => $request->nama_kelas,
+                'tahun_ajaran_id' => $tahunAjaranId,
             ]);
     
-            // Jika ada wali kelas yang dipilih
-            if ($request->filled('wali_kelas_id')) {
-                // Ambil data guru
-                $guru = Guru::find($request->wali_kelas_id);
-                
-                if (!$guru) {
-                    throw new \Exception('Guru tidak ditemukan');
-                }
-                
-                // Attach guru sebagai wali kelas
-                $kelas->guru()->attach($request->wali_kelas_id, [
-                    'is_wali_kelas' => true,
-                    'role' => 'wali_kelas'
-                ]);
-    
-                // Update jabatan guru menjadi guru_wali
-                $guru->jabatan = 'guru_wali';
-                $guru->save();
-                
-                // Tambahkan logging untuk debugging
-                Log::info('Mengubah jabatan guru', [
-                    'guru_id' => $guru->id,
-                    'nama' => $guru->nama,
-                    'jabatan_baru' => 'guru_wali'
-                ]);
-            }
-    
             DB::commit();
-            return redirect()->route('kelas.index')
+            $redirectTo = $this->safeClassRedirect($validated['redirect_to'] ?? null);
+
+            return ($redirectTo ? redirect()->to($redirectTo) : redirect()->route('kelas.index'))
                 ->with('success', 'Data kelas berhasil ditambahkan');
         } catch (\Exception $e) {
             DB::rollBack();
@@ -174,41 +198,24 @@ class ClassController extends Controller
         }
     }
 
+    private function safeClassRedirect(?string $redirectTo): ?string
+    {
+        if (! $redirectTo) {
+            return null;
+        }
+
+        if (Str::startsWith($redirectTo, [url('/'), '/'])) {
+            return $redirectTo;
+        }
+
+        return null;
+    }
+
     public function edit($id)
     {
-        $tahunAjaranId = session('tahun_ajaran_id');
         $kelas = Kelas::findOrFail($id);
-        
-        // Ambil data wali kelas saat ini (jika ada)
-        $waliKelas = $kelas->guru()
-                        ->wherePivot('is_wali_kelas', true)
-                        ->wherePivot('role', 'wali_kelas')
-                        ->first();
-        
-        $assignedWaliKelasIds = DB::table('guru_kelas')
-            ->join('kelas', 'guru_kelas.kelas_id', '=', 'kelas.id')
-            ->where('guru_kelas.is_wali_kelas', true)
-            ->where('guru_kelas.role', 'wali_kelas')
-            ->when($tahunAjaranId, function ($query) use ($tahunAjaranId) {
-                $query->where('kelas.tahun_ajaran_id', $tahunAjaranId);
-            })
-            ->when($waliKelas, function ($query) use ($waliKelas) {
-                $query->where('guru_kelas.guru_id', '!=', $waliKelas->id);
-            })
-            ->pluck('guru_kelas.guru_id');
 
-        $availableGuruList = Guru::where(function ($query) use ($waliKelas) {
-                $query->where('jabatan', 'guru_wali');
-
-                if ($waliKelas) {
-                    $query->orWhere('id', $waliKelas->id);
-                }
-            })
-            ->whereNotIn('id', $assignedWaliKelasIds)
-            ->orderBy('nama')
-            ->get();
-        
-        return view('data.edit_class', compact('kelas', 'waliKelas', 'availableGuruList'));
+        return view('data.edit_class', compact('kelas'));
     }
         
     public function update(Request $request, $id)

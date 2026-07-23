@@ -3,7 +3,7 @@
 @section('title', 'Recycle Bin / Sampah')
 
 @section('content')
-<div data-page="admin-recycle-bin" class="p-4 bg-white block sm:flex items-center justify-between border-b border-gray-200">
+<div data-recycle-bin-root class="p-4 bg-white block sm:flex items-center justify-between border-b border-gray-200">
     <div class="mb-1 w-full">
         <div class="mb-4">
             <h1 class="text-xl font-semibold text-gray-900 sm:text-2xl">Recycle Bin / Sampah</h1>
@@ -164,6 +164,9 @@
                                     <div>
                                         <p class="text-sm font-medium text-gray-900">{{ $item['name'] }}</p>
                                         <p class="text-sm text-gray-500 mt-1">{{ \Illuminate\Support\Str::limit($item['description'], 100) }}</p>
+                                        @if(!empty($item['force_delete_note']))
+                                            <p class="mt-2 rounded-md bg-red-50 px-3 py-2 text-xs text-red-700">{{ $item['force_delete_note'] }}</p>
+                                        @endif
                                         @if($hasChildren)
                                             <p class="text-xs text-gray-400 mt-1">{{ count($item['children']) }} item turunan</p>
                                         @endif
@@ -191,9 +194,14 @@
                                             Restore
                                         </button>
                                     </form>
-                                    <form method="POST" action="{{ route('admin.recycle-bin.force-delete', ['type' => $item['type'], 'id' => $item['id']]) }}" onsubmit="return confirm('Hapus permanen data ini? Tindakan ini tidak dapat dibatalkan.')">
+                                    <form method="POST"
+                                        action="{{ route('admin.recycle-bin.force-delete', ['type' => $item['type'], 'id' => $item['id']]) }}"
+                                        data-force-delete-form
+                                        data-item-type="{{ $item['type'] }}"
+                                        data-confirmation="{{ $item['force_delete_confirmation'] ?? '' }}">
                                         @csrf
                                         @method('DELETE')
+                                        <input type="hidden" name="purge_confirmation" value="">
                                         <button type="submit" class="px-3 py-1.5 text-xs font-medium text-white bg-red-600 rounded-lg hover:bg-red-700">
                                             Hapus Permanen
                                         </button>
@@ -314,7 +322,7 @@
 
 <script>
     function initRecycleBinPage() {
-        var page = document.querySelector('[data-page="admin-recycle-bin"]');
+        var page = document.querySelector('[data-recycle-bin-root]');
         if (!page || page.dataset.recycleBinInit === 'true') {
             return;
         }
@@ -359,6 +367,31 @@
 
                 return posA - posB;
             });
+        }
+
+        function confirmForceDelete(form) {
+            if (form.dataset.itemType === 'siswa') {
+                var expected = form.dataset.confirmation || '';
+                var typed = prompt('Ketik "' + expected + '" untuk menghapus permanen siswa ini. Tindakan ini tidak dapat dibatalkan.');
+
+                if (typed === null) {
+                    return false;
+                }
+
+                if (typed.trim() !== expected) {
+                    alert('Konfirmasi tidak sesuai. Data siswa tidak dihapus.');
+                    return false;
+                }
+
+                var input = form.querySelector('input[name="purge_confirmation"]');
+                if (input) {
+                    input.value = typed.trim();
+                }
+
+                return true;
+            }
+
+            return confirm('Hapus permanen data ini? Tindakan ini tidak dapat dibatalkan.');
         }
 
         function updateSelectedCount() {
@@ -431,7 +464,7 @@
                 return;
             }
 
-            selectedDeleteForm.innerHTML = '<input type="hidden" name="_token" value="' + csrfToken + '"><input type="hidden" name="_method" value="DELETE">';
+            selectedDeleteForm.innerHTML = '<input type="hidden" name="_token" value="' + csrfToken + '"><input type="hidden" name="_method" value="DELETE"><input type="hidden" name="confirmation" value="HAPUS PERMANEN">';
 
             selected.forEach(function (value) {
                 var input = document.createElement('input');
@@ -449,10 +482,30 @@
                 return;
             }
 
+            var confirmation = prompt('Ketik HAPUS PERMANEN untuk menghapus seluruh isi recycle bin.');
+
+            if (confirmation === null) {
+                return;
+            }
+
+            if (confirmation !== 'HAPUS PERMANEN') {
+                alert('Konfirmasi tidak sesuai. Data tidak dihapus.');
+                return;
+            }
+
+            deleteAllForm.innerHTML = '<input type="hidden" name="_token" value="' + csrfToken + '"><input type="hidden" name="_method" value="DELETE"><input type="hidden" name="confirmation" value="HAPUS PERMANEN">';
             deleteAllForm.submit();
         });
 
         updateSelectedCount();
+
+        document.querySelectorAll('[data-force-delete-form]').forEach(function (form) {
+            form.addEventListener('submit', function (event) {
+                if (!confirmForceDelete(form)) {
+                    event.preventDefault();
+                }
+            });
+        });
     }
 
     document.addEventListener('turbo:load', initRecycleBinPage);

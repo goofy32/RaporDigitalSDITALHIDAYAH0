@@ -38,6 +38,29 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Optional Diagnostic Logs
+    |--------------------------------------------------------------------------
+    |
+    | These flags are intentionally disabled by default so routine authenticated
+    | page loads do not fill production logs. Enable them briefly on staging when
+    | investigating a specific performance or data-context issue.
+    |
+    */
+
+    'diagnostics' => [
+        'log_roster_fallback' => (bool) env('LOG_ROSTER_FALLBACK', false),
+        'log_dashboard_progress' => (bool) env('LOG_DASHBOARD_PROGRESS', false),
+        'log_teacher_search' => (bool) env('LOG_TEACHER_SEARCH', false),
+        'log_tahun_ajaran_model_lifecycle' => (bool) env('LOG_TAHUN_AJARAN_MODEL_LIFECYCLE', false),
+        'log_report_processing' => (bool) env('LOG_REPORT_PROCESSING', false),
+    ],
+
+    'report_performance' => [
+        'enabled' => (bool) env('REPORT_PERFORMANCE_ENABLED', false),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Log Channels
     |--------------------------------------------------------------------------
     |
@@ -70,6 +93,14 @@ return [
             'path' => storage_path('logs/laravel.log'),
             'level' => env('LOG_LEVEL', 'debug'),
             'days' => env('LOG_DAILY_DAYS', 14),
+            'replace_placeholders' => true,
+        ],
+
+        'performance' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/performance.log'),
+            'level' => env('PERFORMANCE_LOG_LEVEL', 'info'),
+            'days' => env('PERFORMANCE_LOG_DAYS', 14),
             'replace_placeholders' => true,
         ],
 

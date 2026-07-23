@@ -8,6 +8,7 @@ use Laravel\Sanctum\HasApiTokens;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Facades\DB;
+use App\Services\GuruRoleAvailability;
 
 class Guru extends Authenticatable
 {
@@ -26,7 +27,9 @@ class Guru extends Authenticatable
         'jabatan',
         'username',
         'password',
+        'must_change_password',
         'photo',
+        'signature_path',
     ];
 
     // Relasi dengan kelas
@@ -61,6 +64,56 @@ class Guru extends Authenticatable
         return $this->kelasWali()->exists();
     }
 
+    public function hasWaliKelasAssignment(?int $tahunAjaranId = null): bool
+    {
+        return DB::table('guru_kelas')
+            ->join('kelas', 'guru_kelas.kelas_id', '=', 'kelas.id')
+            ->where('guru_kelas.guru_id', $this->id)
+            ->where('guru_kelas.is_wali_kelas', true)
+            ->where('guru_kelas.role', 'wali_kelas')
+            ->whereNull('kelas.deleted_at')
+            ->when($tahunAjaranId, function ($query) use ($tahunAjaranId) {
+                $query->where('kelas.tahun_ajaran_id', $tahunAjaranId);
+            })
+            ->exists();
+    }
+
+    public function hasPengajarAssignment(?int $tahunAjaranId = null, ?int $semester = null): bool
+    {
+        $hasClassAssignment = DB::table('guru_kelas')
+            ->join('kelas', 'guru_kelas.kelas_id', '=', 'kelas.id')
+            ->where('guru_kelas.guru_id', $this->id)
+            ->where('guru_kelas.role', 'pengajar')
+            ->whereNull('kelas.deleted_at')
+            ->when($tahunAjaranId, function ($query) use ($tahunAjaranId) {
+                $query->where('kelas.tahun_ajaran_id', $tahunAjaranId);
+            })
+            ->exists();
+
+        if ($hasClassAssignment) {
+            return true;
+        }
+
+        return DB::table('mata_pelajarans')
+            ->join('kelas', 'mata_pelajarans.kelas_id', '=', 'kelas.id')
+            ->where('mata_pelajarans.guru_id', $this->id)
+            ->whereNull('mata_pelajarans.deleted_at')
+            ->whereNull('kelas.deleted_at')
+            ->when($tahunAjaranId, function ($query) use ($tahunAjaranId) {
+                $query->where('mata_pelajarans.tahun_ajaran_id', $tahunAjaranId)
+                    ->where('kelas.tahun_ajaran_id', $tahunAjaranId);
+            })
+            ->when($semester, function ($query) use ($semester) {
+                $query->where('mata_pelajarans.semester', $semester);
+            })
+            ->exists();
+    }
+
+    public function availableRoles(?int $tahunAjaranId = null, ?int $semester = null): array
+    {
+        return app(GuruRoleAvailability::class)->availableRoles($this, $tahunAjaranId, $semester);
+    }
+
     /**
      * Get kelas wali if exists
      */
@@ -86,6 +139,7 @@ class Guru extends Authenticatable
     protected $casts = [
         'email_verified_at' => 'datetime',
         'password' => 'hashed',
+        'must_change_password' => 'boolean',
         'tanggal_lahir' => 'date',
         'id' => 'integer'
     ];
@@ -126,6 +180,94 @@ class Guru extends Authenticatable
     public function mataPelajarans()
     {
         return $this->hasMany(MataPelajaran::class, 'guru_id');
+    }
+
+    public function waliClassLabels()
+    {
+        $classes = $this->relationLoaded('kelas')
+            ? $this->getRelation('kelas')
+            : $this->kelas()->get();
+
+        return $classes
+            ->filter(fn ($kelas) => $kelas->pivot->is_wali_kelas || $kelas->pivot->role === 'wali_kelas')
+            ->map(fn ($kelas) => $kelas->label_kelas)
+            ->unique()
+            ->values();
+    }
+
+    public function groupedTeachingResponsibilities()
+    {
+        $groups = collect();
+        $subjects = $this->relationLoaded('mataPelajarans')
+            ? $this->getRelation('mataPelajarans')
+            : $this->mataPelajarans()->with('kelas')->get();
+
+        foreach ($subjects->filter(fn ($subject) => $subject->kelas) as $subject) {
+            $classLabel = $subject->kelas->label_kelas;
+            $existingSubjects = $groups->get($classLabel, collect());
+            $subjectName = trim((string) $subject->nama_pelajaran);
+
+            if ($this->shouldDisplaySubjectName($subject)) {
+                $existingSubjects->push($subjectName);
+            }
+
+            $groups->put($classLabel, $existingSubjects->unique()->values());
+        }
+
+        $classes = $this->relationLoaded('kelas')
+            ? $this->getRelation('kelas')
+            : $this->kelas()->get();
+
+        $classes
+            ->filter(fn ($kelas) => $kelas->pivot->role === 'pengajar' && ! $kelas->pivot->is_wali_kelas)
+            ->each(function ($kelas) use ($groups) {
+                $groups->put($kelas->label_kelas, $groups->get($kelas->label_kelas, collect())->unique()->values());
+            });
+
+        return $groups->sortKeys();
+    }
+
+    public function teachingSummaryLabels()
+    {
+        $groups = $this->groupedTeachingResponsibilities();
+        $hasMultipleClasses = $groups->count() > 1;
+
+        return $groups
+            ->map(function ($subjects, string $classLabel) use ($hasMultipleClasses) {
+                $subjectCount = $subjects->count();
+
+                if ($subjectCount === 0) {
+                    return $classLabel;
+                }
+
+                if ($hasMultipleClasses) {
+                    return $classLabel.': '.$subjectCount.' mapel';
+                }
+
+                return $subjectCount.' mapel di '.$classLabel;
+            })
+            ->values();
+    }
+
+    private function shouldDisplaySubjectName(MataPelajaran $subject): bool
+    {
+        $subjectName = trim((string) $subject->nama_pelajaran);
+
+        if ($subjectName === '' || ! $subject->kelas) {
+            return false;
+        }
+
+        $normalizedSubject = $this->normalizeResponsibilityText($subjectName);
+
+        return ! in_array($normalizedSubject, [
+            $this->normalizeResponsibilityText((string) $subject->kelas->nama_kelas),
+            $this->normalizeResponsibilityText($subject->kelas->label_kelas),
+        ], true);
+    }
+
+    private function normalizeResponsibilityText(string $value): string
+    {
+        return mb_strtolower(preg_replace('/\s+/', '', trim($value)), 'UTF-8');
     }
 
     /**

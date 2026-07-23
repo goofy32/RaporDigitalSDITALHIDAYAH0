@@ -17,6 +17,10 @@ class RedirectIfAuthenticated
 
         // Cek jika user sudah login sebagai guru
         if (Auth::guard('guru')->check()) {
+            if (Auth::guard('guru')->user()?->must_change_password) {
+                return redirect()->route('guru.force-password.edit');
+            }
+
             $selectedRole = session('selected_role');
 
             if ($selectedRole === 'wali_kelas') {

@@ -3,9 +3,12 @@
 use App\Http\Middleware\CheckMataPelajaranOwnership;
 use App\Http\Middleware\SessionTimeout;
 use App\Http\Middleware\CacheControl;
+use App\Http\Middleware\SlowRequestMonitor;
+use App\Http\Middleware\SyncGuruSelectedRoleSession;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Session\Middleware\StartSession;
 use App\Http\Middleware\TahunAjaranMiddleware;
 
 return Application::configure(basePath: dirname(__DIR__))
@@ -20,9 +23,13 @@ return Application::configure(basePath: dirname(__DIR__))
             SessionTimeout::class,
             CacheControl::class,
             \App\Http\Middleware\SecurityHeaders::class,
+            SlowRequestMonitor::class,
             TahunAjaranMiddleware::class,
-            \App\Http\Middleware\HandleValidationErrors::class
+            \App\Http\Middleware\HandleValidationErrors::class,
+            SyncGuruSelectedRoleSession::class,
         ]);
+
+        $middleware->appendToPriorityList(StartSession::class, SyncGuruSelectedRoleSession::class);
 
         $middleware->alias([
             'auth' => \App\Http\Middleware\Authenticate::class,
@@ -36,6 +43,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'check.wali.kelas' => \App\Http\Middleware\CheckWaliKelas::class,
             'check.report.template' => \App\Http\Middleware\CheckReportTemplate::class,
             'check.rapor.access' => \App\Http\Middleware\CheckRaporAccess::class,
+            'force.guru.password' => \App\Http\Middleware\EnsureGuruPasswordChanged::class,
             'tahun.ajaran' => TahunAjaranMiddleware::class,
             'check.basic.setup' => \App\Http\Middleware\CheckBasicSetup::class,
             'handle.validation.errors' => \App\Http\Middleware\HandleValidationErrors::class,

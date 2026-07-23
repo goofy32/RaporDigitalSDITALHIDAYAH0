@@ -3,6 +3,7 @@ import {
     initializeSubjectEntry,
     markSubjectFormChanged,
     markSubjectFormSubmitting,
+    refreshLearningCopyOption,
     setSubjectPageReady,
 } from '../features/subject-form';
 
@@ -95,6 +96,7 @@ function setPendingDeleteState(row, button, id, isPending) {
 
     setDeleteButtonState(button, isPending);
     syncPendingDeleteInputs();
+    refreshLearningCopyOption(getForm());
     markSubjectFormChanged();
 }
 
@@ -109,10 +111,12 @@ function addLingkupMateri() {
             <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
         </button>`;
     container.appendChild(div);
+    refreshLearningCopyOption(getForm());
 }
 
 function removeLingkupMateri(button) {
     button.parentElement.remove();
+    refreshLearningCopyOption(getForm());
 }
 
 function confirmDeleteLingkupMateri(button, id) {
@@ -147,6 +151,29 @@ function handleCheckboxChange(checkbox) {
     const mode = checkbox.classList.contains('muatan-lokal-checkbox')
         ? (checkbox.checked ? 'muatan_lokal' : 'default')
         : (checkbox.checked ? 'guru_mapel' : 'default');
+    const typeSelect = form?.querySelector('.subject-type-select');
+    if (typeSelect) {
+        typeSelect.value = mode === 'muatan_lokal' ? 'muatan_lokal' : (mode === 'guru_mapel' ? 'specialist' : 'regular');
+    }
+
+    initializeSubjectEntry(form, {
+        mode,
+        resetSelection: true,
+    });
+
+    markSubjectFormChanged();
+}
+
+function handleTeachingTypeChange(select) {
+    const form = getForm();
+    const muatanCheckbox = form?.querySelector('.muatan-lokal-checkbox');
+    const allowNonWaliCheckbox = form?.querySelector('.allow-non-wali-checkbox');
+    const mode = select.value === 'muatan_lokal'
+        ? 'muatan_lokal'
+        : (select.value === 'specialist' ? 'guru_mapel' : 'default');
+
+    if (muatanCheckbox) muatanCheckbox.checked = select.value === 'muatan_lokal';
+    if (allowNonWaliCheckbox) allowNonWaliCheckbox.checked = select.value === 'specialist';
 
     initializeSubjectEntry(form, {
         mode,
@@ -164,6 +191,7 @@ function updateFormState() {
         mode: form.dataset.subjectMode || undefined,
         resetSelection: false,
     });
+    refreshLearningCopyOption(form);
 }
 
 function registerEditSubjectGlobals() {
@@ -173,6 +201,7 @@ function registerEditSubjectGlobals() {
     window.checkForDependentData = checkForDependentData;
     window.deleteLingkupMateri = deleteLingkupMateri;
     window.handleCheckboxChange = handleCheckboxChange;
+    window.handleTeachingTypeChange = handleTeachingTypeChange;
     window.updateFormState = updateFormState;
 }
 
@@ -241,12 +270,14 @@ function bindEditSubjectPage() {
 
     document.getElementById('mata_pelajaran')?.addEventListener('input', () => {
         validateMataPelajaran();
+        refreshLearningCopyOption(form);
         markSubjectFormChanged();
     });
-    bindChangeListener(document.getElementById('semester'), validateMataPelajaran);
+    bindChangeListener(document.getElementById('semester'), () => { validateMataPelajaran(); refreshLearningCopyOption(form); });
     bindChangeListener(document.getElementById('kelas'), () => { validateMataPelajaran(); updateFormState(); });
     bindChangeListener(document.getElementById('is_muatan_lokal'), () => handleCheckboxChange(document.getElementById('is_muatan_lokal')));
     bindChangeListener(document.getElementById('allow_non_wali'), () => handleCheckboxChange(document.getElementById('allow_non_wali')));
+    bindChangeListener(document.getElementById('teaching_type'), () => handleTeachingTypeChange(document.getElementById('teaching_type')));
 
     document.querySelectorAll('#lingkupMateriContainer input[name="lingkup_materi[]"]').forEach(input => {
         const originalValue = input.getAttribute('data-original-value');
@@ -259,6 +290,7 @@ function bindEditSubjectPage() {
     });
     validateMataPelajaran();
     updateFormState();
+    refreshLearningCopyOption(form);
     syncPendingDeleteInputs();
     setSubjectPageReady(pageRoot, form);
     form.addEventListener('submit', event => {

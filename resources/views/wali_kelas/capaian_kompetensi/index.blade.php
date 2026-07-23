@@ -1,6 +1,8 @@
 {{-- resources/views/wali_kelas/capaian_kompetensi/index.blade.php --}}
 @extends('layouts.wali_kelas.app')
 
+@section('title', 'Capaian Kompetensi')
+
 @section('content')
 <div class="p-4 bg-white mt-14">
     <!-- Header -->
@@ -37,19 +39,15 @@
                     <th class="px-6 py-3">Mata Pelajaran</th>
                     <th class="px-6 py-3">Guru Pengampu</th>
                     <th class="px-6 py-3">Semester</th>
-                    <th class="px-6 py-3 text-center">Status Kustomisasi</th>
+                    <th class="px-6 py-3 text-center">Status Deskripsi</th>
                     <th class="px-6 py-3 text-center">Aksi</th>
                 </tr>
             </thead>
             <tbody>
                 @forelse($mataPelajarans as $index => $mataPelajaran)
                     @php
-                        $customCount = \App\Models\CapaianKompetensiCustom::where('mata_pelajaran_id', $mataPelajaran->id)
-                            ->where('tahun_ajaran_id', session('tahun_ajaran_id'))
-                            ->where('semester', \App\Models\TahunAjaran::find(session('tahun_ajaran_id'))->semester ?? 1)
-                            ->count();
-                        
-                        $totalSiswa = \App\Models\Siswa::where('kelas_id', $kelas->id)->count();
+                        $customCount = (int) ($customCounts[$mataPelajaran->id] ?? 0);
+                        $defaultCount = max(0, $totalSiswa - $customCount);
                     @endphp
                     <tr class="bg-white border-b hover:bg-gray-50">
                         <td class="px-6 py-4">{{ $index + 1 }}</td>
@@ -66,12 +64,26 @@
                             </span>
                         </td>
                         <td class="px-6 py-4 text-center">
-                            @if($customCount > 0)
-                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                                    {{ $customCount }}/{{ $totalSiswa }} dikustomisasi
+                            @if($totalSiswa === 0 || $customCount === 0)
+                                <span class="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-700"
+                                      title="Khusus berarti deskripsi siswa telah diubah dari pengaturan default.">
+                                    Semua menggunakan default
+                                </span>
+                            @elseif($customCount >= $totalSiswa)
+                                <span class="inline-flex items-center rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-medium text-green-700 ring-1 ring-green-200"
+                                      title="Khusus berarti deskripsi siswa telah diubah dari pengaturan default.">
+                                    {{ $totalSiswa }} siswa memakai deskripsi khusus
                                 </span>
                             @else
-                                <span class="text-xs text-gray-500">Otomatis</span>
+                                <div class="flex flex-wrap items-center justify-center gap-1.5"
+                                     title="Khusus berarti deskripsi siswa telah diubah dari pengaturan default.">
+                                    <span class="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-700">
+                                        {{ $defaultCount }} Default
+                                    </span>
+                                    <span class="inline-flex items-center rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-medium text-green-700 ring-1 ring-green-200">
+                                        {{ $customCount }} Khusus
+                                    </span>
+                                </div>
                             @endif
                         </td>
                         <td class="px-6 py-4">

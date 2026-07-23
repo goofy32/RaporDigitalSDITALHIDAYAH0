@@ -15,6 +15,7 @@
     data-is-guru-wali="{{ auth()->guard('guru')->user()->jabatan == 'guru_wali' ? 'true' : 'false' }}"
     data-subject-id="{{ $subject->id }}"
     data-mapel-data='@json($pengajarMapelData)'
+    data-learning-copy-candidates='{!! e(json_encode($lmTpCopyCandidates ?? [])) !!}'
     data-session-error="{{ e(session('error', '')) }}"
 >
     <div class="p-4 bg-white mt-14">
@@ -196,10 +197,10 @@
                         <!-- Jika wali kelas dan mengajar di kelas wali, tampilkan sebagai readonly -->
                         <div class="relative">
                             <input type="text" 
-                                value="Kelas {{ $subject->kelas->nomor_kelas }} {{ $subject->kelas->nama_kelas }} (Kelas Wali)"
+                                value="{{ $subject->kelas->label_kelas }} (Kelas Wali)"
                                 class="block w-full p-2.5 bg-gray-100 border border-gray-300 rounded-lg text-gray-700 cursor-not-allowed"
                                 readonly>
-                            <input type="hidden" name="kelas" value="{{ $subject->kelas_id }}">
+                            <input type="hidden" name="kelas" value="{{ $subject->kelas_id }}" data-class-number="{{ $subject->kelas?->nomor_kelas }}">
                             <p class="mt-1 text-xs text-gray-500">Kelas tidak dapat diubah untuk mata pelajaran wali kelas</p>
                         </div>
                     @else
@@ -211,8 +212,9 @@
                                 @foreach($classes as $class)
                                     <option value="{{ $class->id }}" 
                                         {{ old('kelas', $subject->kelas_id) == $class->id ? 'selected' : '' }}
+                                        data-class-number="{{ $class->nomor_kelas }}"
                                         data-is-wali-kelas="{{ auth()->guard('guru')->user()->getWaliKelasId() == $class->id ? 'true' : 'false' }}">
-                                        Kelas {{ $class->nomor_kelas }} {{ $class->nama_kelas }}
+                                        {{ $class->label_kelas }}
                                         {{ auth()->guard('guru')->user()->getWaliKelasId() == $class->id ? '(Wali Kelas)' : '' }}
                                     </option>
                                 @endforeach
@@ -269,6 +271,13 @@
                     @error('lingkup_materi')
                         <p class="mt-1 text-sm text-red-500">{{ $message }}</p>
                     @enderror
+
+                    @if(!empty($lmTpCopyCandidates ?? []))
+                        @include('shared.lm_tp_inline_copy_option', [
+                            'checkboxId' => 'copy_lm_tp',
+                            'sourceId' => 'copy_lm_tp_source_id',
+                        ])
+                    @endif
                 </div>
             </div>
         </form>

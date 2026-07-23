@@ -5,7 +5,6 @@
 <aside id="logo-sidebar" 
        class="fixed top-0 left-0 z-40 w-64 h-screen pt-20 transition-transform -translate-x-full bg-white border-r border-gray-200 sm:translate-x-0 dark:bg-gray-800 dark:border-gray-700" 
        aria-label="Sidebar"
-       data-turbo-permanent
        x-data="{ 
            initImages() {
                this.$el.querySelectorAll('img').forEach(img => {
@@ -65,40 +64,8 @@
                     
                     <!-- Warning Indicator with Modified Logic -->
                     @php
-                    $hasLowScores = false;
-                    $countLowScores = 0;
-                    $kkmValue = 70; // Default KKM value
-                    
-                    // Cek apakah ada guru yang login
-                    if (Auth::guard('guru')->check()) {
-                        $guru = Auth::guard('guru')->user();
-                        
-                        // Base query
-                        $query = DB::table('nilais')
-                            ->join('mata_pelajarans', 'nilais.mata_pelajaran_id', '=', 'mata_pelajarans.id')
-                            ->join('kkms', 'mata_pelajarans.id', '=', 'kkms.mata_pelajaran_id')
-                            ->where('mata_pelajarans.guru_id', $guru->id)
-                            ->whereNull('nilais.deleted_at')
-                            ->whereNull('mata_pelajarans.deleted_at')
-                            ->where('nilais.nilai_akhir_rapor', '<', DB::raw('kkms.nilai'));
-                            
-                        // Add tahun ajaran filter
-                        $tahunAjaranId = session('tahun_ajaran_id');
-                        if ($tahunAjaranId) {
-                            $query->where(function($q) use ($tahunAjaranId) {
-                                $q->where('nilais.tahun_ajaran_id', $tahunAjaranId)
-                                    ->where('mata_pelajarans.tahun_ajaran_id', $tahunAjaranId)
-                                    ->where('kkms.tahun_ajaran_id', $tahunAjaranId);
-                            });
-                        }
-                        
-                        $nilaiDibawahKKM = $query->count();
-                            
-                        if ($nilaiDibawahKKM > 0) {
-                            $hasLowScores = true;
-                            $countLowScores = $nilaiDibawahKKM;
-                        }
-                    }
+                    $hasLowScores = $pengajarHasLowScores ?? false;
+                    $countLowScores = $pengajarLowScoreCount ?? 0;
                     @endphp
                     
                     @if($hasLowScores)

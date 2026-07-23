@@ -14,10 +14,12 @@ use App\Http\Controllers\ScoreController;
 use App\Http\Controllers\TujuanPembelajaranController;
 use App\Http\Controllers\EkstrakurikulerController;
 use App\Http\Controllers\ReportController;
-use App\Http\Controllers\UserController;
 use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\TahunAjaranController;
 use App\Http\Controllers\GeminiChatController;
+use App\Http\Controllers\GuruPasswordController;
+use App\Http\Controllers\GuruSignatureController;
+use App\Http\Controllers\HelpCenterController;
 use App\Http\Controllers\AuditController;
 use App\Http\Controllers\KkmController;
 use App\Http\Controllers\BobotNilaiController;
@@ -26,8 +28,8 @@ use App\Http\Controllers\CatatanController;
 use App\Http\Controllers\CapaianKompetensiController;
 use App\Http\Controllers\CapaianRangeTemplateController;
 use App\Http\Controllers\RecycleBinController;
+use App\Http\Controllers\Admin\StagingSimulationController;
 use App\Models\Siswa;
-use App\Models\FormatRapor;
 use App\Models\Kelas;
 use Illuminate\Support\Facades\Auth;
 
@@ -93,31 +95,7 @@ Route::get('/api/session-config', function () {
 })->middleware(['web']);
 
 Route::get('/notifications/unread-count', function () {
-    if (Auth::guard('guru')->check()) {
-        $guru = Auth::guard('guru')->user();
-        $role = session('selected_role') === 'wali_kelas' ? 'wali_kelas' : 'guru';
-
-        $count = \App\Models\Notification::where(function($query) use ($guru, $role) {
-            $query->where('target', 'all')
-                  ->orWhere('target', $role)
-                  ->orWhere(function($q) use ($guru) {
-                      $q->where('target', 'specific')
-                        ->whereJsonContains('specific_users', (int) $guru->id);
-                  });
-        })
-        ->whereDoesntHave('readers', function($query) use ($guru) {
-            $query->where('guru_id', $guru->id);
-        })
-        ->count();
-
-        return response()->json(['count' => $count]);
-    }
-
-    if (Auth::guard('web')->check()) {
-        return response()->json(['count' => 0]);
-    }
-
-    return response()->json(['count' => 0], 401);
+    return app(NotificationController::class)->getUnreadCount();
 })->middleware(['web']);
 
 
@@ -130,6 +108,10 @@ Route::middleware(['web', 'guest'])->group(function () {
         }
         
         if (Auth::guard('guru')->check()) {
+            if (Auth::guard('guru')->user()?->must_change_password) {
+                return redirect()->route('guru.force-password.edit');
+            }
+
             $selectedRole = session('selected_role');
             return $selectedRole === 'wali_kelas' 
                 ? redirect()->route('wali_kelas.dashboard')
@@ -147,14 +129,25 @@ Route::middleware(['web', 'guest'])->group(function () {
 
 Route::post('logout', [LoginController::class, 'logout'])->name('logout');
 
-Route::middleware('auth:guru')->group(function () {
-    Route::get('/switch-role/{role}', [LoginController::class, 'switchRole'])
+Route::middleware('auth:guru')->prefix('guru')->name('guru.')->group(function () {
+    Route::get('/password/change', [GuruPasswordController::class, 'editForceChange'])
+        ->name('force-password.edit');
+    Route::put('/password/change', [GuruPasswordController::class, 'updateForceChange'])
+        ->name('force-password.update');
+});
+
+Route::middleware(['auth:guru', 'force.guru.password'])->group(function () {
+    Route::get('/switch-role/{role}', fn () => abort(405));
+
+    Route::post('/switch-role/{role}', [LoginController::class, 'switchRole'])
         ->name('auth.switch.role');
 });
 
 // Admin Routes - Guard: web, Role: admin only
 Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admin')->group(function () {
 
+    Route::get('/help', [HelpCenterController::class, 'adminIndex'])->name('admin.help.index');
+    Route::get('/help/faq', [HelpCenterController::class, 'adminFaq'])->name('admin.help.faq');
     
     Route::prefix('gemini')->name('gemini.')->middleware('throttle:20,1')->group(function () {
         Route::post('/send-message', [GeminiChatController::class, 'sendMessage'])->name('send');
@@ -165,74 +158,11 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
         Route::get('/auto-switch-tahun', [GeminiChatController::class, 'autoSwitchTahunAjaran'])->name('gemini.auto-switch');
         Route::delete('/clear-conversation', [GeminiChatController::class, 'resetConversation'])->name('reset-conversation');
 
-        if (app()->environment('local')) {
+        if (config('staging_test_tools.enabled')) {
             Route::get('/test-knowledge', [GeminiChatController::class, 'testKnowledgeBase'])->name('test-knowledge');
             Route::get('/debug-test', [GeminiChatController::class, 'debugTest'])->name('debug-test');
-            Route::get('/test-direct', [GeminiChatController::class, 'testGeminiDirectly'])->name('test-direct');
-            Route::get('/test-db', [GeminiChatController::class, 'testDatabaseConnection'])->name('test-db');
-            Route::get('/test-intent', [GeminiChatController::class, 'testIntentAnalysis'])->name('test-intent');
-            Route::get('/test-data', [GeminiChatController::class, 'testDataFetching'])->name('test-data');
-            Route::get('/debug-nilai', [GeminiChatController::class, 'debugNilaiData'])->name('gemini.debug-nilai');
         }
     });
-
-    if (app()->environment('local')) {
-        Route::get('/admin/gemini/test-database', function() {
-            try {
-                $tahunAjaranId = session('tahun_ajaran_id');
-                
-                $nilaiCount = \App\Models\Nilai::where('tahun_ajaran_id', $tahunAjaranId)
-                    ->whereNotNull('nilai_akhir_rapor')
-                    ->count();
-                    
-                $siswaCount = \App\Models\Siswa::whereHas('kelas', function($q) use ($tahunAjaranId) {
-                    $q->where('tahun_ajaran_id', $tahunAjaranId);
-                })->count();
-                
-                $kelasCount = \App\Models\Kelas::where('tahun_ajaran_id', $tahunAjaranId)->count();
-                
-                $mataPelajaranCount = \App\Models\MataPelajaran::where('tahun_ajaran_id', $tahunAjaranId)->count();
-                
-                $userRole = 'unknown';
-                if (Auth::guard('web')->check()) {
-                    $userRole = 'admin';
-                } elseif (Auth::guard('guru')->check()) {
-                    $userRole = session('selected_role') === 'wali_kelas' ? 'wali_kelas' : 'guru';
-                }
-                
-                return response()->json([
-                    'success' => true,
-                    'tahun_ajaran_id' => $tahunAjaranId,
-                    'user_role' => $userRole,
-                    'data_counts' => [
-                        'nilai' => $nilaiCount,
-                        'siswa' => $siswaCount,
-                        'kelas' => $kelasCount,
-                        'mata_pelajaran' => $mataPelajaranCount
-                    ],
-                    'sample_nilai' => \App\Models\Nilai::where('tahun_ajaran_id', $tahunAjaranId)
-                        ->with(['siswa', 'mataPelajaran'])
-                        ->whereNotNull('nilai_akhir_rapor')
-                        ->limit(3)
-                        ->get()
-                        ->map(function($nilai) {
-                            return [
-                                'siswa' => $nilai->siswa->nama ?? 'N/A',
-                                'mata_pelajaran' => $nilai->mataPelajaran->nama_pelajaran ?? 'N/A',
-                                'nilai' => $nilai->nilai_akhir_rapor
-                            ];
-                        })
-                ]);
-                
-            } catch (\Exception $e) {
-                return response()->json([
-                    'success' => false,
-                    'error' => $e->getMessage(),
-                    'trace' => $e->getTraceAsString()
-                ]);
-            }
-        })->middleware(['auth:web']);
-    }
 
     Route::prefix('kkm')->name('admin.kkm.')->group(function() {
         Route::get('/', [KkmController::class, 'index'])->name('index');
@@ -288,11 +218,24 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
     Route::get('/dashboard', [DashboardController::class, 'adminDashboard'])->name('admin.dashboard');
     Route::get('/kelas-progress/{id}', [DashboardController::class, 'getKelasProgressAdmin'])
         ->name('admin.kelas.progress');
+
+    if (config('staging_test_tools.enabled')) {
+        Route::prefix('testing/multi-user-simulation')->name('admin.testing.multi-user.')->group(function () {
+            Route::get('/', [StagingSimulationController::class, 'index'])->name('index');
+            Route::get('/queue-health', [StagingSimulationController::class, 'queueHealth'])->name('queue-health');
+            Route::post('/pdf', [StagingSimulationController::class, 'simulatePdf'])->name('pdf');
+            Route::post('/score', [StagingSimulationController::class, 'simulateScore'])->name('score');
+        });
+    }
     
     // Information/Notifications
     Route::prefix('information')->name('information.')->group(function () {
         Route::post('/', [NotificationController::class, 'store'])->name('store');
-        Route::delete('/{notification}', [NotificationController::class, 'destroy'])->name('destroy');
+        Route::post('/mark-all-read', [NotificationController::class, 'markAllAsRead'])->name('mark-all-read');
+        Route::delete('/delete-all', [NotificationController::class, 'destroyAll'])->name('delete-all');
+        Route::get('/unread-count', [NotificationController::class, 'getUnreadCount'])->name('unread-count');
+        Route::post('/{notification}/read', [NotificationController::class, 'markAsRead'])->name('read')->whereNumber('notification');
+        Route::delete('/{notification}', [NotificationController::class, 'destroy'])->name('destroy')->whereNumber('notification');
         Route::get('/list', [NotificationController::class, 'list'])->name('list');
     });
 
@@ -315,6 +258,12 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
     Route::get('profile/edit', [SchoolProfileController::class, 'edit'])->name('profile.edit');
     Route::post('profile', [SchoolProfileController::class, 'store'])->name('profile.submit');
     
+    Route::get('template/student', [StudentController::class, 'downloadTemplate'])->name('student.template');
+    Route::get('students/upload', [StudentController::class, 'uploadPage'])->name('student.upload');
+    Route::post('students/import', [StudentController::class, 'importExcel'])
+        ->middleware('throttle:5,1')
+        ->name('student.import');
+
     // Student Management
     Route::resource('students', StudentController::class)->names([
         'index' => 'student',
@@ -325,17 +274,10 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
         'update' => 'student.update',
         'destroy' => 'student.destroy',
     ]);
-    
-    Route::get('template/student', [StudentController::class, 'downloadTemplate'])->name('student.template');
-    Route::get('students/upload', [StudentController::class, 'uploadPage'])->name('student.upload');
-    Route::post('students/import', [StudentController::class, 'importExcel'])
-        ->middleware('throttle:5,1')
-        ->name('student.import');
 
     // Subject Settings Routes - harus di atas resource route untuk menghindari konflik
     Route::get('subject/bobot-nilai', [BobotNilaiController::class, 'subjectView'])->name('admin.subject.bobot-nilai');
     Route::get('subject/kkm', [KkmController::class, 'subjectView'])->name('admin.subject.kkm');
-    
     // Subject Routes
     Route::resource('subject', SubjectController::class);
 
@@ -383,9 +325,16 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
         Route::get('/', [TeacherController::class, 'index'])->name('teacher');
         Route::get('/create', [TeacherController::class, 'create'])->name('teacher.create');
         Route::post('/store', [TeacherController::class, 'store'])->name('teacher.store');
+        Route::get('/{guru}/signature', [GuruSignatureController::class, 'show'])->name('teacher.signature.show');
+        Route::post('/{guru}/signature', [GuruSignatureController::class, 'store'])->name('teacher.signature.store');
+        Route::delete('/{guru}/signature', [GuruSignatureController::class, 'destroy'])->name('teacher.signature.destroy');
         Route::get('/{id}', [TeacherController::class, 'show'])->name('teacher.show');
         Route::get('/{id}/edit', [TeacherController::class, 'edit'])->name('teacher.edit');
         Route::put('/{id}', [TeacherController::class, 'update'])->name('teacher.update');
+        Route::get('/{guru}/reset-password', [GuruPasswordController::class, 'editReset'])
+            ->name('teacher.reset-password.edit');
+        Route::put('/{guru}/reset-password', [GuruPasswordController::class, 'updateReset'])
+            ->name('teacher.reset-password.update');
         Route::delete('/{id}', [TeacherController::class, 'destroy'])->name('teacher.destroy');
         
         Route::post('/verify-password', [TeacherController::class, 'verifyPassword'])
@@ -447,6 +396,8 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
         Route::post('/upload', [ReportController::class, 'upload'])
             ->middleware('throttle:20,1')
             ->name('upload');
+        Route::post('/opened-period', [ReportController::class, 'updateOpenedReportPeriod'])
+            ->name('opened-period.update');
         
         Route::get('/{template}/download', [ReportController::class, 'downloadTemplate'])
         ->name('download');
@@ -465,13 +416,16 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
 });
 
     // Pengajar Routes - Guard: guru, Role: guru
-    Route::middleware(['auth:guru', 'role:guru'])
+    Route::middleware(['auth:guru', 'force.guru.password', 'role:guru'])
         ->prefix('pengajar')
         ->name('pengajar.')  // Tambahkan ini untuk name prefix
         ->group(function () {
 
     Route::get('/mata-pelajaran-progress/{mataPelajaranId}', [DashboardController::class, 'getMataPelajaranProgress'])
         ->name('mata_pelajaran.progress');
+
+    Route::get('/help', [HelpCenterController::class, 'pengajarIndex'])->name('help.index');
+    Route::get('/help/faq', [HelpCenterController::class, 'pengajarFaq'])->name('help.faq');
 
     Route::prefix('gemini')->name('gemini.')->middleware('throttle:20,1')->group(function () {
         Route::post('/send-message', [GeminiChatController::class, 'sendMessage'])->name('send');
@@ -505,7 +459,10 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
     // Notifications
     Route::prefix('notifications')->name('notifications.')->group(function () {
         Route::get('/', [NotificationController::class, 'index'])->name('index');
-        Route::post('/{notification}/read', [NotificationController::class, 'markAsRead'])->name('read');
+        Route::post('/mark-all-read', [NotificationController::class, 'markAllAsRead'])->name('mark-all-read');
+        Route::delete('/delete-all', [NotificationController::class, 'destroyAll'])->name('delete-all');
+        Route::post('/{notification}/read', [NotificationController::class, 'markAsRead'])->name('read')->whereNumber('notification');
+        Route::delete('/{notification}', [NotificationController::class, 'destroy'])->name('destroy')->whereNumber('notification');
         Route::get('/unread-count', [NotificationController::class, 'getUnreadCount'])->name('unread-count');
     });
 
@@ -527,10 +484,19 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
     // Score Management
     Route::prefix('score')->name('score.')->group(function () {
         Route::get('/', [ScoreController::class, 'index'])->name('index');
+        Route::get('/import/templates', [ScoreController::class, 'downloadAllImportTemplates'])->name('import_templates');
+        Route::post('/import/templates/preview', [ScoreController::class, 'previewAllImportTemplates'])->name('import_templates.preview');
+        Route::get('/import/templates/preview/{token}/{sheet?}', [ScoreController::class, 'showAllImportTemplatePreview'])
+            ->whereNumber('sheet')
+            ->name('import_templates.preview_sheet');
+        Route::post('/import/templates/preview/{token}/{sheet}/save', [ScoreController::class, 'saveAllImportTemplateSheet'])
+            ->whereNumber('sheet')
+            ->name('import_templates.save_sheet');
         Route::get('/{id}/input', [ScoreController::class, 'inputScore'])->name('input_score');
         Route::post('/{id}/save', [ScoreController::class, 'saveScore'])->name('save_scores');
+        Route::get('/{id}/import/template', [ScoreController::class, 'downloadImportTemplate'])->name('import_template');
+        Route::post('/{id}/import/preview', [ScoreController::class, 'previewImport'])->name('import_preview');
         Route::get('/{id}/preview', [ScoreController::class, 'previewScore'])->name('preview_score');
-        Route::delete('/{id}', [ScoreController::class, 'deleteScores'])->name('delete');
         Route::post('/score/nilai/delete', [ScoreController::class, 'deleteNilai'])->name('nilai.delete');
         Route::post('/validate', [ScoreController::class, 'validateScores'])->name('validate');
         Route::post('/get-class-subjects', [ScoreController::class, 'getClassSubjects'])->name('get_class_subjects');
@@ -560,7 +526,7 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
 });
 
 // Wali Kelas Routes - Guard: guru, Role: wali_kelas
-Route::middleware(['auth:guru', 'role:wali_kelas'])
+Route::middleware(['auth:guru', 'force.guru.password', 'role:wali_kelas'])
 ->prefix('wali-kelas')
 ->name('wali_kelas.')
 ->group(function () {
@@ -571,15 +537,24 @@ Route::prefix('rapor-html')->name('rapor_html.')->group(function () {
     Route::get('/', [ReportController::class, 'indexPrintRapor'])->name('index');
     
     // Halaman cetak rapor HTML untuk siswa tertentu
-    Route::get('/print/{siswa}', [ReportController::class, 'printRaporHtml'])->name('print');
+    Route::get('/print/{siswa}', [ReportController::class, 'printRaporHtml'])
+        ->middleware('check.rapor.access')
+        ->name('print');
     
     // Route alternatif dengan nama yang lebih jelas
-    Route::get('/cetak/{siswa}', [ReportController::class, 'printRaporHtml'])->name('cetak');
+    Route::get('/cetak/{siswa}', [ReportController::class, 'printRaporHtml'])
+        ->middleware('check.rapor.access')
+        ->name('cetak');
 });
 
 // Alternative routes for rapor HTML
 Route::get('/cetak-rapor', [ReportController::class, 'indexPrintRapor'])->name('rapor.print_index');
-Route::get('/cetak-rapor/{siswa}', [ReportController::class, 'printRaporHtml'])->name('rapor.print_html');
+Route::get('/cetak-rapor/{siswa}', [ReportController::class, 'printRaporHtml'])
+    ->middleware('check.rapor.access')
+    ->name('rapor.print_html');
+
+Route::get('/help', [HelpCenterController::class, 'waliKelasIndex'])->name('help.index');
+Route::get('/help/faq', [HelpCenterController::class, 'waliKelasFaq'])->name('help.faq');
 
 Route::prefix('gemini')->name('gemini.')->middleware('throttle:20,1')->group(function () {
     Route::post('/send-message', [GeminiChatController::class, 'sendMessage'])->name('send');
@@ -590,15 +565,20 @@ Route::prefix('gemini')->name('gemini.')->middleware('throttle:20,1')->group(fun
 
 Route::prefix('capaian-kompetensi')->name('capaian_kompetensi.')->group(function () {
     Route::get('/', [CapaianKompetensiController::class, 'waliKelasIndex'])->name('index');
-    Route::get('/{mataPelajaran}/edit', [CapaianKompetensiController::class, 'waliKelasEdit'])->name('edit');
-    Route::put('/{mataPelajaran}', [CapaianKompetensiController::class, 'waliKelasUpdate'])->name('update');
-    
+
     // Route baru untuk range templates
-    Route::get('/range-templates', [CapaianKompetensiController::class, 'rangeTemplates'])->name('range_templates');
+    Route::get('/range-templates', [CapaianRangeTemplateController::class, 'index'])->name('range_templates');
     Route::put('/range-templates', [CapaianRangeTemplateController::class, 'update'])->name('range_templates.update');
     Route::post('/range-templates', [CapaianRangeTemplateController::class, 'store'])->name('range_templates.store');
     Route::delete('/range-templates/{id}', [CapaianRangeTemplateController::class, 'destroy'])->name('range_templates.destroy');
     Route::post('/range-templates/reset', [CapaianRangeTemplateController::class, 'resetToDefault'])->name('range_templates.reset');
+
+    Route::get('/{mataPelajaran}/edit', [CapaianKompetensiController::class, 'waliKelasEdit'])->name('edit');
+    Route::put('/{mataPelajaran}/save-all', [CapaianKompetensiController::class, 'waliKelasSaveAllCapaian'])->name('save_all');
+    Route::put('/{mataPelajaran}/phrase-defaults', [CapaianKompetensiController::class, 'waliKelasUpdatePhraseDefaults'])->name('phrase_defaults.update');
+    Route::put('/{mataPelajaran}/students/phrases/batch', [CapaianKompetensiController::class, 'waliKelasBatchUpdateStudentPhrases'])->name('students.phrases.batch_update');
+    Route::put('/{mataPelajaran}/students/{siswa}/phrases', [CapaianKompetensiController::class, 'waliKelasUpdateStudentPhrase'])->name('students.phrases.update');
+    Route::put('/{mataPelajaran}', [CapaianKompetensiController::class, 'waliKelasUpdate'])->name('update');
 });
 
 Route::prefix('catatan')->name('catatan.')->group(function () {
@@ -619,7 +599,10 @@ Route::prefix('catatan')->name('catatan.')->group(function () {
 
 Route::prefix('notifications')->name('notifications.')->group(function () {
     Route::get('/', [NotificationController::class, 'index'])->name('index');
-    Route::post('/{notification}/read', [NotificationController::class, 'markAsRead'])->name('read');
+    Route::post('/mark-all-read', [NotificationController::class, 'markAllAsRead'])->name('mark-all-read');
+    Route::delete('/delete-all', [NotificationController::class, 'destroyAll'])->name('delete-all');
+    Route::post('/{notification}/read', [NotificationController::class, 'markAsRead'])->name('read')->whereNumber('notification');
+    Route::delete('/{notification}', [NotificationController::class, 'destroy'])->name('destroy')->whereNumber('notification');
     Route::get('/unread-count', [NotificationController::class, 'getUnreadCount'])->name('unread-count');
 });
 
@@ -686,7 +669,7 @@ Route::post('/lingkup-materi/{id}/update', [SubjectController::class, 'updateLin
 // Ensure this route exists for tujuan pembelajaran view
 Route::get('/tujuan-pembelajaran/{mata_pelajaran_id}/view', [TujuanPembelajaranController::class, 'teacherView'])
     ->name('tujuan_pembelajaran.view');
-if (app()->environment('local')) {
+if (config('staging_test_tools.enabled')) {
     Route::get('/test-pdf-request', function() {
         try {
             $siswa = \App\Models\Siswa::first();
@@ -721,18 +704,35 @@ Route::prefix('rapor')->name('rapor.')->group(function () {
     });
 
     Route::middleware('check.rapor.access')->group(function () {
-        Route::get('/download/{siswa}/{type}', [ReportController::class, 'downloadReport'])->name('download');
+        Route::get('/download/{siswa}/{type}', function () {
+            if (request()->wantsJson()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unduh DOCX tersedia melalui tombol generate rapor pada halaman Rapor.',
+                ], 404);
+            }
+
+            return redirect()->route('wali_kelas.rapor.index')
+                ->with('error', 'Unduh DOCX tersedia melalui tombol generate rapor pada halaman Rapor.');
+        })->name('download');
     });
 
-    Route::get('/preview/{siswa}', [ReportController::class, 'previewRapor'])->name('preview');
+    Route::get('/preview/{siswa}', [ReportController::class, 'previewRapor'])
+        ->middleware('check.rapor.access')
+        ->name('preview');
     Route::get('/check-templates', [ReportController::class, 'checkActiveTemplates'])->name('check-templates');
+    Route::get('/pdf-statuses', [ReportController::class, 'pdfStatuses'])
+        ->middleware('throttle:30,1')
+        ->name('pdf-statuses');
     Route::post('/batch-generate', [ReportController::class, 'generateBatchReport'])
         ->middleware('throttle:60,1')
         ->name('batch.generate');
     
-    Route::delete('/clear-cache/{siswa}', [ReportController::class, 'clearPdfCache'])->name('clear-cache');
+    Route::delete('/clear-cache/{siswa}', [ReportController::class, 'clearPdfCache'])
+        ->middleware('check.rapor.access')
+        ->name('clear-cache');
     Route::post('/request-pdf/{siswa}', [ReportController::class, 'requestPdf'])
-        ->middleware('throttle:60,1')
+        ->middleware(['check.rapor.access', 'throttle:60,1'])
         ->name('request-pdf');
     Route::get('/pdf-progress/{requestId}', [ReportController::class, 'checkPdfProgress'])->name('pdf-progress');
     Route::get('/secure-file', [ReportController::class, 'downloadSecureFile'])->name('secure-file');
@@ -747,15 +747,25 @@ Route::prefix('rapor')->name('rapor.')->group(function () {
     Route::middleware(['check.rapor.access', 'throttle:60,1'])->group(function () {
         Route::get('/preview-pdf/{siswa}', [ReportController::class, 'previewPdf'])->name('preview-pdf');
         Route::get('/download-pdf/{siswa}', [ReportController::class, 'downloadPdf'])->name('download-pdf');
-        Route::post('/generate-pdf/{siswa}', [ReportController::class, 'generatePdfDirect'])->name('generate-pdf');
+        Route::post('/generate-pdf/{siswa}', function () {
+            return response()->json([
+                'success' => false,
+                'message' => 'Generate PDF langsung belum tersedia. Gunakan preview atau unduh PDF per siswa.',
+            ], 404);
+        })->name('generate-pdf');
     });
     
     // Batch PDF Route
-    Route::post('/batch-generate-pdf', [ReportController::class, 'generateBatchPdf'])
+    Route::post('/batch-generate-pdf', function () {
+        return response()->json([
+            'success' => false,
+            'message' => 'Batch PDF belum tersedia untuk demo. Gunakan unduh PDF per siswa.',
+        ], 503);
+    })
         ->middleware('throttle:10,1')
         ->name('batch.generate-pdf');
     
-    if (app()->environment('local')) {
+    if (config('staging_test_tools.enabled')) {
         Route::get('/test-pdf-conversion', [ReportController::class, 'testPdfConversion'])->name('test.pdf');
         Route::get('/conversion-status', [ReportController::class, 'getConversionStatus'])->name('conversion.status');
     }

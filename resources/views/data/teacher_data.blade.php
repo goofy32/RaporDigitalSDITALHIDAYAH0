@@ -51,8 +51,8 @@
                     <table class="w-full text-sm text-left text-gray-500">
                         <tbody>
                             <tr class="border-b">
-                                <th class="px-4 py-2 font-medium text-gray-900">NIP</th>
-                                <td class="px-4 py-2">{{ $teacher->nuptk ?? 'Belum Diisi' }}</td>
+                                <th class="px-4 py-2 font-medium text-gray-900">NUPTK</th>
+                                <td class="px-4 py-2">{{ $teacher->nuptk ?: 'Belum Diisi' }}</td>
                             </tr>
                             <tr class="border-b">
                                 <th class="px-4 py-2 font-medium text-gray-900">Nama</th>
@@ -100,27 +100,26 @@
                                 <th class="px-4 py-2 font-medium text-gray-900">Kelas Mengajar</th>
                                 <td class="px-4 py-2">
                                     @php
-                                        $teachingClasses = collect();
-
-                                        foreach($teacher->kelas as $kelas) {
-                                            $classKey = $kelas->nomor_kelas . $kelas->nama_kelas;
-                                            $isWaliKelas = $kelas->pivot->is_wali_kelas && $kelas->pivot->role === 'wali_kelas';
-
-                                            if (!$isWaliKelas) {
-                                                $teachingClasses->put($classKey, [
-                                                    'nomor' => $kelas->nomor_kelas,
-                                                    'nama' => $kelas->nama_kelas
-                                                ]);
-                                            }
-                                        }
+                                        $teachingGroups = $teacher->groupedTeachingResponsibilities();
                                     @endphp
 
-                                    @if($teachingClasses->count() > 0)
-                                        <ul>
-                                            @foreach($teachingClasses as $kelas)
-                                                <li>{{ $kelas['nomor'] }} {{ $kelas['nama'] }}</li>
+                                    @if($teachingGroups->count() > 0)
+                                        <div class="space-y-3">
+                                            @foreach($teachingGroups as $classLabel => $subjects)
+                                                <div>
+                                                    <p class="font-medium text-gray-900">{{ $classLabel }}</p>
+                                                    @if($subjects->isNotEmpty())
+                                                        <ul class="mt-1 list-disc list-inside text-gray-600">
+                                                            @foreach($subjects as $subjectName)
+                                                                <li>{{ $subjectName }}</li>
+                                                            @endforeach
+                                                        </ul>
+                                                    @else
+                                                        <p class="mt-1 text-gray-500">Belum ada mata pelajaran.</p>
+                                                    @endif
+                                                </div>
                                             @endforeach
-                                        </ul>
+                                        </div>
                                     @else
                                         <span>-</span>
                                     @endif
@@ -131,11 +130,11 @@
                                 <th class="px-4 py-2 font-medium text-gray-900">Wali Kelas</th>
                                 <td class="px-4 py-2">
                                     @php
-                                        $kelasWali = $teacher->kelasWali()->first();
+                                        $waliLabels = $teacher->waliClassLabels();
                                     @endphp
 
-                                    @if($kelasWali)
-                                        Kelas {{ $kelasWali->nomor_kelas }} {{ $kelasWali->nama_kelas }}
+                                    @if($waliLabels->isNotEmpty())
+                                        {{ $waliLabels->join(', ') }}
                                     @else
                                         <span>Bukan Wali Kelas</span>
                                     @endif
@@ -148,9 +147,14 @@
                             <tr class="border-b">
                                 <th class="px-4 py-2 font-medium text-gray-900">Password</th>
                                 <td class="px-4 py-2">
-                                    <span class="text-sm text-gray-600">
-                                        Password tidak dapat ditampilkan demi keamanan.
-                                    </span>
+                                    <div class="space-y-2">
+                                        <p class="text-sm text-gray-600">Password tidak dapat ditampilkan demi keamanan.</p>
+                                        <button type="button"
+                                            data-guru-password-reset-open
+                                            class="inline-flex items-center px-3 py-1.5 text-sm font-medium text-green-700 bg-green-50 border border-green-200 rounded-lg hover:bg-green-100">
+                                            Reset password guru
+                                        </button>
+                                    </div>
                                 </td>
                             </tr>
                         </tbody>
@@ -159,5 +163,7 @@
             </div>
         </div>
     </div>
+
+    <x-guru-password-reset-modal :teacher="$teacher" />
 </body>
 </html>

@@ -2,6 +2,7 @@ import {
     getSubjectFormConfig,
     initializeSubjectEntry,
     markSubjectFormChanged,
+    refreshLearningCopyOption,
     setSubjectPageReady,
 } from '../features/subject-form';
 
@@ -78,7 +79,7 @@ function resetEntryFields(entry, index) {
         const id = input.getAttribute('id');
         if (id) input.setAttribute('id', id.replace(/_\d+$/, `_${index}`));
 
-        if (input.tagName === 'INPUT' && input.type !== 'checkbox') input.value = '';
+        if (input.tagName === 'INPUT' && !['checkbox', 'radio'].includes(input.type)) input.value = '';
         if (input.tagName === 'SELECT') input.selectedIndex = 0;
         if (input.type === 'checkbox') input.checked = false;
     });
@@ -121,6 +122,7 @@ function addSubjectEntry() {
     });
 
     initializeSubjectEntry(template, { mode: 'default', resetSelection: true });
+    refreshLearningCopyOption(template);
     updateEntryStyles();
     markSubjectFormChanged();
 }
@@ -148,7 +150,8 @@ function removeSubjectEntry(button) {
 
 function addLingkupMateri(button) {
     const container = button.closest('.lingkup-materi-container');
-    const entryIndex = button.closest('.subject-entry').querySelector('input[type="text"]').name.match(/subjects\[(\d+)\]/)[1];
+    const entry = button.closest('.subject-entry');
+    const entryIndex = entry.querySelector('input[type="text"]').name.match(/subjects\[(\d+)\]/)[1];
     const div = document.createElement('div');
     div.className = 'flex items-center mb-2';
     div.innerHTML = `
@@ -158,11 +161,14 @@ function addLingkupMateri(button) {
             <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
         </button>`;
     container.appendChild(div);
+    refreshLearningCopyOption(entry);
     markSubjectFormChanged();
 }
 
 function removeLingkupMateri(button) {
+    const entry = button.closest('.subject-entry');
     button.parentElement.remove();
+    refreshLearningCopyOption(entry);
     markSubjectFormChanged();
 }
 
@@ -171,6 +177,29 @@ function handleCheckboxChange(checkbox) {
     const mode = checkbox.classList.contains('muatan-lokal-checkbox')
         ? (checkbox.checked ? 'muatan_lokal' : 'default')
         : (checkbox.checked ? 'guru_mapel' : 'default');
+    const typeSelect = entry.querySelector('.subject-type-select');
+    if (typeSelect) {
+        typeSelect.value = mode === 'muatan_lokal' ? 'muatan_lokal' : (mode === 'guru_mapel' ? 'specialist' : 'regular');
+    }
+
+    initializeSubjectEntry(entry, {
+        mode,
+        resetSelection: true,
+    });
+
+    markSubjectFormChanged();
+}
+
+function handleTeachingTypeChange(select) {
+    const entry = select.closest('.subject-entry');
+    const muatanCheckbox = entry.querySelector('.muatan-lokal-checkbox');
+    const allowNonWaliCheckbox = entry.querySelector('.allow-non-wali-checkbox');
+    const mode = select.value === 'muatan_lokal'
+        ? 'muatan_lokal'
+        : (select.value === 'specialist' ? 'guru_mapel' : 'default');
+
+    if (muatanCheckbox) muatanCheckbox.checked = select.value === 'muatan_lokal';
+    if (allowNonWaliCheckbox) allowNonWaliCheckbox.checked = select.value === 'specialist';
 
     initializeSubjectEntry(entry, {
         mode,
@@ -218,19 +247,24 @@ function populateSubjectEntry(entry, index, subjectData) {
     const guruSelect = entry.querySelector(`select[name="subjects[${index}][guru_pengampu]"]`);
     const muatanCheckbox = entry.querySelector(`input[name="subjects[${index}][is_muatan_lokal]"]`);
     const allowNonWaliCheckbox = entry.querySelector(`input[name="subjects[${index}][allow_non_wali]"]`);
+    const typeSelect = entry.querySelector(`select[name="subjects[${index}][teaching_type]"]`);
+    const teachingType = subjectData?.teaching_type
+        || (subjectData?.is_muatan_lokal ? 'muatan_lokal' : (subjectData?.allow_non_wali ? 'specialist' : 'regular'));
 
     if (mataPelajaranInput) mataPelajaranInput.value = subjectData?.mata_pelajaran || '';
     if (kelasSelect) kelasSelect.value = subjectData?.kelas || '';
     if (guruSelect) guruSelect.value = subjectData?.guru_pengampu || '';
-    if (muatanCheckbox) muatanCheckbox.checked = Boolean(subjectData?.is_muatan_lokal);
-    if (allowNonWaliCheckbox) allowNonWaliCheckbox.checked = Boolean(subjectData?.allow_non_wali);
+    if (typeSelect) typeSelect.value = teachingType;
+    if (muatanCheckbox) muatanCheckbox.checked = teachingType === 'muatan_lokal';
+    if (allowNonWaliCheckbox) allowNonWaliCheckbox.checked = teachingType === 'specialist';
 
     populateLingkupMateri(entry, index, subjectData?.lingkup_materi || []);
 
     initializeSubjectEntry(entry, {
-        mode: subjectData?.is_muatan_lokal ? 'muatan_lokal' : (subjectData?.allow_non_wali ? 'guru_mapel' : 'default'),
+        mode: teachingType === 'muatan_lokal' ? 'muatan_lokal' : (teachingType === 'specialist' ? 'guru_mapel' : 'default'),
         resetSelection: false,
     });
+    refreshLearningCopyOption(entry);
 }
 
 function hydrateOldSubjects(form) {
@@ -264,7 +298,22 @@ function registerAddSubjectGlobals() {
     window.addLingkupMateri = addLingkupMateri;
     window.removeLingkupMateri = removeLingkupMateri;
     window.handleCheckboxChange = handleCheckboxChange;
+    window.handleTeachingTypeChange = handleTeachingTypeChange;
     window.updateGuruOptions = updateGuruOptions;
+}
+
+function bindLearningCopyRefresh(form) {
+    form.addEventListener('input', event => {
+        if (!event.target.matches('input[name$="[mata_pelajaran]"]')) return;
+
+        refreshLearningCopyOption(event.target.closest('.subject-entry'));
+    });
+
+    form.addEventListener('change', event => {
+        if (!event.target.matches('.kelas-select, select[name$="[semester]"], input[name$="[semester]"]')) return;
+
+        refreshLearningCopyOption(event.target.closest('.subject-entry'));
+    });
 }
 
 function validateForm() {
@@ -314,17 +363,20 @@ function validateForm() {
             formValid = false;
         }
 
-        let hasEmptyLingkupMateri = false;
-        entry.querySelectorAll(`input[name^="subjects[${index}][lingkup_materi]"]`).forEach(input => {
-            if (!input.value.trim()) {
-                input.classList.add('border-red-500');
-                hasEmptyLingkupMateri = true;
-                formValid = false;
-            }
-        });
+        const copyChecked = entry.querySelector('[data-lm-tp-copy-checkbox]')?.checked;
+        if (!copyChecked) {
+            let hasEmptyLingkupMateri = false;
+            entry.querySelectorAll(`input[name^="subjects[${index}][lingkup_materi]"]`).forEach(input => {
+                if (!input.value.trim()) {
+                    input.classList.add('border-red-500');
+                    hasEmptyLingkupMateri = true;
+                    formValid = false;
+                }
+            });
 
-        if (hasEmptyLingkupMateri) {
-            showContainerError(entry.querySelector('.lingkup-materi-container'), 'Semua lingkup materi harus diisi');
+            if (hasEmptyLingkupMateri) {
+                showContainerError(entry.querySelector('.lingkup-materi-container'), 'Semua lingkup materi harus diisi');
+            }
         }
     });
 
@@ -354,12 +406,16 @@ export function initAddSubjectPage() {
     subjectCount = 1;
     registerAddSubjectGlobals();
     form.dataset.subjectFormBound = 'true';
+    bindLearningCopyRefresh(form);
     form.addEventListener('submit', event => {
         if (!validateForm()) event.preventDefault();
     });
 
     hydrateOldSubjects(form);
-    document.querySelectorAll('.subject-entry').forEach(entry => initializeSubjectEntry(entry, { resetSelection: false }));
+    document.querySelectorAll('.subject-entry').forEach(entry => {
+        initializeSubjectEntry(entry, { resetSelection: false });
+        refreshLearningCopyOption(entry);
+    });
     updateEntryStyles();
     setSubjectPageReady(pageRoot, form);
 }

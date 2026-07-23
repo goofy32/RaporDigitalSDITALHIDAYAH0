@@ -20,6 +20,8 @@
                 <li>Pastikan menulis placeholder utuh: <code class="bg-gray-100 px-1 rounded">${placeholder_key}</code> tanpa spasi di dalamnya</li>
                 <li>Jangan tambahkan koma, tanda kurung atau karakter lain di dalam placeholder</li>
                 <li>Satu sel tabel sebaiknya berisi maksimal satu placeholder</li>
+                <li>Untuk gambar tanda tangan, gunakan <code class="bg-gray-100 px-1 rounded">${ttd_wali_kelas}</code> dalam satu paragraf atau sel biasa, bukan text box/header/footer</li>
+                <li>Sisakan area sekitar 120 x 60 px untuk tanda tangan; PNG transparan direkomendasikan</li>
                 <li>Jika perlu mengganti template, gunakan fungsi "Download Contoh" untuk referensi</li>
             </ul>
         </div>
@@ -340,6 +342,14 @@
                         <td class="py-2 px-4"><span class="text-red-600">✗</span></td>
                         <td class="py-2 px-4"><span class="text-green-600">✓</span></td>
                         <td class="py-2 px-4"><span class="text-green-600">✓</span></td>
+                    </tr>
+                    <tr class="border-b">
+                        <td class="py-2 px-4"><code class="bg-gray-100 px-1 rounded">${ttd_wali_kelas}</code></td>
+                        <td class="py-2 px-4">Gambar tanda tangan wali kelas. Jika belum tersedia, area akan kosong.</td>
+                        <td class="py-2 px-4">Data Sekolah</td>
+                        <td class="py-2 px-4"><span class="text-red-600">Tidak</span></td>
+                        <td class="py-2 px-4"><span class="text-green-600">Ya</span></td>
+                        <td class="py-2 px-4"><span class="text-green-600">Ya</span></td>
                     </tr>
                     <tr class="border-b">
                         <td class="py-2 px-4"><code class="bg-gray-100 px-1 rounded">${tanggal_terbit}</code></td>

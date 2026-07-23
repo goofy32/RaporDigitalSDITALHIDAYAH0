@@ -74,8 +74,7 @@ function handleJabatanChange() {
 
     if (jabatan === 'guru_wali') {
         waliKelasSection.style.display = 'block';
-        kelasMengajarSection.style.display = 'block';
-        syncKelasWaliToKelasAjar();
+        kelasMengajarSection.style.display = 'none';
 
         if (waliKelasSelect && waliKelasSelect.dataset.syncBound !== 'true') {
             waliKelasSelect.addEventListener('change', syncKelasWaliToKelasAjar);
@@ -117,10 +116,10 @@ function bindCreateTeacherValidation(form) {
             var nuptk = document.getElementById('nuptk');
             var phone = document.getElementById('no_handphone');
 
-            if (nuptk?.value.trim() && (nuptk.value.trim().length < 9 || nuptk.value.trim().length > 15)) {
+            if (nuptk?.value.trim() && nuptk.value.trim().length !== 16) {
                 hasError = true;
                 nuptk.classList.add('border-red-500');
-                ensureTeacherErrorMessage(nuptk, 'NUPTK harus antara 9-15 digit');
+                ensureTeacherErrorMessage(nuptk, 'NUPTK harus 16 digit angka');
             }
 
             if (phone?.value.trim() && (phone.value.trim().length < 10 || phone.value.trim().length > 15)) {
@@ -149,7 +148,7 @@ export function initCreateTeacherPage() {
 
     window.handleJabatanChange = handleJabatanChange;
     bindNumericInputs(form);
-    bindLengthValidation(document.getElementById('nuptk'), 9, 15, 'NUPTK harus antara 9-15 digit');
+    bindLengthValidation(document.getElementById('nuptk'), 16, 16, 'NUPTK harus 16 digit angka');
     bindLengthValidation(document.getElementById('no_handphone'), 10, 15, 'No. Handphone harus antara 10-15 digit');
     bindTeacherFileValidation(form);
     bindCreateTeacherValidation(form);

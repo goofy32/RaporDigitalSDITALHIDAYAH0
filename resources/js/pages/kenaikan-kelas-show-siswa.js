@@ -35,7 +35,7 @@ export function initKenaikanKelasShowPage() {
     var sessionAction = pageEl.dataset.sessionAction || '';
     var sessionStatus = pageEl.dataset.sessionStatus || '';
     var selectAllCheckbox = document.getElementById('select-all');
-    var studentCheckboxes = document.querySelectorAll('.student-checkbox');
+    var studentCheckboxes = document.querySelectorAll('.student-checkbox:not(:disabled)');
 
     function updateHiddenInputs(containerId, selectedIds) {
         var container = document.getElementById(containerId);
@@ -55,7 +55,7 @@ export function initKenaikanKelasShowPage() {
         var selectedCount = document.getElementById('selectedCount');
         var actionForms = document.getElementById('actionForms');
 
-        selectedStudents = Array.from(document.querySelectorAll('.student-checkbox:checked')).map(checkbox => checkbox.value);
+        selectedStudents = Array.from(document.querySelectorAll('.student-checkbox:not(:disabled):checked')).map(checkbox => checkbox.value);
 
         if (selectedCount) {
             selectedCount.textContent = selectedStudents.length;
@@ -84,7 +84,8 @@ export function initKenaikanKelasShowPage() {
             updateSelectedStudents();
 
             if (selectAllCheckbox) {
-                selectAllCheckbox.checked = document.querySelectorAll('.student-checkbox:checked').length === studentCheckboxes.length;
+                selectAllCheckbox.checked = studentCheckboxes.length > 0
+                    && document.querySelectorAll('.student-checkbox:not(:disabled):checked').length === studentCheckboxes.length;
             }
         });
     });
@@ -131,7 +132,7 @@ export function initKenaikanKelasShowPage() {
                 icon: 'warning',
                 showCancelButton: true,
                 confirmButtonColor: '#3F7858',
-                cancelButtonColor: '#d33',
+                cancelButtonColor: '#6b7280',
                 confirmButtonText: 'Ya, Lanjutkan',
                 cancelButtonText: 'Batal',
             }).then(result => {

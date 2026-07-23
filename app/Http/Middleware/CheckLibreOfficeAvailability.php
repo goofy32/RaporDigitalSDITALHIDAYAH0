@@ -2,10 +2,10 @@
 
 namespace App\Http\Middleware;
 
+use App\Services\DocumentConversionService;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
-use Symfony\Component\Process\Process;
 use Symfony\Component\HttpFoundation\Response;
 
 class CheckLibreOfficeAvailability
@@ -28,7 +28,7 @@ class CheckLibreOfficeAvailability
                 if ($request->wantsJson()) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'LibreOffice is not available. PDF conversion cannot be performed.',
+                        'message' => 'Fitur PDF belum tersedia karena LibreOffice tidak terdeteksi. DOCX dan cetak HTML tetap dapat digunakan.',
                         'error_type' => 'libreoffice_unavailable'
                     ], 503);
                 } else {
@@ -47,14 +47,7 @@ class CheckLibreOfficeAvailability
      */
     private function isLibreOfficeAvailable(): bool
     {
-        try {
-            $process = new Process(['soffice', '--version']);
-            $process->run();
-            
-            return $process->isSuccessful();
-        } catch (\Exception $e) {
-            return false;
-        }
+        return app(DocumentConversionService::class)->isLibreOfficeAvailable();
     }
     
     /**

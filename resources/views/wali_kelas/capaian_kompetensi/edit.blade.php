@@ -1,232 +1,573 @@
 @extends('layouts.wali_kelas.app')
 
-@section('content')
-<div class="p-4 bg-white mt-14">
-    @php
-        $initialCustomizedCount = $existingCapaian
-            ->filter(fn ($item) => filled($item->custom_capaian_tertinggi) || filled($item->custom_capaian_terendah))
-            ->count();
-    @endphp
+@section('title', 'Kustomisasi Capaian Kompetensi')
 
-    <form action="{{ route('wali_kelas.capaian_kompetensi.update', $mataPelajaran->id) }}"
-          method="POST"
-          id="capaianKompetensiForm"
-          x-data="capaianKompetensiForm()"
-          x-on:submit.prevent="submitForm">
+@section('content')
+@php
+    $tertinggiDefault = $phraseDefaults->get('tertinggi');
+    $terendahDefault = $phraseDefaults->get('terendah');
+    $tertinggiFallback = 'menunjukkan pemahaman dalam';
+    $terendahFallback = 'berkembang dalam';
+    $tertinggiInitialMode = $tertinggiDefault?->mode === 'custom' ? 'custom' : 'preset';
+    $terendahInitialMode = $terendahDefault?->mode === 'custom' ? 'custom' : 'preset';
+    $tertinggiInitialPhrase = $tertinggiDefault?->phrase ?: $tertinggiFallback;
+    $terendahInitialPhrase = $terendahDefault?->phrase ?: $terendahFallback;
+    $tertinggiChoice = old(
+        'tertinggi_choice',
+        $tertinggiDefault ? ($tertinggiDefault->mode === 'custom' ? '__custom__' : $tertinggiDefault->phrase) : $tertinggiFallback
+    );
+    $terendahChoice = old(
+        'terendah_choice',
+        $terendahDefault ? ($terendahDefault->mode === 'custom' ? '__custom__' : $terendahDefault->phrase) : $terendahFallback
+    );
+    $tertinggiCustomPhrase = old(
+        'tertinggi_custom_phrase',
+        $tertinggiDefault?->mode === 'custom' ? $tertinggiDefault->phrase : ''
+    );
+    $terendahCustomPhrase = old(
+        'terendah_custom_phrase',
+        $terendahDefault?->mode === 'custom' ? $terendahDefault->phrase : ''
+    );
+@endphp
+
+<div class="mt-14 bg-white p-4"
+     x-data="capaianUnifiedEditor({
+         defaults: {
+             tertinggi: {
+                 initialMode: @js($tertinggiInitialMode),
+                 initialPhrase: @js($tertinggiInitialPhrase),
+                 choice: @js($tertinggiChoice),
+                 custom: @js($tertinggiCustomPhrase),
+                 fallback: @js($tertinggiFallback)
+             },
+             terendah: {
+                 initialMode: @js($terendahInitialMode),
+                 initialPhrase: @js($terendahInitialPhrase),
+                 choice: @js($terendahChoice),
+                 custom: @js($terendahCustomPhrase),
+                 fallback: @js($terendahFallback)
+             }
+         }
+     })"
+     x-init="init()">
+    <form method="POST"
+          action="{{ route('wali_kelas.capaian_kompetensi.save_all', $mataPelajaran->id) }}"
+          @submit="submitting = true">
         @csrf
         @method('PUT')
+        <input type="hidden" name="context[tahun_ajaran_id]" value="{{ $tahunAjaranId }}">
+        <input type="hidden" name="context[semester]" value="{{ $semester }}">
+        <input type="hidden" name="context[kelas_id]" value="{{ $kelas->id }}">
 
-        <div class="mb-6 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-            <div>
-                <h2 class="text-2xl font-bold text-green-700">Kelola Capaian Kompetensi</h2>
-                <p class="mt-1 text-sm text-gray-600">
-                    {{ $mataPelajaran->nama_pelajaran }} - Kelas {{ $mataPelajaran->kelas->nomor_kelas }}{{ $mataPelajaran->kelas->nama_kelas }}
-                </p>
+        @foreach(['tertinggi', 'terendah'] as $type)
+            <template x-if="defaultDirty('{{ $type }}')">
+                <div>
+                    <input type="hidden" name="defaults[{{ $type }}][changed]" value="1">
+                    <input type="hidden" name="defaults[{{ $type }}][mode]" :value="defaultMode('{{ $type }}')">
+                    <input type="hidden" name="defaults[{{ $type }}][phrase]" :value="defaultPhraseForSave('{{ $type }}')">
+                </div>
+            </template>
+        @endforeach
+
+        <div class="sticky top-16 z-20 mb-6 rounded-lg border border-gray-200 bg-white/95 p-3 shadow-sm backdrop-blur">
+            <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                    <h2 class="text-2xl font-bold text-green-700">Kelola Capaian Kompetensi</h2>
+                    <p class="mt-1 text-sm text-gray-600">
+                        {{ $mataPelajaran->nama_pelajaran }} - {{ $kelas->label_kelas }}
+                    </p>
+                </div>
+
+                <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <a href="{{ route('wali_kelas.capaian_kompetensi.index') }}"
+                       class="inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
+                        Kembali
+                    </a>
+                    <button type="submit"
+                            disabled
+                            :disabled="!hasChanges || submitting"
+                            class="inline-flex items-center justify-center rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-gray-600">
+                        <span x-show="!submitting" x-text="saveButtonLabel()"></span>
+                        <span x-show="submitting" x-cloak>Menyimpan...</span>
+                    </button>
+                </div>
             </div>
 
-            <div class="flex flex-wrap items-center gap-2">
-                <a href="{{ route('wali_kelas.capaian_kompetensi.index') }}"
-                   class="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600">
-                    Kembali
-                </a>
-                <button type="submit"
-                        x-bind:disabled="isSubmitting"
-                        x-bind:class="isSubmitting ? 'opacity-50 cursor-not-allowed' : ''"
-                        class="inline-flex items-center rounded-lg bg-green-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-green-700">
-                    <span x-show="!isSubmitting" class="inline-flex items-center">
-                        <svg class="mr-2 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
-                        </svg>
-                        Simpan Semua Perubahan
-                    </span>
-                    <span x-show="isSubmitting" class="inline-flex items-center">
-                        <svg class="mr-2 h-4 w-4 animate-spin text-white" fill="none" viewBox="0 0 24 24">
-                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-                        </svg>
-                        Menyimpan...
-                    </span>
-                </button>
+            <div x-show="dirtyCount > 0" x-cloak class="mt-3 rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700">
+                Ada <span class="font-semibold" x-text="dirtyCount"></span> perubahan belum disimpan.
             </div>
         </div>
 
-        <div class="mb-6 border-l-4 border-green-500 bg-green-50 p-4">
-            <div class="flex">
-                <div class="flex-shrink-0">
-                    <svg class="h-5 w-5 text-green-500" fill="currentColor" viewBox="0 0 20 20">
-                        <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2h-1V9z" clip-rule="evenodd"></path>
-                    </svg>
+        @if(session('success'))
+            <div class="mb-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+                {{ session('success') }}
+            </div>
+        @endif
+
+        @if(session('error'))
+            <div class="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                {{ session('error') }}
+            </div>
+        @endif
+
+        @if($errors->any())
+            <div class="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                <p class="font-semibold">Periksa kembali isian capaian.</p>
+                <ul class="mt-1 list-inside list-disc">
+                    @foreach($errors->all() as $error)
+                        <li>{{ $error }}</li>
+                    @endforeach
+                </ul>
+            </div>
+        @endif
+
+        <section class="mb-6 rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+            <div class="mb-4 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                    <h3 class="text-lg font-semibold text-gray-900">Pengaturan Kalimat Awal Capaian</h3>
+                    <p class="mt-1 text-sm text-gray-600">
+                        Kalimat ini menjadi pembuka otomatis untuk siswa yang menggunakan pengaturan default.
+                    </p>
                 </div>
-                <div class="ml-3 text-sm text-green-800">
-                    <p>
-                        <strong>Capaian Tertinggi</strong> menampilkan lingkup materi yang paling dikuasai siswa.
-                        <strong>Capaian Terendah</strong> menampilkan lingkup materi yang masih perlu diperkuat.
-                        Kosongkan textarea jika ingin tetap memakai kalimat otomatis dari sistem.
+
+                <div class="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
+                    <div><span class="font-medium text-gray-800">Kelas:</span> {{ $kelas->label_kelas }}</div>
+                    <div><span class="font-medium text-gray-800">Mapel:</span> {{ $mataPelajaran->nama_pelajaran }}</div>
+                    <div><span class="font-medium text-gray-800">Tahun:</span> {{ $tahunAjaran?->tahun_ajaran ?? '-' }}</div>
+                    <div><span class="font-medium text-gray-800">Semester:</span> {{ $semester === 1 ? 'Ganjil' : 'Genap' }}</div>
+                </div>
+            </div>
+
+            <div class="grid gap-4 lg:grid-cols-2">
+                <div>
+                    <label for="tertinggi_choice" class="block text-sm font-medium text-gray-700">
+                        Default capaian tertinggi
+                    </label>
+                    <select id="tertinggi_choice"
+                            x-model="defaults.tertinggi.choice"
+                            @change="defaultUpdated('tertinggi')"
+                            class="mt-1 block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-green-500 focus:ring-green-500">
+                        @foreach($prefixPresets['tertinggi'] as $preset)
+                            <option value="{{ $preset }}">{{ \Illuminate\Support\Str::ucfirst($preset) }}</option>
+                        @endforeach
+                        <option value="__custom__">Tulis kalimat sendiri</option>
+                    </select>
+                    <input x-show="defaults.tertinggi.choice === '__custom__'"
+                           x-cloak
+                           type="text"
+                           x-model="defaults.tertinggi.custom"
+                           @input="defaultUpdated('tertinggi')"
+                           maxlength="150"
+                           placeholder="Contoh: menunjukkan penguasaan mendalam dalam"
+                           class="mt-2 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-green-500 focus:ring-green-500">
+                    <p class="mt-2 text-xs text-gray-500">
+                        Preview: Ahmad <span x-text="defaultPhraseForPreview('tertinggi')"></span> mengenal lambang dan nama bilangan.
+                    </p>
+                </div>
+
+                <div>
+                    <label for="terendah_choice" class="block text-sm font-medium text-gray-700">
+                        Default capaian terendah
+                    </label>
+                    <select id="terendah_choice"
+                            x-model="defaults.terendah.choice"
+                            @change="defaultUpdated('terendah')"
+                            class="mt-1 block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-green-500 focus:ring-green-500">
+                        @foreach($prefixPresets['terendah'] as $preset)
+                            <option value="{{ $preset }}">{{ \Illuminate\Support\Str::ucfirst($preset) }}</option>
+                        @endforeach
+                        <option value="__custom__">Tulis kalimat sendiri</option>
+                    </select>
+                    <input x-show="defaults.terendah.choice === '__custom__'"
+                           x-cloak
+                           type="text"
+                           x-model="defaults.terendah.custom"
+                           @input="defaultUpdated('terendah')"
+                           maxlength="150"
+                           placeholder="Contoh: membutuhkan penguatan dalam"
+                           class="mt-2 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-green-500 focus:ring-green-500">
+                    <p class="mt-2 text-xs text-gray-500">
+                        Preview: Ahmad <span x-text="defaultPhraseForPreview('terendah')"></span> mengenal lambang dan nama bilangan.
                     </p>
                 </div>
             </div>
-        </div>
+        </section>
 
-        <div class="mb-4 flex flex-col gap-3 rounded-lg bg-gray-50 p-4 lg:flex-row lg:items-center lg:justify-between">
-            <div class="flex flex-wrap items-center gap-4 text-sm text-gray-600">
-                <div><strong>Total Siswa:</strong> {{ $siswaList->count() }}</div>
-                <div><strong>Dikustomisasi:</strong> <span x-text="customizedCount">{{ $initialCustomizedCount }}</span></div>
-            </div>
-
-            <div class="relative w-full max-w-xs">
-                <input type="text"
-                       x-model="searchTerm"
-                       placeholder="Cari nama siswa..."
-                       class="block w-full rounded-lg border border-gray-300 bg-white py-2 pl-10 pr-4 text-sm text-gray-900 focus:border-green-500 focus:ring-green-500">
-                <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-                    <svg class="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
-                    </svg>
+        <section class="rounded-lg border border-gray-200 bg-white shadow-sm">
+            <div class="flex flex-col gap-3 border-b border-gray-200 p-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                    <h3 class="text-lg font-semibold text-gray-900">Capaian Per Siswa</h3>
+                    <p class="mt-1 text-sm text-gray-600">
+                        Edit langsung pada kolom capaian seperti spreadsheet sederhana.
+                    </p>
+                    <p class="mt-2 max-w-3xl text-xs text-gray-500">
+                        Kalimat yang diedit akan menjadi khusus untuk siswa tersebut dan tidak lagi mengikuti pengaturan default sampai dikembalikan ke default.
+                    </p>
+                </div>
+                <div class="text-sm text-gray-600">
+                    <strong>Total Siswa:</strong> {{ $siswaList->count() }}
                 </div>
             </div>
-        </div>
 
-        <div class="mb-4 text-sm text-gray-600">
-            <span x-show="hasChanges" x-transition class="font-medium text-orange-600">
-                Ada perubahan yang belum disimpan.
-            </span>
-            <span x-show="!hasChanges">
-                Perbarui capaian tertinggi dan terendah siswa sesuai kebutuhan, lalu simpan perubahan.
-            </span>
-        </div>
-
-        <div class="relative overflow-x-auto rounded-lg border border-gray-200 shadow-sm">
-            <table class="w-full text-sm text-left text-gray-600">
-                <thead class="bg-gray-50 text-xs uppercase text-gray-700">
-                    <tr>
-                        <th class="px-4 py-3">No</th>
-                        <th class="px-4 py-3">Nama Siswa</th>
-                        <th class="px-4 py-3">Nilai</th>
-                        <th class="px-4 py-3">Capaian Tertinggi</th>
-                        <th class="px-4 py-3">Capaian Terendah</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    @foreach($siswaList as $index => $siswa)
-                        @php
-                            $existingRow = $existingCapaian->get($siswa->id);
-                            $existingCapaianTertinggi = $existingRow?->custom_capaian_tertinggi ?? '';
-                            $existingCapaianTerendah = $existingRow?->custom_capaian_terendah ?? '';
-                            $nilai = $siswa->nilais()
-                                ->where('mata_pelajaran_id', $mataPelajaran->id)
-                                ->where('tahun_ajaran_id', session('tahun_ajaran_id'))
-                                ->first();
-                            $nilaiAkhir = $nilai ? $nilai->nilai_akhir_rapor : null;
-                            $autoCapaian = \App\Http\Controllers\CapaianKompetensiController::generateAutoCapaianTertinggiTerendah(
-                                $siswa->id,
-                                $mataPelajaran->id,
-                                session('tahun_ajaran_id')
-                            );
-                        @endphp
-                        <tr class="border-b bg-white align-top hover:bg-gray-50"
-                            x-show="searchTerm === '' || '{{ strtolower($siswa->nama) }}'.includes(searchTerm.toLowerCase())"
-                            x-transition>
-                            <td class="px-4 py-4 font-medium text-gray-900">{{ $index + 1 }}</td>
-                            <td class="px-4 py-4">
-                                <div class="font-medium text-gray-900">{{ $siswa->nama }}</div>
-                                <div class="mt-1 text-xs text-gray-500">NIS: {{ $siswa->nis }}</div>
-                            </td>
-                            <td class="px-4 py-4">
-                                @if(!is_null($nilaiAkhir))
-                                    <div class="font-semibold text-gray-900">{{ number_format($nilaiAkhir, 0) }}</div>
-                                    <div class="mt-1 text-xs text-gray-500">Nilai akhir rapor</div>
-                                @else
-                                    <span class="text-xs text-gray-400">Belum tersedia</span>
-                                @endif
-                            </td>
-                            <td class="px-4 py-4">
-                                <p class="mb-2 text-xs italic text-gray-500">{{ $autoCapaian['tertinggi'] }}</p>
-                                <textarea name="capaian_tertinggi[{{ $siswa->id }}]"
-                                          rows="2"
-                                          class="block w-full rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-sm text-gray-900 focus:border-green-500 focus:ring-green-500"
-                                          placeholder="Kosongkan untuk pakai teks otomatis"
-                                          x-on:input="updateCustomizedCount(); checkForChanges()">{{ $existingCapaianTertinggi }}</textarea>
-                            </td>
-                            <td class="px-4 py-4">
-                                <p class="mb-2 text-xs italic text-gray-500">{{ $autoCapaian['terendah'] }}</p>
-                                <textarea name="capaian_terendah[{{ $siswa->id }}]"
-                                          rows="2"
-                                          class="block w-full rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-sm text-gray-900 focus:border-green-500 focus:ring-green-500"
-                                          placeholder="Kosongkan untuk pakai teks otomatis"
-                                          x-on:input="updateCustomizedCount(); checkForChanges()">{{ $existingCapaianTerendah }}</textarea>
-                            </td>
+            <div class="p-3 lg:p-0">
+                <table class="w-full border-separate border-spacing-y-3 text-left text-sm text-gray-600 lg:border-collapse lg:border-spacing-y-0">
+                    <thead class="hidden bg-gray-50 text-xs uppercase text-gray-700 lg:table-header-group">
+                        <tr>
+                            <th class="px-4 py-3">No</th>
+                            <th class="px-4 py-3">Nama Siswa</th>
+                            <th class="px-4 py-3">Nilai</th>
+                            <th class="w-[34%] px-4 py-3">Capaian Tertinggi</th>
+                            <th class="w-[34%] px-4 py-3">Capaian Terendah</th>
                         </tr>
-                    @endforeach
-                </tbody>
-            </table>
-        </div>
+                    </thead>
+                    <tbody>
+                        @foreach($siswaList as $index => $siswa)
+                            @php
+                                $existingRow = $existingCapaian->get($siswa->id);
+                                $row = $studentCapaianRows[$siswa->id];
+                            @endphp
+                            <tr data-capaian-student-id="{{ $siswa->id }}" class="mb-4 block rounded-lg border border-gray-200 bg-white align-top shadow-sm lg:mb-0 lg:table-row lg:rounded-none lg:border-0 lg:border-b lg:shadow-none lg:hover:bg-gray-50">
+                                <td class="block px-4 py-3 font-medium text-gray-900 lg:table-cell lg:py-4">
+                                    <span class="mb-1 block text-xs font-semibold uppercase text-gray-500 lg:hidden">No</span>
+                                    {{ $index + 1 }}
+                                </td>
+                                <td class="block px-4 py-3 lg:table-cell lg:py-4">
+                                    <span class="mb-1 block text-xs font-semibold uppercase text-gray-500 lg:hidden">Nama Siswa</span>
+                                    <div class="font-medium text-gray-900">{{ $siswa->nama }}</div>
+                                    <div class="mt-1 text-xs text-gray-500">NIS: {{ $siswa->nis }}</div>
+                                </td>
+                                <td class="block px-4 py-3 lg:table-cell lg:py-4">
+                                    <span class="mb-1 block text-xs font-semibold uppercase text-gray-500 lg:hidden">Nilai</span>
+                                    @if(!is_null($row['nilai_akhir']))
+                                        <div class="font-semibold text-gray-900">{{ number_format($row['nilai_akhir'], 0) }}</div>
+                                        <div class="mt-1 text-xs text-gray-500">Nilai akhir rapor</div>
+                                    @else
+                                        <span class="text-xs text-gray-400">Belum tersedia</span>
+                                    @endif
+                                </td>
+
+                                @foreach(['tertinggi' => 'Capaian Tertinggi', 'terendah' => 'Capaian Terendah'] as $type => $label)
+                                    @php
+                                        $status = $row['status'][$type];
+                                        $fullText = $type === 'tertinggi'
+                                            ? $existingRow?->custom_capaian_tertinggi
+                                            : $existingRow?->custom_capaian_terendah;
+                                        $fieldKey = 's'.$siswa->id.'_'.$type;
+                                    @endphp
+                                    <td class="block px-4 py-3 lg:table-cell lg:py-4">
+                                        <span class="mb-1 block text-xs font-semibold uppercase text-gray-500 lg:hidden">{{ $label }}</span>
+                                        <div class="rounded-lg border border-gray-200 bg-white p-3 transition"
+                                             x-data="capaianInlineField({
+                                                  key: @js($fieldKey),
+                                                  studentId: @js((string) $siswa->id),
+                                                  type: @js($type),
+                                                  initial: @js($row['resolved'][$type]),
+                                                 studentName: @js($siswa->nama),
+                                                 lmText: @js($row['lm'][$type]),
+                                                 followsDefault: @js($row['uses_default'][$type]),
+                                                 defaultPhrase: defaultPhraseForPreview(@js($type)),
+                                                 needsConfirm: @js(filled($fullText))
+                                             })"
+                                             :class="{ 'border-green-200 bg-green-50/60': dirty || reset || defaultPreviewDirty }">
+                                            <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+                                                <div class="flex flex-wrap items-center gap-2">
+                                                    <span x-show="!dirty && !reset && !defaultPreviewDirty"
+                                                          class="inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ring-1 ring-inset {{ $status['class'] }}">
+                                                        {{ $status['label'] }}
+                                                    </span>
+                                                    <span x-show="dirty || defaultPreviewDirty"
+                                                          x-cloak
+                                                          class="inline-flex items-center rounded-full bg-green-100 px-2 py-1 text-xs font-medium text-green-700 ring-1 ring-inset ring-green-200">
+                                                        Belum disimpan
+                                                    </span>
+                                                    <span x-show="reset"
+                                                          x-cloak
+                                                          class="inline-flex items-center rounded-full bg-gray-100 px-2 py-1 text-xs font-medium text-gray-700 ring-1 ring-inset ring-gray-200">
+                                                        Akan kembali ke default
+                                                    </span>
+                                                </div>
+                                                <button type="button"
+                                                        class="text-xs font-medium text-green-700 hover:text-green-800 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
+                                                        @click="resetToDefault()">
+                                                    Gunakan default
+                                                </button>
+                                            </div>
+
+                                            <textarea rows="3"
+                                                      x-model="value"
+                                                      x-init="$nextTick(() => autogrow($el))"
+                                                      @input="update(); autogrow($event.target)"
+                                                      class="min-h-[5.5rem] w-full resize-y rounded-lg border border-gray-300 px-3 py-2 text-sm leading-6 text-gray-800 focus:border-green-500 focus:ring-green-500"
+                                                      aria-label="{{ $label }} {{ $siswa->nama }}"></textarea>
+                                            <p x-show="reset"
+                                               x-cloak
+                                               class="mt-2 text-xs text-gray-500">
+                                                Setelah disimpan, capaian ini akan kembali mengikuti pengaturan default.
+                                            </p>
+
+                                            <template x-if="dirty">
+                                                <div>
+                                                    <input type="hidden" :name="'student_changes[' + key + '][siswa_id]'" value="{{ $siswa->id }}">
+                                                    <input type="hidden" :name="'student_changes[' + key + '][' + type + '][action]'" value="custom_full">
+                                                    <input type="hidden" :name="'student_changes[' + key + '][' + type + '][text]'" :value="value">
+                                                </div>
+                                            </template>
+                                            <template x-if="reset">
+                                                <div>
+                                                    <input type="hidden" :name="'student_changes[' + key + '][siswa_id]'" value="{{ $siswa->id }}">
+                                                    <input type="hidden" :name="'student_changes[' + key + '][' + type + '][action]'" value="reset_default">
+                                                </div>
+                                            </template>
+                                        </div>
+                                    </td>
+                                @endforeach
+                            </tr>
+                        @endforeach
+                    </tbody>
+                </table>
+            </div>
+        </section>
     </form>
 </div>
 
 @push('scripts')
 <script>
-window.capaianKompetensiHasChanges = false;
-
-function capaianKompetensiForm() {
+function capaianUnifiedEditor(config) {
     return {
-        searchTerm: '',
-        isSubmitting: false,
-        hasChanges: false,
-        customizedCount: {{ $initialCustomizedCount }},
-        originalValues: {},
-
+        defaults: config.defaults,
+        rowStates: {},
+        dirtyRows: {},
+        submitting: false,
+        rowStateHandler: null,
+        beforeUnloadHandler: null,
+        turboBeforeCacheHandler: null,
         init() {
-            this.$nextTick(() => {
-                this.$el.querySelectorAll('textarea[name^="capaian_"]').forEach((textarea) => {
-                    this.originalValues[textarea.name] = textarea.value;
-                });
-            });
-        },
+            this.rowStateHandler = (event) => this.captureOriginalState(event.detail || {});
+            window.addEventListener('capaian-row-state', this.rowStateHandler);
 
-        updateCustomizedCount() {
-            let count = 0;
-            this.$el.querySelectorAll('tbody tr').forEach((row) => {
-                const tertinggi = row.querySelector('textarea[name^="capaian_tertinggi"]');
-                const terendah = row.querySelector('textarea[name^="capaian_terendah"]');
-
-                if ((tertinggi && tertinggi.value.trim() !== '') || (terendah && terendah.value.trim() !== '')) {
-                    count++;
+            this.beforeUnloadHandler = (event) => {
+                if (!this.hasChanges || this.submitting) {
+                    return;
                 }
-            });
-            this.customizedCount = count;
+
+                event.preventDefault();
+                event.returnValue = '';
+            };
+            window.addEventListener('beforeunload', this.beforeUnloadHandler);
+
+            this.turboBeforeCacheHandler = () => this.destroy();
+            document.addEventListener('turbo:before-cache', this.turboBeforeCacheHandler);
         },
+        destroy() {
+            if (this.rowStateHandler) {
+                window.removeEventListener('capaian-row-state', this.rowStateHandler);
+                this.rowStateHandler = null;
+            }
 
-        checkForChanges() {
-            let hasChanges = false;
-            this.$el.querySelectorAll('textarea[name^="capaian_"]').forEach((textarea) => {
-                if (textarea.value !== this.originalValues[textarea.name]) {
-                    hasChanges = true;
-                }
-            });
+            if (this.beforeUnloadHandler) {
+                window.removeEventListener('beforeunload', this.beforeUnloadHandler);
+                this.beforeUnloadHandler = null;
+            }
 
-            this.hasChanges = hasChanges;
-            window.capaianKompetensiHasChanges = hasChanges;
+            if (this.turboBeforeCacheHandler) {
+                document.removeEventListener('turbo:before-cache', this.turboBeforeCacheHandler);
+                this.turboBeforeCacheHandler = null;
+            }
         },
+        get dirtyCount() {
+            return Object.keys(this.dirtyRows).length;
+        },
+        get hasChanges() {
+            return this.dirtyCount > 0 || this.defaultDirtyCount > 0;
+        },
+        get defaultDirtyCount() {
+            return ['tertinggi', 'terendah'].filter((type) => this.defaultDirty(type)).length;
+        },
+        normalizeStateValue(value) {
+            return String(value ?? '');
+        },
+        captureOriginalState(detail) {
+            const studentId = String(detail.studentId || '');
+            const type = String(detail.type || '');
 
-        submitForm() {
-            if (this.isSubmitting) {
+            if (!studentId || !['tertinggi', 'terendah'].includes(type)) {
                 return;
             }
 
-            this.isSubmitting = true;
-            window.capaianKompetensiHasChanges = false;
-            this.$el.submit();
-        }
+            this.rowStates = {
+                ...this.rowStates,
+                [studentId]: {
+                    ...(this.rowStates[studentId] || {}),
+                    [type]: {
+                        original: this.normalizeStateValue(detail.original),
+                        current: this.normalizeStateValue(detail.current),
+                        reset: Boolean(detail.reset),
+                    },
+                },
+            };
+
+            this.recomputeDirtyRows();
+        },
+        getCurrentRowState(studentId) {
+            return this.rowStates[String(studentId)] || {};
+        },
+        isRowDirty(studentId) {
+            return Object.values(this.getCurrentRowState(studentId)).some((field) => {
+                return Boolean(field.reset) || field.current !== field.original;
+            });
+        },
+        recomputeDirtyRows() {
+            const nextDirtyRows = {};
+
+            Object.keys(this.rowStates).forEach((studentId) => {
+                if (this.isRowDirty(studentId)) {
+                    nextDirtyRows[studentId] = true;
+                }
+            });
+
+            this.dirtyRows = nextDirtyRows;
+        },
+        saveButtonLabel() {
+            if (this.dirtyCount === 0) {
+                return 'Simpan semua perubahan';
+            }
+
+            return `Simpan semua perubahan (${this.dirtyCount} yang berubah)`;
+        },
+        defaultMode(type) {
+            return this.defaults[type].choice === '__custom__' ? 'custom' : 'preset';
+        },
+        defaultPhraseForSave(type) {
+            const current = this.defaults[type];
+            const phrase = this.defaultMode(type) === 'custom' ? current.custom : current.choice;
+
+            return String(phrase || '').trim();
+        },
+        defaultPhraseForPreview(type) {
+            return this.defaultPhraseForSave(type) || this.defaults[type].fallback;
+        },
+        defaultDirty(type) {
+            const current = this.defaults[type];
+
+            return this.defaultMode(type) !== current.initialMode
+                || this.defaultPhraseForSave(type) !== current.initialPhrase;
+        },
+        defaultUpdated(type) {
+            window.dispatchEvent(new CustomEvent('capaian-default-updated', {
+                detail: {
+                    type,
+                    phrase: this.defaultPhraseForPreview(type),
+                    changed: this.defaultDirty(type),
+                },
+            }));
+        },
     };
 }
 
-window.addEventListener('beforeunload', function (e) {
-    if (window.capaianKompetensiHasChanges) {
-        e.preventDefault();
-        e.returnValue = 'Ada perubahan yang belum disimpan. Yakin ingin meninggalkan halaman?';
-        return e.returnValue;
-    }
-});
+function capaianInlineField(config) {
+    return {
+        key: config.key,
+        studentId: String(config.studentId || ''),
+        type: config.type,
+        initial: config.initial || '',
+        value: config.initial || '',
+        studentName: config.studentName || '',
+        lmText: config.lmText || '',
+        followsDefault: Boolean(config.followsDefault),
+        defaultPhrase: config.defaultPhrase || '',
+        needsConfirm: Boolean(config.needsConfirm),
+        dirty: false,
+        reset: false,
+        defaultPreviewDirty: false,
+        defaultUpdateHandler: null,
+        turboBeforeCacheHandler: null,
+        init() {
+            this.defaultUpdateHandler = (event) => this.handleDefaultUpdated(event);
+            window.addEventListener('capaian-default-updated', this.defaultUpdateHandler);
+
+            this.turboBeforeCacheHandler = () => this.destroy();
+            document.addEventListener('turbo:before-cache', this.turboBeforeCacheHandler);
+
+            this.notifyState();
+        },
+        destroy() {
+            if (this.defaultUpdateHandler) {
+                window.removeEventListener('capaian-default-updated', this.defaultUpdateHandler);
+                this.defaultUpdateHandler = null;
+            }
+
+            if (this.turboBeforeCacheHandler) {
+                document.removeEventListener('turbo:before-cache', this.turboBeforeCacheHandler);
+                this.turboBeforeCacheHandler = null;
+            }
+        },
+        handleDefaultUpdated(event) {
+            if (event.detail.type !== this.type || this.dirty) {
+                return;
+            }
+
+            this.defaultPhrase = event.detail.phrase || this.defaultPhrase;
+
+            if (!this.followsDefault && !this.reset) {
+                this.notifyState();
+                return;
+            }
+
+            this.value = this.composeDefaultText();
+            this.defaultPreviewDirty = this.followsDefault && Boolean(event.detail.changed);
+            this.notifyState();
+            this.$nextTick(() => this.autogrow(this.$el.querySelector('textarea')));
+        },
+        update() {
+            this.reset = false;
+            this.defaultPreviewDirty = false;
+            this.dirty = this.value !== this.initial;
+            this.notifyState();
+        },
+        resetToDefault() {
+            if (this.needsConfirm && !window.confirm('Deskripsi custom yang ada akan dihapus dan capaian kembali mengikuti default. Lanjutkan?')) {
+                return;
+            }
+
+            this.value = this.composeDefaultText();
+            this.dirty = false;
+            this.reset = true;
+            this.defaultPreviewDirty = false;
+            this.notifyState();
+            this.$nextTick(() => this.autogrow(this.$el.querySelector('textarea')));
+        },
+        composeDefaultText() {
+            const phrase = String(this.defaultPhrase || '').trim();
+            const lmText = String(this.lmText || '').trim().replace(/[.\s]+$/u, '');
+
+            if (!phrase || !lmText) {
+                return this.initial;
+            }
+
+            return `${this.studentName} ${phrase} ${lmText}.`.replace(/\s+/gu, ' ').trim();
+        },
+        notifyState() {
+            window.dispatchEvent(new CustomEvent('capaian-row-state', {
+                detail: {
+                    key: this.key,
+                    studentId: this.studentId,
+                    type: this.type,
+                    original: this.initial,
+                    current: this.value,
+                    reset: this.reset,
+                },
+            }));
+        },
+        autogrow(element) {
+            if (!element) {
+                return;
+            }
+
+            element.style.height = 'auto';
+            element.style.height = Math.max(element.scrollHeight, 88) + 'px';
+        },
+    };
+}
 </script>
 @endpush
 @endsection

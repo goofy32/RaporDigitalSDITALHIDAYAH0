@@ -14,6 +14,8 @@ export function initTahunAjaranCopyPage() {
     var tahunAjaranInput = document.getElementById('tahun_ajaran');
     var tanggalMulaiInput = document.getElementById('tanggal_mulai');
     var tanggalSelesaiInput = document.getElementById('tanggal_selesai');
+    var confirmationInput = document.getElementById('transition_confirmation_next_year');
+    var requiredConfirmation = pageRoot.dataset.confirmationPhrase || 'BUAT TAHUN AJARAN BERIKUTNYA';
     var csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
     var forceDeleteUrlTemplate = pageRoot.dataset.forceDeleteUrlTemplate || '';
     var indexUrl = pageRoot.dataset.indexUrl || '';
@@ -28,7 +30,7 @@ export function initTahunAjaranCopyPage() {
 
     function setSubmittingState(active) {
         isSubmitting = active;
-        submitButton.disabled = active;
+        submitButton.disabled = active || !confirmationMatches();
         submitButton.innerHTML = active
             ? `
                 <svg class="animate-spin -ml-1 mr-2 h-4 w-4 inline-block" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -38,6 +40,16 @@ export function initTahunAjaranCopyPage() {
                 Membuat Tahun Ajaran...
             `
             : defaultButtonHtml;
+    }
+
+    function confirmationMatches() {
+        return (confirmationInput?.value || '').trim() === requiredConfirmation;
+    }
+
+    function updateSubmitState() {
+        if (!isSubmitting) {
+            submitButton.disabled = !confirmationMatches();
+        }
     }
 
     function getErrorMessage(data, fallbackMessage) {
@@ -176,18 +188,28 @@ export function initTahunAjaranCopyPage() {
             return false;
         }
 
+        if (!confirmationMatches()) {
+            await Swal.fire({
+                icon: 'error',
+                title: 'Konfirmasi Tidak Sesuai',
+                text: 'Konfirmasi tidak sesuai. Ketik kalimat yang diminta untuk melanjutkan.',
+            });
+            confirmationInput?.focus();
+            updateSubmitState();
+            return false;
+        }
+
         var confirmed = await Swal.fire({
             icon: 'question',
             title: 'Buat Tahun Ajaran Berikutnya?',
             html: `
                 <div class="text-left space-y-2">
-                    <p>Tindakan ini akan:</p>
+                    <p>Tahun ajaran berikutnya akan dibuat berdasarkan struktur yang tersedia saat ini.</p>
                     <ul class="list-disc list-inside text-sm text-gray-700 space-y-1">
-                        <li>Menyalin struktur kelas dengan nama dan guru yang sama</li>
-                        <li>Menyalin seluruh pengaturan dari tahun ajaran saat ini</li>
-                        <li>Memulai tahun ajaran baru dengan data nilai kosong</li>
+                        <li>Perubahan pada tahun ajaran sumber setelah proses ini tidak otomatis disalin ke target</li>
+                        <li>Target dibuat belum aktif dan perlu diperiksa sebelum digunakan</li>
+                        <li>Siswa ditempatkan melalui proses Kenaikan Kelas</li>
                     </ul>
-                    <p class="text-sm text-gray-700 mt-3">Siswa dapat diatur kenaikan kelasnya secara manual menggunakan fitur Kenaikan Kelas.</p>
                 </div>
             `,
             showCancelButton: true,
@@ -222,4 +244,7 @@ export function initTahunAjaranCopyPage() {
     } else if (typeof window.initFlowbite === 'function') {
         window.initFlowbite();
     }
+
+    confirmationInput?.addEventListener('input', updateSubmitState);
+    updateSubmitState();
 }

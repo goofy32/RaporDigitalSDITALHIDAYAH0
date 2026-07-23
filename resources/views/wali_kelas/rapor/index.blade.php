@@ -23,13 +23,32 @@
 @endpush
 
 @php
+    $pdfAvailable = $pdfAvailable ?? false;
+    $pdfTemplateAvailability = $pdfTemplateAvailability ?? [];
+    $pdfStatuses = $pdfStatuses ?? [];
+    $openedReportType = $openedReportType ?? $type ?? 'UTS';
+    $hasPdfTemplateForCurrentType = collect($pdfTemplateAvailability)->contains(function ($availability) use ($type) {
+        return (bool) ($availability[$type] ?? false);
+    });
     $readyCount = collect($siswa)->filter(function ($student) use ($nilaiCounts) {
         return ($nilaiCounts[$student->id] ?? 0) > 0 && !is_null($student->absensi);
     })->count();
 @endphp
 
 <!-- Main Container with Single Alpine Instance -->
-<div x-data="raporManager" x-cloak class="p-4 bg-white mt-14" data-active-tab="{{ $type }}" data-tahun-ajaran-id="{{ session('tahun_ajaran_id') }}" data-semester="{{ $semester }}">
+<div
+    x-data="raporManager"
+    x-cloak
+    class="p-4 bg-white mt-14"
+    data-active-tab="{{ $type }}"
+    data-opened-report-type="{{ $openedReportType }}"
+    data-tahun-ajaran-id="{{ session('tahun_ajaran_id') }}"
+    data-semester="{{ $semester }}"
+    data-pdf-status-url="{{ route('wali_kelas.rapor.pdf-statuses') }}"
+    data-dashboard-warmup-enabled="{{ config('report.pdf_dashboard_warmup.enabled') ? '1' : '0' }}"
+    data-pdf-template-availability='@json($pdfTemplateAvailability)'
+    data-pdf-statuses='@json($pdfStatuses)'
+>
     
     <!-- Loading State -->
     <div x-show="!initialized" class="flex items-center justify-center p-12">
@@ -42,13 +61,13 @@
         </div>
     </div>
 
-    <!-- No Template Active State -->
+    <!-- No Template Available for Opened Period State -->
     <div x-show="initialized && !templateUTSActive && !templateUASActive" class="text-center py-8">
         <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
         </svg>
-        <h3 class="mt-2 text-sm font-medium text-gray-900">Tidak Ada Template Aktif</h3>
-        <p class="mt-1 text-sm text-gray-500">Admin belum mengaktifkan template rapor untuk kelas ini.</p>
+        <h3 class="mt-2 text-sm font-medium text-gray-900">Template Periode Dibuka Belum Tersedia</h3>
+        <p class="mt-1 text-sm text-gray-500">Admin belum mengaktifkan template rapor untuk periode yang sedang dibuka.</p>
         <div class="mt-6">
             <button type="button" @click="refreshPage()" class="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
                 <svg class="-ml-1 mr-2 h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -69,6 +88,23 @@
             </h2>
         </div>
 
+        <div class="mb-6 rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-800">
+            <p class="font-semibold">Jenis rapor yang dibuka admin: {{ $openedReportType }}</p>
+            <p class="mt-1">UTS dan UAS tetap berada pada semester aktif. Wali Kelas hanya dapat menyiapkan, mencetak, dan mengunduh jenis rapor yang sedang dibuka.</p>
+        </div>
+
+        @if(!$pdfAvailable)
+            <div class="mb-6 rounded-lg border border-yellow-300 bg-yellow-50 p-4 text-sm text-yellow-800">
+                <p class="font-semibold">PDF belum tersedia di perangkat ini.</p>
+                <p class="mt-1">LibreOffice tidak terdeteksi, sehingga preview dan unduh PDF dinonaktifkan. Unduh DOCX dan cetak HTML tetap dapat digunakan.</p>
+            </div>
+        @elseif(!$hasPdfTemplateForCurrentType)
+            <div class="mb-6 rounded-lg border border-yellow-300 bg-yellow-50 p-4 text-sm text-yellow-800">
+                <p class="font-semibold">Belum ada template {{ $type }} aktif untuk kelas ini.</p>
+                <p class="mt-1">Silakan hubungi admin untuk mengaktifkan template {{ $type }} yang sesuai sebelum menyiapkan, mencetak, atau mengunduh rapor.</p>
+            </div>
+        @endif
+
         <!-- Tabs -->
         <div class="mb-6">
             <div class="border-b border-gray-200">
@@ -83,7 +119,8 @@
                             type="button"
                             :disabled="!templateUTSActive">
                         Rapor UTS
-                        <span x-show="!templateUTSActive" class="ml-1 text-xs text-red-500">(Nonaktif)</span>
+                        <span x-show="openedReportType !== 'UTS'" class="ml-1 text-xs text-red-500">(Belum dibuka)</span>
+                        <span x-show="openedReportType === 'UTS' && !templateUTSActive" class="ml-1 text-xs text-red-500">(Template belum aktif)</span>
                     </button>
                     <button @click="setActiveTab('UAS')"
                             :class="{
@@ -95,7 +132,8 @@
                             type="button"
                             :disabled="!templateUASActive">
                         Rapor UAS
-                        <span x-show="!templateUASActive" class="ml-1 text-xs text-red-500">(Nonaktif)</span>
+                        <span x-show="openedReportType !== 'UAS'" class="ml-1 text-xs text-red-500">(Belum dibuka)</span>
+                        <span x-show="openedReportType === 'UAS' && !templateUASActive" class="ml-1 text-xs text-red-500">(Template belum aktif)</span>
                     </button>
                 </nav>
             </div>
@@ -144,6 +182,7 @@
                         <th class="px-6 py-3">Nama Siswa</th>
                         <th class="px-6 py-3">Status Nilai</th>
                         <th class="px-6 py-3">Status Kehadiran</th>
+                        <th class="px-6 py-3">Status PDF</th>
                         <th class="px-6 py-3">Aksi</th>
                     </tr>
                 </thead>
@@ -239,11 +278,30 @@
                             </div>
                         </td>
 
+                        <!-- Status PDF -->
+                        <td class="px-6 py-4">
+                            @php
+                                $currentPdfStatus = $pdfStatuses[$s->id][$type] ?? 'missing';
+                                $pdfStatusLabels = [
+                                    'ready' => 'PDF siap',
+                                    'preparing' => 'Sedang disiapkan',
+                                    'missing' => 'Belum siap',
+                                ];
+                            @endphp
+                            <span
+                                class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium"
+                                :class="pdfStatusClass({{ $s->id }})"
+                                :title="pdfStatusTitle({{ $s->id }})"
+                                x-text="pdfStatusLabel({{ $s->id }})">
+                                {{ $pdfStatusLabels[$currentPdfStatus] ?? 'Belum siap' }}
+                            </span>
+                        </td>
+
                         <!-- Actions -->
                         <td class="px-1 py-4 text-center whitespace-nowrap">
                             <div class="flex items-center justify-center space-x-2">                                
                                 <!-- Download DOCX Button -->
-                                <button @click="handleGenerate({{ $s->id }}, {{ $nilaiCounts[$s->id] ?? 0 }}, {{ $s->absensi ? 'true' : 'false' }}, '{{ $s->nama }}')"
+                                <button @click="handleGenerate({{ $s->id }}, {{ $nilaiCounts[$s->id] ?? 0 }}, {{ $s->absensi ? 'true' : 'false' }}, @js($s->nama))"
                                     :disabled="!{{ $nilaiCounts[$s->id] ?? 0 }} || !{{ $s->absensi ? 'true' : 'false' }}"
                                     :class="{ 
                                         'opacity-50 cursor-not-allowed': !{{ $nilaiCounts[$s->id] ?? 0 }} || !{{ $s->absensi ? 'true' : 'false' }}, 
@@ -254,26 +312,32 @@
                                     <img src="{{ asset('images/icons/download.png') }}" alt="Download" class="action-icon">
                                 </button>
                                 
+                                @php
+                                    $currentPdfTemplateAvailable = (bool) (($pdfTemplateAvailability[$s->id] ?? [])[$type] ?? false);
+                                @endphp
+
                                 <!-- Preview PDF Button -->
                                 <button @click="handlePreviewPdf({{ $s->id }}, {{ $nilaiCounts[$s->id] ?? 0 }}, {{ $s->absensi ? 'true' : 'false' }})"
-                                        :disabled="!{{ $nilaiCounts[$s->id] ?? 0 }} || !{{ $s->absensi ? 'true' : 'false' }} || loading"
-                                        :class="{ 
-                                            'opacity-50 cursor-not-allowed': !{{ $nilaiCounts[$s->id] ?? 0 }} || !{{ $s->absensi ? 'true' : 'false' }} || loading, 
-                                            'text-purple-600 hover:text-purple-900': {{ $nilaiCounts[$s->id] ?? 0 }} && {{ $s->absensi ? 'true' : 'false' }} && !loading 
+                                        @disabled(!$pdfAvailable || !$currentPdfTemplateAvailable)
+                                        :disabled="!{{ $pdfAvailable ? 'true' : 'false' }} || !hasPdfTemplate({{ $s->id }}) || !{{ $nilaiCounts[$s->id] ?? 0 }} || !{{ $s->absensi ? 'true' : 'false' }} || loading"
+                                        :class="{
+                                            'opacity-50 cursor-not-allowed': !{{ $pdfAvailable ? 'true' : 'false' }} || !hasPdfTemplate({{ $s->id }}) || !{{ $nilaiCounts[$s->id] ?? 0 }} || !{{ $s->absensi ? 'true' : 'false' }} || loading,
+                                            'text-purple-600 hover:text-purple-900': {{ $pdfAvailable ? 'true' : 'false' }} && hasPdfTemplate({{ $s->id }}) && {{ $nilaiCounts[$s->id] ?? 0 }} && {{ $s->absensi ? 'true' : 'false' }} && !loading
                                         }"
                                         class="transition-colors"
-                                        title="Preview PDF">
+                                        :title="pdfActionTitle({{ $s->id }}, 'Preview PDF')">
                                     <img src="{{ asset('images/icons/detail.png') }}" alt="Preview" class="action-icon">
                                 </button>
 
-                                <button @click="handleDownloadPdf({{ $s->id }}, {{ $nilaiCounts[$s->id] ?? 0 }}, {{ $s->absensi ? 'true' : 'false' }}, '{{ $s->nama }}')"
-                                        :disabled="!{{ $nilaiCounts[$s->id] ?? 0 }} || !{{ $s->absensi ? 'true' : 'false' }} || loading"
-                                        :class="{ 
-                                            'opacity-50 cursor-not-allowed': !{{ $nilaiCounts[$s->id] ?? 0 }} || !{{ $s->absensi ? 'true' : 'false' }} || loading, 
-                                            'text-red-600 hover:text-red-900': {{ $nilaiCounts[$s->id] ?? 0 }} && {{ $s->absensi ? 'true' : 'false' }} && !loading 
+                                <button @click="handleDownloadPdf({{ $s->id }}, {{ $nilaiCounts[$s->id] ?? 0 }}, {{ $s->absensi ? 'true' : 'false' }}, @js($s->nama))"
+                                        @disabled(!$pdfAvailable || !$currentPdfTemplateAvailable)
+                                        :disabled="!{{ $pdfAvailable ? 'true' : 'false' }} || !hasPdfTemplate({{ $s->id }}) || !{{ $nilaiCounts[$s->id] ?? 0 }} || !{{ $s->absensi ? 'true' : 'false' }} || loading"
+                                        :class="{
+                                            'opacity-50 cursor-not-allowed': !{{ $pdfAvailable ? 'true' : 'false' }} || !hasPdfTemplate({{ $s->id }}) || !{{ $nilaiCounts[$s->id] ?? 0 }} || !{{ $s->absensi ? 'true' : 'false' }} || loading,
+                                            'text-red-600 hover:text-red-900': {{ $pdfAvailable ? 'true' : 'false' }} && hasPdfTemplate({{ $s->id }}) && {{ $nilaiCounts[$s->id] ?? 0 }} && {{ $s->absensi ? 'true' : 'false' }} && !loading
                                         }"
                                         class="transition-colors"
-                                        title="Unduh Rapor PDF">
+                                        :title="pdfActionTitle({{ $s->id }}, 'Unduh Rapor PDF')">
                                     <template x-if="loadingPdf === {{ $s->id }}">
                                         <svg class="action-icon animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
@@ -290,7 +354,7 @@
                     </tr>
                     @empty
                     <tr>
-                        <td colspan="6" class="px-6 py-4 text-center text-gray-500">
+                        <td colspan="7" class="px-6 py-4 text-center text-gray-500">
                             Tidak ada data siswa
                         </td>
                     </tr>

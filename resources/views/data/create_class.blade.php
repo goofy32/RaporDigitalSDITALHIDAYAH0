@@ -73,10 +73,21 @@
             </div>
         </div>
 
+        @if(isset($targetTahunAjaran) && $targetTahunAjaran)
+        <div class="mb-4 bg-green-50 border border-green-200 text-green-800 p-4 rounded-lg">
+            <p class="font-medium">Tahun ajaran tujuan: {{ $targetTahunAjaran->tahun_ajaran }} Semester {{ $targetTahunAjaran->semester }}</p>
+            <p class="text-sm mt-1">Kelas akan dibuat untuk konteks tahun ajaran ini tanpa perlu mengaktifkannya terlebih dahulu.</p>
+        </div>
+        @endif
+
         <!-- Form -->
         <form id="createClassForm" action="{{ route('kelas.store') }}" method="POST" data-needs-protection data-turbo="false" x-data="formProtection">
             @csrf
-            <input type="hidden" name="tahun_ajaran_id" value="{{ session('tahun_ajaran_id') }}">
+            <input type="hidden" name="target_tahun_ajaran_id" value="{{ old('target_tahun_ajaran_id', $tahunAjaranId ?? session('tahun_ajaran_id')) }}">
+            <input type="hidden" name="tahun_ajaran_id" value="{{ old('tahun_ajaran_id', $tahunAjaranId ?? session('tahun_ajaran_id')) }}">
+            @if(!empty($redirectTo))
+                <input type="hidden" name="redirect_to" value="{{ $redirectTo }}">
+            @endif
 
             <div class="space-y-6 w-full">  <!-- Tambahkan w-full -->
                 <!-- Nomor Kelas -->
@@ -100,21 +111,6 @@
                     @error('nama_kelas')
                         <p class="mt-1 text-sm text-red-500">{{ $message }}</p>
                     @enderror
-                </div>
-
-                <!-- Wali Kelas -->
-                <div class="w-full">  <!-- Tambahkan w-full -->
-                    <label class="block text-sm font-medium text-gray-700">Wali Kelas (Opsional)</label>
-                    <select name="wali_kelas_id" 
-                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500 @error('wali_kelas_id') border-red-500 @enderror">
-                        <option value="">Pilih Wali Kelas</option>
-                        @foreach($guruList as $guru)
-                            <option value="{{ $guru->id }}" {{ old('wali_kelas_id') == $guru->id ? 'selected' : '' }}>
-                                {{ $guru->nama }} ({{ $guru->nuptk }})
-                            </option>
-                        @endforeach
-                    </select>
-                    <p class="mt-1 text-sm text-gray-500">Hanya menampilkan guru dengan jabatan Wali Kelas yang belum ditugaskan</p>
                 </div>
             </div>
         </form>

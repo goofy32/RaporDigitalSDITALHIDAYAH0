@@ -1,23 +1,31 @@
 <div class="space-y-6">
+    @php
+        $reportKelas = $kelas ?? $siswa->kelas;
+        $reportTahunAjaranId = $tahunAjaranId ?? session('tahun_ajaran_id');
+        $reportSemester = $semester ?? optional($tahunAjaran ?? null)->semester ?? session('selected_semester', 1);
+        $reportTahunAjaranText = optional($tahunAjaran ?? null)->tahun_ajaran
+            ?? optional($reportKelas?->tahunAjaran)->tahun_ajaran
+            ?? '-';
+    @endphp
     <!-- Data Siswa -->
     <div>
         <h3 class="text-lg font-semibold mb-3">Data Siswa</h3>
         <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
                 <p class="text-sm text-gray-600">Nama Siswa</p>
-                <p class="font-medium">{{ $siswa->nama }}</p>
+                <p class="font-medium break-words">{{ $siswa->nama }}</p>
             </div>
             <div>
                 <p class="text-sm text-gray-600">NIS/NISN</p>
-                <p class="font-medium">{{ $siswa->nis }} / {{ $siswa->nisn }}</p>
+                <p class="font-medium break-words">{{ $siswa->nis ?: '-' }} / {{ $siswa->nisn ?: '-' }}</p>
             </div>
             <div>
                 <p class="text-sm text-gray-600">Kelas</p>
-                <p class="font-medium">{{ $siswa->kelas->nama_kelas }}</p>
+                <p class="font-medium break-words">{{ $reportKelas?->nama_kelas ?? '-' }}</p>
             </div>
             <div>
                 <p class="text-sm text-gray-600">Tahun Ajaran</p>
-                <p class="font-medium">{{ $siswa->kelas->tahun_ajaran }}</p>
+                <p class="font-medium break-words">{{ $reportTahunAjaranText }}</p>
             </div>
         </div>
     </div>
@@ -85,7 +93,7 @@
                     </tr>
                 </thead>
                 <tbody>
-                    @forelse($siswa->nilaiEkstrakurikuler->where('tahun_ajaran_id', session('tahun_ajaran_id')) as $ekskul)
+                    @forelse($siswa->nilaiEkstrakurikuler->where('tahun_ajaran_id', $reportTahunAjaranId)->where('semester', $reportSemester) as $ekskul)
                     <tr class="bg-white border-b">
                         <td class="px-6 py-4">{{ $ekskul->ekstrakurikuler->nama_ekstrakurikuler }}</td>
                         <td class="px-6 py-4">{{ $ekskul->deskripsi }}</td>
@@ -109,7 +117,11 @@
                 <div class="bg-white p-4 rounded-lg shadow">
                     <p class="text-sm text-gray-600">Sakit</p>
                     @php
-                        $absensi = $siswa->absensi->where('tahun_ajaran_id', session('tahun_ajaran_id'))->first();
+                        $absensi = $siswa->absensi
+                            && $siswa->absensi->tahun_ajaran_id == $reportTahunAjaranId
+                            && $siswa->absensi->semester == $reportSemester
+                                ? $siswa->absensi
+                                : null;
                     @endphp
                     <p class="text-2xl font-bold">{{ $absensi ? $absensi->sakit : 0 }}</p>
                 </div>

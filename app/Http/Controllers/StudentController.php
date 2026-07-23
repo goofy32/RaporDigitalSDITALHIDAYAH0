@@ -3,25 +3,50 @@
 namespace App\Http\Controllers;
 
 use App\Traits\RequiresTahunAjaran;
+use App\Traits\RespondsWithLiveList;
 use Illuminate\Http\Request;
-use App\Imports\StudentImport;
-use Maatwebsite\Excel\Facades\Excel;
 use App\Models\Siswa;
 use App\Models\Kelas;
+use App\Models\TahunAjaran;
+use App\Services\StudentExcelImportService;
+use App\Services\StudentImportTemplateService;
+use App\Services\SiswaKelasSemesterResolver;
+use App\Support\StudentIdentifier;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
 class StudentController extends Controller
 {
-    use RequiresTahunAjaran;
+    use RequiresTahunAjaran, RespondsWithLiveList;
+
+    private const STUDENT_UNAVAILABLE_MESSAGE = 'Data siswa sudah dihapus atau tidak lagi tersedia.';
 
     public function index(Request $request)
     {
         // Ambil tahun ajaran dari session
         $tahunAjaranId = session('tahun_ajaran_id');
+        $activeTahunAjaran = $tahunAjaranId ? TahunAjaran::find($tahunAjaranId) : null;
+
+        if ($activeTahunAjaran) {
+            $students = $this->enrollmentAwareAdminStudentQuery($request, $activeTahunAjaran)
+                ->paginate(10);
+
+            $this->attachAdminStudentContextClasses($students->getCollection());
+
+            $kelasOptions = $this->adminStudentClassOptions($tahunAjaranId);
+
+            return $this->liveListResponse(
+                $request,
+                'admin.student',
+                'admin.partials.student-results',
+                compact('students', 'activeTahunAjaran', 'kelasOptions')
+            );
+        }
         
         // Buat query dasar dengan join ke tabel kelas untuk sorting
         $query = Siswa::join('kelas', 'siswas.kelas_id', '=', 'kelas.id')
@@ -57,24 +82,158 @@ class StudentController extends Controller
                 }
             });
         }
-        
-        // Always apply this sorting regardless of search
-        $query->orderBy('kelas.nomor_kelas', 'asc')
-            ->orderBy('kelas.nama_kelas', 'asc')
-            ->orderBy('siswas.nama', 'asc');
+
+        $this->applyStudentFilters($query, $request, 'siswas.kelas_id');
+        $this->orderStudentQuery(
+            $query,
+            $request,
+            'kelas.nomor_kelas',
+            'kelas.nama_kelas'
+        );
         
         $students = $query->paginate(10);
         
         // Eager load the kelas relationship for the paginated results
         $students->load('kelas');
-        
-        // Pass data tahun ajaran ke view untuk menampilkan informasi
-        $activeTahunAjaran = null;
-        if ($tahunAjaranId) {
-            $activeTahunAjaran = \App\Models\TahunAjaran::find($tahunAjaranId);
+
+        $kelasOptions = $this->adminStudentClassOptions($tahunAjaranId);
+
+        return $this->liveListResponse(
+            $request,
+            'admin.student',
+            'admin.partials.student-results',
+            compact('students', 'activeTahunAjaran', 'kelasOptions')
+        );
+    }
+
+    private function enrollmentAwareAdminStudentQuery(Request $request, TahunAjaran $tahunAjaran)
+    {
+        $tahunAjaranId = (int) $tahunAjaran->id;
+        $semester = (int) $tahunAjaran->semester;
+
+        $query = Siswa::query()
+            ->leftJoin('siswa_kelas_semester as enrollment_context', function ($join) use ($tahunAjaranId, $semester) {
+                $join->on('enrollment_context.siswa_id', '=', 'siswas.id')
+                    ->where('enrollment_context.tahun_ajaran_id', '=', $tahunAjaranId)
+                    ->where('enrollment_context.semester', '=', $semester);
+            })
+            ->leftJoin('kelas as enrollment_kelas', 'enrollment_context.kelas_id', '=', 'enrollment_kelas.id')
+            ->leftJoin('kelas as legacy_kelas', 'siswas.kelas_id', '=', 'legacy_kelas.id')
+            ->select('siswas.*')
+            ->addSelect(DB::raw('COALESCE(enrollment_context.kelas_id, legacy_kelas.id) as context_kelas_id'))
+            ->where(function ($query) use ($tahunAjaranId) {
+                $query->whereNotNull('enrollment_context.id')
+                    ->orWhere(function ($query) use ($tahunAjaranId) {
+                        $query->whereDoesntHave('semesterEnrollments')
+                            ->where('legacy_kelas.tahun_ajaran_id', $tahunAjaranId);
+                    });
+            });
+
+        if ($request->has('search')) {
+            $search = strtolower($request->search);
+            $terms = explode(' ', trim($search));
+
+            $query->where(function ($q) use ($terms, $search) {
+                if (count($terms) > 0 && $terms[0] === 'kelas') {
+                    if (count($terms) > 1 && is_numeric($terms[1])) {
+                        $q->where('enrollment_kelas.nomor_kelas', $terms[1])
+                            ->orWhere('legacy_kelas.nomor_kelas', $terms[1]);
+                    }
+                } else {
+                    $q->where(function ($subQ) use ($search) {
+                        $subQ->where('siswas.nama', 'LIKE', "%{$search}%")
+                            ->orWhere('siswas.nis', 'LIKE', "%{$search}%")
+                            ->orWhere('siswas.nisn', 'LIKE', "%{$search}%")
+                            ->orWhere('enrollment_kelas.nama_kelas', 'LIKE', "%{$search}%")
+                            ->orWhere('enrollment_kelas.nomor_kelas', 'LIKE', "%{$search}%")
+                            ->orWhere('legacy_kelas.nama_kelas', 'LIKE', "%{$search}%")
+                            ->orWhere('legacy_kelas.nomor_kelas', 'LIKE', "%{$search}%");
+                    });
+                }
+            });
         }
-        
-        return view('admin.student', compact('students', 'activeTahunAjaran'));
+
+        $this->applyStudentFilters($query, $request, 'COALESCE(enrollment_context.kelas_id, legacy_kelas.id)');
+
+        return $this->orderStudentQuery(
+            $query,
+            $request,
+            'COALESCE(enrollment_kelas.nomor_kelas, legacy_kelas.nomor_kelas)',
+            'COALESCE(enrollment_kelas.nama_kelas, legacy_kelas.nama_kelas)'
+        );
+    }
+
+    private function applyStudentFilters($query, Request $request, string $classIdExpression): void
+    {
+        if ($request->filled('kelas_id')) {
+            $query->whereRaw($classIdExpression.' = ?', [$request->integer('kelas_id')]);
+        }
+
+        if (in_array($request->input('jenis_kelamin'), ['Laki-laki', 'Perempuan'], true)) {
+            $query->where('siswas.jenis_kelamin', $request->input('jenis_kelamin'));
+        }
+
+        if ($request->filled('foto')) {
+            if ($request->foto === 'ada') {
+                $query->whereNotNull('siswas.photo')
+                    ->where('siswas.photo', '!=', '');
+            } elseif ($request->foto === 'belum') {
+                $query->where(function ($query) {
+                    $query->whereNull('siswas.photo')
+                        ->orWhere('siswas.photo', '');
+                });
+            }
+        }
+    }
+
+    private function orderStudentQuery($query, Request $request, string $classNumberExpression, string $classNameExpression)
+    {
+        return match ($request->input('sort')) {
+            'nama_za' => $query->orderBy('siswas.nama', 'desc'),
+            'nis' => $query->orderBy('siswas.nis', 'asc'),
+            'nisn' => $query->orderBy('siswas.nisn', 'asc'),
+            default => $query
+                ->orderByRaw($classNumberExpression.' asc')
+                ->orderByRaw($classNameExpression.' asc')
+                ->orderBy('siswas.nama', 'asc'),
+        };
+    }
+
+    private function adminStudentClassOptions(?int $tahunAjaranId)
+    {
+        return Kelas::query()
+            ->when($tahunAjaranId, fn ($query) => $query->where('tahun_ajaran_id', $tahunAjaranId))
+            ->orderBy('nomor_kelas')
+            ->orderBy('nama_kelas')
+            ->get(['id', 'nomor_kelas', 'nama_kelas']);
+    }
+
+    private function attachAdminStudentContextClasses($students): void
+    {
+        $classIds = $students->pluck('context_kelas_id')
+            ->filter()
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values();
+
+        if ($classIds->isEmpty()) {
+            return;
+        }
+
+        $classes = Kelas::with('tahunAjaran')
+            ->whereIn('id', $classIds)
+            ->get()
+            ->keyBy('id');
+
+        $students->each(function (Siswa $student) use ($classes) {
+            $contextClassId = (int) ($student->context_kelas_id ?? 0);
+
+            if ($contextClassId && $classes->has($contextClassId)) {
+                $contextClass = $classes->get($contextClassId);
+                $student->setRelation('kelas', $contextClass);
+                $student->setAttribute('admin_kelas_label', $contextClass->full_kelas);
+            }
+        });
     }
     public function create()
     {
@@ -93,24 +252,17 @@ class StudentController extends Controller
     public function store(Request $request)
     {
         $tahunAjaranId = $this->getValidTahunAjaranId();
+        $tahunAjaran = $this->activeTahunAjaranForStudentMutation($tahunAjaranId);
 
-        if (!$tahunAjaranId) {
+        if (! $tahunAjaran) {
             return $this->failTahunAjaranNotSet($request);
         }
 
+        $this->normalizeStudentIdentifierInputs($request);
+
         $validated = $request->validate([
-            'nis' => [
-                'required',
-                'numeric',          // Memastikan hanya angka
-                'digits_between:5,10', // Minimal 5 digit, maksimal 10 digit
-                'unique:siswas,nis'
-            ],
-            'nisn' => [
-                'required',
-                'numeric',         // Memastikan hanya angka
-                'digits:10',       // Harus 10 digit
-                'unique:siswas,nisn'
-            ],
+            'nis' => StudentIdentifier::rules('nis'),
+            'nisn' => StudentIdentifier::rules('nisn'),
             'nama' => [
                 'required',
                 'string',
@@ -121,7 +273,10 @@ class StudentController extends Controller
             'jenis_kelamin' => 'required|in:Laki-laki,Perempuan',
             'agama' => 'required|string|in:Islam,Kristen,Katolik,Hindu,Buddha,Konghucu',
             'alamat' => 'required|string|max:500',
-            'kelas_id' => 'required|exists:kelas,id',
+            'kelas_id' => [
+                'required',
+                $this->activeClassRule((int) $tahunAjaran->id),
+            ],
             'photo' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp', 'max:2048'],
             'nama_ayah' => 'required|string|max:255',
             'nama_ibu' => 'required|string|max:255',
@@ -130,7 +285,9 @@ class StudentController extends Controller
             'alamat_orangtua' => 'nullable|string|max:500',
             'wali_siswa' => 'nullable|string|max:255',
             'pekerjaan_wali' => 'nullable|string|max:100',
-        ]);
+        ], array_merge(StudentIdentifier::messages(), [
+            'tanggal_lahir.before' => 'Tanggal lahir harus sebelum hari ini.',
+        ]));
     
         // Set default empty string untuk field nullable
         $validated['alamat_orangtua'] = $validated['alamat_orangtua'] ?? '';
@@ -143,12 +300,21 @@ class StudentController extends Controller
             $validated['photo'] = $this->storePublicUpload($request->file('photo'), 'photos');
         }
 
-        $validated['tahun_ajaran_id'] = $tahunAjaranId;
+        $validated['tahun_ajaran_id'] = $tahunAjaran->id;
     
         try {
-            Siswa::create($validated);
+            DB::transaction(function () use ($validated, $tahunAjaran) {
+                $student = Siswa::create($validated);
+
+                $this->syncActiveSemesterEnrollment(
+                    $student,
+                    (int) $validated['kelas_id'],
+                    $tahunAjaran
+                );
+            });
+
             return redirect()->route('student')->with('success', 'Data siswa berhasil ditambahkan!');
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('Failed to create student', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
@@ -184,30 +350,22 @@ class StudentController extends Controller
     public function update(Request $request, $id)
     {
         $tahunAjaranId = $this->getValidTahunAjaranId();
+        $tahunAjaran = $this->activeTahunAjaranForStudentMutation($tahunAjaranId);
 
-        if (!$tahunAjaranId) {
+        if (! $tahunAjaran) {
             return $this->failTahunAjaranNotSet($request);
         }
 
         $student = Siswa::findOrFail($id);
-        $validated = $request->validate([
-            'nis' => 'required|string|max:20|unique:siswas,nis,'.$id,
-            'nisn' => 'required|string|max:20|unique:siswas,nisn,'.$id,
-            'nama' => 'required|string|max:255',
-            'tanggal_lahir' => 'required|date|before:today',
-            'jenis_kelamin' => 'required|in:Laki-laki,Perempuan',
-            'agama' => 'required|string|in:Islam,Kristen,Katolik,Hindu,Buddha,Konghucu',
-            'alamat' => 'required|string|max:500',
-            'kelas_id' => 'required|exists:kelas,id',
-            'photo' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp', 'max:2048'],
-            'nama_ayah' => 'required|string|max:255',
-            'nama_ibu' => 'required|string|max:255',
-            'pekerjaan_ayah' => 'nullable|string|max:100',
-            'pekerjaan_ibu' => 'nullable|string|max:100',
-            'alamat_orangtua' => 'nullable|string|max:500',
-            'wali_siswa' => 'nullable|string|max:255',
-            'pekerjaan_wali' => 'nullable|string|max:100',
-        ]);
+        $this->normalizeStudentIdentifierInputs($request);
+
+        $validated = $request->validate(
+            $this->studentUpdateRules($id, [
+                'required',
+                $this->activeClassRule((int) $tahunAjaran->id),
+            ]),
+            $this->studentUpdateMessages()
+        );
     
         if ($request->hasFile('photo')) {
             // Hapus foto lama jika ada
@@ -217,32 +375,166 @@ class StudentController extends Controller
             $validated['photo'] = $this->storePublicUpload($request->file('photo'), 'photos');
         }
 
-        $validated['tahun_ajaran_id'] = $tahunAjaranId;
+        $validated['tahun_ajaran_id'] = $tahunAjaran->id;
     
-        $student->update($validated);
-        return redirect()->route('student')->with('success', 'Data siswa berhasil diperbarui!');
+        try {
+            DB::transaction(function () use ($student, $validated, $tahunAjaran) {
+                $student->update($validated);
+
+                $this->syncActiveSemesterEnrollment(
+                    $student,
+                    (int) $validated['kelas_id'],
+                    $tahunAjaran
+                );
+            });
+
+            return redirect()->route('student')->with('success', 'Data siswa berhasil diperbarui!');
+        } catch (\Throwable $e) {
+            Log::error('Failed to update student', [
+                'student_id' => $student->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'user_id' => auth()->id(),
+            ]);
+
+            return back()->with('error', 'Terjadi kesalahan. Silakan coba lagi.')
+                ->withInput();
+        }
+    }
+
+    private function activeTahunAjaranForStudentMutation(?int $tahunAjaranId): ?TahunAjaran
+    {
+        if (! $tahunAjaranId) {
+            return null;
+        }
+
+        return TahunAjaran::query()
+            ->whereKey($tahunAjaranId)
+            ->where('is_active', true)
+            ->first();
+    }
+
+    private function activeClassRule(int $tahunAjaranId)
+    {
+        return Rule::exists('kelas', 'id')->where(function ($query) use ($tahunAjaranId) {
+            $query->where('tahun_ajaran_id', $tahunAjaranId);
+
+            if (Schema::hasColumn('kelas', 'deleted_at')) {
+                $query->whereNull('deleted_at');
+            }
+        });
+    }
+
+    private function studentUpdateRules(int|string $studentId, ?array $kelasIdRules = null): array
+    {
+        $rules = [
+            'nis' => StudentIdentifier::rules('nis', $studentId),
+            'nisn' => StudentIdentifier::rules('nisn', $studentId),
+            'nama' => ['required', 'string', 'max:255'],
+            'tanggal_lahir' => ['required', 'date', 'before:today'],
+            'jenis_kelamin' => ['required', Rule::in(['Laki-laki', 'Perempuan'])],
+            'agama' => ['required', 'string', Rule::in(['Islam', 'Kristen', 'Katolik', 'Hindu', 'Buddha', 'Konghucu'])],
+            'alamat' => ['required', 'string', 'max:500'],
+            'photo' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp', 'max:2048'],
+            'nama_ayah' => ['required', 'string', 'max:255'],
+            'nama_ibu' => ['required', 'string', 'max:255'],
+            'pekerjaan_ayah' => ['nullable', 'string', 'max:100'],
+            'pekerjaan_ibu' => ['nullable', 'string', 'max:100'],
+            'alamat_orangtua' => ['nullable', 'string', 'max:500'],
+            'wali_siswa' => ['nullable', 'string', 'max:255'],
+            'pekerjaan_wali' => ['nullable', 'string', 'max:100'],
+        ];
+
+        if ($kelasIdRules !== null) {
+            $rules['kelas_id'] = $kelasIdRules;
+        }
+
+        return $rules;
+    }
+
+    private function studentUpdateMessages(): array
+    {
+        return array_merge(StudentIdentifier::messages(), [
+            'tanggal_lahir.before' => 'Tanggal lahir harus sebelum hari ini.',
+        ]);
+    }
+
+    private function normalizeStudentIdentifierInputs(Request $request): void
+    {
+        $normalized = [];
+
+        foreach (['nis', 'nisn'] as $field) {
+            if ($request->has($field)) {
+                $normalized[$field] = StudentIdentifier::normalizeInput($request->input($field));
+            }
+        }
+
+        if ($normalized !== []) {
+            $request->merge($normalized);
+        }
+    }
+
+    private function syncActiveSemesterEnrollment(Siswa $student, int $kelasId, TahunAjaran $tahunAjaran): void
+    {
+        $now = now();
+
+        DB::table('siswa_kelas_semester')->upsert(
+            [[
+                'siswa_id' => $student->id,
+                'kelas_id' => $kelasId,
+                'tahun_ajaran_id' => $tahunAjaran->id,
+                'semester' => (int) $tahunAjaran->semester,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]],
+            ['siswa_id', 'tahun_ajaran_id', 'semester'],
+            ['kelas_id', 'updated_at']
+        );
+
+        if (app()->resolved(SiswaKelasSemesterResolver::class)) {
+            app(SiswaKelasSemesterResolver::class)->resetMemoization();
+        }
     }
 
     public function destroy($id)
     {
-        $student = Siswa::findOrFail($id);
+        $studentId = filter_var($id, FILTER_VALIDATE_INT, [
+            'options' => ['min_range' => 1],
+        ]);
+
+        if ($studentId === false) {
+            return redirect()->route('student')->with('error', self::STUDENT_UNAVAILABLE_MESSAGE);
+        }
+
+        $student = Siswa::withTrashed()->find($studentId);
+
+        if (! $student || $student->trashed()) {
+            return redirect()->route('student')->with('error', self::STUDENT_UNAVAILABLE_MESSAGE);
+        }
 
         $student->delete();
         return redirect()->route('student')->with('success', 'Data siswa berhasil dihapus!');
     }
 
-    public function waliKelasIndex(Request $request)
+    public function waliKelasIndex(Request $request, SiswaKelasSemesterResolver $enrollmentResolver)
     {
         $guru = auth()->guard('guru')->user();
         $tahunAjaranId = session('tahun_ajaran_id');
         
-        \Log::info("Wali Kelas Index", [
+        Log::debug('Wali Kelas Index', [
             'guru_id' => $guru->id,
             'tahun_ajaran_id' => $tahunAjaranId
         ]);
         
         if (!$guru) {
             return redirect()->route('login')->with('error', 'Silakan login terlebih dahulu');
+        }
+
+        $tahunAjaran = $tahunAjaranId ? TahunAjaran::find($tahunAjaranId) : null;
+
+        if (!$tahunAjaran) {
+            return redirect()->route('wali_kelas.dashboard')
+                ->with('error', 'Data tahun ajaran tidak ditemukan.');
         }
         
         // Ambil kelas wali untuk guru ini
@@ -255,7 +547,10 @@ class StudentController extends Controller
             ->select('kelas.id as kelas_id', 'kelas.nomor_kelas', 'kelas.nama_kelas')
             ->first();
         
-        \Log::info("Kelas wali result:", ['kelas_wali' => $kelasWali]);
+        Log::debug('Kelas wali result', [
+            'kelas_id' => $kelasWali?->kelas_id,
+            'found' => (bool) $kelasWali,
+        ]);
         
         if (!$kelasWali) {
             // Log all guru-kelas relations for this guru
@@ -265,31 +560,68 @@ class StudentController extends Controller
                 ->select('guru_kelas.*', 'kelas.tahun_ajaran_id', 'kelas.nomor_kelas', 'kelas.nama_kelas')
                 ->get();
                 
-            \Log::info("All guru-kelas relations:", ['relations' => $relations]);
+            Log::debug('All guru-kelas relations for wali student index', [
+                'relation_count' => $relations->count(),
+            ]);
             
             return redirect()->route('wali_kelas.dashboard')
                 ->with('error', 'Anda belum ditugaskan sebagai wali kelas untuk tahun ajaran yang dipilih.');
         }
         
-        $query = \App\Models\Siswa::with('kelas')
-            ->where('kelas_id', $kelasWali->kelas_id);
+        $query = $enrollmentResolver
+            ->studentQueryForClass((int) $kelasWali->kelas_id, (int) $tahunAjaranId, (int) $tahunAjaran->semester, true);
         
-        \Log::info("Query students for kelas_id: " . $kelasWali->kelas_id);
+        Log::debug('Query students for wali kelas', ['kelas_id' => $kelasWali->kelas_id]);
         
         if ($request->has('search')) {
             $search = $request->search;
             $query->where(function($q) use ($search) {
-                $q->where('nama', 'LIKE', "%{$search}%")
-                ->orWhere('nis', 'LIKE', "%{$search}%")
-                ->orWhere('nisn', 'LIKE', "%{$search}%");
+                $q->where('siswas.nama', 'LIKE', "%{$search}%")
+                ->orWhere('siswas.nis', 'LIKE', "%{$search}%")
+                ->orWhere('siswas.nisn', 'LIKE', "%{$search}%");
             });
         }
-        
+
+        if (in_array($request->input('jenis_kelamin'), ['Laki-laki', 'Perempuan'], true)) {
+            $query->where('siswas.jenis_kelamin', $request->input('jenis_kelamin'));
+        }
+
+        if ($request->filled('catatan')) {
+            $catatanConstraint = function ($catatanQuery) use ($tahunAjaranId, $tahunAjaran) {
+                $catatanQuery->where('tahun_ajaran_id', $tahunAjaranId)
+                    ->where('semester', $tahunAjaran->semester);
+            };
+
+            if ($request->catatan === 'ada') {
+                $query->whereHas('catatanSiswa', $catatanConstraint);
+            } elseif ($request->catatan === 'belum') {
+                $query->whereDoesntHave('catatanSiswa', $catatanConstraint);
+            }
+        }
+
+        if ($request->input('sort') === 'nama_za') {
+            $query->orderBy('siswas.nama', 'desc');
+        } else {
+            $query->orderBy('siswas.nama');
+        }
+
         $students = $query->paginate(10);
+
+        $kelasModel = Kelas::find($kelasWali->kelas_id);
+        $students->getCollection()->each(function (Siswa $student) use ($kelasModel) {
+            if ($kelasModel) {
+                $student->setRelation('kelas', $kelasModel);
+            }
+        });
         
-        \Log::info("Students found:", ['count' => $students->count()]);
+        Log::debug('Students found for wali kelas', ['count' => $students->count()]);
         
-        return view('wali_kelas.student', compact('students'));
+        return $this->liveListResponse(
+            $request,
+            'wali_kelas.student',
+            'wali_kelas.partials.student-results',
+            compact('students')
+        );
     }
 
     public function waliKelasShow($id)
@@ -344,11 +676,13 @@ class StudentController extends Controller
             }
             
             // Validate the request
+            $this->normalizeStudentIdentifierInputs($request);
+
             $validated = $request->validate([
-                'nis' => 'required|unique:siswas',
-                'nisn' => 'required|unique:siswas',
+                'nis' => StudentIdentifier::rules('nis'),
+                'nisn' => StudentIdentifier::rules('nisn'),
                 'nama' => 'required',
-                'tanggal_lahir' => 'required|date',
+                'tanggal_lahir' => 'required|date|before:today',
                 'jenis_kelamin' => 'required',
                 'agama' => 'required',
                 'alamat' => 'required',
@@ -360,19 +694,16 @@ class StudentController extends Controller
                 'alamat_orangtua' => 'nullable|string',
                 'wali_siswa' => 'nullable|string',
                 'pekerjaan_wali' => 'nullable|string',
-            ], [
-                'nis.required' => 'NIS wajib diisi.',
-                'nis.unique' => 'NIS sudah digunakan oleh siswa lain.',
-                'nisn.required' => 'NISN wajib diisi.',
-                'nisn.unique' => 'NISN sudah digunakan oleh siswa lain.',
+            ], array_merge(StudentIdentifier::messages(), [
                 'nama.required' => 'Nama siswa wajib diisi.',
                 'tanggal_lahir.required' => 'Tanggal lahir wajib diisi.',
+                'tanggal_lahir.before' => 'Tanggal lahir harus sebelum hari ini.',
                 'jenis_kelamin.required' => 'Jenis kelamin wajib dipilih.',
                 'agama.required' => 'Agama wajib dipilih.',
                 'alamat.required' => 'Alamat wajib diisi.',
                 'nama_ayah.required' => 'Nama ayah wajib diisi.',
                 'nama_ibu.required' => 'Nama ibu wajib diisi.',
-            ]);
+            ]));
     
             // Set kelas_id from the selected class
             $validated['kelas_id'] = $kelas->id;
@@ -445,21 +776,12 @@ class StudentController extends Controller
         $student = Siswa::where('kelas_id', $kelasWaliId)
             ->findOrFail($id);
 
-        $validated = $request->validate([
-            'nis' => 'required|unique:siswas,nis,' . $id,
-            'nisn' => 'required|unique:siswas,nisn,' . $id,
-            'nama' => 'required',
-            'tanggal_lahir' => 'required|date',
-            'jenis_kelamin' => 'required',
-            'agama' => 'required',
-            'alamat' => 'required',
-            'photo' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp', 'max:2048'],
-            'nama_ayah' => 'nullable',
-            'nama_ibu' => 'nullable',
-            'pekerjaan_ayah' => 'nullable',
-            'pekerjaan_ibu' => 'nullable',
-            'alamat_orangtua' => 'nullable',
-        ]);
+        $this->normalizeStudentIdentifierInputs($request);
+
+        $validated = $request->validate(
+            $this->studentUpdateRules($id),
+            $this->studentUpdateMessages()
+        );
 
         if ($request->hasFile('photo')) {
             if ($student->photo) {
@@ -493,86 +815,65 @@ class StudentController extends Controller
         return view('data.upload_student');
     }
 
-    public function importExcel(Request $request)
+    public function importExcel(Request $request, StudentExcelImportService $studentImportService)
     {
         $request->validate([
             'file' => 'required|mimes:xlsx,xls|max:2048',
+        ], [
+            'file.required' => 'File Excel siswa wajib dipilih.',
+            'file.mimes' => 'File harus berformat Excel (.xlsx atau .xls).',
+            'file.max' => 'Ukuran file Excel maksimal 2 MB.',
         ]);
-    
+
+        $activeTahunAjaran = TahunAjaran::where('is_active', true)->first();
+        if (! $activeTahunAjaran) {
+            return back()->with('error', 'Tidak ada tahun ajaran aktif. Buat tahun ajaran aktif terlebih dahulu.');
+        }
+
         try {
-            DB::beginTransaction();
-    
-            // 1. Log start import
-            \Log::info('Starting import process', [
-                'file' => $request->file('file')->getClientOriginalName()
-            ]);
-    
-            // 2. Baca file terlebih dahulu
-            $data = Excel::toArray(new StudentImport, $request->file('file'));
-            
-            // 3. Log data yang dibaca
-            \Log::info('Excel data read:', [
-                'sheets' => count($data),
-                'rows' => isset($data[0]) ? count($data[0]) : 0
-            ]);
-    
-            // 4. Lakukan import
-            $import = new StudentImport();
-            Excel::import($import, $request->file('file'));
-    
-            // 5. Cek jumlah row yang diproses
-            \Log::info('Rows processed:', [
-                'count' => $import->getRowCount()
-            ]);
-    
-            // 6. Cek error
-            $errors = $import->getErrors();
-            if (!empty($errors)) {
-                \Log::error('Import errors found:', $errors);
-                DB::rollBack();
-                return back()->with('error', $errors);
+            $result = $studentImportService->import($request->file('file'), $activeTahunAjaran);
+
+            if (! $result['success']) {
+                return back()
+                    ->with('error', 'Import siswa dibatalkan. Periksa daftar kesalahan pada file Excel.')
+                    ->with('import_errors', $result['errors']);
             }
-    
-            // 7. Commit jika berhasil
-            DB::commit();
-            \Log::info('Import completed and committed');
-    
+
             return redirect()->route('student')
-                ->with('success', 'Data siswa berhasil diimpor!');
-    
+                ->with('success', "Data siswa berhasil diimpor ({$result['imported_count']} siswa).");
+
         } catch (\Exception $e) {
-            DB::rollBack();
             Log::error('Student import failed', [
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
                 'user_id' => auth()->id(),
             ]);
-            return back()->with('error', 'Gagal mengimpor data. Silakan coba lagi.');
+
+            return back()->with('error', 'File Excel tidak dapat dibaca. Pastikan menggunakan template dari aplikasi ini.');
         }
     }
     
-    public function downloadTemplate()
+    public function downloadTemplate(StudentImportTemplateService $templateService)
     {
         try {
-            $filePath = base_path('../public_html/templates/Student_Template_with_Data.xlsx');
-
-            if (!file_exists($filePath)) {
-                Log::warning('Student import template file missing', [
-                    'path' => $filePath,
-                    'user_id' => auth()->id(),
-                ]);
-
-                return back()->with('error', 'File template tidak ditemukan.');
+            $activeTahunAjaran = TahunAjaran::where('is_active', true)->first();
+            if (! $activeTahunAjaran) {
+                return back()->with('error', 'Tidak ada tahun ajaran aktif. Buat tahun ajaran aktif terlebih dahulu.');
             }
 
-            return response()->download($filePath, 'Template_Import_Siswa.xlsx', [
+            $spreadsheet = $templateService->createWorkbook($activeTahunAjaran);
+            $filename = 'Template_Import_Siswa_'.$activeTahunAjaran->tahun_ajaran.'_Semester_'.$activeTahunAjaran->semester.'.xlsx';
+            $filename = str_replace(['/', '\\'], '-', $filename);
+
+            return response()->streamDownload(function () use ($spreadsheet) {
+                (new Xlsx($spreadsheet))->save('php://output');
+                $spreadsheet->disconnectWorksheets();
+            }, $filename, [
                 'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             ]);
 
         } catch (\Exception $e) {
             Log::error('Failed to download student import template', [
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
                 'user_id' => auth()->id(),
             ]);
 
@@ -601,5 +902,12 @@ class StudentController extends Controller
         }
 
         return $filePath;
+    }
+
+    private function isActiveTahunAjaran(int $tahunAjaranId): bool
+    {
+        return TahunAjaran::whereKey($tahunAjaranId)
+            ->where('is_active', true)
+            ->exists();
     }
 }

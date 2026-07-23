@@ -1,11 +1,17 @@
 function updateSemester(selectElement) {
     var target = selectElement || document.getElementById('tahun_pelajaran');
-    if (!target || !target.value) return;
+    var semesterInput = document.getElementById('semester');
+    if (!target || !semesterInput) return;
+
+    if (!target.value) {
+        semesterInput.value = '';
+        return;
+    }
 
     var selectedOption = target.options[target.selectedIndex];
     var semester = selectedOption?.getAttribute('data-semester');
     if (semester) {
-        document.getElementById('semester').value = semester;
+        semesterInput.value = semester;
     }
 }
 

@@ -12,11 +12,170 @@ function parseJsonDataset(element, key, fallback = []) {
 }
 
 export function getSubjectFormConfig(form) {
+    const pageRoot = form?.closest?.('[data-page]');
+
     return {
         currentSemester: parseInt(form?.dataset.currentSemester || '1'),
         mapelData: parseJsonDataset(form, 'mapelData'),
         waliKelasMap: parseJsonDataset(form, 'waliKelasMap', {}),
+        learningCopyCandidates: parseJsonDataset(form, 'learningCopyCandidates', parseJsonDataset(pageRoot, 'learningCopyCandidates')),
     };
+}
+
+function normalizeSubjectName(value) {
+    return String(value ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function fieldValue(container, selectors) {
+    for (const selector of selectors) {
+        const field = container.querySelector(selector);
+        if (field) return field.value;
+    }
+
+    return '';
+}
+
+function classState(container) {
+    const classField = container.querySelector('.kelas-select, select[name$="[kelas]"], select[name="kelas"], input[name="kelas"]');
+    const selectedOption = classField?.tagName === 'SELECT' ? classField.options[classField.selectedIndex] : null;
+    const kelasId = parseInt(classField?.value || '');
+    const classNumber = parseInt(selectedOption?.dataset?.classNumber || classField?.dataset?.classNumber || '');
+
+    return {
+        kelasId,
+        classNumber,
+    };
+}
+
+function currentSubjectId(container, form) {
+    return parseInt(container?.dataset?.subjectId || form?.dataset?.subjectId || '');
+}
+
+export function matchingLearningCopyCandidates(container) {
+    const form = container?.closest('form') || container;
+    const { learningCopyCandidates } = getSubjectFormConfig(form);
+    const subjectName = normalizeSubjectName(fieldValue(container, [
+        'input[name$="[mata_pelajaran]"]',
+        'input[name="mata_pelajaran"]',
+        '#mata_pelajaran',
+    ]));
+    const semester = parseInt(fieldValue(container, [
+        'select[name$="[semester]"]',
+        'input[name$="[semester]"]',
+        'select[name="semester"]',
+        'input[name="semester"]',
+        '#semester',
+    ]));
+    const { kelasId, classNumber } = classState(container);
+    const excludedSubjectId = currentSubjectId(container, form);
+
+    if (!subjectName || !Number.isInteger(kelasId) || !Number.isInteger(classNumber) || !Number.isInteger(semester)) {
+        return [];
+    }
+
+    return learningCopyCandidates.filter(candidate => {
+        return candidate.subject_key === subjectName
+            && parseInt(candidate.semester) === semester
+            && parseInt(candidate.kelas_nomor) === classNumber
+            && parseInt(candidate.kelas_id) !== kelasId
+            && parseInt(candidate.id) !== excludedSubjectId;
+    });
+}
+
+function setManualLingkupMateriRequired(container, required) {
+    container.querySelectorAll('input[name*="[lingkup_materi]"], input[name="lingkup_materi[]"]').forEach(input => {
+        input.required = required;
+        input.dataset.copyOptional = required ? 'false' : 'true';
+    });
+}
+
+export function refreshManualLingkupMateriRequirement(container) {
+    if (!container) return;
+
+    const wrapper = container.querySelector('[data-lm-tp-copy-option]');
+    const checkbox = wrapper?.querySelector('[data-lm-tp-copy-checkbox]');
+    const copyIsActive = Boolean(
+        wrapper
+        && !wrapper.classList.contains('hidden')
+        && checkbox
+        && !checkbox.disabled
+        && checkbox.checked
+    );
+
+    setManualLingkupMateriRequired(container, !copyIsActive);
+}
+
+export function refreshLearningCopyOption(container) {
+    if (!container) return;
+
+    const wrapper = container.querySelector('[data-lm-tp-copy-option]');
+    if (!wrapper) {
+        refreshManualLingkupMateriRequirement(container);
+        return;
+    }
+
+    const checkbox = wrapper.querySelector('[data-lm-tp-copy-checkbox]');
+    const sourceSelect = wrapper.querySelector('[data-lm-tp-copy-source]');
+    const sourceWrap = wrapper.querySelector('[data-lm-tp-copy-source-wrap]');
+    const sourceLabel = wrapper.querySelector('[data-lm-tp-copy-source-label]');
+    const candidates = matchingLearningCopyCandidates(container);
+    const previousValue = sourceSelect?.value || wrapper.dataset.initialSourceId || '';
+    const shouldCheck = wrapper.dataset.initialChecked === 'true';
+
+    if (checkbox && checkbox.dataset.lmTpCopyToggleBound !== 'true') {
+        checkbox.dataset.lmTpCopyToggleBound = 'true';
+        checkbox.addEventListener('change', () => refreshManualLingkupMateriRequirement(container));
+    }
+
+    if (sourceSelect) {
+        sourceSelect.innerHTML = '<option value="">Pilih sumber LM/TP</option>';
+        candidates.forEach(candidate => {
+            const option = document.createElement('option');
+            option.value = String(candidate.id);
+            option.textContent = `${candidate.label} (${candidate.lm_count} LM, ${candidate.tp_count} TP)`;
+            sourceSelect.appendChild(option);
+        });
+    }
+
+    if (candidates.length === 0) {
+        wrapper.classList.add('hidden');
+        if (checkbox) {
+            checkbox.checked = false;
+            checkbox.disabled = true;
+        }
+        if (sourceSelect) {
+            sourceSelect.value = '';
+            sourceSelect.disabled = true;
+        }
+        refreshManualLingkupMateriRequirement(container);
+        return;
+    }
+
+    wrapper.classList.remove('hidden');
+    if (checkbox) checkbox.disabled = false;
+    if (sourceSelect) {
+        sourceSelect.disabled = false;
+        const candidateIds = candidates.map(candidate => String(candidate.id));
+        sourceSelect.value = candidateIds.includes(String(previousValue)) ? String(previousValue) : String(candidates[0].id);
+    }
+
+    if (candidates.length === 1) {
+        sourceWrap?.classList.add('hidden');
+        if (sourceLabel) {
+            sourceLabel.textContent = `Sumber: ${candidates[0].label}`;
+            sourceLabel.classList.remove('hidden');
+        }
+    } else {
+        sourceWrap?.classList.remove('hidden');
+        sourceLabel?.classList.add('hidden');
+    }
+
+    if (checkbox && shouldCheck) {
+        checkbox.checked = true;
+        wrapper.dataset.initialChecked = 'false';
+    }
+
+    refreshManualLingkupMateriRequirement(container);
 }
 
 export function markSubjectFormChanged() {
@@ -64,8 +223,28 @@ export function showSubjectInfo(container, type, message) {
     `;
 }
 
-function getTeacherCategory(option) {
-    return option.getAttribute('data-jabatan') === 'guru_wali' ? 'wali' : 'guru';
+function isActiveYearWali(option) {
+    return option.getAttribute('data-is-active-wali') === 'true';
+}
+
+function optionClassIds(option, attributeName) {
+    return (option.getAttribute(attributeName) || '')
+        .split(',')
+        .map(value => parseInt(value))
+        .filter(value => Number.isInteger(value));
+}
+
+function isAssignedToTeachClass(option, selectedKelasId) {
+    const kelasId = parseInt(selectedKelasId);
+    if (!Number.isInteger(kelasId)) return false;
+
+    return optionClassIds(option, 'data-teaching-class-ids').includes(kelasId);
+}
+
+function setTeacherOptionAvailable(option, available) {
+    option.disabled = !available;
+    option.hidden = !available;
+    option.style.display = available ? '' : 'none';
 }
 
 function getClassState(form, kelasSelect) {
@@ -119,8 +298,7 @@ export function filterGuruDropdown(entry, mode, { resetSelection = false } = {})
     const { selectedKelasId, hasWaliKelas, waliKelasId } = getClassState(form, kelasSelect);
 
     Array.from(guruSelect.options).forEach(option => {
-        option.disabled = false;
-        option.hidden = false;
+        setTeacherOptionAvailable(option, true);
         if (!option.value) return;
     });
 
@@ -132,21 +310,17 @@ export function filterGuruDropdown(entry, mode, { resetSelection = false } = {})
     if (mode === 'muatan_lokal' || mode === 'guru_mapel') {
         Array.from(guruSelect.options).forEach(option => {
             if (!option.value) return;
-            if (getTeacherCategory(option) === 'wali') {
-                option.disabled = true;
-                option.hidden = true;
-            }
+            setTeacherOptionAvailable(option, !isActiveYearWali(option) && isAssignedToTeachClass(option, selectedKelasId));
         });
         if (mode === 'muatan_lokal') {
-            showSubjectInfo(infoContainer, 'warning', 'Ini pelajaran muatan lokal, guru hanya non-wali kelas.');
+            showSubjectInfo(infoContainer, 'warning', 'Ini pelajaran muatan lokal, guru hanya non-wali kelas yang ditugaskan mengajar di kelas ini.');
         } else {
-            showSubjectInfo(infoContainer, 'info', 'Mode guru mapel aktif. Guru pengampu hanya guru non-wali kelas.');
+            showSubjectInfo(infoContainer, 'info', 'Mode guru mapel aktif. Guru pengampu hanya guru non-wali yang ditugaskan mengajar di kelas ini.');
         }
     } else if (!hasWaliKelas || !waliKelasId) {
         Array.from(guruSelect.options).forEach(option => {
             if (!option.value) return;
-            option.disabled = true;
-            option.hidden = true;
+            setTeacherOptionAvailable(option, false);
         });
         showSubjectInfo(infoContainer, 'warning', 'Pelajaran wajib membutuhkan wali kelas. Kelas ini belum memiliki wali kelas.');
     } else {
@@ -154,11 +328,14 @@ export function filterGuruDropdown(entry, mode, { resetSelection = false } = {})
             if (!option.value) return;
             const optionId = parseInt(option.value);
             const isTargetWali = optionId === waliKelasId;
-            option.disabled = !isTargetWali;
-            option.hidden = !isTargetWali;
+            setTeacherOptionAvailable(option, isTargetWali);
         });
         guruSelect.value = waliKelasId.toString();
         showSubjectInfo(infoContainer, 'info', 'Pelajaran wajib otomatis menggunakan guru wali kelas dari kelas ini.');
+    }
+
+    if (guruSelect.value && guruSelect.options[guruSelect.selectedIndex]?.disabled) {
+        guruSelect.value = '';
     }
 
     guruSelect.classList.toggle('border-yellow-500', guruSelect.value === '' || guruSelect.selectedIndex === 0);

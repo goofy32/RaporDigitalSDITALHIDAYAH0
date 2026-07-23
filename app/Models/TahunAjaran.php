@@ -4,9 +4,9 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
-use Illuminate\Database\Eloquent\SoftDeletes;
 
 class TahunAjaran extends Model
 {
@@ -20,7 +20,7 @@ class TahunAjaran extends Model
         'tanggal_mulai',
         'tanggal_selesai',
         'semester', // 1: Ganjil, 2: Genap
-        'deskripsi'
+        'deskripsi',
     ];
 
     protected $casts = [
@@ -28,7 +28,7 @@ class TahunAjaran extends Model
         'tanggal_mulai' => 'date',
         'tanggal_selesai' => 'date',
         'semester' => 'integer',
-        'deleted_at' => 'datetime' // Add this for soft delete support
+        'deleted_at' => 'datetime', // Add this for soft delete support
     ];
 
     // Boot method untuk setup model events
@@ -52,7 +52,7 @@ class TahunAjaran extends Model
                 if ($profil) {
                     $profil->update([
                         'tahun_pelajaran' => $tahunAjaran->tahun_ajaran,
-                        'semester' => $tahunAjaran->semester
+                        'semester' => $tahunAjaran->semester,
                     ]);
                 }
             }
@@ -73,24 +73,24 @@ class TahunAjaran extends Model
                 ->where('tahun_ajaran_id', $tahunAjaranId)
                 ->update(['semester' => $newSemester]);
         }
-        
+
         // Update mata pelajaran dengan semester baru
         if (Schema::hasColumn('mata_pelajarans', 'semester')) {
             DB::table('mata_pelajarans')
                 ->where('tahun_ajaran_id', $tahunAjaranId)
                 ->update(['semester' => $newSemester]);
         }
-        
+
         // Update nilai-nilai dengan semester baru
         // Skip this - nilais doesn't have a semester column
-        
+
         // Update template rapor dengan semester baru
         if (Schema::hasColumn('report_templates', 'semester')) {
             DB::table('report_templates')
                 ->where('tahun_ajaran_id', $tahunAjaranId)
                 ->update(['semester' => $newSemester]);
         }
-        
+
         // Tambahkan model lain yang memiliki semester dan tahun_ajaran_id jika ada
     }
 
@@ -106,6 +106,11 @@ class TahunAjaran extends Model
         return $this->hasManyThrough(Siswa::class, Kelas::class);
     }
 
+    public function semesterEnrollments()
+    {
+        return $this->hasMany(SiswaKelasSemester::class, 'tahun_ajaran_id');
+    }
+
     // Relasi dengan mata pelajaran
     public function mataPelajarans()
     {
@@ -117,24 +122,25 @@ class TahunAjaran extends Model
     {
         return $this->hasMany(ReportTemplate::class);
     }
-    
+
     // Get tahun ajaran aktif
     public static function getActive()
     {
         return self::where('is_active', true)->first();
     }
-    
+
     // Format label semester
     public function getSemesterLabelAttribute()
     {
         return $this->semester == 1 ? 'Ganjil' : 'Genap';
     }
-    
+
     // Cek apakah tahun ajaran sedang aktif berdasarkan tanggal
     public function isCurrentlyActive()
     {
         $today = now();
-        return $this->is_active && 
+
+        return $this->is_active &&
                $today->between($this->tanggal_mulai, $this->tanggal_selesai);
     }
 
@@ -144,6 +150,7 @@ class TahunAjaran extends Model
         if ($includeSoftDeleted) {
             return $query->withTrashed();
         }
+
         return $query;
     }
 }

@@ -7,6 +7,7 @@ use App\Traits\RequiresTahunAjaran;
 use App\Models\ReportTemplate;
 use App\Models\ReportPlaceholder;
 use App\Models\Siswa;
+use App\Models\Kelas;
 use App\Models\MataPelajaran;
 use App\Models\Notification;
 use App\Services\RaporTemplateProcessor;
@@ -19,9 +20,16 @@ use Barryvdh\DomPDF\Facade\PDF;
 use App\Models\ReportGeneration;
 use App\Models\TahunAjaran;
 use App\Jobs\GeneratePdfReportJob;
+use App\Services\DocumentConversionService;
 use App\Services\PdfCacheService;
+use App\Services\ReportPdfAutoPrepareService;
+use App\Services\ReportPeriodService;
+use App\Services\ReportTemplateDocxValidationService;
+use App\Services\SiswaKelasSemesterResolver;
+use App\Services\ReportPerformanceTracker;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\URL;
+use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 
 class ReportController extends Controller
 {
@@ -31,6 +39,7 @@ class ReportController extends Controller
     public function index()
     {
         $tahunAjaranId = session('tahun_ajaran_id');
+        $openedReportType = app(ReportPeriodService::class)->openedType(null, $tahunAjaranId ? (int) $tahunAjaranId : null);
         
         $templates = ReportTemplate::when($tahunAjaranId, function($query) use ($tahunAjaranId) {
                 return $query->where('tahun_ajaran_id', $tahunAjaranId);
@@ -41,7 +50,20 @@ class ReportController extends Controller
         
         $schoolProfile = \App\Models\ProfilSekolah::first();
         
-        return view('admin.report.index', compact('templates', 'schoolProfile'));
+        return view('admin.report.index', compact('templates', 'schoolProfile', 'openedReportType'));
+    }
+
+    public function updateOpenedReportPeriod(Request $request)
+    {
+        $validated = $request->validate([
+            'opened_report_type' => 'required|in:UTS,UAS',
+        ]);
+
+        app(ReportPeriodService::class)->setOpenedType($validated['opened_report_type']);
+
+        return redirect()
+            ->route('report.template.index')
+            ->with('success', 'Jenis rapor yang dibuka untuk Wali Kelas berhasil diperbarui.');
     }
     // Modify the upload method to use school profile data
     /**
@@ -108,6 +130,15 @@ class ReportController extends Controller
             
             // Validasi placeholder dalam template
             $templatePath = Storage::disk('public')->path($filePath);
+            if ($typeValidationMessage = app(ReportTemplateDocxValidationService::class)->validateTypeFromDocxText($templatePath, $request->type)) {
+                \Storage::disk('public')->delete($filePath);
+
+                return response()->json([
+                    'success' => false,
+                    'message' => $typeValidationMessage,
+                ], 422);
+            }
+
             $templateProcessor = new \PhpOffice\PhpWord\TemplateProcessor($templatePath);
             $variables = $templateProcessor->getVariables();
             
@@ -183,60 +214,95 @@ class ReportController extends Controller
      */
     public function printRaporHtml(Siswa $siswa, Request $request)
     {
-        $guru = auth()->guard('guru')->user();
-        
-        if (!$guru || !$guru->isWaliKelas()) {
-            abort(403, 'Hanya wali kelas yang dapat mencetak rapor');
-        }
-        
-        if (!$siswa->isInKelasWali($guru->id)) {
-            abort(403, 'Anda hanya dapat mencetak rapor siswa di kelas yang Anda walikan');
-        }
-        
-        $tahunAjaranId = session('tahun_ajaran_id');
-        $tahunAjaran = TahunAjaran::find($tahunAjaranId);
-        $semester = $tahunAjaran ? $tahunAjaran->semester : 1;
-        
-        $siswa->load([
-            'kelas',
-            'nilais' => function($query) use ($tahunAjaranId, $semester) {
-                $query->where('tahun_ajaran_id', $tahunAjaranId)
-                    ->whereHas('mataPelajaran', function($q) use ($semester) {
-                        $q->where('semester', $semester);
-                    })
-                    ->where('is_submitted', true);
-            },
-            'nilais.mataPelajaran',
-            'nilaiEkstrakurikuler' => function($query) use ($tahunAjaranId) {
-                $query->where('tahun_ajaran_id', $tahunAjaranId);
-            },
-            'nilaiEkstrakurikuler.ekstrakurikuler',
-            'absensi' => function($query) use ($tahunAjaranId, $semester) {
-                $query->where('semester', $semester)
-                    ->where('tahun_ajaran_id', $tahunAjaranId);
+        $type = $this->normalizeReportType($request->query('type', 'UTS'));
+        $performance = ReportPerformanceTracker::startFlowIfEnabled(
+            'html_print',
+            $type,
+            $request->route()?->getName()
+        );
+
+        try {
+            $tahunAjaranId = ReportPerformanceTracker::measureSegment('context', function () use ($request) {
+                return $this->resolveRaporTahunAjaranId($request);
+            });
+            abort_unless($tahunAjaranId, 403);
+            $type = $this->resolveReportTypeForRequest($request, $tahunAjaranId);
+
+            ReportPerformanceTracker::measureSegment('authorization', function () use ($siswa, $tahunAjaranId) {
+                $this->authorizeWaliRaporAccess($siswa, $tahunAjaranId);
+            });
+
+            $guru = auth()->guard('guru')->user();
+            [$tahunAjaran, $kelas] = ReportPerformanceTracker::measureSegment('context', function () use ($siswa, $tahunAjaranId) {
+                return [
+                    TahunAjaran::find($tahunAjaranId),
+                    $this->applyRaporClassContext($siswa, $tahunAjaranId),
+                ];
+            });
+            $semester = $tahunAjaran ? $tahunAjaran->semester : 1;
+            abort_unless($kelas, 403);
+
+            if ($response = $this->ensureReportPeriodOpened($request, $type, $tahunAjaranId)) {
+                return $response;
             }
-        ]);
-        
-        $profilSekolah = ProfilSekolah::first();
-        $waliKelas = $guru;
-        
-        if ($siswa->nilais->isEmpty()) {
-            return redirect()->back()
-                ->with('error', 'Data nilai siswa belum lengkap. Pastikan semua nilai sudah diinput untuk semester ' . $semester);
+
+            ReportPerformanceTracker::measureSegment('preload', function () use ($siswa, $tahunAjaranId, $semester) {
+                $siswa->load([
+                    'nilais' => function($query) use ($tahunAjaranId, $semester) {
+                        $query->where('tahun_ajaran_id', $tahunAjaranId)
+                            ->whereHas('mataPelajaran', function($q) use ($semester) {
+                                $q->where('semester', $semester);
+                            })
+                            ->where('is_submitted', true);
+                    },
+                    'nilais.mataPelajaran',
+                    'nilaiEkstrakurikuler' => function($query) use ($tahunAjaranId, $semester) {
+                        $query->where('tahun_ajaran_id', $tahunAjaranId)
+                            ->where('semester', $semester);
+                    },
+                    'nilaiEkstrakurikuler.ekstrakurikuler',
+                    'absensi' => function($query) use ($tahunAjaranId, $semester) {
+                        $query->where('semester', $semester)
+                            ->where('tahun_ajaran_id', $tahunAjaranId);
+                    }
+                ]);
+            });
+
+            $profilSekolah = ReportPerformanceTracker::measureSegment('preload', fn () => ProfilSekolah::first());
+            $waliKelas = $guru;
+
+            if ($siswa->nilais->isEmpty()) {
+                return redirect()->back()
+                    ->with('error', 'Data nilai siswa belum lengkap. Pastikan semua nilai sudah diinput untuk semester ' . $semester);
+            }
+
+            if (!$siswa->absensi) {
+                return redirect()->back()
+                    ->with('error', 'Data absensi siswa belum diinput untuk semester ' . $semester);
+            }
+
+            return ReportPerformanceTracker::measureSegment('response', function () use (
+                $siswa,
+                $tahunAjaran,
+                $profilSekolah,
+                $waliKelas,
+                $semester,
+                $kelas,
+                $tahunAjaranId
+            ) {
+                return view('wali_kelas.rapor.print_html', compact(
+                    'siswa',
+                    'tahunAjaran',
+                    'profilSekolah',
+                    'waliKelas',
+                    'semester',
+                    'kelas',
+                    'tahunAjaranId'
+                ));
+            });
+        } finally {
+            ReportPerformanceTracker::finishIfEnabled($performance);
         }
-        
-        if (!$siswa->absensi) {
-            return redirect()->back()
-                ->with('error', 'Data absensi siswa belum diinput untuk semester ' . $semester);
-        }
-        
-        return view('wali_kelas.rapor.print_html', compact(
-            'siswa',
-            'tahunAjaran', 
-            'profilSekolah',
-            'waliKelas',
-            'semester'
-        ));
     }
 
     /**
@@ -270,13 +336,18 @@ class ReportController extends Controller
         $tahunAjaran = TahunAjaran::find($tahunAjaranId);
         $semester = $tahunAjaran ? $tahunAjaran->semester : 1;
 
-        $siswa = Siswa::with([
-                'kelas.mataPelajarans' => function ($query) use ($tahunAjaranId, $semester) {
+        $kelasModel = Kelas::with([
+                'mataPelajarans' => function ($query) use ($tahunAjaranId, $semester) {
                     $query->where('semester', $semester)
                         ->when($tahunAjaranId, function ($subQuery) use ($tahunAjaranId) {
                             return $subQuery->where('tahun_ajaran_id', $tahunAjaranId);
                         });
                 },
+            ])->find($kelas->id);
+
+        $siswa = app(SiswaKelasSemesterResolver::class)
+            ->studentQueryForClass((int) $kelas->id, (int) $tahunAjaranId, (int) $semester, true)
+            ->with([
                 'nilais' => function ($query) use ($tahunAjaranId, $semester) {
                     $query->where('tahun_ajaran_id', $tahunAjaranId)
                         ->whereHas('mataPelajaran', function ($subQuery) use ($semester) {
@@ -290,9 +361,14 @@ class ReportController extends Controller
                         ->where('tahun_ajaran_id', $tahunAjaranId);
                 },
             ])
-            ->where('kelas_id', $kelas->id)
             ->orderBy('nama')
             ->get();
+
+        $siswa->each(function (Siswa $student) use ($kelasModel) {
+            if ($kelasModel) {
+                $student->setRelation('kelas', $kelasModel);
+            }
+        });
         
         $diagnosisResults = [];
         foreach ($siswa as $s) {
@@ -314,60 +390,52 @@ class ReportController extends Controller
 
     public function checkActiveTemplates(Request $request)
     {
-        $guru = auth()->user();
-        $kelasId = $guru->kelasWali->id ?? null;
+        $guru = auth()->guard('guru')->user();
+        $tahunAjaranId = $this->getValidTahunAjaranId(
+            $request->query('tahun_ajaran_id') ? (int) $request->query('tahun_ajaran_id') : null
+        );
+
+        $kelasId = $guru && $tahunAjaranId
+            ? DB::table('guru_kelas')
+                ->join('kelas', 'guru_kelas.kelas_id', '=', 'kelas.id')
+                ->where('guru_kelas.guru_id', $guru->id)
+                ->where('guru_kelas.is_wali_kelas', true)
+                ->where('guru_kelas.role', 'wali_kelas')
+                ->where('kelas.tahun_ajaran_id', $tahunAjaranId)
+                ->value('kelas.id')
+            : null;
         
         if (!$kelasId) {
             return response()->json([
                 'UTS_active' => false,
                 'UAS_active' => false,
+                'opened_report_type' => 'UTS',
                 'error' => 'Tidak ditemukan kelas yang diwalikan'
             ]);
         }
+
+        $openedReportType = $this->openedReportTypeForYear((int) $tahunAjaranId);
         
         // Cek template aktif untuk UTS
-        $utsTemplate = $this->getTemplateStatus('UTS', $kelasId);
+        $utsTemplate = $this->getTemplateStatus('UTS', $kelasId, $tahunAjaranId);
             
         // Cek template aktif untuk UAS
-        $uasTemplate = $this->getTemplateStatus('UAS', $kelasId);
+        $uasTemplate = $this->getTemplateStatus('UAS', $kelasId, $tahunAjaranId);
         
         return response()->json([
-            'UTS_active' => $utsTemplate,
-            'UAS_active' => $uasTemplate
+            'UTS_active' => $openedReportType === 'UTS' && $utsTemplate,
+            'UAS_active' => $openedReportType === 'UAS' && $uasTemplate,
+            'UTS_template_active' => $utsTemplate,
+            'UAS_template_active' => $uasTemplate,
+            'opened_report_type' => $openedReportType,
+            'UTS_message' => $openedReportType === 'UTS' ? null : app(ReportPeriodService::class)->unopenedMessage('UTS'),
+            'UAS_message' => $openedReportType === 'UAS' ? null : app(ReportPeriodService::class)->unopenedMessage('UAS'),
         ]);
     }
 
-    protected function getTemplateStatus($type, $kelasId)
+    protected function getTemplateStatus($type, $kelasId, $tahunAjaranId = null)
     {
-        // Cek template yang langsung terkait dengan kelas
-        $templateByKelas = ReportTemplate::where('type', $type)
-            ->where('kelas_id', $kelasId)
-            ->where('is_active', true)
-            ->exists();
-            
-        if ($templateByKelas) {
-            return true;
-        }
-        
-        // Cek template melalui many-to-many relationship
-        $templateByMany = ReportTemplate::where('type', $type)
-            ->where('is_active', true)
-            ->whereHas('kelasList', function($query) use ($kelasId) {
-                $query->where('kelas_id', $kelasId);
-            })
-            ->exists();
-            
-        if ($templateByMany) {
-            return true;
-        }
-        
-        // Cek template global
-        $templateGlobal = ReportTemplate::where('type', $type)
-            ->whereNull('kelas_id')
-            ->where('is_active', true)
-            ->exists();
-            
-        return $templateGlobal;
+        return (bool) $this->findActiveReportTemplateForContext($type, $kelasId, $tahunAjaranId);
     }
     /**
      * Menampilkan history rapor
@@ -379,7 +447,7 @@ class ReportController extends Controller
         $tahunAjaranId = session('tahun_ajaran_id');
         
         // Ambil data history rapor dari tabel report_generations
-        $reports = ReportGeneration::with(['siswa', 'kelas', 'generator'])
+        $reports = ReportGeneration::with(['siswa', 'kelas', 'generator', 'template.kelas'])
             ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
                 return $query->where('tahun_ajaran_id', $tahunAjaranId);
             })
@@ -402,7 +470,8 @@ class ReportController extends Controller
             return redirect()->back()->with('error', 'File rapor tidak ditemukan.');
         }
         
-        $fileName = 'rapor_' . $report->siswa->nis . '_' . $report->type . '.docx';
+        $studentIdentifier = $report->siswa?->nis ?: 'siswa-' . $report->siswa_id;
+        $fileName = 'rapor_' . $studentIdentifier . '_' . $report->type . '.docx';
         
         return response()->download($path, $fileName);
     }
@@ -891,224 +960,9 @@ class ReportController extends Controller
      */
     public function downloadPdf(Siswa $siswa, Request $request)
     {
-        // ===== OPTIMIZATION 1: Resource Limits =====
-        $originalTimeLimit = ini_get('max_execution_time');
-        $originalMemoryLimit = ini_get('memory_limit');
-        
-        set_time_limit(300); // 5 minutes
-        ini_set('memory_limit', '1024M'); // Increase to 1GB
-        
-        // ===== OPTIMIZATION 2: Request Tracking =====
-        $requestId = uniqid('pdf_', true);
-        $startTime = microtime(true);
-        $memoryStart = memory_get_usage(true);
-        
-        Log::info("=== PDF REQUEST STARTED ===", [
-            'request_id' => $requestId,
-            'siswa_id' => $siswa->id,
-            'siswa_name' => $siswa->nama,
-            'type' => $request->query('type', 'UTS'),
-            'tahun_ajaran_id' => $request->query('tahun_ajaran_id', session('tahun_ajaran_id')),
-            'memory_start' => round($memoryStart / 1024 / 1024, 2) . 'MB',
-            'timestamp' => now()->toISOString(),
-            'user_agent' => $request->userAgent(),
-            'ip_address' => $request->ip()
-        ]);
+        $request->query->set('disposition', 'attachment');
 
-        try {
-            // ===== OPTIMIZATION 3: LibreOffice Check with Performance =====
-            $libreOfficeCheckStart = microtime(true);
-            
-            $conversionService = new \App\Services\DocumentConversionService();
-            if (!$conversionService->isLibreOfficeAvailable()) {
-                $this->logPerformanceMetrics($requestId, 'libreoffice_check_failed', $startTime, $memoryStart);
-                
-                return response()->json([
-                    'success' => false,
-                    'message' => 'LibreOffice tidak tersedia. Pastikan LibreOffice sudah terinstall dan path sudah benar di .env file.',
-                    'request_id' => $requestId
-                ], 500);
-            }
-            
-            $libreOfficeCheckTime = (microtime(true) - $libreOfficeCheckStart) * 1000;
-            Log::info("LibreOffice check completed", [
-                'request_id' => $requestId,
-                'check_time_ms' => round($libreOfficeCheckTime, 2)
-            ]);
-
-            // ===== OPTIMIZATION 4: Enhanced Data Validation =====
-            $validationStart = microtime(true);
-            
-            $type = $request->query('type', 'UTS');
-            $tahunAjaranId = $request->query('tahun_ajaran_id', session('tahun_ajaran_id'));
-            
-            Log::info("PDF generation process started", [
-                'request_id' => $requestId,
-                'siswa_id' => $siswa->id,
-                'siswa_name' => $siswa->nama,
-                'type' => $type,
-                'tahun_ajaran_id' => $tahunAjaranId
-            ]);
-            
-            $validationTime = (microtime(true) - $validationStart) * 1000;
-
-            // ===== OPTIMIZATION 5: Template Processing with Monitoring =====
-            $templateStart = microtime(true);
-            
-            // Get the template
-            $template = $this->getTemplateForSiswa($siswa, $type, $tahunAjaranId);
-            
-            if (!$template) {
-                $this->logPerformanceMetrics($requestId, 'template_not_found', $startTime, $memoryStart);
-                
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Template rapor tidak ditemukan untuk tipe ' . $type,
-                    'request_id' => $requestId
-                ], 404);
-            }
-            
-            $templateTime = (microtime(true) - $templateStart) * 1000;
-            Log::info("Template found", [
-                'request_id' => $requestId,
-                'template_id' => $template->id,
-                'template_time_ms' => round($templateTime, 2)
-            ]);
-
-            // ===== OPTIMIZATION 6: DOCX Generation with Monitoring =====
-            $docxStart = microtime(true);
-            
-            // Generate the DOCX report
-            $processor = new \App\Services\RaporTemplateProcessor($template, $siswa, $type, $tahunAjaranId);
-            $result = $processor->generate(true); // bypass validation for now
-            
-            if (!$result['success'] || !isset($result['path'])) {
-                $this->logPerformanceMetrics($requestId, 'docx_generation_failed', $startTime, $memoryStart);
-                throw new \Exception('Gagal generate file DOCX: ' . ($result['message'] ?? 'Unknown error'));
-            }
-            
-            $docxTime = (microtime(true) - $docxStart) * 1000;
-            
-            $docxPath = $result['path'];
-            $fullDocxPath = storage_path('app/public/' . $docxPath);
-            
-            // Validate DOCX file exists
-            if (!file_exists($fullDocxPath)) {
-                $this->logPerformanceMetrics($requestId, 'docx_file_missing', $startTime, $memoryStart);
-                throw new \Exception("DOCX file tidak ditemukan: $fullDocxPath");
-            }
-            
-            $docxSize = filesize($fullDocxPath);
-            Log::info('DOCX generated successfully', [
-                'request_id' => $requestId,
-                'docx_path' => $fullDocxPath,
-                'docx_size_mb' => round($docxSize / 1024 / 1024, 2),
-                'docx_time_ms' => round($docxTime, 2)
-            ]);
-
-            // ===== OPTIMIZATION 7: PDF Conversion with Monitoring =====
-            $pdfStart = microtime(true);
-            
-            $pdfResult = $conversionService->convertStorageDocxToPdf($docxPath, 'pdf_reports');
-            
-            if (!$pdfResult['success']) {
-                $this->logPerformanceMetrics($requestId, 'pdf_conversion_failed', $startTime, $memoryStart, [
-                    'conversion_error' => $pdfResult['message']
-                ]);
-                
-                Log::error('PDF conversion failed', [
-                    'request_id' => $requestId,
-                    'error' => $pdfResult['message'],
-                    'docx_path' => $fullDocxPath
-                ]);
-                
-                throw new \Exception('Konversi ke PDF gagal: ' . $pdfResult['message']);
-            }
-            
-            $pdfTime = (microtime(true) - $pdfStart) * 1000;
-
-            // ===== OPTIMIZATION 8: File Validation and Response =====
-            $responseStart = microtime(true);
-            
-            $pdfPath = storage_path('app/public/' . $pdfResult['storage_path']);
-            
-            if (!file_exists($pdfPath)) {
-                $this->logPerformanceMetrics($requestId, 'pdf_file_missing', $startTime, $memoryStart);
-                throw new \Exception("PDF file tidak ditemukan: $pdfPath");
-            }
-            
-            $pdfSize = filesize($pdfPath);
-            
-            // Generate clean filename
-            $cleanName = preg_replace('/[^\w\s-]/', '', $siswa->nama);
-            $cleanName = preg_replace('/\s+/', '_', $cleanName);
-            $filename = "Rapor_{$type}_{$cleanName}_{$siswa->nis}.pdf";
-            
-            $responseTime = (microtime(true) - $responseStart) * 1000;
-
-            // ===== OPTIMIZATION 9: Success Logging =====
-            $this->logPerformanceMetrics($requestId, 'success', $startTime, $memoryStart, [
-                'docx_size_mb' => round($docxSize / 1024 / 1024, 2),
-                'pdf_size_mb' => round($pdfSize / 1024 / 1024, 2),
-                'filename' => $filename,
-                'breakdown_ms' => [
-                    'libreoffice_check' => round($libreOfficeCheckTime, 2),
-                    'validation' => round($validationTime, 2),
-                    'template_lookup' => round($templateTime, 2),
-                    'docx_generation' => round($docxTime, 2),
-                    'pdf_conversion' => round($pdfTime, 2),
-                    'response_prep' => round($responseTime, 2)
-                ]
-            ]);
-            
-            // Return file download response
-            return response()->download($pdfPath, $filename, [
-                'Content-Type' => 'application/pdf'
-            ]);
-            
-        } catch (\Exception $e) {
-            $this->logPerformanceMetrics($requestId, 'error', $startTime, $memoryStart, [
-                'error_message' => $e->getMessage(),
-                'error_file' => $e->getFile(),
-                'error_line' => $e->getLine()
-            ]);
-            
-            Log::error('Error generating PDF report', [
-                'request_id' => $requestId,
-                'siswa_id' => $siswa->id,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-            
-            return response()->json([
-                'success' => false,
-                'message' => 'Gagal menghasilkan PDF: ' . $e->getMessage(),
-                'request_id' => $requestId,
-                'debug_info' => env('APP_DEBUG') ? [
-                    'libreoffice_available' => app(\App\Services\DocumentConversionService::class)->isLibreOfficeAvailable(),
-                    'php_os' => PHP_OS,
-                    'storage_path' => storage_path('app/public/'),
-                ] : null
-            ], 500);
-            
-        } finally {
-            // ===== OPTIMIZATION 10: Cleanup =====
-            // Restore original settings
-            set_time_limit($originalTimeLimit);
-            ini_set('memory_limit', $originalMemoryLimit);
-            
-            // Final log
-            $finalTime = microtime(true);
-            $totalDuration = ($finalTime - $startTime) * 1000;
-            
-            Log::info("=== PDF REQUEST COMPLETED ===", [
-                'request_id' => $requestId,
-                'total_duration_ms' => round($totalDuration, 2),
-                'total_duration_seconds' => round($totalDuration / 1000, 2),
-                'memory_peak_mb' => round(memory_get_peak_usage(true) / 1024 / 1024, 2),
-                'timestamp' => now()->toISOString()
-            ]);
-        }
+        return $this->previewPdf($siswa, $request);
     }
     
     /**
@@ -1193,18 +1047,243 @@ class ReportController extends Controller
             $metrics = array_merge($metrics, $additionalData);
         }
         
-        Log::info("Performance Metrics - {$status}", $metrics);
+        if (config('logging.diagnostics.log_report_processing')) {
+            Log::debug("Performance Metrics - {$status}", $metrics);
+        }
     }
 
-    public function previewRapor($siswa_id) {
+    private function resolveRaporTahunAjaranId(Request $request): ?int
+    {
+        $hasRequestedYear = $request->has('tahun_ajaran_id')
+            && $request->input('tahun_ajaran_id') !== null
+            && $request->input('tahun_ajaran_id') !== '';
+
+        return $this->getValidTahunAjaranId(
+            $hasRequestedYear ? (int) $request->input('tahun_ajaran_id') : null
+        );
+    }
+
+    private function authorizeWaliRaporAccess(Siswa $siswa, int $tahunAjaranId): void
+    {
+        $guru = auth()->guard('guru')->user();
+        $tahunAjaran = TahunAjaran::find($tahunAjaranId);
+
+        abort_unless(
+            $guru &&
+            $tahunAjaran &&
+            session('selected_role') === 'wali_kelas' &&
+            $siswa->isInKelasWali($guru->id, $tahunAjaranId, (int) $tahunAjaran->semester),
+            403
+        );
+    }
+
+    private function getRaporSemester(int $tahunAjaranId): int
+    {
+        return (int) (TahunAjaran::whereKey($tahunAjaranId)->value('semester') ?: 1);
+    }
+
+    private function normalizeReportType(?string $type): string
+    {
+        return app(ReportPeriodService::class)->normalizeType($type) ?: 'UTS';
+    }
+
+    private function resolveReportTypeForRequest(Request $request, int $tahunAjaranId, string $source = 'query'): string
+    {
+        $value = $source === 'input'
+            ? $request->input('type')
+            : $request->query('type');
+
+        if ($value !== null && $value !== '') {
+            return $this->normalizeReportType($value);
+        }
+
+        return $this->openedReportTypeForYear($tahunAjaranId);
+    }
+
+    private function openedReportTypeForYear(int $tahunAjaranId): string
+    {
+        return app(ReportPeriodService::class)->openedType(null, $tahunAjaranId);
+    }
+
+    private function reportPeriodUnavailableResponse(Request $request, string $type, int $tahunAjaranId)
+    {
+        $periodService = app(ReportPeriodService::class);
+        $message = $periodService->unopenedMessage($type);
+
+        Log::info('report.period_unopened_access_blocked', [
+            'report_type' => $type,
+            'opened_report_type' => $periodService->openedType(null, $tahunAjaranId),
+            'tahun_ajaran_id' => $tahunAjaranId,
+            'route' => $request->route()?->getName(),
+            'guru_id' => auth()->guard('guru')->id(),
+        ]);
+
+        if ($request->expectsJson() || $request->ajax()) {
+            return response()->json([
+                'success' => false,
+                'message' => $message,
+                'error_type' => 'report_period_unopened',
+                'opened_report_type' => $periodService->openedType(null, $tahunAjaranId),
+            ], 422);
+        }
+
+        return redirect()
+            ->route('wali_kelas.rapor.index', [
+                'type' => $periodService->openedType(null, $tahunAjaranId),
+                'tahun_ajaran_id' => $tahunAjaranId,
+            ])
+            ->with('error', $message);
+    }
+
+    private function ensureReportPeriodOpened(Request $request, string $type, int $tahunAjaranId)
+    {
+        if (app(ReportPeriodService::class)->isOpened($type, null, $tahunAjaranId)) {
+            return null;
+        }
+
+        return $this->reportPeriodUnavailableResponse($request, $type, $tahunAjaranId);
+    }
+
+    private function resolveRaporClass(Siswa $siswa, int $tahunAjaranId): ?Kelas
+    {
+        try {
+            return app(SiswaKelasSemesterResolver::class)
+                ->resolveClass($siswa, $tahunAjaranId, $this->getRaporSemester($tahunAjaranId), true);
+        } catch (\RuntimeException $exception) {
+            Log::warning('Unable to resolve report class context', [
+                'siswa_id' => $siswa->id,
+                'tahun_ajaran_id' => $tahunAjaranId,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return null;
+        }
+    }
+
+    private function applyRaporClassContext(Siswa $siswa, int $tahunAjaranId): ?Kelas
+    {
+        $kelas = $this->resolveRaporClass($siswa, $tahunAjaranId);
+
+        if ($kelas) {
+            $kelas->loadMissing('tahunAjaran');
+            $siswa->setRelation('kelas', $kelas);
+        }
+
+        return $kelas;
+    }
+
+    private function reportTemplateSemester(?int $tahunAjaranId): ?int
+    {
+        return $tahunAjaranId ? $this->getRaporSemester($tahunAjaranId) : null;
+    }
+
+    private function baseActiveReportTemplateQuery(string $type, ?int $tahunAjaranId = null)
+    {
+        $semester = $this->reportTemplateSemester($tahunAjaranId);
+
+        return ReportTemplate::where('type', $type)
+            ->where('is_active', true)
+            ->when($tahunAjaranId, function ($query) use ($tahunAjaranId) {
+                return $query->where('tahun_ajaran_id', $tahunAjaranId);
+            })
+            ->when($semester, function ($query) use ($semester) {
+                return $query->where(function ($query) use ($semester) {
+                    $query->whereNull('semester')
+                        ->orWhere('semester', $semester);
+                });
+            })
+            ->orderByDesc('updated_at')
+            ->orderByDesc('id');
+    }
+
+    private function findActiveReportTemplateForContext(string $type, ?int $kelasId, ?int $tahunAjaranId = null): ?ReportTemplate
+    {
+        if ($kelasId) {
+            $template = $this->baseActiveReportTemplateQuery($type, $tahunAjaranId)
+                ->whereHas('kelasList', function ($query) use ($kelasId) {
+                    $query->where('kelas_id', $kelasId);
+                })
+                ->first();
+
+            if ($template) {
+                return $template;
+            }
+
+            $template = $this->baseActiveReportTemplateQuery($type, $tahunAjaranId)
+                ->where('kelas_id', $kelasId)
+                ->first();
+
+            if ($template) {
+                return $template;
+            }
+        }
+
+        return $this->baseActiveReportTemplateQuery($type, $tahunAjaranId)
+            ->whereNull('kelas_id')
+            ->whereDoesntHave('kelasList')
+            ->first();
+    }
+
+    private function pdfTemplateUnavailableResponse(Request $request, Siswa $siswa, string $type, int $tahunAjaranId, ?int $kelasId = null)
+    {
+        Log::warning('PDF report template unavailable for requested context', [
+            'siswa_id' => $siswa->id,
+            'kelas_id' => $kelasId,
+            'tahun_ajaran_id' => $tahunAjaranId,
+            'semester' => $this->getRaporSemester($tahunAjaranId),
+            'type' => $type,
+            'route' => $request->route()?->getName(),
+        ]);
+
+        return response()->json([
+            'success' => false,
+            'message' => $this->missingActiveTemplateMessage($type),
+            'error_type' => 'template_missing',
+        ], 422);
+    }
+
+    private function missingActiveTemplateMessage(string $type): string
+    {
+        $type = $this->normalizeReportType($type);
+
+        return "Belum ada template {$type} aktif untuk kelas ini. Silakan hubungi admin.";
+    }
+
+    public function previewRapor(Request $request, $siswa_id) {
+        $type = $this->normalizeReportType($request->query('type', 'UTS'));
+        $performance = ReportPerformanceTracker::startFlowIfEnabled(
+            'html_preview',
+            $type,
+            $request->route()?->getName()
+        );
+
         try {
             // Ambil tipe rapor dari query param
-            $type = request('type', 'UTS');
-            $tahunAjaranId = session('tahun_ajaran_id');
+            $tahunAjaranId = ReportPerformanceTracker::measureSegment('context', function () use ($request) {
+                return $this->resolveRaporTahunAjaranId($request);
+            });
+            abort_unless($tahunAjaranId, 403);
+            $type = $this->resolveReportTypeForRequest($request, $tahunAjaranId);
+
+            $siswa = ReportPerformanceTracker::measureSegment('context', fn () => Siswa::find($siswa_id));
+            abort_unless($siswa, 403);
+            ReportPerformanceTracker::measureSegment('authorization', function () use ($siswa, $tahunAjaranId) {
+                $this->authorizeWaliRaporAccess($siswa, $tahunAjaranId);
+            });
+
+            if ($response = $this->ensureReportPeriodOpened($request, $type, $tahunAjaranId)) {
+                return $response;
+            }
             
             // Ambil semester dari tahun ajaran
-            $tahunAjaran = \App\Models\TahunAjaran::find($tahunAjaranId);
+            [$tahunAjaran, $kelas] = ReportPerformanceTracker::measureSegment('context', function () use ($siswa, $tahunAjaranId) {
+                return [
+                    \App\Models\TahunAjaran::find($tahunAjaranId),
+                    $this->applyRaporClassContext($siswa, $tahunAjaranId),
+                ];
+            });
             $semester = $tahunAjaran ? $tahunAjaran->semester : 1;
+            abort_unless($kelas, 403);
             
             \Log::info('Preview rapor', [
                 'siswa_id' => $siswa_id,
@@ -1214,26 +1293,28 @@ class ReportController extends Controller
             ]);
             
             // Cari siswa dengan relasi yang dibutuhkan
-            $siswa = Siswa::with([
-                'kelas',
-                'nilais' => function($query) use ($tahunAjaranId, $semester) {
-                    // Filter nilai berdasarkan semester dan tahun ajaran
-                    $query->where('tahun_ajaran_id', $tahunAjaranId);
-                    $query->whereHas('mataPelajaran', function($q) use ($semester) {
-                        $q->where('semester', $semester);
-                    });
-                    $query->where('is_submitted', true);
-                },
-                'nilais.mataPelajaran',
-                'nilaiEkstrakurikuler' => function($query) use ($tahunAjaranId) {
-                    $query->where('tahun_ajaran_id', $tahunAjaranId);
-                },
-                'nilaiEkstrakurikuler.ekstrakurikuler',
-                'absensi' => function($query) use ($tahunAjaranId, $semester) {
-                    $query->where('semester', $semester)
-                        ->where('tahun_ajaran_id', $tahunAjaranId);
-                }
-            ])->findOrFail($siswa_id);
+            ReportPerformanceTracker::measureSegment('preload', function () use ($siswa, $tahunAjaranId, $semester) {
+                $siswa->load([
+                    'nilais' => function($query) use ($tahunAjaranId, $semester) {
+                        // Filter nilai berdasarkan semester dan tahun ajaran
+                        $query->where('tahun_ajaran_id', $tahunAjaranId);
+                        $query->whereHas('mataPelajaran', function($q) use ($semester) {
+                            $q->where('semester', $semester);
+                        });
+                        $query->where('is_submitted', true);
+                    },
+                    'nilais.mataPelajaran',
+                    'nilaiEkstrakurikuler' => function($query) use ($tahunAjaranId, $semester) {
+                        $query->where('tahun_ajaran_id', $tahunAjaranId)
+                            ->where('semester', $semester);
+                    },
+                    'nilaiEkstrakurikuler.ekstrakurikuler',
+                    'absensi' => function($query) use ($tahunAjaranId, $semester) {
+                        $query->where('semester', $semester)
+                            ->where('tahun_ajaran_id', $tahunAjaranId);
+                    }
+                ]);
+            });
             
             // Logging untuk debug
             \Log::info('Preview data loaded', [
@@ -1244,11 +1325,16 @@ class ReportController extends Controller
             ]);
             
             // Render view ke HTML
-            $html = view('wali_kelas.rapor.preview', [
-                'siswa' => $siswa,
-                'type' => $type,
-                'semester' => $semester
-            ])->render();
+            $html = ReportPerformanceTracker::measureSegment('response', function () use ($siswa, $type, $semester, $kelas, $tahunAjaran, $tahunAjaranId) {
+                return view('wali_kelas.rapor.preview', [
+                    'siswa' => $siswa,
+                    'type' => $type,
+                    'semester' => $semester,
+                    'kelas' => $kelas,
+                    'tahunAjaran' => $tahunAjaran,
+                    'tahunAjaranId' => $tahunAjaranId
+                ])->render();
+            });
             
             // Kembalikan sebagai JSON response
             return response()->json([
@@ -1256,6 +1342,10 @@ class ReportController extends Controller
                 'html' => $html
             ]);
         } catch (\Exception $e) {
+            if ($e instanceof HttpExceptionInterface) {
+                throw $e;
+            }
+
             // Log error untuk debugging
             \Log::error('Error in previewRapor: ' . $e->getMessage());
             \Log::error($e->getTraceAsString());
@@ -1265,6 +1355,8 @@ class ReportController extends Controller
                 'success' => false,
                 'message' => 'Terjadi kesalahan saat memuat preview rapor: ' . $e->getMessage()
             ], 500);
+        } finally {
+            ReportPerformanceTracker::finishIfEnabled($performance);
         }
     }
 
@@ -1445,18 +1537,48 @@ class ReportController extends Controller
      */
     public function previewPdf(Siswa $siswa, Request $request)
     {
+        $type = $this->normalizeReportType($request->query('type', 'UTS'));
+        $disposition = $request->query('disposition', 'inline') === 'attachment' ? 'attachment' : 'inline';
+        $flowPrefix = $disposition === 'attachment' ? 'pdf_download' : 'pdf_preview';
+        $performance = ReportPerformanceTracker::startFlowIfEnabled(
+            "{$flowPrefix}_pending",
+            $type,
+            $request->route()?->getName()
+        );
+
         try {
-            $type = $request->query('type', 'UTS');
-            $tahunAjaranId = $this->getValidTahunAjaranId(
-                $request->query('tahun_ajaran_id') ? (int) $request->query('tahun_ajaran_id') : null
-            );
+            $tahunAjaranId = ReportPerformanceTracker::measureSegment('context', function () use ($request) {
+                return $this->getValidTahunAjaranId(
+                    $request->query('tahun_ajaran_id') ? (int) $request->query('tahun_ajaran_id') : null
+                );
+            });
 
             if (!$tahunAjaranId) {
                 return $this->failTahunAjaranNotSet($request, true);
             }
+            $type = $this->resolveReportTypeForRequest($request, $tahunAjaranId);
 
-            $disposition = $request->query('disposition', 'inline') === 'attachment' ? 'attachment' : 'inline';
+            ReportPerformanceTracker::measureSegment('authorization', function () use ($siswa, $tahunAjaranId) {
+                $this->authorizeWaliRaporAccess($siswa, $tahunAjaranId);
+            });
 
+            if ($response = $this->ensureReportPeriodOpened($request, $type, $tahunAjaranId)) {
+                return $response;
+            }
+
+            $kelas = ReportPerformanceTracker::measureSegment('context', function () use ($siswa, $tahunAjaranId) {
+                return $this->resolveRaporClass($siswa, $tahunAjaranId);
+            });
+
+            // Get template and generate DOCX
+            $template = ReportPerformanceTracker::measureSegment('context', function () use ($siswa, $type, $tahunAjaranId) {
+                return $this->getTemplateForSiswa($siswa, $type, $tahunAjaranId);
+            });
+            if (!$template) {
+                return $this->pdfTemplateUnavailableResponse($request, $siswa, $type, $tahunAjaranId, $kelas?->id);
+            }
+
+            // Cache lookup happens before LibreOffice checks so valid cached PDFs remain fast and reusable.
             $cachedPdf = PdfCacheService::getCachedPdf(
                 $siswa,
                 $type,
@@ -1464,64 +1586,27 @@ class ReportController extends Controller
             );
 
             if ($cachedPdf) {
-                return redirect()->away(
-                    $this->createSecureRaporFileUrl(
-                        $cachedPdf['path'],
-                        $cachedPdf['filename'],
-                        $disposition,
-                        60
-                    )
-                );
-            }
-            
-            // Similar to downloadPdf but return for inline viewing
-            $conversionService = new \App\Services\DocumentConversionService();
-            if (!$conversionService->isLibreOfficeAvailable()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'LibreOffice tidak tersedia untuk preview PDF.'
-                ], 500);
+                ReportPerformanceTracker::setFlowTypeIfEnabled("{$flowPrefix}_cache_hit");
+
+                return $this->pdfReadyResponse($request, $cachedPdf, $disposition, true);
             }
 
-            // Get template and generate DOCX
-            $template = $this->getTemplateForSiswa($siswa, $type, $tahunAjaranId);
-            if (!$template) {
-                throw new \Exception('Template rapor tidak ditemukan.');
-            }
-            
-            $processor = new \App\Services\RaporTemplateProcessor($template, $siswa, $type, $tahunAjaranId);
-            $result = $processor->generate(true);
-            
-            $docxPath = $result['path'];
-            
-            // Convert to PDF
-            $pdfResult = $conversionService->convertStorageDocxToPdf($docxPath, 'pdf_reports');
-            
-            if (!$pdfResult['success']) {
-                throw new \Exception('Konversi ke PDF gagal: ' . $pdfResult['message']);
-            }
+            ReportPerformanceTracker::setFlowTypeIfEnabled("{$flowPrefix}_queued");
 
-            $downloadFilename = pathinfo($result['filename'], PATHINFO_FILENAME) . '.pdf';
-
-            PdfCacheService::cachePdf(
+            return $this->queuePdfGenerationResponse(
+                $request,
                 $siswa,
                 $type,
-                $tahunAjaranId,
-                $pdfResult['storage_path'],
-                $downloadFilename,
-                Storage::disk('public')->size($pdfResult['storage_path'])
-            );
-            
-            return redirect()->away(
-                $this->createSecureRaporFileUrl(
-                    $pdfResult['storage_path'],
-                    $downloadFilename,
-                    $disposition,
-                    60
-                )
+                (int) $tahunAjaranId,
+                $disposition,
+                $flowPrefix
             );
             
         } catch (\Exception $e) {
+            if ($e instanceof HttpExceptionInterface) {
+                throw $e;
+            }
+
             Log::error('[ReportController] Preview PDF failed', [
                 'siswa_id' => $siswa->id,
                 'error' => $e->getMessage(),
@@ -1535,121 +1620,232 @@ class ReportController extends Controller
                 'success' => false,
                 'message' => 'Terjadi kesalahan. Silakan coba lagi.'
             ], 500);
+        } finally {
+            ReportPerformanceTracker::finishIfEnabled($performance);
         }
+    }
+
+    protected function queuePdfGenerationResponse(
+        Request $request,
+        Siswa $siswa,
+        string $type,
+        int $tahunAjaranId,
+        string $disposition,
+        string $flowPrefix
+    ) {
+        $existingRequestId = $this->activePdfGenerationRequestId($siswa, $type, $tahunAjaranId);
+
+        if ($existingRequestId) {
+            return $this->pdfProcessingResponse($request, $existingRequestId, $disposition, true);
+        }
+
+        $requestId = 'pdf_' . (string) Str::uuid();
+        $userId = auth()->guard('guru')->id();
+
+        Cache::put(PdfCacheService::getProgressKey($requestId), [
+            'status' => 'queued',
+            'stage' => 'queued',
+            'message' => 'Menunggu antrean',
+            'completed' => false,
+            'error' => false,
+            'request_id' => $requestId,
+            'siswa_id' => $siswa->id,
+            'type' => $type,
+            'tahun_ajaran_id' => $tahunAjaranId,
+            'user_id' => $userId,
+            'cached' => false,
+            'updated_at' => time(),
+            'timestamp' => now()->toISOString(),
+        ], now()->addMinutes(PdfCacheService::PROGRESS_TTL_MINUTES));
+
+        Cache::put(
+            PdfCacheService::getGenerationRequestKey($siswa, $type, $tahunAjaranId),
+            $requestId,
+            now()->addMinutes(PdfCacheService::PROGRESS_TTL_MINUTES)
+        );
+
+        GeneratePdfReportJob::dispatch($siswa, $type, $tahunAjaranId, $requestId, $userId);
+
+        return $this->pdfProcessingResponse($request, $requestId, $disposition, false);
+    }
+
+    protected function activePdfGenerationRequestId(Siswa $siswa, string $type, int $tahunAjaranId): ?string
+    {
+        $requestKey = PdfCacheService::getGenerationRequestKey($siswa, $type, $tahunAjaranId);
+        $requestId = Cache::get($requestKey);
+
+        if (! is_string($requestId) || $requestId === '') {
+            return null;
+        }
+
+        $progress = Cache::get(PdfCacheService::getProgressKey($requestId));
+
+        if (! is_array($progress)) {
+            Cache::forget($requestKey);
+
+            return null;
+        }
+
+        if ((int) ($progress['siswa_id'] ?? 0) !== (int) $siswa->id ||
+            (string) ($progress['type'] ?? '') !== (string) $type ||
+            (int) ($progress['tahun_ajaran_id'] ?? 0) !== (int) $tahunAjaranId) {
+            Cache::forget($requestKey);
+
+            return null;
+        }
+
+        $currentUserId = auth()->guard('guru')->id();
+        if ($currentUserId && isset($progress['user_id']) && (string) $progress['user_id'] !== (string) $currentUserId) {
+            return null;
+        }
+
+        if (($progress['completed'] ?? false) || ($progress['error'] ?? false)) {
+            Cache::forget($requestKey);
+
+            return null;
+        }
+
+        $updatedAt = (int) ($progress['updated_at'] ?? 0);
+        if ($updatedAt > 0 && $updatedAt < now()->subMinutes(PdfCacheService::PROCESSING_STALE_MINUTES)->timestamp) {
+            Cache::forget($requestKey);
+
+            return null;
+        }
+
+        return $requestId;
+    }
+
+    protected function pdfReadyResponse(Request $request, array $cachedPdf, string $disposition, bool $cacheHit, ?string $requestId = null)
+    {
+        return ReportPerformanceTracker::measureSegment('response', function () use ($request, $cachedPdf, $disposition, $cacheHit, $requestId) {
+            $url = $this->createSecureRaporFileUrl(
+                $cachedPdf['path'],
+                $cachedPdf['filename'],
+                $disposition,
+                60
+            );
+
+            if ($this->expectsPdfJson($request)) {
+                return response()->json([
+                    'success' => true,
+                    'status' => 'ready',
+                    'ready' => true,
+                    'cache_hit' => $cacheHit,
+                    'cached' => $cacheHit,
+                    'url' => $url,
+                    'download_url' => $url,
+                    'filename' => $cachedPdf['filename'],
+                    'file_size' => $cachedPdf['file_size'] ?? null,
+                    'request_id' => $requestId,
+                ]);
+            }
+
+            return redirect()->away($url);
+        });
+    }
+
+    protected function pdfProcessingResponse(Request $request, string $requestId, string $disposition, bool $reused)
+    {
+        return ReportPerformanceTracker::measureSegment('response', function () use ($request, $requestId, $disposition, $reused) {
+            $pollUrl = route('wali_kelas.rapor.pdf-progress', [
+                'requestId' => $requestId,
+                'disposition' => $disposition,
+            ]);
+
+            if ($this->expectsPdfJson($request)) {
+                return response()->json([
+                    'success' => true,
+                    'status' => 'processing',
+                    'ready' => false,
+                    'cache_hit' => false,
+                    'cached' => false,
+                    'reused' => $reused,
+                    'request_id' => $requestId,
+                    'poll_url' => $pollUrl,
+                    'progress_url' => $pollUrl,
+                    'message' => 'Sedang menyiapkan PDF rapor. Proses ini biasanya membutuhkan beberapa detik.',
+                ], 202);
+            }
+
+            return redirect()->route('wali_kelas.rapor.index')
+                ->with('success', 'PDF sedang disiapkan. Silakan buka kembali beberapa saat lagi.');
+        });
+    }
+
+    protected function expectsPdfJson(Request $request): bool
+    {
+        return $request->expectsJson() || $request->ajax();
     }
 
     public function requestPdf(Siswa $siswa, Request $request)
     {
-        $type = $request->input('type', 'UTS');
-        $tahunAjaranId = $this->getValidTahunAjaranId(
-            $request->input('tahun_ajaran_id') ? (int) $request->input('tahun_ajaran_id') : null
+        $type = $this->normalizeReportType($request->input('type', 'UTS'));
+        $disposition = $request->input('disposition') === 'inline' ? 'inline' : 'attachment';
+        $performance = ReportPerformanceTracker::startFlowIfEnabled(
+            'pdf_request_pending',
+            $type,
+            $request->route()?->getName()
         );
 
-        if (!$tahunAjaranId) {
-            return $this->failTahunAjaranNotSet($request, true);
-        }
-
-        $requestId = uniqid('pdf_', true);
-
-        Log::info("=== PDF REQUEST RECEIVED ===", [
-            'request_id' => $requestId,
-            'siswa_id' => $siswa->id,
-            'siswa_name' => $siswa->nama,
-            'type' => $type,
-            'tahun_ajaran_id' => $tahunAjaranId,
-            'user_agent' => $request->userAgent(),
-            'ip' => $request->ip()
-        ]);
-
         try {
-            // Initialize progress immediately
-            $progressKey = "pdf_progress_{$requestId}";
-            Cache::put($progressKey, [
-                'percentage' => 0,
-                'message' => 'Permintaan diterima...',
-                'completed' => false,
-                'error' => false,
-                'timestamp' => now()->toISOString(),
-                'request_id' => $requestId,
-                'initiated' => true
-            ], now()->addMinutes(30));
+            $tahunAjaranId = $this->getValidTahunAjaranId(
+                $request->input('tahun_ajaran_id') ? (int) $request->input('tahun_ajaran_id') : null
+            );
 
-            // Check cache first
+            if (!$tahunAjaranId) {
+                return $this->failTahunAjaranNotSet($request, true);
+            }
+            $type = $this->resolveReportTypeForRequest($request, $tahunAjaranId, 'input');
+
+            $this->authorizeWaliRaporAccess($siswa, $tahunAjaranId);
+
+            if ($response = $this->ensureReportPeriodOpened($request, $type, $tahunAjaranId)) {
+                return $response;
+            }
+
+            $kelas = $this->resolveRaporClass($siswa, $tahunAjaranId);
+            $template = $this->getTemplateForSiswa($siswa, $type, $tahunAjaranId);
+
+            if (!$template) {
+                return $this->pdfTemplateUnavailableResponse($request, $siswa, $type, $tahunAjaranId, $kelas?->id);
+            }
+
             $cachedPdf = PdfCacheService::getCachedPdf($siswa, $type, $tahunAjaranId);
             
             if ($cachedPdf) {
-                Log::info("PDF found in cache, returning immediately", [
-                    'request_id' => $requestId,
-                    'cache_path' => $cachedPdf['path']
-                ]);
+                ReportPerformanceTracker::setFlowTypeIfEnabled('pdf_request_cache_hit');
 
-                return response()->json([
-                    'success' => true,
-                    'ready' => true,
-                    'cached' => true,
-                    'download_url' => $this->createSecureRaporFileUrl(
-                        $cachedPdf['path'],
-                        $cachedPdf['filename'],
-                        'attachment'
-                    ),
-                    'filename' => $cachedPdf['filename'],
-                    'file_size' => $cachedPdf['file_size'],
-                    'request_id' => $requestId
-                ]);
+                return $this->pdfReadyResponse($request, $cachedPdf, $disposition, true);
             }
 
-            // Update progress: Dispatching job
-            Cache::put($progressKey, [
-                'percentage' => 5,
-                'message' => 'Memulai generate PDF...',
-                'completed' => false,
-                'error' => false,
-                'timestamp' => now()->toISOString(),
-                'request_id' => $requestId,
-                'dispatching' => true
-            ], now()->addMinutes(30));
+            ReportPerformanceTracker::setFlowTypeIfEnabled('pdf_request_queued');
 
-            // Dispatch job
-            $userId = auth()->guard('guru')->id();
-            GeneratePdfReportJob::dispatch($siswa, $type, $tahunAjaranId, $requestId, $userId);
-
-            Log::info("PDF job dispatched successfully", [
-                'request_id' => $requestId,
-                'job_dispatched' => true
-            ]);
-
-            return response()->json([
-                'success' => true,
-                'ready' => false,
-                'cached' => false,
-                'request_id' => $requestId,
-                'estimated_time' => '30-60 seconds',
-                'message' => 'PDF sedang diproses. Mohon tunggu...',
-                'progress_url' => route('wali_kelas.rapor.pdf-progress', $requestId)
-            ]);
+            return $this->queuePdfGenerationResponse(
+                $request,
+                $siswa,
+                $type,
+                (int) $tahunAjaranId,
+                $disposition,
+                'pdf_request'
+            );
 
         } catch (\Exception $e) {
+            if ($e instanceof HttpExceptionInterface) {
+                throw $e;
+            }
+
             Log::error("Error in requestPdf", [
-                'request_id' => $requestId,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
 
-            // Update progress with error
-            Cache::put($progressKey, [
-                'percentage' => -1,
-                'message' => 'Error: ' . $e->getMessage(),
-                'completed' => true,
-                'error' => true,
-                'timestamp' => now()->toISOString(),
-                'request_id' => $requestId
-            ], now()->addMinutes(30));
-
             return response()->json([
                 'success' => false,
-                'message' => 'Gagal memproses permintaan PDF: ' . $e->getMessage(),
-                'request_id' => $requestId
+                'status' => 'failed',
+                'message' => 'PDF gagal disiapkan. Silakan coba lagi atau hubungi administrator.'
             ], 500);
+        } finally {
+            ReportPerformanceTracker::finishIfEnabled($performance);
         }
     }
 
@@ -1657,48 +1853,103 @@ class ReportController extends Controller
     /**
      * Check PDF generation progress
      */
-    public function checkPdfProgress($requestId)
+    public function checkPdfProgress(Request $request, string $requestId)
     {
-        Log::info("Progress check requested", [
-            'request_id' => $requestId,
-            'timestamp' => now()->toISOString()
-        ]);
-
         try {
-            $progressKey = "pdf_progress_{$requestId}";
+            $progressKey = PdfCacheService::getProgressKey($requestId);
             $progress = Cache::get($progressKey);
 
             if (!$progress) {
                 Log::warning("Progress not found", [
                     'request_id' => $requestId,
                     'progress_key' => $progressKey,
-                    'all_keys' => Cache::get('all_progress_keys', [])
                 ]);
 
                 return response()->json([
                     'success' => false,
+                    'status' => 'failed',
                     'message' => 'Progress tidak ditemukan. Request mungkin sudah kadaluarsa.',
                     'request_id' => $requestId,
-                    'debug_info' => [
-                        'progress_key' => $progressKey,
-                        'cache_available' => Cache::getStore() !== null
-                    ]
                 ], 404);
             }
 
-            Log::info("Progress found", [
-                'request_id' => $requestId,
-                'progress' => $progress
-            ]);
+            $this->authorizePdfProgress($progress);
+
+            if (($progress['error'] ?? false) || ($progress['status'] ?? null) === 'failed') {
+                return response()->json([
+                    'success' => true,
+                    'status' => 'failed',
+                    'message' => $progress['message'] ?? 'PDF gagal disiapkan. Silakan coba lagi atau hubungi administrator.',
+                    'request_id' => $requestId,
+                    'progress' => $this->sanitizePdfProgress($progress),
+                ]);
+            }
+
+            $siswaId = (int) ($progress['siswa_id'] ?? 0);
+            $type = (string) ($progress['type'] ?? 'UTS');
+            $tahunAjaranId = (int) ($progress['tahun_ajaran_id'] ?? 0);
+            $siswa = $siswaId ? Siswa::find($siswaId) : null;
+
+            if ($siswa && $tahunAjaranId) {
+                $cachedPdf = PdfCacheService::getCachedPdf($siswa, $type, $tahunAjaranId);
+
+                if ($cachedPdf) {
+                    $disposition = $request->query('disposition') === 'inline' ? 'inline' : 'attachment';
+                    $url = $this->createSecureRaporFileUrl(
+                        $cachedPdf['path'],
+                        $cachedPdf['filename'],
+                        $disposition,
+                        60
+                    );
+
+                    return response()->json([
+                        'success' => true,
+                        'status' => 'ready',
+                        'ready' => true,
+                        'cache_hit' => (bool) ($progress['cached'] ?? false),
+                        'cached' => (bool) ($progress['cached'] ?? false),
+                        'url' => $url,
+                        'download_url' => $url,
+                        'filename' => $cachedPdf['filename'],
+                        'file_size' => $cachedPdf['file_size'] ?? null,
+                        'request_id' => $requestId,
+                        'progress' => $this->sanitizePdfProgress(array_merge($progress, [
+                            'status' => 'ready',
+                            'completed' => true,
+                            'filename' => $cachedPdf['filename'],
+                            'file_size' => $cachedPdf['file_size'] ?? null,
+                        ])),
+                    ]);
+                }
+            }
+
+            if (($progress['completed'] ?? false) && ! ($progress['error'] ?? false)) {
+                return response()->json([
+                    'success' => true,
+                    'status' => 'failed',
+                    'message' => 'PDF belum tersedia. Silakan coba lagi atau hubungi administrator.',
+                    'request_id' => $requestId,
+                    'progress' => $this->sanitizePdfProgress($progress),
+                ]);
+            }
 
             return response()->json([
                 'success' => true,
-                'progress' => $progress,
+                'status' => 'processing',
+                'ready' => false,
+                'cache_hit' => false,
+                'cached' => false,
+                'message' => $progress['message'] ?? 'Sedang menyiapkan PDF rapor.',
+                'progress' => $this->sanitizePdfProgress($progress),
                 'request_id' => $requestId,
                 'timestamp' => now()->toISOString()
             ]);
 
         } catch (\Exception $e) {
+            if ($e instanceof HttpExceptionInterface) {
+                throw $e;
+            }
+
             Log::error("Error checking progress", [
                 'request_id' => $requestId,
                 'error' => $e->getMessage()
@@ -1706,17 +1957,61 @@ class ReportController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' => 'Error checking progress: ' . $e->getMessage(),
+                'status' => 'failed',
+                'message' => 'Gagal memeriksa status PDF. Silakan coba lagi.',
                 'request_id' => $requestId
             ], 500);
         }
     }
 
+    protected function authorizePdfProgress(array $progress): void
+    {
+        $currentGuruId = auth()->guard('guru')->id();
+
+        abort_unless(
+            $currentGuruId &&
+            isset($progress['user_id']) &&
+            (string) $progress['user_id'] === (string) $currentGuruId,
+            403
+        );
+
+        $siswaId = (int) ($progress['siswa_id'] ?? 0);
+        $tahunAjaranId = (int) ($progress['tahun_ajaran_id'] ?? 0);
+
+        if ($siswaId && $tahunAjaranId && ($siswa = Siswa::find($siswaId))) {
+            $this->authorizeWaliRaporAccess($siswa, $tahunAjaranId);
+        }
+    }
+
+    protected function sanitizePdfProgress(array $progress): array
+    {
+        return collect($progress)
+            ->only([
+                'status',
+                'stage',
+                'message',
+                'completed',
+                'error',
+                'request_id',
+                'percentage',
+                'cached',
+                'filename',
+                'file_size',
+                'updated_at',
+                'timestamp',
+            ])
+            ->all();
+    }
+
     /**
      * Clear PDF cache for student
      */
-    public function clearPdfCache(Siswa $siswa)
+    public function clearPdfCache(Siswa $siswa, Request $request)
     {
+        $tahunAjaranId = $this->resolveRaporTahunAjaranId($request);
+        abort_unless($tahunAjaranId, 403);
+        $this->authorizeWaliRaporAccess($siswa, $tahunAjaranId);
+
         try {
             PdfCacheService::clearStudentCache($siswa);
             
@@ -1784,17 +2079,35 @@ class ReportController extends Controller
 
     public function generateReport(Request $request, Siswa $siswa)
     {
-        $type = $request->input('type', 'UTS');
+        $type = $this->normalizeReportType($request->input('type', 'UTS'));
         $action = $request->input('action', 'download');
-        $tahunAjaranId = $this->getValidTahunAjaranId(
-            $request->input('tahun_ajaran_id') ? (int) $request->input('tahun_ajaran_id') : null
+        $tahunAjaranId = null;
+        $performance = ReportPerformanceTracker::startFlowIfEnabled(
+            'docx_generate',
+            $type,
+            $request->route()?->getName()
         );
-
-        if (!$tahunAjaranId) {
-            return $this->failTahunAjaranNotSet($request, true);
-        }
         
         try {
+            $tahunAjaranId = ReportPerformanceTracker::measureSegment('context', function () use ($request) {
+                return $this->getValidTahunAjaranId(
+                    $request->input('tahun_ajaran_id') ? (int) $request->input('tahun_ajaran_id') : null
+                );
+            });
+
+            if (!$tahunAjaranId) {
+                return $this->failTahunAjaranNotSet($request, true);
+            }
+            $type = $this->resolveReportTypeForRequest($request, $tahunAjaranId, 'input');
+
+            ReportPerformanceTracker::measureSegment('authorization', function () use ($siswa, $tahunAjaranId) {
+                $this->authorizeWaliRaporAccess($siswa, $tahunAjaranId);
+            });
+
+            if ($response = $this->ensureReportPeriodOpened($request, $type, $tahunAjaranId)) {
+                return $response;
+            }
+
             \Log::info('Generate report request', [
                 'siswa_id' => $siswa->id,
                 'type' => $type,
@@ -1803,33 +2116,67 @@ class ReportController extends Controller
             ]);
             
             // Get the template based on the report type requested
-            $template = $this->getTemplateForSiswa($siswa, $type, $tahunAjaranId);
+            $template = ReportPerformanceTracker::measureSegment('context', function () use ($siswa, $type, $tahunAjaranId) {
+                return $this->getTemplateForSiswa($siswa, $type, $tahunAjaranId);
+            });
             
             if (!$template) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Tidak ditemukan template rapor ' . $type . ' yang aktif untuk kelas ini pada tahun ajaran yang dipilih.',
+                    'message' => $this->missingActiveTemplateMessage($type),
                     'error_type' => 'template_missing'
                 ], 404);
             }
+
+            $cachedDocx = PdfCacheService::getCachedDocx($siswa, $type, $tahunAjaranId);
+            if ($cachedDocx) {
+                ReportPerformanceTracker::setFlowTypeIfEnabled('docx_cache_hit');
+
+                $cachedPath = storage_path('app/public/' . $cachedDocx['path']);
+                $cachedFilename = $cachedDocx['filename'] ?? basename($cachedPath);
+
+                if ($action == 'preview') {
+                    return ReportPerformanceTracker::measureSegment('response', function () use ($cachedDocx, $cachedFilename) {
+                        return response()->json([
+                            'success' => true,
+                            'file_url' => $this->createSecureRaporFileUrl(
+                                $cachedDocx['path'],
+                                $cachedFilename,
+                                'attachment'
+                            ),
+                            'filename' => $cachedFilename,
+                            'cache_hit' => true,
+                        ]);
+                    });
+                }
+
+                return ReportPerformanceTracker::measureSegment('response', function () use ($cachedPath, $cachedFilename) {
+                    return $this->downloadDocxFile($cachedPath, $cachedFilename);
+                });
+            }
+
+            ReportPerformanceTracker::setFlowTypeIfEnabled('docx_cache_miss');
             
             // Better validation - verify data for the CURRENT semester, not based on report type
-            $tahunAjaran = \App\Models\TahunAjaran::find($tahunAjaranId);
+            $tahunAjaran = ReportPerformanceTracker::measureSegment('context', fn () => \App\Models\TahunAjaran::find($tahunAjaranId));
             $currentSemester = $tahunAjaran ? $tahunAjaran->semester : ($type === 'UTS' ? 1 : 2);
             
             // Check for proper data in the current semester
-            $hasNilai = $siswa->nilais()
-                ->whereHas('mataPelajaran', function($q) use ($currentSemester) {
-                    $q->where('semester', $currentSemester);
-                })
-                ->where('tahun_ajaran_id', $tahunAjaranId)
-                ->where('is_submitted', true)
-                ->exists();
-                
-            $hasAbsensi = $siswa->absensi()
-                ->where('semester', $currentSemester)
-                ->where('tahun_ajaran_id', $tahunAjaranId)
-                ->exists();
+            [$hasNilai, $hasAbsensi] = ReportPerformanceTracker::measureSegment('preload', function () use ($siswa, $currentSemester, $tahunAjaranId) {
+                return [
+                    $siswa->nilais()
+                        ->whereHas('mataPelajaran', function($q) use ($currentSemester) {
+                            $q->where('semester', $currentSemester);
+                        })
+                        ->where('tahun_ajaran_id', $tahunAjaranId)
+                        ->where('is_submitted', true)
+                        ->exists(),
+                    $siswa->absensi()
+                        ->where('semester', $currentSemester)
+                        ->where('tahun_ajaran_id', $tahunAjaranId)
+                        ->exists(),
+                ];
+            });
                 
             if (!$hasNilai || !$hasAbsensi) {
                 \Log::warning('Data incomplete for report generation', [
@@ -1889,22 +2236,34 @@ class ReportController extends Controller
                 'file_size' => $fileSize,
                 'action' => $action
             ]);
+
+            $cachedDocx = PdfCacheService::cacheDocx($siswa, $type, $tahunAjaranId, $fullPath, $result['filename']);
+            $responsePath = $cachedDocx
+                ? storage_path('app/public/' . $cachedDocx['path'])
+                : $fullPath;
+            $responseFilename = $cachedDocx['filename'] ?? $result['filename'];
+            $responseStoragePath = $cachedDocx['path'] ?? $result['path'];
             
             // Handle preview vs download
             if ($action == 'preview') {
-                return response()->json([
-                    'success' => true,
-                    'file_url' => $this->createSecureRaporFileUrl(
-                        $result['path'],
-                        $result['filename'],
-                        'attachment'
-                    ),
-                    'filename' => $result['filename']
-                ]);
+                return ReportPerformanceTracker::measureSegment('response', function () use ($responseStoragePath, $responseFilename) {
+                    return response()->json([
+                        'success' => true,
+                        'file_url' => $this->createSecureRaporFileUrl(
+                            $responseStoragePath,
+                            $responseFilename,
+                            'attachment'
+                        ),
+                        'filename' => $responseFilename,
+                        'cache_hit' => false,
+                    ]);
+                });
             }
             
             // **SOLUTION: Download dengan headers yang BENAR untuk DOCX**
-            return $this->downloadDocxFile($fullPath, $result['filename']);
+            return ReportPerformanceTracker::measureSegment('response', function () use ($responsePath, $responseFilename) {
+                return $this->downloadDocxFile($responsePath, $responseFilename);
+            });
             
         } 
         catch (\App\Exceptions\RaporException $e) {
@@ -1932,6 +2291,8 @@ class ReportController extends Controller
                 'success' => false,
                 'message' => 'Terjadi kesalahan saat generate rapor: ' . $e->getMessage()
             ], 500);
+        } finally {
+            ReportPerformanceTracker::finishIfEnabled($performance);
         }
     }
 
@@ -2026,15 +2387,19 @@ class ReportController extends Controller
     protected function saveGenerationHistory(Siswa $siswa, ReportTemplate $template, $type, $tahunAjaranId = null, $filePath = null)
     {
         try {
+            $tahunAjaranId = $tahunAjaranId ?: session('tahun_ajaran_id');
+            $tahunAjaran = $tahunAjaranId ? TahunAjaran::find($tahunAjaranId) : null;
+            $kelas = $tahunAjaranId ? $this->resolveRaporClass($siswa, (int) $tahunAjaranId) : null;
+
             \App\Models\ReportGeneration::create([
                 'siswa_id' => $siswa->id,
-                'kelas_id' => $siswa->kelas_id,
+                'kelas_id' => $kelas?->id ?: $siswa->kelas_id,
                 'report_template_id' => $template->id,
                 'generated_file' => $filePath, // Gunakan path file yang diberikan
                 'type' => $type,
-                'tahun_ajaran' => $template->tahun_ajaran,
-                'semester' => $template->semester,
-                'tahun_ajaran_id' => $tahunAjaranId ?: session('tahun_ajaran_id'),
+                'tahun_ajaran' => $tahunAjaran?->tahun_ajaran ?: $template->tahun_ajaran,
+                'semester' => $tahunAjaran?->semester ?: $template->semester,
+                'tahun_ajaran_id' => $tahunAjaranId,
                 'generated_at' => now(),
                 'generated_by' => auth()->id() ?? auth()->guard('guru')->id()
             ]);
@@ -2063,12 +2428,22 @@ class ReportController extends Controller
      */
     public function regenerateHistoryRapor(ReportGeneration $report)
     {
+        $performance = ReportPerformanceTracker::startFlowIfEnabled(
+            'docx_regenerate',
+            $report->type,
+            request()->route()?->getName()
+        );
+
         try {
             // Ambil data yang diperlukan
-            $siswa = $report->siswa;
-            $template = $report->template;
-            $type = $report->type;
-            $tahunAjaranId = $report->tahun_ajaran_id;
+            [$siswa, $template, $type, $tahunAjaranId] = ReportPerformanceTracker::measureSegment('context', function () use ($report) {
+                return [
+                    $report->siswa,
+                    $report->template,
+                    $report->type,
+                    $report->tahun_ajaran_id,
+                ];
+            });
             
             if (!$template) {
                 return response()->json([
@@ -2097,10 +2472,10 @@ class ReportController extends Controller
             $report->generated_at = now();
             $report->save();
             
-            return response()->json([
+            return ReportPerformanceTracker::measureSegment('response', fn () => response()->json([
                 'success' => true,
                 'message' => 'Rapor berhasil digenerate ulang'
-            ]);
+            ]));
         } catch (\Exception $e) {
             \Log::error('Error regenerating report: ' . $e->getMessage(), [
                 'report_id' => $report->id,
@@ -2111,6 +2486,8 @@ class ReportController extends Controller
                 'success' => false,
                 'message' => 'Terjadi kesalahan saat regenerasi rapor: ' . $e->getMessage()
             ], 500);
+        } finally {
+            ReportPerformanceTracker::finishIfEnabled($performance);
         }
     }
     
@@ -2123,14 +2500,15 @@ class ReportController extends Controller
     public function previewHistoryRapor(ReportGeneration $report)
     {
         try {
+            $report->loadMissing(['kelas.tahunAjaran']);
+            $reportSemester = (int) ($report->semester ?: ($report->type === 'UTS' ? 1 : 2));
+
             // Ambil data siswa dengan relasi yang diperlukan
             $siswa = $report->siswa()->with([
-                'kelas',
-                'nilais' => function($query) use ($report) {
+                'nilais' => function($query) use ($report, $reportSemester) {
                     // Filter nilai sesuai dengan semester dan tahun ajaran rapor
-                    $semester = $report->type === 'UTS' ? 1 : 2;
-                    $query->whereHas('mataPelajaran', function($q) use ($semester) {
-                        $q->where('semester', $semester);
+                    $query->whereHas('mataPelajaran', function($q) use ($reportSemester) {
+                        $q->where('semester', $reportSemester);
                     })
                     ->when($report->tahun_ajaran_id, function($q) use ($report) {
                         $q->where('tahun_ajaran_id', $report->tahun_ajaran_id);
@@ -2138,15 +2516,14 @@ class ReportController extends Controller
                     ->where('is_submitted', true);
                 },
                 'nilais.mataPelajaran',
-                'nilaiEkstrakurikuler' => function($query) use ($report) {
+                'nilaiEkstrakurikuler' => function($query) use ($report, $reportSemester) {
                     $query->when($report->tahun_ajaran_id, function($q) use ($report) {
                         $q->where('tahun_ajaran_id', $report->tahun_ajaran_id);
-                    });
+                    })->where('semester', $reportSemester);
                 },
                 'nilaiEkstrakurikuler.ekstrakurikuler',
-                'absensi' => function($query) use ($report) {
-                    $semester = $report->type === 'UTS' ? 1 : 2;
-                    $query->where('semester', $semester)
+                'absensi' => function($query) use ($report, $reportSemester) {
+                    $query->where('semester', $reportSemester)
                         ->when($report->tahun_ajaran_id, function($q) use ($report) {
                             $q->where('tahun_ajaran_id', $report->tahun_ajaran_id);
                         });
@@ -2156,11 +2533,22 @@ class ReportController extends Controller
             if (!$siswa) {
                 return redirect()->back()->with('error', 'Data siswa tidak ditemukan.');
             }
+
+            if ($report->kelas) {
+                $siswa->setRelation('kelas', $report->kelas);
+            } elseif ($report->tahun_ajaran_id) {
+                $this->applyRaporClassContext($siswa, (int) $report->tahun_ajaran_id);
+            } else {
+                $siswa->loadMissing('kelas');
+            }
             
             // Render view ke HTML
             $html = view('admin.report.preview_history', [
                 'siswa' => $siswa,
-                'report' => $report
+                'report' => $report,
+                'kelas' => $siswa->kelas,
+                'semester' => $reportSemester,
+                'tahunAjaranId' => $report->tahun_ajaran_id
             ])->render();
             
             return response()->json([
@@ -2181,7 +2569,7 @@ class ReportController extends Controller
 
     public function indexWaliKelas()
     {
-        $guru = auth()->user();
+        $guru = auth()->guard('guru')->user();
         $tahunAjaranId = session('tahun_ajaran_id');
         
         // Ambil data tahun ajaran untuk mendapatkan semester yang benar
@@ -2194,11 +2582,22 @@ class ReportController extends Controller
         // Semester bisa 1/2 (ganjil/genap)
         // Tipe bisa UTS/UAS (tengah semester/akhir semester)
         $semester = $tahunAjaran->semester; // 1 atau 2
-        $type = request('type', 'UTS'); // Default ke UTS, tapi bisa diubah dengan query param
+        $openedReportType = $this->openedReportTypeForYear((int) $tahunAjaranId);
+        $type = $this->normalizeReportType(request('type', $openedReportType));
+
+        if ($type !== $openedReportType) {
+            return redirect()
+                ->route('wali_kelas.rapor.index', [
+                    'type' => $openedReportType,
+                    'tahun_ajaran_id' => $tahunAjaranId,
+                ])
+                ->with('error', app(ReportPeriodService::class)->unopenedMessage($type));
+        }
         
         \Log::info('Rapor WaliKelas - Info penting:', [
             'semester' => $semester,
             'type' => $type,
+            'opened_report_type' => $openedReportType,
             'tahun_ajaran_id' => $tahunAjaranId,
             'kombinasi_valid' => "Semester {$semester} - {$type}"
         ]);
@@ -2217,14 +2616,19 @@ class ReportController extends Controller
             return redirect()->back()->with('error', 'Anda tidak menjadi wali kelas untuk tahun ajaran yang dipilih.');
         }
         
-        // Query siswa
-        $siswa = Siswa::with([
-                'kelas.mataPelajarans' => function ($query) use ($tahunAjaranId, $semester) {
+        $kelasModel = Kelas::with([
+                'mataPelajarans' => function ($query) use ($tahunAjaranId, $semester) {
                     $query->where('semester', $semester)
                         ->when($tahunAjaranId, function ($subQuery) use ($tahunAjaranId) {
                             return $subQuery->where('tahun_ajaran_id', $tahunAjaranId);
                         });
                 },
+            ])->find($kelas->id);
+
+        // Query siswa
+        $siswa = app(SiswaKelasSemesterResolver::class)
+            ->studentQueryForClass((int) $kelas->id, (int) $tahunAjaranId, (int) $semester, true)
+            ->with([
                 'nilais' => function ($query) use ($tahunAjaranId, $semester) {
                     $query->where('tahun_ajaran_id', $tahunAjaranId)
                         ->whereHas('mataPelajaran', function ($subQuery) use ($semester) {
@@ -2247,9 +2651,14 @@ class ReportController extends Controller
                         });
                 }
             ])
-            ->where('kelas_id', $kelas->id)
             ->orderBy('nama')
             ->get();
+
+        $siswa->each(function (Siswa $student) use ($kelasModel) {
+            if ($kelasModel) {
+                $student->setRelation('kelas', $kelasModel);
+            }
+        });
 
         $totalMapelCount = MataPelajaran::where('kelas_id', $kelas->id)
             ->whereNull('deleted_at')
@@ -2297,29 +2706,146 @@ class ReportController extends Controller
                     : ($completedCount >= $totalMapelCount && $totalMapelCount > 0 ? 'complete' : 'partial'),
             ];
         }
+
+        $pdfTemplateAvailability = [];
+        $pdfStatuses = [];
+        foreach ($siswa as $student) {
+            $pdfTemplateAvailability[$student->id] = [
+                'UTS' => $openedReportType === 'UTS' && (bool) $this->getTemplateForSiswa($student, 'UTS', $tahunAjaranId),
+                'UAS' => $openedReportType === 'UAS' && (bool) $this->getTemplateForSiswa($student, 'UAS', $tahunAjaranId),
+            ];
+            $pdfStatuses[$student->id] = [
+                'UTS' => $openedReportType === 'UTS' ? PdfCacheService::getPdfPreparationStatus($student, 'UTS', $tahunAjaranId) : 'missing',
+                'UAS' => $openedReportType === 'UAS' ? PdfCacheService::getPdfPreparationStatus($student, 'UAS', $tahunAjaranId) : 'missing',
+            ];
+        }
+
+        if (config('report.pdf_auto_prepare.enabled', false)) {
+            $autoPrepare = app(ReportPdfAutoPrepareService::class);
+
+            foreach ($siswa as $student) {
+                if (($pdfTemplateAvailability[$student->id][$openedReportType] ?? false) &&
+                    ($pdfStatuses[$student->id][$openedReportType] ?? 'missing') === 'missing') {
+                    $autoPrepare->scheduleForStudent($student, (int) $tahunAjaranId, [$openedReportType], 'report_page_warmup');
+                    $pdfStatuses[$student->id][$openedReportType] = PdfCacheService::getPdfPreparationStatus($student, $openedReportType, (int) $tahunAjaranId);
+                }
+            }
+        }
         
         return view('wali_kelas.rapor.index', [
             'siswa' => $siswa,
             'diagnosisResults' => $diagnosisResults,
             'nilaiCounts' => $nilaiCounts,
             'completionData' => $completionData,
+            'pdfTemplateAvailability' => $pdfTemplateAvailability,
+            'pdfStatuses' => $pdfStatuses,
             'type' => $type, // Kirim ke view
+            'openedReportType' => $openedReportType,
             'semester' => $semester, // Kirim ke view
             'tahunAjaran' => $tahunAjaran,
-            'kelas' => $kelas
+            'kelas' => $kelas,
+            'pdfAvailable' => app(\App\Services\DocumentConversionService::class)->isLibreOfficeAvailable(),
+        ]);
+    }
+
+    public function pdfStatuses(Request $request)
+    {
+        $type = $this->normalizeReportType($request->query('type', 'UTS'));
+
+        if (! in_array($type, ['UTS', 'UAS'], true)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Tipe rapor tidak valid.',
+            ], 422);
+        }
+
+        $tahunAjaranId = $this->getValidTahunAjaranId(
+            $request->query('tahun_ajaran_id') ? (int) $request->query('tahun_ajaran_id') : null
+        );
+
+        if (! $tahunAjaranId) {
+            return $this->failTahunAjaranNotSet($request, true);
+        }
+        $type = $this->resolveReportTypeForRequest($request, $tahunAjaranId);
+
+        $tahunAjaran = TahunAjaran::find($tahunAjaranId);
+        if (! $tahunAjaran) {
+            return $this->failTahunAjaranNotSet($request, true);
+        }
+
+        if ($response = $this->ensureReportPeriodOpened($request, $type, $tahunAjaranId)) {
+            return $response;
+        }
+
+        $studentIds = collect($request->query('student_ids', []))
+            ->flatten()
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn ($id) => $id > 0)
+            ->unique()
+            ->values();
+
+        if ($studentIds->count() > 50) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Maksimal 50 status PDF dapat diperiksa sekaligus.',
+            ], 422);
+        }
+
+        if ($studentIds->isEmpty()) {
+            return response()->json([
+                'success' => true,
+                'type' => $type,
+                'statuses' => [],
+            ]);
+        }
+
+        $guru = auth()->guard('guru')->user();
+        abort_unless($guru, 403);
+
+        $kelas = DB::table('guru_kelas')
+            ->join('kelas', 'guru_kelas.kelas_id', '=', 'kelas.id')
+            ->where('guru_kelas.guru_id', $guru->id)
+            ->where('guru_kelas.is_wali_kelas', true)
+            ->where('guru_kelas.role', 'wali_kelas')
+            ->where('kelas.tahun_ajaran_id', $tahunAjaranId)
+            ->whereNull('kelas.deleted_at')
+            ->select('kelas.*')
+            ->first();
+
+        abort_unless($kelas, 403);
+
+        $students = app(SiswaKelasSemesterResolver::class)
+            ->studentQueryForClass((int) $kelas->id, (int) $tahunAjaranId, (int) $tahunAjaran->semester, true)
+            ->whereIn('siswas.id', $studentIds->all())
+            ->get();
+
+        $authorizedIds = $students->pluck('id')->map(fn ($id) => (int) $id)->sort()->values()->all();
+        $requestedIds = $studentIds->sort()->values()->all();
+
+        abort_unless($authorizedIds === $requestedIds, 403);
+
+        $statuses = [];
+        foreach ($students as $student) {
+            $statuses[$student->id] = PdfCacheService::getPdfPreparationStatus($student, $type, $tahunAjaranId);
+        }
+
+        return response()->json([
+            'success' => true,
+            'type' => $type,
+            'tahun_ajaran_id' => $tahunAjaranId,
+            'statuses' => $statuses,
         ]);
     }
 
     public function activate(ReportTemplate $template)
     {
         try {
-            // Cek apakah template ini sudah aktif
             if ($template->is_active) {
-                // Jika sudah aktif, berarti ini adalah request untuk menonaktifkan
                 $template->update(['is_active' => false]);
+
                 return response()->json([
                     'success' => true,
-                    'message' => 'Template berhasil dinonaktifkan',
+                    'message' => 'Template berhasil dinonaktifkan. Jika tidak ada template ' . $template->type . ' aktif lain yang sesuai, rapor ' . $template->type . ' belum dapat dibuat.',
                     'status' => 'inactive'
                 ]);
             }
@@ -2330,72 +2856,6 @@ class ReportController extends Controller
                 'kelas_id' => $template->kelas_id
             ]);
 
-            $otherType = $template->type === 'UTS' ? 'UAS' : 'UTS';
-
-            ReportTemplate::where('type', $otherType)
-                ->where('tahun_ajaran_id', $template->tahun_ajaran_id)
-                ->where('is_active', true)
-                ->update(['is_active' => false]);
-
-            // Dapatkan semua kelas yang terkait dengan template ini
-            $targetKelasIds = [];
-            
-            // Jika ini template untuk kelas tertentu (relasi lama)
-            if ($template->kelas_id) {
-                $targetKelasIds[] = $template->kelas_id;
-            }
-            
-            // Jika template memiliki relasi many-to-many ke kelas
-            if ($template->kelasList && $template->kelasList->count() > 0) {
-                $kelasListIds = $template->kelasList->pluck('id')->toArray();
-                $targetKelasIds = array_merge($targetKelasIds, $kelasListIds);
-            }
-            
-            \Log::info('Target kelas IDs', [
-                'ids' => $targetKelasIds,
-                'count' => count($targetKelasIds)
-            ]);
-
-            // Jika template ini untuk kelas spesifik
-            if (!empty($targetKelasIds)) {
-                // Cari template lain dengan tipe yang sama dan untuk kelas yang sama
-                $conflictingTemplates = ReportTemplate::where('type', $template->type)
-                    ->where('tahun_ajaran_id', $template->tahun_ajaran_id)
-                    ->where('id', '!=', $template->id)
-                    ->where(function($query) use ($targetKelasIds) {
-                        // Template dengan kelas_id yang cocok
-                        $query->whereIn('kelas_id', $targetKelasIds);
-                        // Atau template dengan relasi many-to-many ke kelas yang sama
-                        $query->orWhereHas('kelasList', function($q) use ($targetKelasIds) {
-                            $q->whereIn('kelas_id', $targetKelasIds);
-                        });
-                    })
-                    ->where('is_active', true)
-                    ->get();
-                    
-                \Log::info('Found conflicting templates', [
-                    'count' => $conflictingTemplates->count(),
-                    'template_ids' => $conflictingTemplates->pluck('id')->toArray()
-                ]);
-                
-                // Nonaktifkan template yang konflik
-                foreach ($conflictingTemplates as $conflictingTemplate) {
-                    \Log::info('Deactivating conflicting template', [
-                        'template_id' => $conflictingTemplate->id
-                    ]);
-                    $conflictingTemplate->update(['is_active' => false]);
-                }
-            } else {
-                // Ini adalah template global, nonaktifkan semua template global dengan tipe yang sama
-                ReportTemplate::where('type', $template->type)
-                    ->where('tahun_ajaran_id', $template->tahun_ajaran_id)
-                    ->whereNull('kelas_id')
-                    ->where('id', '!=', $template->id)
-                    ->where('is_active', true)
-                    ->update(['is_active' => false]);
-            }
-            
-            // Aktifkan template ini
             $template->update(['is_active' => true]);
             
             return response()->json([
@@ -2424,19 +2884,33 @@ class ReportController extends Controller
      */
     public function generateBatchReport(Request $request)
     {
+        $type = $this->normalizeReportType($request->input('type', 'UTS'));
+        $guru = null;
+        $performance = ReportPerformanceTracker::startFlowIfEnabled(
+            'batch_docx',
+            $type,
+            $request->route()?->getName()
+        );
+
         try {
             $siswaIds = $request->input('siswa_ids', []);
-            $type = $request->input('type', 'UTS');
-            $tahunAjaranId = $this->getValidTahunAjaranId(
-                $request->input('tahun_ajaran_id') ? (int) $request->input('tahun_ajaran_id') : null
-            );
+            $tahunAjaranId = ReportPerformanceTracker::measureSegment('context', function () use ($request) {
+                return $this->getValidTahunAjaranId(
+                    $request->input('tahun_ajaran_id') ? (int) $request->input('tahun_ajaran_id') : null
+                );
+            });
 
             if (!$tahunAjaranId) {
                 return $this->failTahunAjaranNotSet($request, true);
             }
+            $type = $this->resolveReportTypeForRequest($request, $tahunAjaranId, 'input');
+
+            if ($response = $this->ensureReportPeriodOpened($request, $type, $tahunAjaranId)) {
+                return $response;
+            }
             
             // Get current semester from tahun ajaran
-            $tahunAjaran = \App\Models\TahunAjaran::find($tahunAjaranId);
+            $tahunAjaran = ReportPerformanceTracker::measureSegment('context', fn () => \App\Models\TahunAjaran::find($tahunAjaranId));
             $currentSemester = $tahunAjaran ? $tahunAjaran->semester : 1;
             
             // Log for debugging
@@ -2448,8 +2922,21 @@ class ReportController extends Controller
             ]);
             
             // Validasi siswa
-            $guru = auth()->guard('guru')->user();
-            $kelas = $guru->kelasWali;
+            $guru = ReportPerformanceTracker::measureSegment('authorization', fn () => auth()->guard('guru')->user());
+            ReportPerformanceTracker::measureSegment('authorization', function () use ($guru) {
+                abort_unless($guru && session('selected_role') === 'wali_kelas', 403);
+            });
+
+            $kelas = ReportPerformanceTracker::measureSegment('context', function () use ($guru, $tahunAjaranId) {
+                return DB::table('guru_kelas')
+                    ->join('kelas', 'guru_kelas.kelas_id', '=', 'kelas.id')
+                    ->where('guru_kelas.guru_id', $guru->id)
+                    ->where('guru_kelas.is_wali_kelas', true)
+                    ->where('guru_kelas.role', 'wali_kelas')
+                    ->where('kelas.tahun_ajaran_id', $tahunAjaranId)
+                    ->select('kelas.*')
+                    ->first();
+            });
             
             if (!$kelas) {
                 throw new \Exception('Anda tidak memiliki kelas yang diwalikan');
@@ -2460,31 +2947,42 @@ class ReportController extends Controller
                 throw new \Exception('Tidak ada siswa yang dipilih');
             }
             
-            // Verifikasi siswa
-            $siswaList = Siswa::whereIn('id', $siswaIds)
-                ->where('kelas_id', $kelas->id)
-                ->get();
+            // Verifikasi siswa berdasarkan enrollment semester/tahun ajaran
+            $authorizedStudentIds = ReportPerformanceTracker::measureSegment('authorization', function () use ($kelas, $tahunAjaranId, $currentSemester) {
+                return app(SiswaKelasSemesterResolver::class)
+                    ->studentsForClass((int) $kelas->id, (int) $tahunAjaranId, (int) $currentSemester, true)
+                    ->pluck('id')
+                    ->all();
+            });
+
+            $siswaList = ReportPerformanceTracker::measureSegment('preload', function () use ($siswaIds, $authorizedStudentIds) {
+                return Siswa::whereIn('id', $siswaIds)
+                    ->whereIn('id', $authorizedStudentIds)
+                    ->get();
+            });
                 
             if ($siswaList->count() !== count($siswaIds)) {
                 throw new \Exception('Cetak Semua Rapor Masih Maintenance di Tahun Ajaran ini, Harap Gunakan Fitur Download Rapor Satu per Satu di Icon Aksi');
             }
             
             // Cek template untuk tipe rapor yang diminta
-            $template = ReportTemplate::where([
-                    'type' => $type,
-                    'is_active' => true,
-                ])
-                ->where(function($query) use ($kelas) {
-                    $query->where('kelas_id', $kelas->id)
-                        ->orWhereHas('kelasList', function($q) use ($kelas) {
-                            $q->where('kelas_id', $kelas->id);
-                        })
-                        ->orWhereNull('kelas_id'); // Template global
-                })
-                ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
-                    return $query->where('tahun_ajaran_id', $tahunAjaranId);
-                })
-                ->first();
+            $template = ReportPerformanceTracker::measureSegment('context', function () use ($type, $kelas, $tahunAjaranId) {
+                return ReportTemplate::where([
+                        'type' => $type,
+                        'is_active' => true,
+                    ])
+                    ->where(function($query) use ($kelas) {
+                        $query->where('kelas_id', $kelas->id)
+                            ->orWhereHas('kelasList', function($q) use ($kelas) {
+                                $q->where('kelas_id', $kelas->id);
+                            })
+                            ->orWhereNull('kelas_id'); // Template global
+                    })
+                    ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
+                        return $query->where('tahun_ajaran_id', $tahunAjaranId);
+                    })
+                    ->first();
+            });
             
             if (!$template) {
                 throw new \Exception("Tidak ada template {$type} aktif untuk kelas ini di tahun ajaran yang dipilih");
@@ -2555,11 +3053,11 @@ class ReportController extends Controller
                         // Simpan history generate
                         \App\Models\ReportGeneration::create([
                             'siswa_id' => $siswa->id,
-                            'kelas_id' => $siswa->kelas_id,
+                            'kelas_id' => $kelas->id,
                             'report_template_id' => $template->id,
                             'generated_file' => $result['path'],
                             'type' => $type,
-                            'tahun_ajaran' => $template->tahun_ajaran,
+                            'tahun_ajaran' => $tahunAjaran?->tahun_ajaran ?: $template->tahun_ajaran,
                             'semester' => $currentSemester, // Use current semester
                             'tahun_ajaran_id' => $tahunAjaranId,
                             'generated_at' => now(),
@@ -2663,7 +3161,7 @@ class ReportController extends Controller
             // Return signed URL download agar file batch tidak bisa diakses publik langsung
             $downloadUrl = $this->createSecureBatchDownloadUrl($webPath, $zipName);
             
-            return response()->json([
+            return ReportPerformanceTracker::measureSegment('response', fn () => response()->json([
                 'success' => true,
                 'message' => 'Batch rapor berhasil digenerate',
                 'download_url' => $downloadUrl,
@@ -2672,9 +3170,13 @@ class ReportController extends Controller
                     'success' => count($successSiswa),
                     'error' => count($errorSiswa)
                 ]
-            ]);
+            ]));
             
         } catch (\Exception $e) {
+            if ($e instanceof HttpExceptionInterface) {
+                throw $e;
+            }
+
             \Log::error("Batch generate report error: " . $e->getMessage(), [
                 'trace' => $e->getTraceAsString()
             ]);
@@ -2699,79 +3201,46 @@ class ReportController extends Controller
                     'trace' => array_slice($e->getTrace(), 0, 3)
                 ] : null
             ], 500);
+        } finally {
+            ReportPerformanceTracker::finishIfEnabled($performance);
         }
     }
 
     protected function getTemplateForSiswa(Siswa $siswa, $type, $tahunAjaranId = null)
     {
         $tahunAjaranId = $tahunAjaranId ?: session('tahun_ajaran_id');
+        $kelas = $tahunAjaranId ? $this->resolveRaporClass($siswa, (int) $tahunAjaranId) : null;
+        $kelasId = $kelas?->id ?: ($tahunAjaranId ? null : $siswa->kelas_id);
         
         \Log::info('Looking for template', [
             'siswa_id' => $siswa->id,
             'siswa_kelas_id' => $siswa->kelas_id,
+            'report_kelas_id' => $kelasId,
             'type' => $type, // UTS atau UAS
             'tahun_ajaran_id' => $tahunAjaranId
         ]);
-        
-        // First look for class-specific template using the many-to-many relationship
-        $template = ReportTemplate::where('type', $type) // PENTING: ini adalah tipe UTS/UAS
-            ->where('is_active', true)
-            ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
-                return $query->where('tahun_ajaran_id', $tahunAjaranId);
-            })
-            ->whereHas('kelasList', function($query) use ($siswa) {
-                $query->where('kelas_id', $siswa->kelas_id);
-            })
-            ->first();
-        
+
+        $template = $this->findActiveReportTemplateForContext($type, $kelasId, $tahunAjaranId ? (int) $tahunAjaranId : null);
+
         if ($template) {
-            \Log::info('Found template with many-to-many relation', [
+            \Log::info('Found template for report context', [
                 'template_id' => $template->id,
-                'template_type' => $template->type
+                'template_type' => $template->type,
+                'kelas_id' => $kelasId,
+                'tahun_ajaran_id' => $tahunAjaranId,
             ]);
-            return $template;
-        }
-        
-        // If not found, try the old relationship
-        $template = ReportTemplate::where('type', $type)
-            ->where('kelas_id', $siswa->kelas_id)
-            ->where('is_active', true)
-            ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
-                return $query->where('tahun_ajaran_id', $tahunAjaranId);
-            })
-            ->first();
-        
-        if ($template) {
-            \Log::info('Found template with direct kelas relation', [
-                'template_id' => $template->id,
-                'template_type' => $template->type
-            ]);
+
             return $template;
         }
 
-        // If still not found, look for global template
-        $template = ReportTemplate::where('type', $type)
-            ->whereNull('kelas_id')
-            ->where('is_active', true)
-            ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
-                return $query->where('tahun_ajaran_id', $tahunAjaranId);
-            })
-            ->first();
+        \Log::warning('No template found for', [
+            'type' => $type,
+            'kelas_id' => $kelasId,
+            'tahun_ajaran_id' => $tahunAjaranId,
+            'semester' => $tahunAjaranId ? $this->getRaporSemester((int) $tahunAjaranId) : null,
+        ]);
         
-        if ($template) {
-            \Log::info('Found global template', [
-                'template_id' => $template->id,
-                'template_type' => $template->type
-            ]);
-        } else {
-            \Log::warning('No template found for', [
-                'type' => $type,
-                'kelas_id' => $siswa->kelas_id,
-                'tahun_ajaran_id' => $tahunAjaranId
-            ]);
-        }
-        
-        return $template;
+        return null;
     }
 
     public function downloadSecureFile(Request $request)
@@ -2896,7 +3365,7 @@ class ReportController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Template berhasil dihapus'
+                'message' => 'Template berhasil dihapus. Jika tidak ada template ' . $template->type . ' aktif lain yang sesuai, rapor ' . $template->type . ' belum dapat dibuat.'
             ]);
 
         } catch (\Exception $e) {

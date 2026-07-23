@@ -7,6 +7,8 @@ use App\Models\CatatanSiswa;
 use App\Models\CatatanMataPelajaran;
 use App\Models\Siswa;
 use App\Models\MataPelajaran;
+use App\Models\TahunAjaran;
+use App\Services\SiswaKelasSemesterResolver;
 use App\Traits\RequiresTahunAjaran;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -23,14 +25,15 @@ class CatatanController extends Controller
      */
     public function showCatatanSiswa(Siswa $siswa)
     {
-        $guru = Auth::guard('guru')->user();
-        $tahunAjaranId = session('tahun_ajaran_id');
-        $selectedSemester = session('selected_semester', 1);
-        
-        // Check if this teacher is the wali kelas for this student
-        if (!$siswa->isInKelasWali($guru->id)) {
-            return redirect()->back()->with('error', 'Anda tidak memiliki akses untuk mengedit catatan siswa ini.');
+        $tahunAjaranId = $this->getValidTahunAjaranId();
+
+        if (!$tahunAjaranId) {
+            return $this->failTahunAjaranNotSet(request());
         }
+
+        $selectedSemester = $this->getCurrentSemester($tahunAjaranId);
+        $kelas = $this->authorizeWaliStudent($siswa, $tahunAjaranId, $selectedSemester);
+        $siswa->setRelation('kelas', $kelas);
         
         // Get existing notes for current context
         $catatanList = CatatanSiswa::where('siswa_id', $siswa->id)
@@ -61,12 +64,8 @@ class CatatanController extends Controller
         ]);
         
         $guru = Auth::guard('guru')->user();
-        $selectedSemester = session('selected_semester', 1);
-        
-        // Check access
-        if (!$siswa->isInKelasWali($guru->id)) {
-            return redirect()->back()->with('error', 'Anda tidak memiliki akses untuk mengedit catatan siswa ini.');
-        }
+        $selectedSemester = $this->getCurrentSemester($tahunAjaranId);
+        $this->authorizeWaliStudent($siswa, $tahunAjaranId, $selectedSemester);
         
         DB::beginTransaction();
         
@@ -97,7 +96,7 @@ class CatatanController extends Controller
                         'tahun_ajaran_id' => $tahunAjaranId,
                         'semester' => $selectedSemester,
                         'type' => $type,
-                    ])->delete();
+                    ])->get()->each->delete();
                 }
             }
             
@@ -126,11 +125,14 @@ class CatatanController extends Controller
      */
 public function indexCatatanMataPelajaran()
 {
-    $guru = Auth::guard('guru')->user();
-    $tahunAjaranId = session('tahun_ajaran_id');
+    $tahunAjaranId = $this->getValidTahunAjaranId();
+
+    if (!$tahunAjaranId) {
+        return $this->failTahunAjaranNotSet(request());
+    }
     
     // FIX: Ambil semester dari tahun ajaran aktif, bukan dari session
-    $tahunAjaran = \App\Models\TahunAjaran::find($tahunAjaranId);
+    $tahunAjaran = TahunAjaran::find($tahunAjaranId);
     $correctSemester = $tahunAjaran ? $tahunAjaran->semester : 1;
     
     // Update session jika tidak sesuai
@@ -144,27 +146,15 @@ public function indexCatatanMataPelajaran()
     }
     
     $selectedSemester = $correctSemester; // Gunakan semester yang benar
-    
-    // Get kelas wali yang benar
-    $kelas = DB::table('guru_kelas')
-        ->join('kelas', 'guru_kelas.kelas_id', '=', 'kelas.id')
-        ->where('guru_kelas.guru_id', $guru->id)
-        ->where('guru_kelas.is_wali_kelas', true)
-        ->where('guru_kelas.role', 'wali_kelas')
-        ->where('kelas.tahun_ajaran_id', $tahunAjaranId)
-        ->select('kelas.*')
-        ->first();
-    
-    if ($kelas) {
-        $kelas = \App\Models\Kelas::find($kelas->id);
-    }
+
+    $kelas = $this->authorizeWaliKelasForYear($tahunAjaranId);
     
     if (!$kelas) {
         return redirect()->back()->with('error', 'Anda tidak memiliki kelas yang diwalikan untuk tahun ajaran ini.');
     }
     
     \Log::info('CatatanController Fixed Debug', [
-        'guru_id' => $guru->id,
+        'guru_id' => Auth::guard('guru')->id(),
         'tahun_ajaran_id' => $tahunAjaranId,
         'correct_semester' => $correctSemester,
         'kelas_id' => $kelas->id,
@@ -200,20 +190,17 @@ public function indexCatatanMataPelajaran()
      */
     public function showCatatanMataPelajaran(MataPelajaran $mataPelajaran)
     {
-        $guru = Auth::guard('guru')->user();
-        $tahunAjaranId = session('tahun_ajaran_id');
-        $selectedSemester = session('selected_semester', 1);
-        
-        // Check if this teacher can manage this subject
-        $kelas = $guru->kelasWali;
-        if (!$kelas || $mataPelajaran->kelas_id !== $kelas->id) {
-            return redirect()->back()->with('error', 'Anda tidak memiliki akses untuk mengedit catatan mata pelajaran ini.');
+        $tahunAjaranId = $this->getValidTahunAjaranId();
+
+        if (!$tahunAjaranId) {
+            return $this->failTahunAjaranNotSet(request());
         }
+
+        $selectedSemester = $this->getCurrentSemester($tahunAjaranId);
+        $kelas = $this->authorizeWaliSubject($mataPelajaran, $tahunAjaranId, $selectedSemester);
         
         // Get all students in the class
-        $siswaList = Siswa::where('kelas_id', $kelas->id)
-            ->orderBy('nama')
-            ->get();
+        $siswaList = $this->studentsForWaliClass((int) $kelas->id, $tahunAjaranId, $selectedSemester);
         
         // Get existing notes for this subject and all students
         $existingCatatan = CatatanMataPelajaran::where('mata_pelajaran_id', $mataPelajaran->id)
@@ -241,13 +228,8 @@ public function indexCatatanMataPelajaran()
         }
 
         $guru = Auth::guard('guru')->user();
-        $selectedSemester = session('selected_semester', 1);
-        
-        // Check access
-        $kelas = $guru->kelasWali;
-        if (!$kelas || $mataPelajaran->kelas_id !== $kelas->id) {
-            return redirect()->back()->with('error', 'Anda tidak memiliki akses untuk mengedit catatan mata pelajaran ini.');
-        }
+        $selectedSemester = $this->getCurrentSemester($tahunAjaranId);
+        $kelas = $this->authorizeWaliSubject($mataPelajaran, $tahunAjaranId, $selectedSemester);
         
         $request->validate([
             'catatan' => 'required|array',
@@ -255,13 +237,20 @@ public function indexCatatanMataPelajaran()
             'catatan.*.uts' => 'nullable|string|max:1000',
             'catatan.*.uas' => 'nullable|string|max:1000',
         ]);
+
+        $catatanData = $request->input('catatan', []);
+        $this->assertAllStudentsBelongToWaliClass(
+            array_keys($catatanData),
+            (int) $kelas->id,
+            $tahunAjaranId,
+            $selectedSemester
+        );
         
         DB::beginTransaction();
         
         try {
-            $catatanData = $request->input('catatan', []);
-            
             foreach ($catatanData as $siswaId => $catatan) {
+                $siswaId = (int) $siswaId;
                 $types = ['umum', 'uts', 'uas'];
                 
                 foreach ($types as $type) {
@@ -289,7 +278,7 @@ public function indexCatatanMataPelajaran()
                             'tahun_ajaran_id' => $tahunAjaranId,
                             'semester' => $selectedSemester,
                             'type' => $type,
-                        ])->delete();
+                        ])->get()->each->delete();
                     }
                 }
             }
@@ -318,12 +307,28 @@ public function indexCatatanMataPelajaran()
      */
     public function getCatatanForSiswa(Request $request)
     {
-        $siswaId = $request->input('siswa_id');
-        $mataPelajaranId = $request->input('mata_pelajaran_id');
-        $type = $request->input('type', 'umum');
+        $validated = $request->validate([
+            'siswa_id' => ['required', 'integer'],
+            'mata_pelajaran_id' => ['required', 'integer'],
+            'type' => ['nullable', 'in:umum,uts,uas'],
+        ]);
+
+        $siswaId = (int) $validated['siswa_id'];
+        $mataPelajaranId = (int) $validated['mata_pelajaran_id'];
+        $type = $validated['type'] ?? 'umum';
         
-        $tahunAjaranId = session('tahun_ajaran_id');
-        $selectedSemester = session('selected_semester', 1);
+        $tahunAjaranId = $this->getValidTahunAjaranId();
+        abort_unless($tahunAjaranId, 403);
+
+        $selectedSemester = $this->getCurrentSemester($tahunAjaranId);
+        $mataPelajaran = MataPelajaran::find($mataPelajaranId);
+        $kelas = $mataPelajaran
+            ? $this->authorizeWaliSubject($mataPelajaran, $tahunAjaranId, $selectedSemester)
+            : null;
+        abort_unless(
+            $kelas && $this->isStudentInClass($siswaId, (int) $kelas->id, $tahunAjaranId, $selectedSemester),
+            403
+        );
         
         $catatan = CatatanMataPelajaran::where([
             'siswa_id' => $siswaId,
@@ -337,5 +342,86 @@ public function indexCatatanMataPelajaran()
             'success' => true,
             'catatan' => $catatan ? $catatan->catatan : ''
         ]);
+    }
+
+    private function getCurrentSemester(int $tahunAjaranId): int
+    {
+        return (int) (TahunAjaran::find($tahunAjaranId)?->semester ?? 1);
+    }
+
+    private function authorizeWaliKelasForYear(int $tahunAjaranId)
+    {
+        $guru = Auth::guard('guru')->user();
+        abort_unless($guru && session('selected_role') === 'wali_kelas', 403);
+
+        $kelasId = DB::table('guru_kelas')
+            ->join('kelas', 'guru_kelas.kelas_id', '=', 'kelas.id')
+            ->where('guru_kelas.guru_id', $guru->id)
+            ->where('guru_kelas.is_wali_kelas', true)
+            ->where('guru_kelas.role', 'wali_kelas')
+            ->where('kelas.tahun_ajaran_id', $tahunAjaranId)
+            ->value('kelas.id');
+
+        abort_unless($kelasId, 403);
+
+        return \App\Models\Kelas::find($kelasId);
+    }
+
+    private function authorizeWaliStudent(Siswa $siswa, int $tahunAjaranId, int $semester)
+    {
+        $kelas = $this->authorizeWaliKelasForYear($tahunAjaranId);
+
+        abort_unless(
+            $kelas && $this->isStudentInClass((int) $siswa->id, (int) $kelas->id, $tahunAjaranId, $semester),
+            403
+        );
+
+        return $kelas;
+    }
+
+    private function authorizeWaliSubject(MataPelajaran $mataPelajaran, int $tahunAjaranId, int $semester)
+    {
+        $kelas = $this->authorizeWaliKelasForYear($tahunAjaranId);
+
+        abort_unless(
+            $kelas
+            && (int) $mataPelajaran->kelas_id === (int) $kelas->id
+            && (int) $mataPelajaran->tahun_ajaran_id === $tahunAjaranId
+            && (int) $mataPelajaran->semester === $semester,
+            403
+        );
+
+        return $kelas;
+    }
+
+    private function studentsForWaliClass(int $kelasId, int $tahunAjaranId, int $semester)
+    {
+        return app(SiswaKelasSemesterResolver::class)
+            ->studentsForClass($kelasId, $tahunAjaranId, $semester, true);
+    }
+
+    private function isStudentInClass(int $siswaId, int $kelasId, int $tahunAjaranId, int $semester): bool
+    {
+        return app(SiswaKelasSemesterResolver::class)
+            ->isEnrolledInClass($siswaId, $kelasId, $tahunAjaranId, $semester, true);
+    }
+
+    private function assertAllStudentsBelongToWaliClass(array $studentIds, int $kelasId, int $tahunAjaranId, int $semester): void
+    {
+        $submittedCount = count($studentIds);
+        $studentIds = collect($studentIds)
+            ->map(fn ($id) => (int) $id)
+            ->filter()
+            ->unique()
+            ->values();
+
+        abort_unless($studentIds->count() === $submittedCount, 403);
+
+        $authorizedCount = app(SiswaKelasSemesterResolver::class)
+            ->studentQueryForClass($kelasId, $tahunAjaranId, $semester, true)
+            ->whereIn('siswas.id', $studentIds)
+            ->count();
+
+        abort_unless($authorizedCount === $studentIds->count(), 403);
     }
 }

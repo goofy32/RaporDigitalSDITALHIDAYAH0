@@ -8,11 +8,16 @@ use Illuminate\Support\Facades\Auth;
 use App\Models\Guru;
 use Illuminate\Support\Facades\Hash;
 use App\Models\User;
+use App\Models\TahunAjaran;
 use App\Services\AuditService;
+use App\Services\GuruSelectedRoleSessionState;
+use App\Services\TahunAjaranContext;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 class LoginController extends Controller
 {
-    public function login(Request $request)
+    public function login(Request $request, GuruSelectedRoleSessionState $roleSessionState)
     {
         $credentials = $request->validate([
             'username' => 'required|string',
@@ -39,14 +44,18 @@ class LoginController extends Controller
         if ($guru && Hash::check($password, $guru->password)) {
             Auth::guard('guru')->login($guru);
 
-            session([
-                'selected_role' => 'pengajar',
-                'last_activity' => time(),
-            ]);
+            $selectedRole = $this->defaultGuruRole($guru);
+
+            $roleSessionState->publish($request->session(), $selectedRole);
+            $request->session()->put('last_activity', time());
 
             AuditService::logLogin('success', $identifier);
 
-            return redirect()->route('pengajar.dashboard');
+            if ((bool) $guru->must_change_password) {
+                return redirect()->route('guru.force-password.edit');
+            }
+
+            return redirect()->route($this->dashboardRouteForRole($selectedRole));
         }
     
         // Log failed login attempt
@@ -57,7 +66,7 @@ class LoginController extends Controller
         ])->withInput($request->except('password'));
     }
 
-    public function switchRole(string $role)
+    public function switchRole(Request $request, string $role, GuruSelectedRoleSessionState $roleSessionState)
     {
         $guru = Auth::guard('guru')->user();
 
@@ -65,23 +74,76 @@ class LoginController extends Controller
             return redirect()->route('login');
         }
 
-        if (!in_array($role, ['pengajar', 'wali_kelas'])) {
-            return redirect()->back()
-                ->with('error', 'Role tidak valid.');
+        if (!in_array($role, ['pengajar', 'wali_kelas'], true)) {
+            abort(403);
         }
 
-        if ($role === 'wali_kelas' && !$guru->isWaliKelas()) {
-            return redirect()->back()
-                ->with('error', 'Anda bukan wali kelas.');
+        if (!in_array($role, $this->availableGuruRoles($guru), true)) {
+            abort(403);
         }
 
-        session(['selected_role' => $role]);
+        $selectedRoleBefore = $request->session()->get(GuruSelectedRoleSessionState::ROLE_KEY);
+        $roleSessionState->publish($request->session(), $role);
 
-        if ($role === 'wali_kelas') {
-            return redirect()->route('wali_kelas.dashboard');
+        Log::info('Guru mengganti role aktif.', [
+            'request_id' => (string) Str::uuid(),
+            'route_name' => $request->route()?->getName(),
+            'route_uri' => $request->route()?->uri(),
+            'selected_role_before' => $selectedRoleBefore,
+            'target_role' => $role,
+            'selected_role_after' => $request->session()->get(GuruSelectedRoleSessionState::ROLE_KEY),
+        ]);
+
+        return redirect()->route($this->dashboardRouteForRole($role));
+    }
+
+    private function defaultGuruRole(Guru $guru): string
+    {
+        $roles = $this->availableGuruRoles($guru);
+
+        if (in_array('pengajar', $roles, true)) {
+            return 'pengajar';
         }
 
-        return redirect()->route('pengajar.dashboard');
+        if (in_array('wali_kelas', $roles, true)) {
+            return 'wali_kelas';
+        }
+
+        return 'pengajar';
+    }
+
+    private function availableGuruRoles(Guru $guru): array
+    {
+        $tahunAjaran = $this->currentTahunAjaran();
+
+        return $guru->availableRoles(
+            $tahunAjaran?->id,
+            $tahunAjaran?->semester
+        );
+    }
+
+    private function currentTahunAjaran(): ?TahunAjaran
+    {
+        $context = app(TahunAjaranContext::class);
+
+        if ($context->selected()) {
+            return $context->selected();
+        }
+
+        $tahunAjaranId = session('tahun_ajaran_id');
+
+        if ($tahunAjaranId) {
+            return TahunAjaran::find($tahunAjaranId);
+        }
+
+        return TahunAjaran::where('is_active', true)->first();
+    }
+
+    private function dashboardRouteForRole(string $role): string
+    {
+        return $role === 'wali_kelas'
+            ? 'wali_kelas.dashboard'
+            : 'pengajar.dashboard';
     }
 
     public function logout(Request $request)
@@ -90,6 +152,10 @@ class LoginController extends Controller
         
         // Log logout event before actually logging out
         AuditService::logLogout();
+
+        if ($request->hasSession()) {
+            app(GuruSelectedRoleSessionState::class)->forget($request->session());
+        }
         
         // Clear all possible auth guards
         Auth::guard('web')->logout();

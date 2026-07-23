@@ -5,7 +5,7 @@
 @endsection
 
 @section('sidebar')
-    <x-wali-kelas.sidebar data-turbo-permanent id="sidebar"></x-wali-kelas.sidebar>
+    <x-wali-kelas.sidebar></x-wali-kelas.sidebar>
 @endsection
 
 @push('styles')
@@ -50,14 +50,14 @@
         <div class="mt-16">
             <div id="main">
                 @php
-                    $activeTahunAjaran = \App\Models\TahunAjaran::where('is_active', true)->first();
-                    $hasActiveTahunAjaran = !is_null($activeTahunAjaran);
-                    $fallbackTahunAjaran = !$hasActiveTahunAjaran
-                        ? \App\Models\TahunAjaran::orderBy('id', 'desc')->first()
+                    $layoutSystemActiveTahunAjaran = $systemActiveTahunAjaran ?? null;
+                    $layoutHasActiveTahunAjaran = $hasActiveTahunAjaran ?? !is_null($layoutSystemActiveTahunAjaran);
+                    $layoutFallbackTahunAjaran = !$layoutHasActiveTahunAjaran
+                        ? ($latestTahunAjaran ?? null)
                         : null;
                 @endphp
 
-                @if(!$hasActiveTahunAjaran)
+                @if(!$layoutHasActiveTahunAjaran)
                     <div x-data="{ show: true }"
                          x-show="show"
                          x-transition.opacity.duration.150ms
@@ -68,13 +68,13 @@
                                     <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.72-1.36 3.485 0l5.58 9.92c.75 1.334-.213 2.981-1.742 2.981H4.42c-1.53 0-2.492-1.647-1.743-2.98l5.58-9.921zM11 13a1 1 0 10-2 0 1 1 0 002 0zm-1-6a1 1 0 00-1 1v3a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" />
                                 </svg>
                                 <div>
-                                    <p class="text-yellow-800 font-medium">Tahun Ajaran Belum Diaktifkan</p>
-                                    <p class="text-yellow-700 text-sm">
-                                        @if($fallbackTahunAjaran)
-                                            Data Anda akan masuk ke
-                                            <strong>{{ $fallbackTahunAjaran->tahun_ajaran }} - {{ $fallbackTahunAjaran->semester }}</strong>.
-                                            Hubungi administrator untuk mengaktifkan tahun ajaran yang benar.
-                                        @else
+                                <p class="text-yellow-800 font-medium">Tahun Ajaran Belum Diaktifkan</p>
+                                <p class="text-yellow-700 text-sm">
+                                    @if($layoutFallbackTahunAjaran)
+                                        Data Anda akan masuk ke
+                                        <strong>{{ $layoutFallbackTahunAjaran->tahun_ajaran }} - {{ $layoutFallbackTahunAjaran->semester }}</strong>.
+                                        Hubungi administrator untuk mengaktifkan tahun ajaran yang benar.
+                                    @else
                                             Belum ada tahun ajaran. Hubungi administrator segera.
                                         @endif
                                     </p>
@@ -101,6 +101,8 @@
             </div>
         </div>
     </div>
+
+    <x-ai-chatbot />
 @endsection
 
 @section('role-scripts')

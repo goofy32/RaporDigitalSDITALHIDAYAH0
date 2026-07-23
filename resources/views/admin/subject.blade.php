@@ -33,94 +33,87 @@
             </a>
         </div>
 
-        <div class="flex flex-col md:flex-row justify-between items-center gap-4 mb-6">
-            <form action="{{ route('subject.index') }}" method="GET" class="w-full" data-turbo="false">
-                <div class="flex gap-2">
-                    <input type="text" name="search" value="{{ request('search') }}"
-                        class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-green-500 focus:border-green-500 block w-full p-2"
-                        placeholder="Cari nama mata pelajaran">
-                    <button type="submit" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                            <path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd" />
-                        </svg>
-                    </button>
+        <div data-live-list>
+            <form action="{{ route('subject.index') }}" method="GET" class="mb-4" data-live-list-form data-turbo="false">
+                <div class="flex flex-col gap-3 md:flex-row">
+                    <div class="flex flex-1 gap-2">
+                        <input type="text" name="search" value="{{ request('search') }}"
+                            data-live-search-input
+                            class="block w-full rounded-lg border border-gray-300 bg-gray-50 p-2 text-sm text-gray-900 focus:border-green-500 focus:ring-green-500"
+                            placeholder="Cari nama mata pelajaran">
+                        <button type="submit" class="shrink-0 rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700">Cari</button>
+                    </div>
+
+                    <details class="relative" data-live-filter-panel>
+                        <x-live-list.filter-button />
+                        <div class="mt-2 w-full rounded-lg border border-gray-200 bg-white p-4 shadow-lg md:absolute md:right-0 md:z-20 md:w-80">
+                            <div class="space-y-3">
+                                <div>
+                                    <label class="mb-1 block text-sm font-medium text-gray-700">Kelas</label>
+                                    <select name="kelas_id" class="w-full rounded-lg border-gray-300 text-sm focus:border-green-500 focus:ring-green-500">
+                                        <option value="">Semua kelas</option>
+                                        @foreach($kelasOptions as $kelas)
+                                            <option value="{{ $kelas->id }}" @selected((string) request('kelas_id') === (string) $kelas->id)>{{ $kelas->label_kelas }}</option>
+                                        @endforeach
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="mb-1 block text-sm font-medium text-gray-700">Guru pengajar</label>
+                                    <select name="guru_id" class="w-full rounded-lg border-gray-300 text-sm focus:border-green-500 focus:ring-green-500">
+                                        <option value="">Semua guru</option>
+                                        @foreach($guruOptions as $guru)
+                                            <option value="{{ $guru->id }}" @selected((string) request('guru_id') === (string) $guru->id)>{{ $guru->nama }}</option>
+                                        @endforeach
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="mb-1 block text-sm font-medium text-gray-700">Jenis</label>
+                                    <select name="jenis" class="w-full rounded-lg border-gray-300 text-sm focus:border-green-500 focus:ring-green-500">
+                                        <option value="">Semua jenis</option>
+                                        <option value="wajib" @selected(request('jenis') === 'wajib')>Wajib</option>
+                                        <option value="muatan_lokal" @selected(request('jenis') === 'muatan_lokal')>Muatan Lokal</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="mb-1 block text-sm font-medium text-gray-700">Kelengkapan TP</label>
+                                    <select name="tp_status" class="w-full rounded-lg border-gray-300 text-sm focus:border-green-500 focus:ring-green-500">
+                                        <option value="">Semua</option>
+                                        <option value="lengkap" @selected(request('tp_status') === 'lengkap')>TP lengkap</option>
+                                        <option value="belum" @selected(request('tp_status') === 'belum')>Belum lengkap</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="mb-1 block text-sm font-medium text-gray-700">Urutkan</label>
+                                    <select name="sort" class="w-full rounded-lg border-gray-300 text-sm focus:border-green-500 focus:ring-green-500">
+                                        <option value="">Urutan kelas</option>
+                                        <option value="az" @selected(request('sort') === 'az')>A-Z</option>
+                                        <option value="za" @selected(request('sort') === 'za')>Z-A</option>
+                                    </select>
+                                </div>
+                                <div class="flex items-center justify-end gap-2 pt-2">
+                                    <a href="{{ route('subject.index') }}" data-live-reset class="rounded-lg bg-gray-100 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200">Reset Filter</a>
+                                    <button type="submit" class="rounded-lg bg-green-700 px-3 py-2 text-sm font-medium text-white hover:bg-green-800">Terapkan</button>
+                                </div>
+                            </div>
+                        </div>
+                    </details>
                 </div>
             </form>
-        </div>
-  
-        <!-- Table -->
-        <div class="relative overflow-x-auto shadow-md sm:rounded-lg">
-            <table class="w-full text-sm text-left text-gray-500">
-                <thead class="text-xs text-gray-700 uppercase bg-gray-50">
-                    <tr>
-                        <th scope="col" class="px-6 py-3">No</th>
-                        <th scope="col" class="px-6 py-3">Mata Pelajaran</th>
-                        <th scope="col" class="px-6 py-3">Kelas</th>
-                        <th scope="col" class="px-6 py-3">Semester</th>
-                        <th scope="col" class="px-6 py-3">Guru Pengampu</th>
-                        <th scope="col" class="px-6 py-3">Lingkup Materi</th>
-                        <th scope="col" class="px-6 py-3 text-center min-w-[100px] w-28">Aksi</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    @forelse($subjects as $index => $subject)
-                    <tr class="bg-white border-b hover:bg-gray-50">
-                        <td class="px-6 py-4">{{ ($subjects->currentPage() - 1) * $subjects->perPage() + $loop->iteration }}</td>
-                        <td class="px-6 py-4">{{ $subject->nama_pelajaran }}</td>
-                        <td class="px-6 py-4">{{ $subject->kelas->nomor_kelas }}-{{ $subject->kelas->nama_kelas }}</td>
-                        <td class="px-6 py-4">Semester {{ $subject->semester }}</td>
-                        <td class="px-6 py-4">{{ $subject->guru->nama }}</td>
-                        <td class="px-6 py-4">
-                            @if($subject->lingkupMateris->isNotEmpty())
-                                <ul class="list-disc list-inside">
-                                    @foreach($subject->lingkupMateris as $lm)
-                                        <li>{{ $lm->judul_lingkup_materi }}</li>
-                                    @endforeach
-                                </ul>
-                            @else
-                                Tidak ada Lingkup Materi
-                            @endif
-                        </td>
 
-                        <td class="px-1 py-4 text-center whitespace-nowrap">
-                            <div class="flex items-center justify-center gap-2">
-                                <a href="{{ route('tujuan_pembelajaran.create', $subject->id) }}"
-                                   class="inline-flex items-center justify-center text-green-600 hover:text-green-800"
-                                   title="Ubah atau Lihat Tujuan Pembelajaran">
-                                    <img src="{{ asset('images/icons/edittp.png') }}" alt="Extracurricular Icon" class="w-5 h-5 object-contain">
-                                </a>
+            @include('components.live-list.filter-chips', ['filters' => [
+                ['key' => 'search', 'label' => 'Pencarian'],
+                ['key' => 'kelas_id', 'label' => 'Kelas', 'values' => $kelasOptions->mapWithKeys(fn ($kelas) => [$kelas->id => $kelas->label_kelas])->all()],
+                ['key' => 'guru_id', 'label' => 'Guru', 'values' => $guruOptions->pluck('nama', 'id')->all()],
+                ['key' => 'jenis', 'label' => 'Jenis', 'values' => ['wajib' => 'Wajib', 'muatan_lokal' => 'Muatan Lokal']],
+                ['key' => 'tp_status', 'label' => 'Kelengkapan TP', 'values' => ['lengkap' => 'TP lengkap', 'belum' => 'Belum lengkap']],
+                ['key' => 'sort', 'label' => 'Urutan', 'values' => ['az' => 'A-Z', 'za' => 'Z-A']],
+            ]])
 
-                                <a href="{{ route('subject.edit', $subject->id) }}"
-                                   data-turbo-action="replace"
-                                   class="inline-flex items-center justify-center text-green-600 hover:text-green-800"
-                                   title="Ubah Data">
-                                    <img src="{{ asset('images/icons/edit.png') }}" alt="Extracurricular Icon" class="w-5 h-5 object-contain">
-                                </a>
+            <div class="mb-3 hidden text-sm text-gray-500" data-live-list-loading>Memuat data...</div>
 
-                                <form action="{{ route('subject.destroy', $subject->id) }}" method="POST" class="inline-flex items-center">
-                                    @csrf
-                                    @method('DELETE')
-                                    <button type="submit"
-                                            class="inline-flex items-center justify-center text-red-600 hover:text-red-800"
-                                            onclick="return confirm('Apakah Anda yakin ingin menghapus data ini?')"
-                                            title="Hapus Data">
-                                        <img src="{{ asset('images/icons/delete.png') }}" alt="Extracurricular Icon" class="w-5 h-5 object-contain">
-                                    </button>
-                                </form>
-                            </div>
-                        </td>
-                    </tr>
-                    @empty
-                    <tr class="bg-white border-b">
-                        <td colspan="7" class="px-6 py-4 text-center">Tidak ada data mata pelajaran</td>
-                    </tr>
-                    @endforelse
-                </tbody>
-            </table>
-        </div>
-
-        <div>
-            {{ $subjects->links('vendor.pagination.custom') }}
+            <div data-live-list-results>
+                @include('admin.partials.subject-results', ['subjects' => $subjects])
+            </div>
         </div>
     </div>
 </div>

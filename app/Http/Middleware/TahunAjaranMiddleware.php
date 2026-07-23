@@ -5,6 +5,7 @@ namespace App\Http\Middleware;
 use Closure;
 use Illuminate\Http\Request;
 use App\Models\TahunAjaran;
+use App\Services\TahunAjaranContext;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 
@@ -22,22 +23,22 @@ class TahunAjaranMiddleware
         // Ambil parameter untuk menampilkan tahun ajaran terarsipkan
         $tampilkanArsip = $request->has('showArchived');
         $allTahunAjarans = $this->getCachedTahunAjarans(true);
+        $systemActiveTahunAjaran = $this->getCachedActiveTahunAjaran();
+        $latestTahunAjaran = null;
         
         // Cek jika ada tahun ajaran yang dipilih di session
         $tahunAjaranId = session('tahun_ajaran_id');
         
         // Jika tidak ada di session, gunakan tahun ajaran aktif
         if (!$tahunAjaranId || !$this->isValidTahunAjaranId($tahunAjaranId, $allTahunAjarans)) {
-            $activeTahunAjaran = $this->getCachedActiveTahunAjaran();
-            
-            if ($activeTahunAjaran) {
-                session(['tahun_ajaran_id' => $activeTahunAjaran->id]);
+            if ($systemActiveTahunAjaran) {
+                session(['tahun_ajaran_id' => $systemActiveTahunAjaran->id]);
                 session(['no_tahun_ajaran' => false]);
                 // FIX: Sync semester session dengan tahun ajaran aktif
-                session(['selected_semester' => $activeTahunAjaran->semester]);
-                $tahunAjaranId = $activeTahunAjaran->id;
+                session(['selected_semester' => $systemActiveTahunAjaran->semester]);
+                $tahunAjaranId = $systemActiveTahunAjaran->id;
                 if (config('app.debug')) {
-                    \Log::info("Auto-sync tahun ajaran dan semester: Set ke tahun ajaran aktif (ID: {$tahunAjaranId}, Semester: {$activeTahunAjaran->semester})");
+                    \Log::info("Auto-sync tahun ajaran dan semester: Set ke tahun ajaran aktif (ID: {$tahunAjaranId}, Semester: {$systemActiveTahunAjaran->semester})");
                 }
             } else {
                 // Gunakan tahun ajaran terbaru jika tidak ada yang aktif
@@ -69,6 +70,10 @@ class TahunAjaranMiddleware
                 }
             }
         }
+
+        if (!$latestTahunAjaran && !$systemActiveTahunAjaran) {
+            $latestTahunAjaran = $this->getCachedLatestTahunAjaran();
+        }
         
         // Share tahun ajaran ke semua view
         $tahunAjaran = null;
@@ -91,12 +96,14 @@ class TahunAjaranMiddleware
                 // Tahun ajaran tidak ditemukan, mungkin sudah dihapus
                 // Reset session dan cari tahun ajaran lain
                 session()->forget('tahun_ajaran_id');
-                $newActiveTahunAjaran = $this->getCachedActiveTahunAjaran();
+                $newActiveTahunAjaran = $systemActiveTahunAjaran;
                 
                 if ($newActiveTahunAjaran) {
                     session(['tahun_ajaran_id' => $newActiveTahunAjaran->id]);
                     session(['no_tahun_ajaran' => false]);
                     session(['selected_semester' => $newActiveTahunAjaran->semester]); // Add semester sync here too
+                    $tahunAjaran = $newActiveTahunAjaran;
+                    $tahunAjaranId = $newActiveTahunAjaran->id;
                     view()->share('activeTahunAjaran', $newActiveTahunAjaran);
                     $request->merge(['tahun_ajaran_id' => $newActiveTahunAjaran->id]);
                     $request->attributes->add(['tahun_ajaran_id' => $newActiveTahunAjaran->id]);
@@ -110,9 +117,27 @@ class TahunAjaranMiddleware
         
         // Ambil daftar semua tahun ajaran (untuk dropdown selector)
         $tahunAjarans = $this->getCachedTahunAjarans($tampilkanArsip);
+
+        /** @var TahunAjaranContext $context */
+        $context = app(TahunAjaranContext::class);
+        $context->initialize(
+            $tahunAjaran,
+            $systemActiveTahunAjaran,
+            $latestTahunAjaran,
+            $tahunAjarans,
+            $allTahunAjarans,
+            $tampilkanArsip
+        );
         
+        view()->share('tahunAjaranContext', $context);
+        view()->share('selectedTahunAjaran', $tahunAjaran);
+        view()->share('systemActiveTahunAjaran', $systemActiveTahunAjaran);
+        view()->share('latestTahunAjaran', $latestTahunAjaran);
+        view()->share('hasActiveTahunAjaran', $context->hasActiveTahunAjaran());
+        view()->share('hasAnyTahunAjaran', $context->hasAnyTahunAjaran());
         view()->share('tahunAjarans', $tahunAjarans);
         view()->share('tampilkanArsip', $tampilkanArsip);
+        $request->attributes->add(['tahun_ajaran_context' => $context]);
         
         // Pastikan field tahun_ajaran_id otomatis terisi saat form submission
         if ($request->isMethod('post') || $request->isMethod('put')) {

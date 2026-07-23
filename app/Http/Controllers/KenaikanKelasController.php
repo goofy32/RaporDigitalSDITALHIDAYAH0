@@ -4,52 +4,59 @@ namespace App\Http\Controllers;
 
 use App\Models\Kelas;
 use App\Models\Siswa;
+use App\Models\SiswaKelasSemester;
 use App\Models\TahunAjaran;
+use App\Services\SiswaKelasSemesterResolver;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+use RuntimeException;
 
 class KenaikanKelasController extends Controller
 {
+    private const PROMOTION_WRITES_DISABLED_MESSAGE = 'Kenaikan kelas massal dan kelulusan berbasis enrollment belum diaktifkan. Gunakan proses siswa terpilih untuk kenaikan atau tinggal kelas.';
+    private const SEMESTER_GANJIL_PROMOTION_MESSAGE = 'Kenaikan kelas dilakukan setelah Semester Genap selesai. Pastikan nilai dan rapor sudah selesai, lalu buat tahun ajaran berikutnya dan proses kenaikan kelas.';
+
     /**
      * Menampilkan halaman untuk proses kenaikan kelas
      */
-    public function index()
+    public function index(Request $request, SiswaKelasSemesterResolver $enrollmentResolver)
     {
         // Ambil tahun ajaran aktif
-        $tahunAjaranAktif = TahunAjaran::where('is_active', true)->first();
+        $tahunAjaranAktif = $this->resolveSourceTahunAjaran($request);
         
         if (!$tahunAjaranAktif) {
             return view('admin.kenaikan_kelas.index', [
                 'error' => 'Tidak ada tahun ajaran yang aktif. Anda perlu mengaktifkan tahun ajaran terlebih dahulu.'
             ]);
         }
+
+        if ((int) $tahunAjaranAktif->semester !== 2) {
+            return view('admin.kenaikan_kelas.index', [
+                'tahunAjaranAktif' => $tahunAjaranAktif,
+                'promotionWritesEnabled' => false,
+                'promotionWritesDisabledMessage' => self::SEMESTER_GANJIL_PROMOTION_MESSAGE,
+                'promotionUnavailableForGanjil' => true,
+            ]);
+        }
         
         // Cari tahun ajaran baru (tahun ajaran selanjutnya)
-        // Mencari berdasarkan angka tahun yang lebih besar dari tahun ajaran aktif
-        $tahunAjaranBaru = null;
-        
-        if ($tahunAjaranAktif) {
-            // Ekstrak tahun dari format "2023/2024"
-            $tahunParts = explode('/', $tahunAjaranAktif->tahun_ajaran);
-            $tahunAwal = (int)$tahunParts[0];
-            
-            // Cari tahun ajaran dengan tahun awal yang lebih besar dari tahun ajaran aktif
-            $tahunAjaranBaru = TahunAjaran::where(function($query) use ($tahunAwal) {
-                    $query->whereRaw("SUBSTRING_INDEX(tahun_ajaran, '/', 1) > ?", [$tahunAwal]);
-                })
-                ->orderBy('tahun_ajaran')
-                ->first();
-        }
+        $tahunAjaranBaru = $this->findNextSemesterOneYear($tahunAjaranAktif);
         
         // Ambil kelas dari tahun ajaran aktif untuk ditampilkan
         $kelasAktif = Kelas::where('tahun_ajaran_id', $tahunAjaranAktif->id)
                     ->orderBy('nomor_kelas')
                     ->orderBy('nama_kelas')
                     ->get();
+
+        $this->attachPromotionRosterCounts($kelasAktif, $tahunAjaranAktif, $enrollmentResolver, $tahunAjaranBaru);
+        $promotionWritesEnabled = false;
+        $promotionWritesDisabledMessage = self::PROMOTION_WRITES_DISABLED_MESSAGE;
         
         // Jika tidak ada tahun ajaran berikutnya, berikan peringatan
         if (!$tahunAjaranBaru) {
-            return view('admin.kenaikan_kelas.index', compact('kelasAktif', 'tahunAjaranAktif'))
+            return view('admin.kenaikan_kelas.index', compact('kelasAktif', 'tahunAjaranAktif', 'promotionWritesEnabled', 'promotionWritesDisabledMessage'))
                 ->with('warning', 'Belum ada tahun ajaran selanjutnya. Silakan buat tahun ajaran baru dengan tahun yang lebih tinggi dari ' . $tahunAjaranAktif->tahun_ajaran . '. Anda bisa membuat tahun ajaran baru dengan menyalin data dari tahun ajaran yang sudah ada.');
         }
         
@@ -61,36 +68,38 @@ class KenaikanKelasController extends Controller
         
         // Jika tidak ada kelas di tahun ajaran baru, berikan peringatan
         if ($kelasBaru->isEmpty()) {
-            return view('admin.kenaikan_kelas.index', compact('kelasAktif', 'tahunAjaranAktif', 'tahunAjaranBaru'))
+            return view('admin.kenaikan_kelas.index', compact('kelasAktif', 'tahunAjaranAktif', 'tahunAjaranBaru', 'promotionWritesEnabled', 'promotionWritesDisabledMessage'))
                 ->with('warning', 'Tahun ajaran ' . $tahunAjaranBaru->tahun_ajaran . ' belum memiliki kelas. Untuk melakukan kenaikan kelas, Anda perlu membuat kelas-kelas di tahun ajaran tersebut terlebih dahulu.');
         }
         
-        return view('admin.kenaikan_kelas.index', compact('kelasAktif', 'kelasBaru', 'tahunAjaranAktif', 'tahunAjaranBaru'));
+        return view('admin.kenaikan_kelas.index', compact('kelasAktif', 'kelasBaru', 'tahunAjaranAktif', 'tahunAjaranBaru', 'promotionWritesEnabled', 'promotionWritesDisabledMessage'));
     }
     
-    public function showKelasSiswa($kelasId)
+    public function showKelasSiswa(Request $request, SiswaKelasSemesterResolver $enrollmentResolver, $kelasId)
     {
         $kelas = Kelas::findOrFail($kelasId);
-        $siswaList = Siswa::where('kelas_id', $kelasId)
-                    ->where('status', 'aktif')
-                    ->orderBy('nama')
-                    ->get();
+
+        $tahunAjaranAktif = $this->resolveSourceTahunAjaran($request);
+
+        if (!$tahunAjaranAktif || (int) $tahunAjaranAktif->semester !== 2) {
+            return redirect()->route('admin.kenaikan-kelas.index')
+                ->with('error', self::SEMESTER_GANJIL_PROMOTION_MESSAGE);
+        }
+
+        if ((int) $kelas->tahun_ajaran_id !== (int) $tahunAjaranAktif->id) {
+            abort(404);
+        }
+
+        $siswaList = $this->studentsForPromotionClass($kelas, $tahunAjaranAktif, $enrollmentResolver);
         
         // Check if this is the final grade (for graduation)
         $isKelasAkhir = $kelas->nomor_kelas == 6; // For SD, grade 6 is the final grade
         
-        // Get the active tahun ajaran
-        $tahunAjaranAktif = TahunAjaran::where('is_active', true)->first();
-        $tahunAjaranBaru = TahunAjaran::where(function($query) use ($tahunAjaranAktif) {
-            $tahunParts = explode('/', $tahunAjaranAktif->tahun_ajaran);
-            $tahunAwal = (int)$tahunParts[0];
-            $query->whereRaw("SUBSTRING_INDEX(tahun_ajaran, '/', 1) > ?", [$tahunAwal]);
-        })
-        ->orderBy('tahun_ajaran')
-        ->first();
+        $tahunAjaranBaru = $this->findNextSemesterOneYear($tahunAjaranAktif);
         
         // Get classes that can be promotion targets
-        $kelasTujuan = [];
+        $kelasTujuan = collect();
+        $kelasTinggal = collect();
         if ($tahunAjaranBaru) {
             // If not the final grade, only show classes with nomor +1
             if (!$isKelasAkhir) {
@@ -99,7 +108,23 @@ class KenaikanKelasController extends Controller
                              ->orderBy('nama_kelas')
                              ->get();
             }
+
+            $kelasTinggal = Kelas::where('tahun_ajaran_id', $tahunAjaranBaru->id)
+                         ->where('nomor_kelas', $kelas->nomor_kelas)
+                         ->orderBy('nama_kelas')
+                         ->get();
         }
+
+        $targetClassCapability = [
+            'can_promote_to_next_grade' => !$isKelasAkhir && $kelasTujuan->isNotEmpty(),
+            'can_repeat_same_grade' => $kelasTinggal->isNotEmpty(),
+            'is_final_grade' => $isKelasAkhir,
+        ];
+
+        $processingSummary = $this->attachPromotionProcessingStatus($siswaList, $kelas, $tahunAjaranBaru);
+        $processedPromotionCount = $processingSummary['processed'];
+        $pendingPromotionCount = $processingSummary['pending'];
+        $promotionComplete = $processingSummary['complete'];
         
         // Check report status for each student
         $raporStatus = [];
@@ -107,108 +132,49 @@ class KenaikanKelasController extends Controller
             // Check if reports have been generated for this student
             $hasReport = \App\Models\ReportGeneration::where('siswa_id', $siswa->id)
                 ->where('tahun_ajaran_id', $tahunAjaranAktif->id)
+                ->where('semester', 2)
                 ->exists();
             
             $raporStatus[$siswa->id] = $hasReport;
         }
+
+        $promotionWritesEnabled = $isKelasAkhir || $tahunAjaranBaru !== null;
+        $promotionWritesDisabledMessage = $isKelasAkhir
+            ? 'Kelulusan berbasis enrollment belum diaktifkan. Gunakan setelah phase kelulusan khusus.'
+            : 'Kenaikan kelas membutuhkan tahun ajaran tujuan semester 1 yang valid.';
         
         return view('admin.kenaikan_kelas.show_siswa', compact(
-            'kelas', 'siswaList', 'isKelasAkhir', 'kelasTujuan', 'tahunAjaranBaru', 'raporStatus'
+            'kelas',
+            'siswaList',
+            'isKelasAkhir',
+            'kelasTujuan',
+            'kelasTinggal',
+            'tahunAjaranAktif',
+            'tahunAjaranBaru',
+            'raporStatus',
+            'targetClassCapability',
+            'promotionWritesEnabled',
+            'promotionWritesDisabledMessage',
+            'processedPromotionCount',
+            'pendingPromotionCount',
+            'promotionComplete'
         ));
     }
     /**
      * Proses kenaikan kelas untuk sekelompok siswa
      */
-    public function processKenaikanKelas(Request $request)
+    public function processKenaikanKelas(Request $request, SiswaKelasSemesterResolver $enrollmentResolver)
     {
-        $request->validate([
-            'siswa_ids' => 'required|array',
-            'siswa_ids.*' => 'exists:siswas,id',
-            'kelas_tujuan_id' => 'required|exists:kelas,id',
-        ]);
-    
-        DB::beginTransaction();
-        try {
-            $kelasTujuan = Kelas::findOrFail($request->kelas_tujuan_id);
-            $siswaDetails = [];
-    
-            foreach ($request->siswa_ids as $siswaId) {
-                $siswa = Siswa::findOrFail($siswaId);
-                $kelasAsal = $siswa->kelas;
-                
-                $siswa->kelas_id = $request->kelas_tujuan_id;
-                $siswa->is_naik_kelas = true;
-                $siswa->save();
-                
-                // Simpan detail untuk feedback
-                $siswaDetails[] = [
-                    'id' => $siswa->id,
-                    'nama' => $siswa->nama,
-                    'kelas_asal' => "Kelas {$kelasAsal->nomor_kelas} {$kelasAsal->nama_kelas}",
-                    'kelas_tujuan' => "Kelas {$kelasTujuan->nomor_kelas} {$kelasTujuan->nama_kelas}"
-                ];
-            }
-            
-            DB::commit();
-            
-            // Kirim data detail untuk SweetAlert
-            return redirect()->back()->with([
-                'success' => 'Berhasil memproses kenaikan kelas untuk ' . count($request->siswa_ids) . ' siswa',
-                'siswa_details' => $siswaDetails,
-                'action_type' => 'kenaikan'
-            ]);
-        } catch (\Exception $e) {
-            DB::rollBack();
-            return redirect()->back()->with('error', 'Gagal memproses kenaikan kelas: ' . $e->getMessage());
-        }
+        return $this->processEnrollmentPromotion($request, $enrollmentResolver, 'kenaikan');
     }
     
 
     /**
      * Proses tinggal kelas untuk sekelompok siswa
      */
-    public function processTinggalKelas(Request $request)
+    public function processTinggalKelas(Request $request, SiswaKelasSemesterResolver $enrollmentResolver)
     {
-        $request->validate([
-            'siswa_ids' => 'required|array',
-            'siswa_ids.*' => 'exists:siswas,id',
-            'kelas_tujuan_id' => 'required|exists:kelas,id',
-        ]);
-
-        DB::beginTransaction();
-        try {
-            $kelasTujuan = Kelas::findOrFail($request->kelas_tujuan_id);
-            $siswaDetails = [];
-
-            foreach ($request->siswa_ids as $siswaId) {
-                $siswa = Siswa::findOrFail($siswaId);
-                $kelasAsal = $siswa->kelas;
-                
-                $siswa->kelas_id = $request->kelas_tujuan_id;
-                $siswa->is_naik_kelas = false;
-                $siswa->save();
-                
-                // Simpan detail untuk feedback
-                $siswaDetails[] = [
-                    'id' => $siswa->id,
-                    'nama' => $siswa->nama,
-                    'kelas_asal' => "Kelas {$kelasAsal->nomor_kelas} {$kelasAsal->nama_kelas}",
-                    'kelas_tujuan' => "Kelas {$kelasTujuan->nomor_kelas} {$kelasTujuan->nama_kelas}"
-                ];
-            }
-            
-            DB::commit();
-            
-            // Kirim data detail untuk SweetAlert
-            return redirect()->back()->with([
-                'success' => 'Berhasil memproses siswa tinggal kelas untuk ' . count($request->siswa_ids) . ' siswa',
-                'siswa_details' => $siswaDetails,
-                'action_type' => 'tinggal'
-            ]);
-        } catch (\Exception $e) {
-            DB::rollBack();
-            return redirect()->back()->with('error', 'Gagal memproses tinggal kelas: ' . $e->getMessage());
-        }
+        return $this->processEnrollmentPromotion($request, $enrollmentResolver, 'tinggal');
     }
 
     /**
@@ -216,6 +182,10 @@ class KenaikanKelasController extends Controller
      */
     public function processMassPromotion()
     {
+        if (! $this->promotionWritesEnabled()) {
+            return $this->legacyPromotionActionDisabledResponse();
+        }
+
         // Cek tahun ajaran aktif dan tahun ajaran baru
         $tahunAjaranAktif = TahunAjaran::where('is_active', true)->first();
         
@@ -390,69 +360,406 @@ class KenaikanKelasController extends Controller
     /**
      * Proses kelulusan untuk sekelompok siswa
      */
-    public function processKelulusan(Request $request)
+    public function processKelulusan(Request $request, SiswaKelasSemesterResolver $enrollmentResolver)
     {
-        $request->validate([
-            'siswa_ids' => 'required|array',
+        $validated = $request->validate([
+            'source_kelas_id' => 'required|exists:kelas,id',
+            'source_tahun_ajaran_id' => 'required|exists:tahun_ajarans,id',
+            'siswa_ids' => 'required|array|min:1',
             'siswa_ids.*' => 'exists:siswas,id',
             'status' => 'required|in:lulus,pindah,dropout',
-            'kelas_tinggal_id' => 'required_if:status,pindah|exists:kelas,id',
         ]);
 
-        DB::beginTransaction();
-        try {
-            $siswaDetails = [];
-            
-            foreach ($request->siswa_ids as $siswaId) {
-                $siswa = Siswa::findOrFail($siswaId);
-                $kelasAsal = $siswa->kelas;
-                
-                $siswa->status = $request->status;
-                
-                // Jika status "pindah" (tidak lulus), siswa ditempatkan di kelas yang dipilih
-                if ($request->status === 'pindah' && $request->has('kelas_tinggal_id')) {
-                    $siswa->kelas_id = $request->kelas_tinggal_id;
-                    $siswa->is_naik_kelas = false; // Tandai sebagai tidak naik kelas
-                    
-                    // Ambil informasi kelas tujuan
-                    $kelasTujuan = Kelas::findOrFail($request->kelas_tinggal_id);
-                    
-                    // Simpan detail untuk feedback
-                    $siswaDetails[] = [
-                        'id' => $siswa->id,
-                        'nama' => $siswa->nama,
-                        'kelas_asal' => "Kelas {$kelasAsal->nomor_kelas} {$kelasAsal->nama_kelas}",
-                        'status' => 'Tidak Lulus',
-                        'kelas_tujuan' => "Kelas {$kelasTujuan->nomor_kelas} {$kelasTujuan->nama_kelas}"
-                    ];
-                } else {
-                    // Untuk status lulus atau lainnya, info normal
-                    $siswaDetails[] = [
-                        'id' => $siswa->id,
-                        'nama' => $siswa->nama,
-                        'kelas_asal' => "Kelas {$kelasAsal->nomor_kelas} {$kelasAsal->nama_kelas}",
-                        'status' => $request->status === 'lulus' ? 'Lulus' : ucfirst($request->status)
-                    ];
-                }
-                
-                $siswa->save();
-            }
-            
-            DB::commit();
-            
-            // Ubah pesan sukses berdasarkan status
-            $statusLabel = $request->status === 'lulus' ? 'Lulus' : 'Tidak Lulus';
-            
-            // Kirim data detail untuk SweetAlert
-            return redirect()->back()->with([
-                'success' => "Berhasil memproses {$statusLabel} untuk " . count($request->siswa_ids) . " siswa",
-                'siswa_details' => $siswaDetails,
-                'action_type' => 'kelulusan',
-                'status' => $request->status
-            ]);
-        } catch (\Exception $e) {
-            DB::rollBack();
-            return redirect()->back()->with('error', 'Gagal memproses: ' . $e->getMessage());
+        $sourceTahunAjaran = TahunAjaran::findOrFail($validated['source_tahun_ajaran_id']);
+        $sourceKelas = Kelas::findOrFail($validated['source_kelas_id']);
+        $siswaIds = collect($validated['siswa_ids'])
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values();
+
+        if ($error = $this->validateGraduationContext($sourceTahunAjaran, $sourceKelas)) {
+            return redirect()->back()->with('error', $error);
         }
+
+        try {
+            foreach ($siswaIds as $siswaId) {
+                if (! $enrollmentResolver->isEnrolledInClass($siswaId, $sourceKelas->id, $sourceTahunAjaran->id, 2, true)) {
+                    return redirect()->back()->with('error', 'Sebagian siswa tidak valid untuk konteks kelas akhir sumber.');
+                }
+            }
+        } catch (RuntimeException) {
+            return redirect()->back()->with('error', 'Konteks enrollment siswa tidak valid.');
+        }
+
+        $students = Siswa::whereIn('id', $siswaIds)->get()->keyBy('id');
+        $requestedStatus = $validated['status'];
+
+        foreach ($siswaIds as $siswaId) {
+            $student = $students->get($siswaId);
+
+            if (! $student) {
+                return redirect()->back()->with('error', 'Sebagian siswa tidak valid.');
+            }
+
+            if ($student->status !== 'aktif' && $student->status !== $requestedStatus) {
+                return redirect()->back()->with('error', 'Sebagian siswa sudah memiliki status akhir yang berbeda.');
+            }
+        }
+
+        try {
+            DB::transaction(function () use ($students, $siswaIds, $requestedStatus) {
+                foreach ($siswaIds as $siswaId) {
+                    $student = $students->get($siswaId);
+                    $student->status = $requestedStatus;
+                    $student->save();
+                }
+            });
+        } catch (\Throwable) {
+            return redirect()->back()->with('error', 'Gagal memproses status siswa kelas akhir.');
+        }
+
+        $siswaDetails = $siswaIds->map(function (int $siswaId) use ($students, $sourceKelas, $requestedStatus) {
+            $siswa = $students->get($siswaId);
+
+            return [
+                'id' => $siswaId,
+                'nama' => $siswa?->nama ?? 'Siswa',
+                'kelas_asal' => $this->formatClassLabel($sourceKelas),
+                'status' => $this->statusLabel($requestedStatus),
+            ];
+        })->all();
+
+        return redirect()->back()->with([
+            'success' => 'Berhasil memproses ' . $this->statusLabel($requestedStatus) . ' untuk ' . $siswaIds->count() . ' siswa',
+            'siswa_details' => $siswaDetails,
+            'action_type' => 'kelulusan',
+            'status' => $requestedStatus,
+        ]);
+    }
+
+    private function resolveSourceTahunAjaran(Request $request): ?TahunAjaran
+    {
+        $queryString = (string) $request->server('QUERY_STRING', '');
+        $hasExplicitTahunAjaran = preg_match('/(?:^|&)tahun_ajaran_id=/', $queryString) === 1;
+        $requestedTahunAjaranId = $hasExplicitTahunAjaran ? $request->query('tahun_ajaran_id') : null;
+
+        if ($requestedTahunAjaranId !== null && $requestedTahunAjaranId !== '') {
+            $requestedTahunAjaranId = (int) $requestedTahunAjaranId;
+            $semester = DB::table('tahun_ajarans')
+                ->where('id', $requestedTahunAjaranId)
+                ->value('semester');
+
+            if ((int) $semester !== 2) {
+                abort(422, 'Perencanaan kenaikan kelas hanya mendukung sumber semester genap.');
+            }
+
+            return TahunAjaran::findOrFail($requestedTahunAjaranId);
+        }
+
+        return TahunAjaran::where('is_active', true)->first();
+    }
+
+    private function findNextSemesterOneYear(TahunAjaran $sourceTahunAjaran): ?TahunAjaran
+    {
+        if (! preg_match('/^(\d{4})\/(\d{4})$/', (string) $sourceTahunAjaran->tahun_ajaran, $matches)) {
+            return null;
+        }
+
+        $nextLabel = ((int) $matches[1] + 1) . '/' . ((int) $matches[2] + 1);
+
+        return TahunAjaran::where('tahun_ajaran', $nextLabel)
+            ->where('semester', 1)
+            ->orderBy('tanggal_mulai')
+            ->first();
+    }
+
+    private function attachPromotionRosterCounts(
+        Collection $kelasAktif,
+        TahunAjaran $tahunAjaran,
+        SiswaKelasSemesterResolver $enrollmentResolver,
+        ?TahunAjaran $targetTahunAjaran = null
+    ): void
+    {
+        foreach ($kelasAktif as $kelas) {
+            $students = $this->studentsForPromotionClass($kelas, $tahunAjaran, $enrollmentResolver);
+            $summary = $this->promotionProcessingSummary($students, $targetTahunAjaran);
+
+            $kelas->promotion_roster_count = $summary['total'];
+            $kelas->promotion_processed_count = $summary['processed'];
+            $kelas->promotion_pending_count = $summary['pending'];
+            $kelas->promotion_complete = $summary['complete'];
+        }
+    }
+
+    private function studentsForPromotionClass(Kelas $kelas, TahunAjaran $tahunAjaran, SiswaKelasSemesterResolver $enrollmentResolver): Collection
+    {
+        if ((int) $tahunAjaran->semester !== 2) {
+            return collect();
+        }
+
+        $query = $enrollmentResolver
+            ->studentQueryForClass($kelas->id, $tahunAjaran->id, 2, true);
+
+        if (Schema::hasColumn('siswas', 'status')) {
+            $query->where('status', 'aktif');
+        }
+
+        return $query->orderBy('nama')
+            ->get()
+            ->unique('id')
+            ->values();
+    }
+
+    private function attachPromotionProcessingStatus(Collection $students, Kelas $sourceKelas, ?TahunAjaran $targetTahunAjaran): array
+    {
+        $targetEnrollments = $this->targetEnrollmentsForStudents($students, $targetTahunAjaran);
+        $processed = 0;
+
+        foreach ($students as $student) {
+            $targetEnrollment = $targetEnrollments->get($student->id);
+            $targetClass = $targetEnrollment?->kelas;
+            $isProcessed = $targetEnrollment !== null;
+
+            $student->promotion_processed = $isProcessed;
+            $student->promotion_target_class_label = $targetClass ? $this->formatClassLabel($targetClass) : null;
+            $student->promotion_outcome = $isProcessed ? $this->inferPromotionOutcome($sourceKelas, $targetClass) : null;
+
+            if ($isProcessed) {
+                $processed++;
+            }
+        }
+
+        $total = $students->count();
+        $pending = max($total - $processed, 0);
+
+        return [
+            'total' => $total,
+            'processed' => $processed,
+            'pending' => $pending,
+            'complete' => $total > 0 && $pending === 0,
+        ];
+    }
+
+    private function promotionProcessingSummary(Collection $students, ?TahunAjaran $targetTahunAjaran): array
+    {
+        $processed = $this->targetEnrollmentsForStudents($students, $targetTahunAjaran)->count();
+        $total = $students->count();
+        $pending = max($total - $processed, 0);
+
+        return [
+            'total' => $total,
+            'processed' => $processed,
+            'pending' => $pending,
+            'complete' => $total > 0 && $pending === 0,
+        ];
+    }
+
+    private function targetEnrollmentsForStudents(Collection $students, ?TahunAjaran $targetTahunAjaran): Collection
+    {
+        if (! $targetTahunAjaran || $students->isEmpty()) {
+            return collect();
+        }
+
+        return SiswaKelasSemester::with('kelas')
+            ->whereIn('siswa_id', $students->pluck('id')->all())
+            ->where('tahun_ajaran_id', $targetTahunAjaran->id)
+            ->where('semester', 1)
+            ->get()
+            ->keyBy('siswa_id');
+    }
+
+    private function inferPromotionOutcome(Kelas $sourceKelas, ?Kelas $targetKelas): string
+    {
+        if (! $targetKelas) {
+            return 'Sudah diproses';
+        }
+
+        $sourceGrade = (int) $sourceKelas->nomor_kelas;
+        $targetGrade = (int) $targetKelas->nomor_kelas;
+
+        if ($targetGrade === $sourceGrade + 1) {
+            return 'Naik Kelas';
+        }
+
+        if ($targetGrade === $sourceGrade) {
+            return 'Tinggal Kelas';
+        }
+
+        return 'Sudah diproses';
+    }
+
+    private function processEnrollmentPromotion(Request $request, SiswaKelasSemesterResolver $enrollmentResolver, string $action)
+    {
+        $validated = $request->validate([
+            'source_kelas_id' => 'required|exists:kelas,id',
+            'source_tahun_ajaran_id' => 'required|exists:tahun_ajarans,id',
+            'target_tahun_ajaran_id' => 'required|exists:tahun_ajarans,id',
+            'siswa_ids' => 'required|array|min:1',
+            'siswa_ids.*' => 'exists:siswas,id',
+            'kelas_tujuan_id' => 'required|exists:kelas,id',
+        ]);
+
+        $sourceTahunAjaran = TahunAjaran::findOrFail($validated['source_tahun_ajaran_id']);
+        $targetTahunAjaran = TahunAjaran::findOrFail($validated['target_tahun_ajaran_id']);
+        $sourceKelas = Kelas::findOrFail($validated['source_kelas_id']);
+        $targetKelas = Kelas::findOrFail($validated['kelas_tujuan_id']);
+        $siswaIds = collect($validated['siswa_ids'])
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values();
+
+        if ($siswaIds->isEmpty()) {
+            return redirect()->back()->with('error', 'Tidak ada siswa yang dipilih.');
+        }
+
+        if ($error = $this->validatePromotionContext($sourceTahunAjaran, $targetTahunAjaran, $sourceKelas, $targetKelas, $action)) {
+            return redirect()->back()->with('error', $error);
+        }
+
+        try {
+            foreach ($siswaIds as $siswaId) {
+                if (! $enrollmentResolver->isEnrolledInClass($siswaId, $sourceKelas->id, $sourceTahunAjaran->id, 2, true)) {
+                    return redirect()->back()->with('error', 'Sebagian siswa tidak valid untuk konteks kelas sumber.');
+                }
+            }
+        } catch (RuntimeException) {
+            return redirect()->back()->with('error', 'Konteks enrollment siswa tidak valid.');
+        }
+
+        $existingTargetEnrollment = SiswaKelasSemester::whereIn('siswa_id', $siswaIds)
+            ->where('tahun_ajaran_id', $targetTahunAjaran->id)
+            ->where('semester', 1)
+            ->exists();
+
+        if ($existingTargetEnrollment) {
+            return redirect()->back()->with('error', 'Sebagian siswa sudah memiliki enrollment di tahun ajaran tujuan.');
+        }
+
+        $students = Siswa::whereIn('id', $siswaIds)->get()->keyBy('id');
+
+        try {
+            DB::transaction(function () use ($siswaIds, $targetKelas, $targetTahunAjaran) {
+                foreach ($siswaIds as $siswaId) {
+                    SiswaKelasSemester::create([
+                        'siswa_id' => $siswaId,
+                        'kelas_id' => $targetKelas->id,
+                        'tahun_ajaran_id' => $targetTahunAjaran->id,
+                        'semester' => 1,
+                    ]);
+                }
+            });
+
+            $enrollmentResolver->resetMemoization();
+        } catch (\Throwable $e) {
+            return redirect()->back()->with('error', 'Gagal memproses enrollment kenaikan kelas.');
+        }
+
+        $siswaDetails = $siswaIds->map(function (int $siswaId) use ($students, $sourceKelas, $targetKelas) {
+            $siswa = $students->get($siswaId);
+
+            return [
+                'id' => $siswaId,
+                'nama' => $siswa?->nama ?? 'Siswa',
+                'kelas_asal' => $this->formatClassLabel($sourceKelas),
+                'kelas_tujuan' => $this->formatClassLabel($targetKelas),
+            ];
+        })->all();
+
+        $actionLabel = $action === 'kenaikan' ? 'kenaikan kelas' : 'tinggal kelas';
+
+        return redirect()->back()->with([
+            'success' => 'Berhasil memproses ' . $actionLabel . ' untuk ' . $siswaIds->count() . ' siswa',
+            'siswa_details' => $siswaDetails,
+            'action_type' => $action,
+        ]);
+    }
+
+    private function validatePromotionContext(
+        TahunAjaran $sourceTahunAjaran,
+        TahunAjaran $targetTahunAjaran,
+        Kelas $sourceKelas,
+        Kelas $targetKelas,
+        string $action
+    ): ?string {
+        if ((int) $sourceTahunAjaran->semester !== 2) {
+            return 'Kenaikan kelas hanya dapat diproses dari tahun ajaran semester genap.';
+        }
+
+        if ((int) $sourceKelas->tahun_ajaran_id !== (int) $sourceTahunAjaran->id) {
+            return 'Kelas sumber tidak sesuai dengan tahun ajaran sumber.';
+        }
+
+        if ((int) $targetTahunAjaran->semester !== 1) {
+            return 'Tahun ajaran tujuan harus semester ganjil.';
+        }
+
+        $expectedTargetYear = $this->findNextSemesterOneYear($sourceTahunAjaran);
+        if (! $expectedTargetYear || (int) $expectedTargetYear->id !== (int) $targetTahunAjaran->id) {
+            return 'Tahun ajaran tujuan tidak sesuai dengan tahun ajaran berikutnya.';
+        }
+
+        if ((int) $targetKelas->tahun_ajaran_id !== (int) $targetTahunAjaran->id) {
+            return 'Kelas tujuan tidak sesuai dengan tahun ajaran tujuan.';
+        }
+
+        $sourceGrade = (int) $sourceKelas->nomor_kelas;
+        $targetGrade = (int) $targetKelas->nomor_kelas;
+
+        if ($sourceGrade >= 6) {
+            return 'Kelulusan kelas akhir belum diproses melalui jalur kenaikan kelas ini.';
+        }
+
+        if ($action === 'kenaikan' && $targetGrade !== $sourceGrade + 1) {
+            return 'Kelas tujuan kenaikan harus satu tingkat di atas kelas sumber.';
+        }
+
+        if ($action === 'tinggal' && $targetGrade !== $sourceGrade) {
+            return 'Kelas tujuan tinggal kelas harus berada pada tingkat yang sama.';
+        }
+
+        return null;
+    }
+
+    private function validateGraduationContext(TahunAjaran $sourceTahunAjaran, Kelas $sourceKelas): ?string
+    {
+        if ((int) $sourceTahunAjaran->semester !== 2) {
+            return 'Kelulusan hanya dapat diproses dari tahun ajaran semester genap.';
+        }
+
+        if ((int) $sourceKelas->tahun_ajaran_id !== (int) $sourceTahunAjaran->id) {
+            return 'Kelas sumber tidak sesuai dengan tahun ajaran sumber.';
+        }
+
+        if ((int) $sourceKelas->nomor_kelas !== 6) {
+            return 'Kelulusan hanya dapat diproses untuk kelas akhir.';
+        }
+
+        return null;
+    }
+
+    private function formatClassLabel(Kelas $kelas): string
+    {
+        return "Kelas {$kelas->nomor_kelas} {$kelas->nama_kelas}";
+    }
+
+    private function statusLabel(string $status): string
+    {
+        return match ($status) {
+            'lulus' => 'Lulus',
+            'pindah' => 'Pindah/Keluar',
+            'dropout' => 'Tidak Aktif',
+            default => ucfirst($status),
+        };
+    }
+
+    private function promotionWritesEnabled(): bool
+    {
+        return false;
+    }
+
+    private function legacyPromotionActionDisabledResponse()
+    {
+        return redirect()->route('admin.kenaikan-kelas.index')
+            ->with('error', self::PROMOTION_WRITES_DISABLED_MESSAGE);
     }
 }

@@ -7,12 +7,13 @@ use App\Models\Prestasi;
 use App\Models\Kelas;
 use App\Models\Siswa;
 use App\Traits\RequiresTahunAjaran;
+use App\Traits\RespondsWithLiveList;
 use Illuminate\Support\Facades\Log;
 
 
 class AchievementController extends Controller
 {
-    use RequiresTahunAjaran;
+    use RequiresTahunAjaran, RespondsWithLiveList;
 
     // Menampilkan semua data prestasi
     public function index(Request $request)
@@ -57,9 +58,55 @@ class AchievementController extends Controller
                 }
             });
         }
-        
+
+        if ($request->filled('kelas_id')) {
+            $query->where('kelas_id', $request->integer('kelas_id'));
+        }
+
+        if ($request->filled('siswa_id')) {
+            $query->where('siswa_id', $request->integer('siswa_id'));
+        }
+
+        if ($request->filled('jenis_prestasi')) {
+            $query->where('jenis_prestasi', $request->input('jenis_prestasi'));
+        }
+
+        match ($request->input('sort')) {
+            'terlama' => $query->oldest(),
+            'az' => $query->orderBy('jenis_prestasi'),
+            default => $query->latest(),
+        };
+
         $prestasis = $query->paginate(10);
-        return view('admin.achievement', compact('prestasis'));
+
+        $kelasOptions = Kelas::query()
+            ->when($tahunAjaranId, fn ($kelasQuery) => $kelasQuery->where('tahun_ajaran_id', $tahunAjaranId))
+            ->orderBy('nomor_kelas')
+            ->orderBy('nama_kelas')
+            ->get(['id', 'nomor_kelas', 'nama_kelas']);
+
+        $siswaOptions = Siswa::query()
+            ->when($tahunAjaranId, function ($siswaQuery) use ($tahunAjaranId) {
+                $siswaQuery->whereHas('kelas', fn ($kelasQuery) => $kelasQuery->where('tahun_ajaran_id', $tahunAjaranId));
+            })
+            ->orderBy('nama')
+            ->get(['id', 'nama']);
+
+        $jenisPrestasiOptions = Prestasi::query()
+            ->when($tahunAjaranId, fn ($prestasiQuery) => $prestasiQuery->where('tahun_ajaran_id', $tahunAjaranId))
+            ->whereNotNull('jenis_prestasi')
+            ->where('jenis_prestasi', '!=', '')
+            ->select('jenis_prestasi')
+            ->distinct()
+            ->orderBy('jenis_prestasi')
+            ->pluck('jenis_prestasi');
+
+        return $this->liveListResponse(
+            $request,
+            'admin.achievement',
+            'admin.partials.achievement-results',
+            compact('prestasis', 'kelasOptions', 'siswaOptions', 'jenisPrestasiOptions')
+        );
     }
 
     // Menampilkan form tambah prestasi

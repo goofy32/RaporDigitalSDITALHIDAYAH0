@@ -91,10 +91,10 @@
                        <!-- NUPTK -->
                        <div>
                            <label class="block text-sm font-medium text-gray-700">NUPTK</label>
-                           <input type="number" name="nuptk" value="{{ old('nuptk', $teacher->nuptk) }}" placeholder="Kosongkan jika belum ada"
+                           <input type="text" name="nuptk" value="{{ old('nuptk', $teacher->nuptk) }}" pattern="[0-9]{16}" inputmode="numeric" maxlength="16" placeholder="Kosongkan jika belum ada"
                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500"
-                               oninput="this.value = this.value.replace(/[^0-9]/g, '').slice(0, 15);">
-                          <p class="mt-1 text-sm text-gray-500">Kosongkan jika belum ada. Jika diisi, masukkan hanya angka (9-15 digit)</p>
+                               oninput="this.value = this.value.replace(/[^0-9]/g, '').slice(0, 16);">
+                          <p class="mt-1 text-sm text-gray-500">Kosongkan jika belum ada. Jika diisi, masukkan tepat 16 digit angka.</p>
                        </div>
 
                        <!-- Nama -->
@@ -117,31 +117,39 @@
                        <!-- Tanggal Lahir -->
                        <div>
                            <label class="block text-sm font-medium text-gray-700">Tanggal Lahir</label>
-                           <input type="date" name="tanggal_lahir" value="{{ old('tanggal_lahir', $teacher->tanggal_lahir) }}" required
+                           <input type="date" name="tanggal_lahir" value="{{ old('tanggal_lahir', $teacher->tanggal_lahir) }}" max="{{ now()->subDay()->format('Y-m-d') }}"
                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500">
+                           <p class="mt-1 text-sm text-gray-500">Opsional. Jika diisi, tanggal harus sebelum hari ini.</p>
+                           @error('tanggal_lahir')
+                               <p class="mt-1 text-sm text-red-500">{{ $message }}</p>
+                           @enderror
                        </div>
 
                        <!-- No. Handphone -->
                        <div>
                            <label class="block text-sm font-medium text-gray-700">No. Handphone</label>
-                           <input type="number" name="no_handphone" value="{{ old('no_handphone', $teacher->no_handphone) }}" required
+                           <input type="number" name="no_handphone" value="{{ old('no_handphone', $teacher->no_handphone) }}"
                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500"
                                oninput="this.value = this.value.replace(/[^0-9]/g, '').slice(0, 15);">
-                           <p class="mt-1 text-sm text-gray-500">Masukkan hanya angka (10-15 digit)</p>
+                           <p class="mt-1 text-sm text-gray-500">Opsional. Jika diisi, masukkan hanya angka (10-15 digit).</p>
                        </div>
 
                        <!-- Email -->
                        <div>
                            <label class="block text-sm font-medium text-gray-700">Email</label>
-                           <input type="email" name="email" value="{{ old('email', $teacher->email) }}" required
+                           <input type="email" name="email" value="{{ old('email', $teacher->email) }}"
                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500">
+                           <p class="mt-1 text-sm text-gray-500">Opsional. Jika diisi, gunakan format email yang valid.</p>
                        </div>
 
                        <!-- Alamat -->
                        <div>
                            <label class="block text-sm font-medium text-gray-700">Alamat</label>
-                           <textarea name="alamat" rows="3" required
-                               class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500">{{ old('alamat', $teacher->alamat) }}</textarea>
+                            <textarea
+                                name="alamat" rows="5"
+                                class="mt-1 block w-full min-h-[130px] resize-y rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500"
+                            >{{ old('alamat', $teacher->alamat) }}</textarea>
+                            <p class="mt-1 text-sm text-gray-500">Opsional. Tidak digunakan pada rapor.</p>
                        </div>
                    </div>
 
@@ -149,26 +157,25 @@
                    <div class="space-y-4">
                        <!-- Jabatan -->
                        <div>
-                           <label class="block text-sm font-medium text-gray-700">Jabatan</label>
+                           <label class="block text-sm font-medium text-gray-700">Tanggung Jawab Guru</label>
                            <select name="jabatan" id="jabatan" onchange="handleJabatanChange()" required
                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500">
-                               <option value="guru" {{ $teacher->jabatan === 'guru' ? 'selected' : '' }}>Guru</option>
-                               <option value="guru_wali" {{ $teacher->jabatan === 'guru_wali' ? 'selected' : '' }}>Guru dan Wali Kelas</option>
+                               <option value="guru" {{ $teacher->jabatan === 'guru' ? 'selected' : '' }}>Pengajar Biasa</option>
+                               <option value="guru_wali" {{ $teacher->jabatan === 'guru_wali' ? 'selected' : '' }}>Wali Kelas</option>
                            </select>
                        </div>
 
                        <!-- Kelas Mengajar -->
                        <div id="kelas_mengajar_section">
-                            <label class="block text-sm font-medium text-gray-700">Kelas yang Diajar</label>
+                            <label class="block text-sm font-medium text-gray-700">Kelas yang diajar sebagai pengajar khusus/muatan lokal</label>
                             
                             @php
-                                // Ambil semua kelas yang diajar (pengajar), kecuali yang sudah diwalikan
-                                $kelasAjar = $teacher->kelas()->wherePivot('role', 'pengajar')->pluck('kelas.id')->toArray();
+                                $kelasAjar = $teacher->kelas
+                                    ->filter(fn ($kelas) => $kelas->pivot->role === 'pengajar' && ! $kelas->pivot->is_wali_kelas)
+                                    ->pluck('id')
+                                    ->toArray();
                                 
-                                // Ambil kelas yang diwalikan
-                                $kelasWali = $teacher->kelas()->wherePivot('is_wali_kelas', true)
-                                                            ->wherePivot('role', 'wali_kelas')
-                                                            ->first();
+                                $kelasWali = $currentWaliKelas;
                             @endphp
                             
                             @if(isset($kelasList) && $kelasList->count() > 0)
@@ -177,11 +184,11 @@
                                     @foreach($kelasList as $kelas)
                                         <option value="{{ $kelas->id }}" 
                                             {{ in_array($kelas->id, $kelasAjar) ? 'selected' : '' }}>
-                                            Kelas {{ $kelas->nomor_kelas }} {{ $kelas->nama_kelas }}
+                                            {{ $kelas->label_kelas }}
                                         </option>
                                     @endforeach
                                 </select>
-                                <p class="mt-1 text-sm text-gray-500">Tekan CTRL untuk memilih beberapa kelas yang akan diajar</p>
+                                <p class="mt-1 text-sm text-gray-500">Untuk wali kelas, mata pelajaran wajib reguler otomatis mengikuti kelas wali dan tidak perlu dipilih di sini.</p>
                             @else
                                 <div class="mt-1 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
                                     <p class="text-sm text-yellow-800">
@@ -197,7 +204,7 @@
                             @if($kelasWali)
                                 <div class="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded-md">
                                     <p class="text-sm text-yellow-800">
-                                        <span class="font-medium">Catatan:</span> Guru ini menjadi wali kelas untuk Kelas {{ $kelasWali->nomor_kelas }} {{ $kelasWali->nama_kelas }}. 
+                                        <span class="font-medium">Catatan:</span> Guru ini menjadi wali kelas untuk {{ $kelasWali->label_kelas }}.
                                         Kelas wali tidak perlu dipilih di daftar kelas mengajar, karena akan otomatis ditambahkan.
                                     </p>
                                 </div>
@@ -206,7 +213,7 @@
 
                        <!-- Wali Kelas -->
                        <div id="wali_kelas_section" style="{{ $teacher->jabatan === 'guru_wali' ? '' : 'display:none;' }}">
-                            <label class="block text-sm font-medium text-gray-700">Wali Kelas Untuk</label>
+                            <label class="block text-sm font-medium text-gray-700">Pilih kelas wali</label>
                             
                             @if(isset($availableKelas) && $availableKelas->count() > 0)
                                 <select name="wali_kelas_id" id="wali_kelas_id"
@@ -215,14 +222,14 @@
                                     @foreach($availableKelas as $kelas)
                                         <option value="{{ $kelas->id }}" 
                                             {{ ($kelasWali && $kelasWali->id === $kelas->id) ? 'selected' : '' }}>
-                                            Kelas {{ $kelas->nomor_kelas }} {{ $kelas->nama_kelas }}
+                                            {{ $kelas->label_kelas }}
                                         </option>
                                     @endforeach
                                 </select>
                                 @if($kelasWali)
                                     <p class="mt-1 text-sm text-gray-600">
                                         Saat ini menjadi wali kelas: 
-                                        Kelas {{ $kelasWali->nomor_kelas }} {{ $kelasWali->nama_kelas }}
+                                        {{ $kelasWali->label_kelas }}
                                     </p>
                                 @endif
                             @else
@@ -249,13 +256,27 @@
                        <!-- Photo -->
                        <div>
                            <label class="block text-sm font-medium text-gray-700">Photo (ukuran 4x6 atau 2x3)</label>
-                           <input type="file" name="photo" accept="image/*"
+                           <input type="file" name="photo" accept="image/jpeg,image/png,image/webp"
                                class="mt-1 block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-green-50 file:text-green-700 hover:file:bg-green-100">
+                           <p class="mt-1 text-sm text-gray-500">Format JPG, JPEG, PNG, atau WebP. Maksimal 2 MB.</p>
+                           @error('photo')
+                               <p class="mt-1 text-sm text-red-500">{{ $message }}</p>
+                           @enderror
                        </div>
 
                        <!-- Password Section -->
                        <div class="pt-4 border-t border-gray-200">
-                            <h3 class="text-lg font-medium text-gray-900 mb-4">Ubah Password</h3>
+                            <div class="flex flex-col gap-3 mb-4 md:flex-row md:items-center md:justify-between">
+                                <div>
+                                    <h3 class="text-lg font-medium text-gray-900">Keamanan Password</h3>
+                                    <p class="mt-1 text-sm text-gray-600">Password tidak dapat ditampilkan demi keamanan.</p>
+                                </div>
+                                <button type="button"
+                                    data-guru-password-reset-open
+                                    class="inline-flex items-center justify-center px-3 py-2 text-sm font-medium text-green-700 bg-green-50 border border-green-200 rounded-lg hover:bg-green-100">
+                                    Reset password guru
+                                </button>
+                            </div>
                             
                             <div class="space-y-4">
                                 <div>
@@ -290,7 +311,103 @@
                </div>
            </div>
        </form>
+
+       @php
+           $signatureErrors = $errors->getBag('signatureUpload');
+       @endphp
+
+       <section class="mt-6 max-w-3xl rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
+           <div class="grid gap-5 md:grid-cols-[180px,1fr]">
+               <div class="flex min-h-[90px] items-center justify-center rounded-lg border border-dashed border-gray-300 bg-gray-50 p-3">
+                   @if($teacher->signature_path)
+                       <img
+                           src="{{ route('teacher.signature.show', $teacher) }}"
+                           alt="Preview tanda tangan {{ $teacher->nama }}"
+                           class="max-h-[90px] w-full object-contain"
+                       >
+                   @else
+                       <div class="text-center text-sm text-gray-500">
+                           Belum ada tanda tangan
+                       </div>
+                   @endif
+               </div>
+
+               <div>
+                   <h3 class="text-lg font-semibold text-gray-900">Tanda Tangan Digital</h3>
+                   <p class="mt-1 text-sm text-gray-600">
+                       Opsional. Digunakan pada rapor ketika guru bertugas sebagai wali kelas.
+                   </p>
+                   <p class="mt-1 text-sm text-gray-500">
+                       Format PNG, JPG, JPEG, atau WebP. Maksimal 1 MB. PNG transparan direkomendasikan.
+                   </p>
+
+                   @if(session('signatureUploadSuccess'))
+                       <p class="mt-3 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
+                           {{ session('signatureUploadSuccess') }}
+                       </p>
+                   @endif
+
+                   @if($signatureErrors->has('signature'))
+                       <div class="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                           @foreach($signatureErrors->get('signature') as $signatureError)
+                               <p>{{ $signatureError }}</p>
+                           @endforeach
+                       </div>
+                   @endif
+
+                   <div
+                       data-signature-upload-client-error
+                       class="mt-3 hidden rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
+                   ></div>
+
+                   <div class="mt-4 flex flex-wrap items-center gap-3">
+                       <form
+                           id="signatureUploadForm"
+                           data-signature-upload-form
+                           data-turbo="false"
+                           action="{{ route('teacher.signature.store', $teacher) }}"
+                           method="POST"
+                           enctype="multipart/form-data"
+                       >
+                           @csrf
+                           <input
+                               id="signature"
+                               type="file"
+                               name="signature"
+                               accept="image/png,image/jpeg,image/webp"
+                               data-signature-upload-input
+                               class="sr-only"
+                           >
+                           <label
+                               for="signature"
+                               data-signature-upload-label
+                               class="inline-flex cursor-pointer items-center rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2">
+                               {{ $teacher->signature_path ? 'Ganti Tanda Tangan' : 'Pilih dan Unggah Tanda Tangan' }}
+                           </label>
+                       </form>
+
+                       @if($teacher->signature_path)
+                           <form action="{{ route('teacher.signature.destroy', $teacher) }}" method="POST"
+                               onsubmit="return confirm('Hapus tanda tangan guru ini? Rapor berikutnya akan dibuat tanpa gambar tanda tangan.');">
+                               @csrf
+                               @method('DELETE')
+                               <button type="submit"
+                                   class="inline-flex items-center rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-100">
+                                   Hapus
+                               </button>
+                           </form>
+                       @endif
+                   </div>
+
+                   <p class="mt-3 text-xs text-gray-500">
+                       File disimpan secara privat dan tidak ditampilkan sebagai URL publik.
+                   </p>
+               </div>
+           </div>
+       </section>
    </div>
 </div>
+
+<x-guru-password-reset-modal :teacher="$teacher" />
 
 @endsection

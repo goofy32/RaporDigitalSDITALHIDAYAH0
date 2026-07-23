@@ -5,6 +5,7 @@ import {
     setPengajarDeleteButtonState,
     syncPengajarCheckboxes,
 } from '../features/pengajar-subject-form';
+import { refreshLearningCopyOption } from '../features/subject-form';
 
 var pendingDeleteIds = [];
 
@@ -40,11 +41,13 @@ function addLingkupMateri() {
         <button type="button" onclick="removeLingkupMateri(this)" class="ml-2 p-2 bg-red-600 text-white rounded-lg hover:bg-red-700"><svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg></button>
     `;
     container.appendChild(div);
+    refreshLearningCopyOption(getForm());
     markPengajarSubjectChanged();
 }
 
 function removeLingkupMateri(button) {
     button.closest('.flex.items-center')?.remove();
+    refreshLearningCopyOption(getForm());
     markPengajarSubjectChanged();
 }
 
@@ -61,6 +64,7 @@ function setPendingDeleteState(row, button, id, isPending) {
     if (!isPending) pendingDeleteIds = pendingDeleteIds.filter(deleteId => deleteId !== id);
     setPengajarDeleteButtonState(button, isPending);
     syncPendingDeleteInputs();
+    refreshLearningCopyOption(getForm());
     markPengajarSubjectChanged();
 }
 
@@ -87,7 +91,10 @@ function updateKelasSelection() {
     var isWaliKelas = selectedOption?.getAttribute('data-is-wali-kelas') === 'true';
     var isMuatanLokal = isMuatanLokalElement ? isMuatanLokalElement.checked : false;
 
-    if (!config.isGuruWali || !waliInfo || !muatanLokalContainer) return;
+    if (!config.isGuruWali || !waliInfo || !muatanLokalContainer) {
+        refreshLearningCopyOption(getForm());
+        return;
+    }
 
     if (isWaliKelas) {
         waliInfo.style.display = 'block';
@@ -101,6 +108,7 @@ function updateKelasSelection() {
             allowNonWaliElement.disabled = true;
         }
         if (nonMuatanOptions) nonMuatanOptions.style.display = 'none';
+        refreshLearningCopyOption(getForm());
         return;
     }
 
@@ -110,6 +118,7 @@ function updateKelasSelection() {
     if (allowNonWaliElement) allowNonWaliElement.disabled = false;
     if (nonMuatanOptions) nonMuatanOptions.style.display = isMuatanLokal ? 'none' : 'block';
     if (!isMuatanLokal && allowNonWaliElement) allowNonWaliElement.checked = true;
+    refreshLearningCopyOption(getForm());
 }
 
 function checkDuplication() {
@@ -164,6 +173,7 @@ export function initPengajarEditSubjectPage() {
 
     document.getElementById('mata_pelajaran')?.addEventListener('input', function () {
         validateMataPelajaran();
+        refreshLearningCopyOption(form);
         markPengajarSubjectChanged();
     });
     document.getElementById('kelas')?.addEventListener('change', function () {
@@ -212,6 +222,7 @@ export function initPengajarEditSubjectPage() {
     document.querySelector('.p-4.sm\\:ml-64')?.style.setProperty('margin-left', '16rem');
     updateKelasSelection();
     validateMataPelajaran();
+    refreshLearningCopyOption(form);
 
     if (pageRoot.dataset.sessionError && pageRoot.dataset.sessionErrorShown !== 'true' && typeof Swal !== 'undefined') {
         pageRoot.dataset.sessionErrorShown = 'true';

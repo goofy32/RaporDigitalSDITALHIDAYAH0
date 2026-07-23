@@ -6,12 +6,16 @@ use App\Models\ReportTemplate;
 use App\Models\Siswa;
 use App\Models\ReportPlaceholder;
 use App\Models\ProfilSekolah;
+use App\Models\Kelas;
+use App\Models\Guru;
+use App\Models\TahunAjaran;
 use PhpOffice\PhpWord\TemplateProcessor;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
 use App\Exceptions\RaporException;
 use Exception;
 use App\Helpers\FileNameHelper;
+use App\Services\SiswaKelasSemesterResolver;
 
 class RaporTemplateProcessor 
 {
@@ -29,6 +33,11 @@ class RaporTemplateProcessor
     protected $placeholders;
     protected $schoolProfile;
     protected $tahunAjaranId; // Tambahkan property untuk menyimpan tahun ajaran ID
+    protected ?Kelas $reportKelas = null;
+    protected ?TahunAjaran $reportTahunAjaran = null;
+    protected ?string $fotoSiswaReplacementPath = null;
+    private const FOTO_SISWA_WIDTH = '3cm';
+    private const FOTO_SISWA_HEIGHT = '4cm';
 
     public function __construct(ReportTemplate $template, Siswa $siswa, $type = 'UTS', $tahunAjaranId = null)
     {
@@ -38,12 +47,17 @@ class RaporTemplateProcessor
         $this->schoolProfile = ProfilSekolah::first();
         // Ambil tahun ajaran dari parameter, session, atau dari kelas siswa
         $this->tahunAjaranId = $tahunAjaranId ?: session('tahun_ajaran_id') ?: ($siswa->kelas->tahun_ajaran_id ?? null);
+        $this->reportTahunAjaran = $this->tahunAjaranId ? TahunAjaran::find($this->tahunAjaranId) : null;
+        $this->reportKelas = $this->resolveReportClass();
+
+        if ($this->reportKelas) {
+            $this->reportKelas->loadMissing('tahunAjaran');
+            $this->siswa->setRelation('kelas', $this->reportKelas);
+        }
         
-        // Log untuk debugging
-        Log::info('RaporTemplateProcessor initialized:', [
+        $this->logReportProcessing('RaporTemplateProcessor initialized', [
             'siswa_id' => $siswa->id, 
-            'siswa_name' => $siswa->nama,
-            'kelas' => $siswa->kelas->nama_kelas ?? 'Unknown',
+            'kelas_id' => $this->reportKelas->id ?? $siswa->kelas_id ?? null,
             'template_id' => $template->id,
             'type' => $type,
             'tahun_ajaran_id' => $this->tahunAjaranId
@@ -58,21 +72,16 @@ class RaporTemplateProcessor
             );
         }
     
-        // Log untuk debugging
-        Log::info('Template Info:', [
+        $this->logReportProcessing('Template info resolved', [
             'template_id' => $template->id,
-            'filename' => $template->filename,
-            'path' => $template->path,
             'is_active' => $template->is_active,
-            'tahun_ajaran_id' => $this->tahunAjaranId // Log tahun ajaran yang digunakan
+            'tahun_ajaran_id' => $this->tahunAjaranId,
         ]);
     
         // Pastikan path template adalah file yang valid
         $templatePath = storage_path('app/public/' . $template->path);
         
-        // Log path lengkap
-        Log::info('Full template path:', [
-            'path' => $templatePath,
+        $this->logReportProcessing('Template path checked', [
             'exists' => file_exists($templatePath),
             'is_file' => is_file($templatePath)
         ]);
@@ -93,26 +102,59 @@ class RaporTemplateProcessor
             );
         }
     
-        try {
-            $this->processor = new TemplateProcessor($templatePath);
-        } catch (\Exception $e) {
-            throw new RaporException(
-                "Gagal memproses template: " . $e->getMessage() . ". Hubungi admin untuk perbaiki template.",
-                'template_invalid',
-                self::ERROR_TEMPLATE_INVALID
-            );
+        ReportPerformanceTracker::measureSegment('template_open', function () use ($templatePath) {
+            try {
+                $this->processor = new TemplateProcessor($templatePath);
+            } catch (\Exception $e) {
+                throw new RaporException(
+                    "Gagal memproses template: " . $e->getMessage() . ". Hubungi admin untuk perbaiki template.",
+                    'template_invalid',
+                    self::ERROR_TEMPLATE_INVALID
+                );
+            }
+
+            $this->placeholders = ReportPlaceholder::all()->groupBy('category');
+        });
+    }
+
+    private function logReportProcessing(string $message, array $context = []): void
+    {
+        if (! config('logging.diagnostics.log_report_processing')) {
+            return;
         }
-    
-        $this->placeholders = ReportPlaceholder::all()->groupBy('category');
+
+        Log::debug($message, $context);
+    }
+
+    protected function resolveReportClass(): ?Kelas
+    {
+        if (! $this->tahunAjaranId || ! $this->reportTahunAjaran) {
+            return $this->siswa->kelas;
+        }
+
+        try {
+            return app(SiswaKelasSemesterResolver::class)
+                ->resolveClass($this->siswa, (int) $this->tahunAjaranId, (int) $this->reportTahunAjaran->semester, true);
+        } catch (\RuntimeException $exception) {
+            Log::warning('Unable to resolve template report class context', [
+                'siswa_id' => $this->siswa->id,
+                'tahun_ajaran_id' => $this->tahunAjaranId,
+                'semester' => $this->reportTahunAjaran->semester,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return null;
+        }
     }
 
     protected function getTemplateForSiswa(Siswa $siswa, $type, $tahunAjaranId = null)
     {
         $tahunAjaranId = $tahunAjaranId ?: session('tahun_ajaran_id');
+        $kelasId = $this->reportKelas?->id ?: $siswa->kelas_id;
         
         // First look for class-specific template
         $template = ReportTemplate::where('type', $type)
-            ->where('kelas_id', $siswa->kelas_id)
+            ->where('kelas_id', $kelasId)
             ->where('is_active', true)
             ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
                 return $query->where('tahun_ajaran_id', $tahunAjaranId);
@@ -130,10 +172,9 @@ class RaporTemplateProcessor
                 ->first();
         }
         
-        // Log untuk debugging
-        Log::info('Template selection for siswa:', [
+        $this->logReportProcessing('Template selection checked', [
             'siswa_id' => $siswa->id,
-            'kelas_id' => $siswa->kelas_id,
+            'kelas_id' => $kelasId,
             'type' => $type,
             'tahun_ajaran_id' => $tahunAjaranId,
             'template_found' => $template ? 'Yes' : 'No',
@@ -160,9 +201,8 @@ class RaporTemplateProcessor
     
     protected function debugCatatanData($tahunAjaranId, $semester, $catatanType)
     {
-        Log::info('=== DEBUG CATATAN DATA ===', [
+        $this->logReportProcessing('Debug catatan data requested', [
             'siswa_id' => $this->siswa->id,
-            'siswa_nama' => $this->siswa->nama,
             'tahun_ajaran_id' => $tahunAjaranId,
             'semester' => $semester,
             'catatan_type' => $catatanType
@@ -176,18 +216,9 @@ class RaporTemplateProcessor
             ->with('mataPelajaran')
             ->get();
 
-        Log::info('Semua catatan mata pelajaran:', [
+        $this->logReportProcessing('Catatan mata pelajaran loaded', [
             'count' => $allCatatan->count(),
-            'data' => $allCatatan->map(function($catatan) {
-                return [
-                    'id' => $catatan->id,
-                    'mata_pelajaran_id' => $catatan->mata_pelajaran_id,
-                    'mata_pelajaran_nama' => $catatan->mataPelajaran->nama_pelajaran ?? 'N/A',
-                    'catatan' => $catatan->catatan,
-                    'type' => $catatan->type,
-                    'semester' => $catatan->semester
-                ];
-            })->toArray()
+            'mata_pelajaran_ids' => $allCatatan->pluck('mata_pelajaran_id')->filter()->values()->all(),
         ]);
 
         // Cek juga semua mata pelajaran untuk siswa ini
@@ -201,12 +232,9 @@ class RaporTemplateProcessor
             ->get()
             ->groupBy('mata_pelajaran_id');
 
-        Log::info('Mata pelajaran dengan nilai:', [
+        $this->logReportProcessing('Mata pelajaran dengan nilai loaded', [
             'count' => $allMapel->count(),
             'mapel_ids' => $allMapel->keys()->toArray(),
-            'mapel_names' => $allMapel->map(function($nilai, $mapelId) {
-                return $nilai->first()->mataPelajaran->nama_pelajaran ?? 'N/A';
-            })->toArray()
         ]);
 
         return $allCatatan;
@@ -222,14 +250,16 @@ class RaporTemplateProcessor
     {
         $semester = $this->getReportDataSemester();
         $tahunAjaranId = $this->tahunAjaranId;
+        $kelas = $this->reportKelas ?: $this->siswa->kelas;
+        $tahunAjaran = $this->reportTahunAjaran ?: $kelas?->tahunAjaran;
         
         // Data Siswa
         $data = [
             'nama_siswa' => $this->siswa->nama,
             'nisn' => $this->siswa->nisn ?: '-',
             'nis' => $this->siswa->nis ?: '-',
-            'kelas' => $this->siswa->kelas->nomor_kelas . ' ' . $this->siswa->kelas->nama_kelas,
-            'tahun_ajaran' => $this->siswa->kelas->tahunAjaran ? $this->siswa->kelas->tahunAjaran->tahun_ajaran : ($this->schoolProfile->tahun_pelajaran ?? '-'),
+            'kelas' => $kelas ? $kelas->nomor_kelas . ' ' . $kelas->nama_kelas : '-',
+            'tahun_ajaran' => $tahunAjaran ? $tahunAjaran->tahun_ajaran : ($this->schoolProfile->tahun_pelajaran ?? '-'),
             'tempat_lahir' => $this->siswa->tempat_lahir ?? '-',
             'jenis_kelamin' => $this->siswa->jenis_kelamin ?? '-',
             'agama' => $this->siswa->agama ?? '-',
@@ -242,11 +272,13 @@ class RaporTemplateProcessor
             'wali_siswa' => $this->siswa->wali_siswa ?? '-',
             'pekerjaan_wali' => $this->siswa->pekerjaan_wali ?? '-',
             'alamat_wali' => $this->siswa->alamat_wali ?? '-',
-            'fase' => $this->determineFase($this->siswa->kelas->nomor_kelas),
-            'semester' => $this->schoolProfile->semester == 1 ? 'Ganjil' : 'Genap',
+            'fase' => $kelas ? $this->determineFase($kelas->nomor_kelas) : '-',
+            'semester' => (int) $semester === 1 ? 'Ganjil' : 'Genap',
         ];
 
         $data['foto_siswa'] = $this->prepareFotoSiswa();
+        $waliKelas = $kelas ? $kelas->getWaliKelas() : null;
+        $data['ttd_wali_kelas'] = $this->prepareTtdWaliKelas($waliKelas);
 
         // ========== CATATAN SISWA (CATATAN GURU) ==========
         $catatanSiswa = \App\Models\CatatanSiswa::where('siswa_id', $this->siswa->id)
@@ -274,10 +306,9 @@ class RaporTemplateProcessor
         // Grouping by mata pelajaran
         $nilai = $nilaiCollection->groupBy('mataPelajaran.nama_pelajaran');
         
-        Log::info('Data nilai yang diambil:', [
+        $this->logReportProcessing('Report score data loaded', [
             'siswa_id' => $this->siswa->id,
             'mapel_count' => $nilai->count(),
-            'mapel_list' => $nilai->keys()->toArray(),
             'tahun_ajaran_id' => $tahunAjaranId,
             'kkm_count' => count($kkmData)
         ]);
@@ -297,11 +328,9 @@ class RaporTemplateProcessor
                     $value->first()->mataPelajaran->is_muatan_lokal == 1;
             });
             
-        Log::info('Pembagian mata pelajaran:', [
+        $this->logReportProcessing('Report subject groups prepared', [
             'reguler_count' => $mapelReguler->count(),
             'mulok_count' => $mulok->count(),
-            'reguler_list' => $mapelReguler->keys()->toArray(),
-            'mulok_list' => $mulok->keys()->toArray()
         ]);
 
         $allMapelIds = $nilaiCollection->pluck('mata_pelajaran_id')
@@ -350,7 +379,7 @@ class RaporTemplateProcessor
                     ];
                     $processedMapelNames[] = $mapelName;
                     
-                    Log::info("Mata pelajaran diidentifikasi", [
+                    $this->logReportProcessing("Mata pelajaran diidentifikasi", [
                         'nama' => $mapelName,
                         'key' => $matchedKey,
                         'mata_pelajaran_id' => $nilaiMapel->first()->mata_pelajaran_id
@@ -421,7 +450,7 @@ class RaporTemplateProcessor
                     
                     $mapelCount++;
                     
-                    Log::info("Mata pelajaran $key diproses", [
+                    $this->logReportProcessing("Mata pelajaran $key diproses", [
                         'nama' => $mapelName,
                         'nilai' => $nilaiValue,
                         'kkm' => $data["kkm_$key"],
@@ -459,7 +488,7 @@ class RaporTemplateProcessor
                 $data["capaian_kompetensi_$key"] = '';
                 $data["kkm_$key"] = '70'; // Default KKM
                 
-                Log::info("Mata pelajaran $key tidak ditemukan dalam data siswa");
+                $this->logReportProcessing("Mata pelajaran $key tidak ditemukan dalam data siswa");
             }
         }
 
@@ -494,7 +523,7 @@ class RaporTemplateProcessor
                     $processedMapelNames[] = $mapelName;
                     $mapelCount++;
                     
-                    Log::info("Mata pelajaran lainnya diproses", [
+                    $this->logReportProcessing("Mata pelajaran lainnya diproses", [
                         'nama' => $mapelName,
                         'nilai' => $nilaiValue,
                         'capaian_tertinggi' => substr($dynamicPlaceholders[$mapelCount-1]['capaian_tertinggi'], 0, 100) . '...',
@@ -595,6 +624,7 @@ class RaporTemplateProcessor
             ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
                 return $query->where('tahun_ajaran_id', $tahunAjaranId);
             })
+            ->where('semester', $semester)
             ->get();
             
         for ($i = 1; $i <= 6; $i++) {
@@ -630,11 +660,10 @@ class RaporTemplateProcessor
         if ($this->schoolProfile) {
             $data['nomor_telepon'] = $this->schoolProfile->telepon ?: '-';
             $data['kepala_sekolah'] = $this->schoolProfile->kepala_sekolah ?: '-';
-            $data['wali_kelas'] = $this->siswa->kelas->waliKelasName ?: '-';
+            $data['wali_kelas'] = $kelas ? ($kelas->waliKelasName ?: '-') : '-';
             $data['nip_kepala_sekolah'] = $this->schoolProfile->nip_kepala_sekolah ?? '-';
             
             // PERBAIKAN: Ambil NUPTK wali kelas dari database
-            $waliKelas = $this->siswa->kelas->getWaliKelas();
             $data['nip_wali_kelas'] = $waliKelas ? $waliKelas->nuptk : '-';
             $data['nuptk_wali_kelas'] = $waliKelas ? $waliKelas->nuptk : '-'; // Alias untuk NUPTK
             
@@ -660,9 +689,9 @@ class RaporTemplateProcessor
         } else {
             $data['nomor_telepon'] = '-';
             $data['kepala_sekolah'] = '-';
-            $data['wali_kelas'] = '-';
-            $data['nip_wali_kelas'] = '-';
-            $data['nuptk_wali_kelas'] = '-';
+            $data['wali_kelas'] = $kelas ? ($kelas->waliKelasName ?: '-') : '-';
+            $data['nip_wali_kelas'] = $waliKelas ? $waliKelas->nuptk : '-';
+            $data['nuptk_wali_kelas'] = $waliKelas ? $waliKelas->nuptk : '-';
             
             // Default tanggal
             $data['tanggal_terbit'] = date('d-m-Y');
@@ -686,7 +715,7 @@ class RaporTemplateProcessor
 
 
         // Log data akhir yang akan diisi ke template
-        Log::info('Data placeholder yang telah disiapkan:', [
+        $this->logReportProcessing('Data placeholder yang telah disiapkan:', [
             'mata_pelajaran_count' => count(array_filter(array_keys($data), function($key) {
                 return strpos($key, 'nama_matapelajaran') === 0;
             })),
@@ -760,7 +789,7 @@ class RaporTemplateProcessor
         
         $outputPath = $tempDir . DIRECTORY_SEPARATOR . $fileName;
         
-        Log::info('Creating processed photo', [
+        $this->logReportProcessing('Creating processed photo', [
             'source' => $sourcePath,
             'output' => $outputPath,
             'temp_dir' => $tempDir,
@@ -769,7 +798,7 @@ class RaporTemplateProcessor
         
         // Skip jika sudah diproses (cache)
         if (file_exists($outputPath)) {
-            Log::info('Using cached processed photo', [
+            $this->logReportProcessing('Using cached processed photo', [
                 'cached_path' => $outputPath
             ]);
             return $outputPath;
@@ -789,7 +818,7 @@ class RaporTemplateProcessor
         $sourceHeight = $imageInfo[1];
         $sourceType = $imageInfo[2];
         
-        Log::info('Processing photo details', [
+        $this->logReportProcessing('Processing photo details', [
             'source_size' => "{$sourceWidth}x{$sourceHeight}",
             'target_size' => "{$targetWidth}x{$targetHeight}",
             'source_type' => $sourceType,
@@ -881,7 +910,7 @@ class RaporTemplateProcessor
             throw new \Exception("Processed image file is invalid");
         }
         
-        Log::info('Photo processed successfully', [
+        $this->logReportProcessing('Photo processed successfully', [
             'source' => basename($sourcePath),
             'output' => $outputPath,
             'output_size' => filesize($outputPath) . ' bytes',
@@ -896,36 +925,69 @@ class RaporTemplateProcessor
      * 
      * @return string|null
      */
-protected function prepareFotoSiswa()
-{
-    // TEMPORARY: Skip processing untuk test
-    if ($this->siswa->photo) {
-        $originalPath = storage_path('app/public/' . $this->siswa->photo);
-        $originalPath = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $originalPath);
-        
-        if (file_exists($originalPath)) {
-            Log::info('Using ORIGINAL photo (no processing)', [
-                'siswa_id' => $this->siswa->id,
-                'path' => $originalPath
-            ]);
-            return $originalPath; // Return foto asli langsung
+    protected function prepareFotoSiswa()
+    {
+        if ($this->siswa->photo) {
+            $originalPath = storage_path('app/public/' . $this->siswa->photo);
+            $originalPath = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $originalPath);
+
+            if (file_exists($originalPath)) {
+                $processedPath = $this->prepareAndResizeFoto($originalPath);
+
+                $this->logReportProcessing('Using processed student photo', [
+                    'siswa_id' => $this->siswa->id,
+                    'path' => $processedPath,
+                ]);
+
+                return $processedPath;
+            }
         }
+
+        $defaultPath = public_path('images/default-student.png');
+        $defaultPath = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $defaultPath);
+
+        if (file_exists($defaultPath)) {
+            $processedPath = $this->prepareAndResizeFoto($defaultPath);
+
+            $this->logReportProcessing('Using processed default student photo', [
+                'siswa_id' => $this->siswa->id,
+                'path' => $processedPath,
+            ]);
+
+            return $processedPath;
+        }
+
+        return null;
     }
-    
-    // Default photo
-    $defaultPath = public_path('images/default-student.png');
-    $defaultPath = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $defaultPath);
-    
-    if (file_exists($defaultPath)) {
-        Log::info('Using default photo (no processing)', [
-            'siswa_id' => $this->siswa->id,
-            'path' => $defaultPath
-        ]);
-        return $defaultPath;
+
+    protected function prepareTtdWaliKelas(?Guru $waliKelas): ?string
+    {
+        if (! $waliKelas || blank($waliKelas->signature_path)) {
+            return null;
+        }
+
+        if (! Storage::disk('local')->exists($waliKelas->signature_path)) {
+            Log::warning('File tanda tangan wali kelas tidak ditemukan; placeholder dikosongkan.', [
+                'kelas_id' => $this->reportKelas?->id,
+                'tahun_ajaran_id' => $this->tahunAjaranId,
+            ]);
+
+            return null;
+        }
+
+        $path = Storage::disk('local')->path($waliKelas->signature_path);
+
+        if (! is_file($path) || ! is_readable($path) || @getimagesize($path) === false) {
+            Log::warning('File tanda tangan wali kelas tidak dapat diproses; placeholder dikosongkan.', [
+                'kelas_id' => $this->reportKelas?->id,
+                'tahun_ajaran_id' => $this->tahunAjaranId,
+            ]);
+
+            return null;
+        }
+
+        return $path;
     }
-    
-    return null;
-}
 
 
     /**
@@ -948,7 +1010,7 @@ protected function prepareFotoSiswa()
             $kkmData[$kkm->mata_pelajaran_id] = $kkm->nilai;
         }
         
-        Log::info('Data KKM yang diambil:', [
+        $this->logReportProcessing('Data KKM yang diambil:', [
             'tahun_ajaran_id' => $tahunAjaranId,
             'kkm_count' => count($kkmData),
             'kkm_data' => $kkmData
@@ -971,7 +1033,7 @@ protected function prepareFotoSiswa()
         $normalizedName = strtolower(trim($mapelName));
         
         // Log untuk debugging
-        Log::info('Mencoba mencocokkan mata pelajaran:', [
+        $this->logReportProcessing('Mencoba mencocokkan mata pelajaran:', [
             'mapel_name' => $mapelName,
             'normalized' => $normalizedName
         ]);
@@ -982,7 +1044,7 @@ protected function prepareFotoSiswa()
                 
                 // Exact match paling diutamakan
                 if ($normalizedName === $normalizedKeyword) {
-                    Log::info('Exact match ditemukan', [
+                    $this->logReportProcessing('Exact match ditemukan', [
                         'mapel' => $mapelName,
                         'matched_with' => $keyword,
                         'key' => $key
@@ -995,7 +1057,7 @@ protected function prepareFotoSiswa()
                     // Pastikan ini bukan partial match yang ambigu
                     // Misalnya, "Pendidikan" bisa merujuk ke banyak mata pelajaran
                     if (strlen($normalizedKeyword) > 5) {
-                        Log::info('Partial match ditemukan', [
+                        $this->logReportProcessing('Partial match ditemukan', [
                             'mapel' => $mapelName,
                             'matched_with' => $keyword,
                             'key' => $key
@@ -1007,7 +1069,7 @@ protected function prepareFotoSiswa()
                 // Cek similaritas teks (terakhir dan dengan threshold yang lebih tinggi)
                 $similarity = similar_text($normalizedName, $normalizedKeyword) / max(strlen($normalizedName), strlen($normalizedKeyword));
                 if ($similarity > 0.8) { // Threshold 80% (lebih tinggi)
-                    Log::info('Similarity match ditemukan', [
+                    $this->logReportProcessing('Similarity match ditemukan', [
                         'mapel' => $mapelName,
                         'matched_with' => $keyword,
                         'similarity' => $similarity,
@@ -1018,7 +1080,7 @@ protected function prepareFotoSiswa()
             }
         }
 
-        Log::info('Tidak ada kecocokan untuk mata pelajaran', ['mapel' => $mapelName]);
+        $this->logReportProcessing('Tidak ada kecocokan untuk mata pelajaran', ['mapel' => $mapelName]);
         return null;
     }
 
@@ -1178,7 +1240,7 @@ protected function prepareFotoSiswa()
     public function generate($bypassValidation = false)
     {
         try {
-            Log::info('Starting generate() with professional photo processing', [
+            $this->logReportProcessing('Starting generate() with professional photo processing', [
                 'tahun_ajaran_id' => $this->tahunAjaranId
             ]);
             
@@ -1191,88 +1253,124 @@ protected function prepareFotoSiswa()
             }
 
             // 2. Kumpulkan dan isi data
-            $data = $this->collectAllData();
+            $data = ReportPerformanceTracker::measureSegment('preload', function () {
+                return $this->collectAllData();
+            });
             
             // 3. Dapatkan semua variabel di template
             $variables = $this->processor->getVariables();
             
-            Log::info('Variables in template:', [
+            $this->logReportProcessing('Variables in template:', [
                 'found_variables' => $variables,
                 'template_type' => $this->type,
                 'tahun_ajaran_id' => $this->tahunAjaranId,
-                'foto_siswa_found' => in_array('foto_siswa', $variables)
+                'foto_siswa_found' => in_array('foto_siswa', $variables),
+                'ttd_wali_kelas_found' => in_array('ttd_wali_kelas', $variables),
             ]);
             
-            // 4. HANDLE FOTO SISWA TERLEBIH DAHULU (PENTING!)
-            if (in_array('foto_siswa', $variables)) {
-                $this->setFotoSiswa($data['foto_siswa']);
-                
-                // Update variables list setelah foto di-set
-                $variables = $this->processor->getVariables();
-                
-                Log::info('After setting foto siswa', [
-                    'foto_siswa_still_exists' => in_array('foto_siswa', $variables),
-                    'remaining_variables_count' => count($variables)
-                ]);
-            }
-            
-            // 5. Isi placeholder text (EXCLUDE foto_siswa yang sudah di-handle)
-            foreach ($data as $key => $value) {
-                if (in_array($key, $variables) && $key !== 'foto_siswa') {
-                    $processedValue = $this->processPlaceholderValue($value);
-                    $this->processor->setValue($key, $processedValue);
-                }
-            }
-            
-            // 6. Fill missing placeholders (EXCLUDE foto_siswa)
-            $remainingVariables = $this->processor->getVariables();
-            $missingPlaceholders = array_diff($remainingVariables, array_keys($data));
-            
-            Log::info('Filling missing placeholders', [
-                'missing_count' => count($missingPlaceholders),
-                'missing_placeholders' => $missingPlaceholders
-            ]);
-            
-            foreach ($missingPlaceholders as $placeholder) {
-                // CRITICAL: SKIP foto_siswa completely!
-                if ($placeholder !== 'foto_siswa') {
-                    try {
-                        $defaultValue = $this->getDefaultPlaceholderValue($placeholder);
-                        $this->processor->setValue($placeholder, $defaultValue);
-                    } catch (\Exception $e) {
-                        Log::warning("Could not set default value for placeholder '{$placeholder}':", [
-                            'error' => $e->getMessage()
-                        ]);
-                    }
-                }
-            }
+            ReportPerformanceTracker::measureSegment('images', function () use (&$variables, $data) {
+                // 4. HANDLE FOTO SISWA TERLEBIH DAHULU (PENTING!)
+                if (in_array('foto_siswa', $variables)) {
+                    $this->setFotoSiswa($data['foto_siswa']);
 
-            // 7. Clean remaining placeholders (EXCLUDE foto_siswa)
-            $finalRemainingPlaceholders = $this->processor->getVariables();
-            
-            Log::info('Final cleanup placeholders', [
-                'final_remaining_count' => count($finalRemainingPlaceholders),
-                'final_remaining' => $finalRemainingPlaceholders
-            ]);
-            
-            foreach ($finalRemainingPlaceholders as $placeholder) {
-                // CRITICAL: NEVER touch foto_siswa again!
-                if ($placeholder !== 'foto_siswa') {
-                    try {
-                        $this->processor->setValue($placeholder, '');
-                    } catch (\Exception $e) {
-                        Log::warning("Could not clean placeholder '{$placeholder}'");
-                    }
-                } else {
-                    Log::warning('foto_siswa placeholder still exists after setImageValue - this should not happen!');
+                    // Update variables list setelah foto di-set
+                    $variables = $this->processor->getVariables();
+
+                    $this->logReportProcessing('After setting foto siswa', [
+                        'foto_siswa_still_exists' => in_array('foto_siswa', $variables),
+                        'remaining_variables_count' => count($variables)
+                    ]);
                 }
-            }
+
+                if (in_array('ttd_wali_kelas', $variables, true)) {
+                    $this->setTtdWaliKelas($data['ttd_wali_kelas'] ?? null);
+
+                    $variables = $this->processor->getVariables();
+
+                    $this->logReportProcessing('After setting ttd wali kelas', [
+                        'ttd_wali_kelas_still_exists' => in_array('ttd_wali_kelas', $variables, true),
+                        'remaining_variables_count' => count($variables),
+                    ]);
+                }
+            });
+
+            ReportPerformanceTracker::measureSegment('template_replace', function () use (&$variables, $data) {
+                // 5. Isi placeholder text (EXCLUDE image placeholders yang sudah di-handle)
+                $imagePlaceholders = ['foto_siswa', 'ttd_wali_kelas'];
+                foreach ($data as $key => $value) {
+                    if (in_array($key, $variables) && ! in_array($key, $imagePlaceholders, true)) {
+                        $processedValue = $this->processPlaceholderValue($value);
+                        $this->processor->setValue($key, $processedValue);
+                    }
+                }
+
+                // 6. Fill missing placeholders (EXCLUDE foto_siswa)
+                $remainingVariables = $this->processor->getVariables();
+                $missingPlaceholders = array_diff($remainingVariables, array_keys($data));
+
+                $this->logReportProcessing('Filling missing placeholders', [
+                    'missing_count' => count($missingPlaceholders),
+                    'missing_placeholders' => $missingPlaceholders
+                ]);
+
+                foreach ($missingPlaceholders as $placeholder) {
+                    // CRITICAL: SKIP foto_siswa completely!
+                    if ($placeholder === 'foto_siswa') {
+                        continue;
+                    }
+
+                    if ($placeholder === 'ttd_wali_kelas') {
+                        $this->processor->setValue('ttd_wali_kelas', '');
+                        continue;
+                    }
+
+                    if (! in_array($placeholder, $imagePlaceholders, true)) {
+                        try {
+                            $defaultValue = $this->getDefaultPlaceholderValue($placeholder);
+                            $this->processor->setValue($placeholder, $defaultValue);
+                        } catch (\Exception $e) {
+                            Log::warning("Could not set default value for placeholder '{$placeholder}':", [
+                                'error' => $e->getMessage()
+                            ]);
+                        }
+                    }
+                }
+
+                // 7. Clean remaining placeholders (EXCLUDE foto_siswa)
+                $finalRemainingPlaceholders = $this->processor->getVariables();
+
+                $this->logReportProcessing('Final cleanup placeholders', [
+                    'final_remaining_count' => count($finalRemainingPlaceholders),
+                    'final_remaining' => $finalRemainingPlaceholders
+                ]);
+
+                foreach ($finalRemainingPlaceholders as $placeholder) {
+                    // CRITICAL: NEVER touch foto_siswa again!
+                    if ($placeholder === 'foto_siswa') {
+                        Log::warning('foto_siswa placeholder still exists after setImageValue - this should not happen!');
+                        continue;
+                    }
+
+                    if ($placeholder === 'ttd_wali_kelas') {
+                        $this->processor->setValue('ttd_wali_kelas', '');
+                        continue;
+                    }
+
+                    if (! in_array($placeholder, $imagePlaceholders, true)) {
+                        try {
+                            $this->processor->setValue($placeholder, '');
+                        } catch (\Exception $e) {
+                            Log::warning("Could not clean placeholder '{$placeholder}'");
+                        }
+                    }
+                }
+            });
             
             // 8. Generate file
             $filename = $this->generateFilename();
             $outputPath = $this->saveFile($filename);
 
-            Log::info('Rapor generated successfully with professional photo processing', [
+            $this->logReportProcessing('Rapor generated successfully with professional photo processing', [
                 'filename' => $filename,
                 'siswa_id' => $this->siswa->id
             ]);
@@ -1316,28 +1414,26 @@ protected function prepareFotoSiswa()
     {
         try {
             if ($fotoPath && file_exists($fotoPath)) {
-                // Ukuran dalam twips untuk 3x4 cm
-                // 1 cm ≈ 28.35 points ≈ 40.5 twips
-                $widthTwips = 3 * 40.5;   // 3 cm = ~121 twips
-                $heightTwips = 4 * 40.5;  // 4 cm = ~162 twips
+                // Keep the table-cell placeholder as an inline 3x4 cm student photo.
+                $this->fotoSiswaReplacementPath = $fotoPath;
                 
                 $this->processor->setImageValue('foto_siswa', [
                     'path' => $fotoPath,
-                    'width' => $widthTwips,
-                    'height' => $heightTwips,
-                    'ratio' => false // Karena sudah di-crop perfect, tidak perlu maintain ratio
+                    'width' => self::FOTO_SISWA_WIDTH,
+                    'height' => self::FOTO_SISWA_HEIGHT,
+                    'ratio' => ! $this->isThreeByFourImage($fotoPath),
                 ]);
                 
-                Log::info('Foto successfully set to template', [
+                $this->logReportProcessing('Foto successfully set to template', [
                     'siswa_id' => $this->siswa->id,
                     'foto_path' => $fotoPath,
-                    'size_cm' => '3x4',
-                    'size_twips' => "{$widthTwips}x{$heightTwips}",
+                    'size_cm' => self::FOTO_SISWA_WIDTH.'x'.self::FOTO_SISWA_HEIGHT,
                     'is_processed' => strpos($fotoPath, 'processed_') !== false
                 ]);
             } else {
                 // Placeholder jika tidak ada foto
-                $this->processor->setValue('foto_siswa', '[FOTO TIDAK TERSEDIA]');
+                $this->fotoSiswaReplacementPath = null;
+                $this->processor->setValue('foto_siswa', '');
                 
                 Log::warning('No photo available for template', [
                     'siswa_id' => $this->siswa->id
@@ -1352,10 +1448,115 @@ protected function prepareFotoSiswa()
             
             // Fallback graceful
             try {
-                $this->processor->setValue('foto_siswa', '[ERROR MEMUAT FOTO]');
+                $this->fotoSiswaReplacementPath = null;
+                $this->processor->setValue('foto_siswa', '');
             } catch (\Exception $fallbackError) {
                 Log::error('Critical error in foto fallback', [
                     'error' => $fallbackError->getMessage()
+                ]);
+            }
+        }
+    }
+
+    private function isThreeByFourImage(string $path): bool
+    {
+        $size = @getimagesize($path);
+
+        if (! is_array($size) || empty($size[0]) || empty($size[1])) {
+            return false;
+        }
+
+        return abs(($size[0] / $size[1]) - 0.75) < 0.01;
+    }
+
+    private function centerFotoSiswaParagraph(string $outputPath): void
+    {
+        if (! $this->fotoSiswaReplacementPath || ! is_file($outputPath)) {
+            return;
+        }
+
+        $zip = new \ZipArchive;
+
+        if ($zip->open($outputPath) !== true) {
+            return;
+        }
+
+        $xml = $zip->getFromName('word/document.xml');
+
+        if (! is_string($xml) || $xml === '') {
+            $zip->close();
+
+            return;
+        }
+
+        $pattern = '/<w:p\b[^>]*>(?:(?!<\/w:p>).)*<v:shape\b[^>]*style="[^"]*width:'
+            .preg_quote(self::FOTO_SISWA_WIDTH, '/')
+            .';height:'
+            .preg_quote(self::FOTO_SISWA_HEIGHT, '/')
+            .'[^"]*"(?:(?!<\/w:p>).)*<\/w:p>/s';
+
+        $updatedXml = preg_replace_callback($pattern, function (array $matches) {
+            return $this->centerParagraphXml($matches[0]);
+        }, $xml);
+
+        if (is_string($updatedXml) && $updatedXml !== $xml) {
+            $zip->addFromString('word/document.xml', $updatedXml);
+
+            $this->logReportProcessing('Centered student photo paragraph in generated DOCX', [
+                'siswa_id' => $this->siswa->id,
+            ]);
+        }
+
+        $zip->close();
+    }
+
+    private function centerParagraphXml(string $paragraphXml): string
+    {
+        if (preg_match('/<w:pPr\b[^>]*>.*?<\/w:pPr>/s', $paragraphXml)) {
+            if (str_contains($paragraphXml, '<w:jc ')) {
+                return preg_replace('/<w:jc\b[^\/>]*\/>/', '<w:jc w:val="center"/>', $paragraphXml, 1) ?? $paragraphXml;
+            }
+
+            return preg_replace('/<\/w:pPr>/', '<w:jc w:val="center"/></w:pPr>', $paragraphXml, 1) ?? $paragraphXml;
+        }
+
+        return preg_replace('/(<w:p\b[^>]*>)/', '$1<w:pPr><w:jc w:val="center"/></w:pPr>', $paragraphXml, 1) ?? $paragraphXml;
+    }
+
+    protected function setTtdWaliKelas(?string $signaturePath): void
+    {
+        try {
+            if ($signaturePath && is_readable($signaturePath) && @getimagesize($signaturePath) !== false) {
+                $this->processor->setImageValue('ttd_wali_kelas', [
+                    'path' => $signaturePath,
+                    'width' => 120,
+                    'height' => 60,
+                    'ratio' => true,
+                ]);
+
+                $this->logReportProcessing('Tanda tangan wali kelas set to template', [
+                    'kelas_id' => $this->reportKelas?->id,
+                    'tahun_ajaran_id' => $this->tahunAjaranId,
+                ]);
+
+                return;
+            }
+
+            $this->processor->setValue('ttd_wali_kelas', '');
+        } catch (\Exception $e) {
+            Log::warning('Gagal memproses tanda tangan wali kelas; placeholder dikosongkan.', [
+                'kelas_id' => $this->reportKelas?->id,
+                'tahun_ajaran_id' => $this->tahunAjaranId,
+                'error' => $e->getMessage(),
+            ]);
+
+            try {
+                $this->processor->setValue('ttd_wali_kelas', '');
+            } catch (\Exception $fallbackError) {
+                Log::warning('Gagal membersihkan placeholder tanda tangan wali kelas.', [
+                    'kelas_id' => $this->reportKelas?->id,
+                    'tahun_ajaran_id' => $this->tahunAjaranId,
+                    'error' => $fallbackError->getMessage(),
                 ]);
             }
         }
@@ -1383,7 +1584,7 @@ protected function prepareFotoSiswa()
                     $fileAge = $now - filemtime($file);
                     if ($fileAge > $maxAge) {
                         unlink($file);
-                        Log::info('Cleaned up old processed photo', [
+                        $this->logReportProcessing('Cleaned up old processed photo', [
                             'file' => basename($file),
                             'age_minutes' => round($fileAge / 60)
                         ]);
@@ -1434,6 +1635,10 @@ protected function prepareFotoSiswa()
         if ($placeholder === 'foto_siswa') {
             return null; // This should never be called
         }
+
+        if ($placeholder === 'ttd_wali_kelas') {
+            return '';
+        }
         
         // Special handling for specific placeholder types
         if (strpos($placeholder, 'nilai_') === 0) {
@@ -1466,7 +1671,7 @@ protected function prepareFotoSiswa()
         // Instead, use the current semester from the tahun ajaran
 
         if ($this->tahunAjaranId) {
-            $tahunAjaran = \App\Models\TahunAjaran::find($this->tahunAjaranId);
+            $tahunAjaran = $this->reportTahunAjaran ?: TahunAjaran::find($this->tahunAjaranId);
             if ($tahunAjaran) {
                 return $tahunAjaran->semester;
             }
@@ -1546,17 +1751,18 @@ protected function prepareFotoSiswa()
         // Get tahun ajaran info
         $tahunAjaranText = null;
         if ($this->tahunAjaranId) {
-            $tahunAjaran = \App\Models\TahunAjaran::find($this->tahunAjaranId);
+            $tahunAjaran = $this->reportTahunAjaran ?: TahunAjaran::find($this->tahunAjaranId);
             if ($tahunAjaran) {
                 $tahunAjaranText = $tahunAjaran->tahun_ajaran;
             }
         }
+        $kelas = $this->reportKelas ?: $this->siswa->kelas;
         
         // Call the helper to generate a consistent filename
         return FileNameHelper::generateReportFilename(
             $this->type,
             $this->siswa->nama,
-            $this->siswa->kelas->nomor_kelas . $this->siswa->kelas->nama_kelas,
+            $kelas ? $kelas->nomor_kelas . $kelas->nama_kelas : 'Kelas',
             $tahunAjaranText
         );
     }
@@ -1598,13 +1804,18 @@ protected function prepareFotoSiswa()
         }
         
         try {
-            $this->processor->saveAs($outputPath);
+            ReportPerformanceTracker::measureSegment('docx_save', function () use ($outputPath) {
+                $this->processor->saveAs($outputPath);
+
+                if (!file_exists($outputPath)) {
+                    throw new \Exception("File tidak berhasil disimpan");
+                }
+
+                $this->centerFotoSiswaParagraph($outputPath);
+                app(ReportIdentityLayoutStabilizer::class)->stabilize($outputPath);
+            });
             
-            if (!file_exists($outputPath)) {
-                throw new \Exception("File tidak berhasil disimpan");
-            }
-            
-            Log::info('Rapor berhasil disimpan:', [
+            $this->logReportProcessing('Rapor berhasil disimpan:', [
                 'path' => $outputPath,
                 'size' => filesize($outputPath),
                 'tahun_ajaran_id' => $this->tahunAjaranId

@@ -15,6 +15,8 @@ use App\Models\Prestasi;
 use App\Models\Siswa;
 use App\Models\TujuanPembelajaran;
 use App\Models\User;
+use App\Services\SiswaPurgeException;
+use App\Services\SiswaPurgeService;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -24,6 +26,7 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 
 class RecycleBinController extends Controller
 {
@@ -95,10 +98,47 @@ class RecycleBinController extends Controller
     public function forceDelete(Request $request, string $type, int $id): JsonResponse|RedirectResponse
     {
         try {
+            if ($type === 'siswa') {
+                $purgeService = app(SiswaPurgeService::class);
+                $purgeResult = $purgeService->purge(
+                    $id,
+                    (string) $request->input('purge_confirmation', '')
+                );
+                $cleanupComplete = $purgeService->runPostCommitCleanupSafely($purgeResult);
+                $message = $cleanupComplete
+                    ? 'Siswa '.$purgeResult['siswa_name'].' berhasil dihapus permanen.'
+                    : SiswaPurgeService::FILE_CLEANUP_WARNING;
+
+                return $this->successResponse($request, $message);
+            }
+
             $message = $this->forceDeleteItem($type, $id);
 
             return $this->successResponse($request, $message);
+        } catch (SiswaPurgeException $e) {
+            Log::warning('[RecycleBinController] Siswa purge blocked', [
+                'type' => $type,
+                'id' => $id,
+                'context' => $e->context(),
+                'user_id' => auth()->id() ?? auth()->guard('guru')->id(),
+            ]);
+
+            return $this->errorResponse($request, $e->getMessage(), 422);
         } catch (\RuntimeException $e) {
+            if ($type === 'siswa') {
+                Log::error('[RecycleBinController] Siswa purge failed', [
+                    'type' => $type,
+                    'id' => $id,
+                    'exception_class' => get_class($e),
+                    'error' => $e->getMessage(),
+                    'user_id' => auth()->id() ?? auth()->guard('guru')->id(),
+                    'file' => $e->getFile(),
+                    'line' => $e->getLine(),
+                ]);
+
+                return $this->errorResponse($request, 'Terjadi kesalahan saat menghapus permanen data. Silakan coba lagi.', 500);
+            }
+
             return $this->errorResponse($request, $e->getMessage(), 422);
         } catch (\Throwable $e) {
             Log::error('[RecycleBinController] Force delete failed', [
@@ -121,35 +161,35 @@ class RecycleBinController extends Controller
             ->filter()
             ->values();
 
-        $deletedCount = 0;
+        $request->validate([
+            'confirmation' => 'required|string|in:'.SiswaPurgeService::BULK_CONFIRMATION,
+        ]);
 
         try {
-            if ($items->isEmpty()) {
-                foreach (array_keys($this->typeMap()) as $type) {
-                    $modelClass = $this->typeMap()[$type]['class'];
+            $targets = $items->isEmpty()
+                ? $this->allForceDeleteTargets()
+                : $this->selectedForceDeleteTargets($items);
 
-                    $modelClass::onlyTrashed()->get()->each(function (Model $model) use ($type, &$deletedCount) {
-                        $this->forceDeleteModel($type, $model);
-                        $deletedCount++;
-                    });
-                }
+            $summary = $this->processBulkForceDeleteTargets(
+                $targets,
+                (string) $request->input('confirmation', '')
+            );
+            $message = $this->bulkForceDeleteMessage($summary);
 
-                return $this->successResponse($request, 'Seluruh data di recycle bin berhasil dihapus permanen.');
+            if (
+                $summary['deleted_count'] === 0
+                && $summary['skipped_already_deleted_count'] === 0
+                && $summary['failed_count'] > 0
+            ) {
+                return $this->errorResponse($request, $message, 422);
             }
 
-            $items->each(function (string $item) use (&$deletedCount) {
-                [$type, $id] = explode(':', $item, 2);
-                $this->forceDeleteItem($type, (int) $id);
-                $deletedCount++;
-            });
-
-            return $this->successResponse($request, "{$deletedCount} data berhasil dihapus permanen.");
+            return $this->successResponse($request, $message);
         } catch (\RuntimeException $e) {
             return $this->errorResponse($request, $e->getMessage(), 422);
         } catch (\Throwable $e) {
             Log::error('[RecycleBinController] Bulk force delete failed', [
                 'items' => $items->all(),
-                'deleted_count' => $deletedCount,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
                 'user_id' => auth()->id() ?? auth()->guard('guru')->id(),
@@ -159,6 +199,205 @@ class RecycleBinController extends Controller
 
             return $this->errorResponse($request, 'Terjadi kesalahan saat menghapus data dari recycle bin. Silakan coba lagi.', 500);
         }
+    }
+
+    protected function allForceDeleteTargets(): Collection
+    {
+        $targets = collect();
+
+        foreach (array_keys($this->typeMap()) as $type) {
+            $modelClass = $this->typeMap()[$type]['class'];
+
+            $modelClass::onlyTrashed()
+                ->select('id')
+                ->orderBy('id')
+                ->get()
+                ->each(function (Model $model) use ($type, $targets) {
+                    $targets->push([
+                        'type' => $type,
+                        'id' => (int) $model->getKey(),
+                    ]);
+                });
+        }
+
+        return $this->normalizeBulkForceDeleteTargets($targets);
+    }
+
+    protected function selectedForceDeleteTargets(Collection $items): Collection
+    {
+        return $items
+            ->map(function (string $item) {
+                [$type, $id] = array_pad(explode(':', $item, 2), 2, null);
+
+                return [
+                    'type' => (string) $type,
+                    'id' => (int) $id,
+                ];
+            })
+            ->filter(fn (array $target) => $target['type'] !== '' && $target['id'] > 0)
+            ->values();
+    }
+
+    protected function processBulkForceDeleteTargets(Collection $targets, string $bulkConfirmation): array
+    {
+        $targets = $this->normalizeBulkForceDeleteTargets($targets);
+
+        $summary = [
+            'deleted_count' => 0,
+            'skipped_already_deleted_count' => 0,
+            'failed_count' => 0,
+            'cleanup_warning_count' => 0,
+            'failure_reasons' => [],
+            'skipped_reasons' => [],
+        ];
+
+        $siswaIds = $targets
+            ->filter(fn (array $target) => $target['type'] === 'siswa')
+            ->pluck('id')
+            ->all();
+
+        if ($siswaIds !== []) {
+            $siswaSummary = app(SiswaPurgeService::class)->purgeBulk($siswaIds, $bulkConfirmation);
+
+            foreach ($siswaSummary['successes'] as $success) {
+                $summary['deleted_count']++;
+
+                if (! ($success['cleanup_complete'] ?? true)) {
+                    $summary['cleanup_warning_count']++;
+                }
+            }
+
+            foreach ($siswaSummary['failures'] as $failure) {
+                $summary['failed_count']++;
+                $summary['failure_reasons'][] = $failure['message'];
+
+                Log::warning('[RecycleBinController] Bulk Siswa purge item failed', [
+                    'siswa_id' => $failure['siswa_id'] ?? null,
+                    'message' => $failure['message'] ?? null,
+                    'context' => $failure['context'] ?? [],
+                    'user_id' => auth()->id() ?? auth()->guard('guru')->id(),
+                ]);
+            }
+        }
+
+        $targets
+            ->reject(fn (array $target) => $target['type'] === 'siswa')
+            ->each(function (array $target) use (&$summary) {
+                try {
+                    $result = $this->forceDeleteBulkItem($target['type'], (int) $target['id']);
+
+                    if ($result['status'] === 'deleted') {
+                        $summary['deleted_count']++;
+
+                        return;
+                    }
+
+                    if ($result['status'] === 'skipped_already_deleted') {
+                        $summary['skipped_already_deleted_count']++;
+                        $summary['skipped_reasons'][] = [
+                            'type' => $target['type'],
+                            'id' => $target['id'],
+                            'reason' => 'missing_before_processing_or_deleted_by_parent_cascade',
+                        ];
+                    }
+                } catch (\Throwable $exception) {
+                    $summary['failed_count']++;
+                    $summary['failure_reasons'][] = $this->friendlyBulkFailureMessage($exception);
+
+                    Log::warning('[RecycleBinController] Bulk force delete item failed', [
+                        'type' => $target['type'],
+                        'id' => $target['id'],
+                        'exception_class' => get_class($exception),
+                        'error' => $exception->getMessage(),
+                        'user_id' => auth()->id() ?? auth()->guard('guru')->id(),
+                    ]);
+                }
+            });
+
+        return $summary;
+    }
+
+    protected function normalizeBulkForceDeleteTargets(Collection $targets): Collection
+    {
+        return $targets
+            ->map(function (array $target, int $index) {
+                return [
+                    'type' => (string) ($target['type'] ?? ''),
+                    'id' => (int) ($target['id'] ?? 0),
+                    '_bulk_index' => $index,
+                ];
+            })
+            ->filter(fn (array $target) => $target['type'] !== '' && $target['id'] > 0)
+            ->unique(fn (array $target) => $target['type'].':'.$target['id'])
+            ->sort(function (array $left, array $right) {
+                $priority = $this->bulkForceDeletePriority($left['type'])
+                    <=> $this->bulkForceDeletePriority($right['type']);
+
+                return $priority !== 0
+                    ? $priority
+                    : $left['_bulk_index'] <=> $right['_bulk_index'];
+            })
+            ->map(fn (array $target) => [
+                'type' => $target['type'],
+                'id' => $target['id'],
+            ])
+            ->values();
+    }
+
+    protected function bulkForceDeletePriority(string $type): int
+    {
+        return match ($type) {
+            'kelas' => 10,
+            'mata-pelajaran' => 20,
+            'lingkup-materi' => 30,
+            'tujuan-pembelajaran' => 40,
+            default => 50,
+        };
+    }
+
+    protected function bulkForceDeleteMessage(array $summary): string
+    {
+        $parts = [
+            $summary['deleted_count'].' data berhasil dihapus permanen.',
+        ];
+
+        if (($summary['skipped_already_deleted_count'] ?? 0) > 0) {
+            $parts[] = $summary['skipped_already_deleted_count'].' data dilewati karena sudah ikut terhapus atau tidak lagi tersedia.';
+        }
+
+        if ($summary['cleanup_warning_count'] > 0) {
+            $parts[] = $summary['cleanup_warning_count'].' data berhasil dihapus, tetapi ada file atau cache rapor yang perlu dibersihkan oleh administrator sistem.';
+        }
+
+        if ($summary['failed_count'] > 0) {
+            $reasons = collect($summary['failure_reasons'])
+                ->take(3)
+                ->implode('; ');
+
+            if ($summary['failed_count'] > 3) {
+                $reasons .= '; dan '.($summary['failed_count'] - 3).' data lainnya.';
+            }
+
+            $parts[] = $summary['failed_count'].' data gagal: '.Str::limit($reasons, 300);
+        }
+
+        return implode(' ', $parts);
+    }
+
+    protected function bulkFailureLabel(array $target): string
+    {
+        $label = $this->typeMap()[$target['type']]['label'] ?? Str::title(str_replace('-', ' ', $target['type']));
+
+        return $label.' #'.$target['id'];
+    }
+
+    protected function friendlyBulkFailureMessage(\Throwable $exception): string
+    {
+        if ($exception instanceof \RuntimeException && $exception->getMessage() === 'Tipe data tidak valid.') {
+            return $exception->getMessage();
+        }
+
+        return 'Gagal diproses. Silakan cek data terkait.';
     }
 
     protected function collectDeletedItems(Request $request): Collection
@@ -209,6 +448,10 @@ class RecycleBinController extends Controller
                 ->get();
 
             $items = $items->concat($records->map(function (Model $record) use ($type, $config) {
+                $siswaConfirmation = $type === 'siswa' && $record instanceof Siswa
+                    ? app(SiswaPurgeService::class)->confirmationPhrase($record)
+                    : null;
+
                 return [
                     'id' => $record->getKey(),
                     'type' => $type,
@@ -221,6 +464,10 @@ class RecycleBinController extends Controller
                     'expires_at' => $record->deleted_at->copy()->addDays(60),
                     'parent_type' => $this->resolveParentType($type),
                     'parent_id' => $this->resolveParentId($type, $record),
+                    'force_delete_confirmation' => $siswaConfirmation,
+                    'force_delete_note' => $siswaConfirmation
+                        ? 'Hapus permanen siswa akan membersihkan enrollment dan riwayat akademik milik siswa ini. Kelas, guru, akun, dan tahun ajaran tidak ikut dihapus.'
+                        : null,
                     'children' => [],
                 ];
             }));
@@ -722,10 +969,33 @@ class RecycleBinController extends Controller
         return "{$config['label']} {$name} berhasil dihapus permanen.";
     }
 
+    protected function forceDeleteBulkItem(string $type, int $id): array
+    {
+        $config = $this->typeMap()[$type] ?? null;
+
+        if (!$config) {
+            throw new \RuntimeException('Tipe data tidak valid.');
+        }
+
+        $model = $config['class']::onlyTrashed()->find($id);
+
+        if (!$model) {
+            return [
+                'status' => 'skipped_already_deleted',
+            ];
+        }
+
+        $this->forceDeleteModel($type, $model);
+
+        return [
+            'status' => 'deleted',
+        ];
+    }
+
     protected function forceDeleteModel(string $type, Model $model): void
     {
         if ($type === 'siswa' && $model instanceof Siswa) {
-            $this->deletePhotoIfExists($model->photo);
+            throw new \RuntimeException('Hapus permanen siswa harus menggunakan alur konfirmasi satu data dari recycle bin.');
         }
 
         if ($type === 'guru' && $model instanceof Guru) {

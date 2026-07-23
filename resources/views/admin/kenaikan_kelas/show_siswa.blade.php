@@ -28,11 +28,61 @@
     </div>
     @endif
 
+    @if(isset($promotionWritesEnabled) && !$promotionWritesEnabled)
+    <div class="bg-yellow-50 border border-yellow-200 text-yellow-800 p-4 mb-6 rounded-lg">
+        <p class="font-medium">Mode perencanaan kenaikan kelas</p>
+        <p class="text-sm mt-1">{{ $promotionWritesDisabledMessage ?? 'Kenaikan kelas berbasis enrollment belum diaktifkan.' }}</p>
+    </div>
+    @endif
+
     <div class="mb-6">
         <h3 class="text-lg font-semibold text-gray-800 mb-3">Kelas {{ $kelas->nomor_kelas }} {{ $kelas->nama_kelas }}</h3>
         <p class="text-gray-600">Wali Kelas: {{ $kelas->waliKelasName }}</p>
         <p class="text-gray-600">Jumlah Siswa: {{ $siswaList->count() }}</p>
+        @if(isset($tahunAjaranBaru) && $tahunAjaranBaru)
+            <p class="text-gray-600">Status Proses: {{ $processedPromotionCount ?? 0 }}/{{ $siswaList->count() }} sudah diproses</p>
+            <span class="inline-block mt-2 px-2 py-1 text-xs {{ ($promotionComplete ?? false) ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800' }} rounded-full">
+                {{ ($promotionComplete ?? false) ? 'Selesai' : 'Belum selesai' }}
+            </span>
+        @endif
+        @if(isset($tahunAjaranAktif))
+            <p class="text-gray-500 text-sm mt-1">Sumber: {{ $tahunAjaranAktif->tahun_ajaran }} Semester {{ $tahunAjaranAktif->semester }}</p>
+        @endif
+        @if(isset($tahunAjaranBaru) && $tahunAjaranBaru)
+            <p class="text-gray-500 text-sm">Tujuan: {{ $tahunAjaranBaru->tahun_ajaran }} Semester {{ $tahunAjaranBaru->semester }}</p>
+        @endif
     </div>
+
+    @if(isset($tahunAjaranBaru) && $tahunAjaranBaru)
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+        <div class="bg-green-50 border border-green-200 rounded-lg p-4">
+            <h4 class="font-medium text-green-800 mb-2">Kandidat Naik Kelas</h4>
+            @if(!$isKelasAkhir && $kelasTujuan->isNotEmpty())
+                <ul class="text-sm text-green-700 space-y-1">
+                    @foreach($kelasTujuan as $target)
+                        <li>Kelas {{ $target->nomor_kelas }} {{ $target->nama_kelas }}</li>
+                    @endforeach
+                </ul>
+            @elseif($isKelasAkhir)
+                <p class="text-sm text-green-700">Kelas akhir dapat ditandai lulus, pindah/keluar, atau tidak aktif tanpa membuat enrollment baru.</p>
+            @else
+                <p class="text-sm text-red-700">Belum ada kelas tujuan tingkat berikutnya.</p>
+            @endif
+        </div>
+        <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+            <h4 class="font-medium text-yellow-800 mb-2">Kandidat Tinggal Kelas</h4>
+            @if(isset($kelasTinggal) && $kelasTinggal->isNotEmpty())
+                <ul class="text-sm text-yellow-700 space-y-1">
+                    @foreach($kelasTinggal as $target)
+                        <li>Kelas {{ $target->nomor_kelas }} {{ $target->nama_kelas }}</li>
+                    @endforeach
+                </ul>
+            @else
+                <p class="text-sm text-red-700">Belum ada kelas tujuan tingkat yang sama.</p>
+            @endif
+        </div>
+    </div>
+    @endif
 
     @if($siswaList->isEmpty())
     <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
@@ -43,33 +93,45 @@
     @if(!$isKelasAkhir && $kelasTujuan->isEmpty())
     <div class="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
         <p class="text-red-800">Tidak ada kelas tujuan yang tersedia di tahun ajaran baru. Pastikan kelas untuk tingkat berikutnya sudah dibuat.</p>
-        <a href="{{ route('kelas.create') }}" class="text-blue-600 hover:underline mt-2 inline-block">Buat Kelas Baru</a>
+        @if($tahunAjaranBaru)
+            <a href="{{ route('kelas.create', ['target_tahun_ajaran_id' => $tahunAjaranBaru->id, 'redirect_to' => route('admin.kenaikan-kelas.show-siswa', $kelas->id)]) }}" class="text-blue-600 hover:underline mt-2 inline-block">Buat Kelas Baru</a>
+        @else
+            <p class="text-red-700 text-sm mt-2">Buat tahun ajaran tujuan semester ganjil terlebih dahulu.</p>
+        @endif
     </div>
     @else
 
     <div class="mb-6">
+        @if($promotionWritesEnabled && ($pendingPromotionCount ?? $siswaList->count()) > 0)
         <div class="flex items-center mb-4">
             <input id="select-all" type="checkbox" class="h-4 w-4 text-green-600 focus:ring-green-500">
             <label for="select-all" class="ml-2 block text-sm text-gray-900">Pilih Semua Siswa</label>
         </div>
+        @endif
 
         <div class="overflow-x-auto">
             <table class="min-w-full bg-white border border-gray-200">
                 <thead class="bg-gray-100">
                     <tr>
+                        @if($promotionWritesEnabled)
                         <th class="py-3 px-4 border-b text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Pilih</th>
+                        @endif
                         <th class="py-3 px-4 border-b text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">NIS</th>
                         <th class="py-3 px-4 border-b text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Nama</th>
                         <th class="py-3 px-4 border-b text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Jenis Kelamin</th>
                         <th class="py-3 px-4 border-b text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Status Rapor</th>
+                        <th class="py-3 px-4 border-b text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Status Proses</th>
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-gray-200">
                     @foreach($siswaList as $siswa)
+                    @php($isProcessed = (bool) ($siswa->promotion_processed ?? false))
                     <tr data-siswa-id="{{ $siswa->id }}">
+                        @if($promotionWritesEnabled)
                         <td class="py-3 px-4 border-b">
-                            <input type="checkbox" name="siswa_ids[]" value="{{ $siswa->id }}" class="student-checkbox h-4 w-4 text-green-600 focus:ring-green-500">
+                            <input type="checkbox" name="siswa_ids[]" value="{{ $siswa->id }}" class="student-checkbox h-4 w-4 text-green-600 focus:ring-green-500 disabled:opacity-50 disabled:cursor-not-allowed" {{ $isProcessed ? 'disabled' : '' }}>
                         </td>
+                        @endif
                         <td class="py-3 px-4 border-b">{{ $siswa->nis }}</td>
                         <td class="py-3 px-4 border-b">{{ $siswa->nama }}</td>
                         <td class="py-3 px-4 border-b">{{ $siswa->jenis_kelamin }}</td>
@@ -86,6 +148,20 @@
                                 </span>
                             @endif
                         </td>
+                        <td class="py-3 px-4 border-b">
+                            @if($isProcessed)
+                                <span class="inline-flex items-center bg-green-100 text-green-800 text-xs font-medium px-2.5 py-0.5 rounded-full">
+                                    Sudah diproses
+                                </span>
+                                @if($siswa->promotion_target_class_label)
+                                    <div class="text-xs text-gray-500 mt-1">{{ $siswa->promotion_outcome }} - {{ $siswa->promotion_target_class_label }}</div>
+                                @endif
+                            @else
+                                <span class="inline-flex items-center bg-yellow-100 text-yellow-800 text-xs font-medium px-2.5 py-0.5 rounded-full">
+                                    Belum diproses
+                                </span>
+                            @endif
+                        </td>
                     </tr>
                     @endforeach
                 </tbody>
@@ -93,55 +169,40 @@
         </div>
     </div>
 
+    @if($promotionWritesEnabled && ($pendingPromotionCount ?? $siswaList->count()) > 0)
     <div class="bg-gray-50 p-4 rounded-lg border border-gray-200 mb-6" id="actionForms" style="display: none;">
         <h3 class="text-lg font-semibold text-gray-800 mb-3">Proses Siswa Terpilih</h3>
         <p class="mb-3">Anda telah memilih <span id="selectedCount" class="font-semibold">0</span> siswa.</p>
 
         @if($isKelasAkhir)
-        <form action="{{ route('admin.kenaikan-kelas.process-kelulusan') }}" method="POST" class="space-y-4" id="kelulusanForm" x-data="{ selectedStatus: '', checkStatus() { if (this.selectedStatus === 'pindah') { this.$nextTick(() => { this.$el.querySelector('select[name=&quot;kelas_tinggal_id&quot;]')?.focus(); }); } } }">
+        <form action="{{ route('admin.kenaikan-kelas.process-kelulusan') }}" method="POST" class="space-y-4" id="kelulusanForm" x-data="{ selectedStatus: '' }">
             @csrf
+            <input type="hidden" name="source_kelas_id" value="{{ $kelas->id }}">
+            <input type="hidden" name="source_tahun_ajaran_id" value="{{ $tahunAjaranAktif->id }}">
             <div id="selectedKelulusanIds"></div>
+
+            <div class="bg-blue-50 p-4 rounded-lg border border-blue-200">
+                <h4 class="text-md font-medium text-blue-800 mb-2">Informasi Kelulusan dan Status Akhir</h4>
+                <ul class="list-disc pl-5 text-sm space-y-1 text-blue-700">
+                    <li>Siswa akan diperbarui statusnya sesuai pilihan.</li>
+                    <li>Tidak ada enrollment tahun ajaran baru yang dibuat.</li>
+                    <li>Riwayat kelas, nilai, rapor, dan data semester sebelumnya tetap tersimpan.</li>
+                </ul>
+            </div>
 
             <div>
                 <label for="status" class="block text-sm font-medium text-gray-700">Status</label>
-                <select name="status" id="status" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500" x-model="selectedStatus" @change="checkStatus()">
+                <select name="status" id="status" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500" x-model="selectedStatus">
                     <option value="">-- Pilih Status --</option>
                     <option value="lulus">Lulus</option>
-                    <option value="pindah">Tidak Lulus</option>
+                    <option value="pindah">Pindah/Keluar</option>
+                    <option value="dropout">Tidak Aktif</option>
                 </select>
             </div>
 
-            <div x-show="selectedStatus === 'pindah'" x-cloak class="bg-yellow-50 p-4 rounded-lg border border-yellow-200 mt-3 mb-3">
-                <h4 class="text-md font-medium text-yellow-800 mb-2">Informasi Siswa Tidak Lulus</h4>
-                <p class="text-yellow-700 mb-2">Siswa yang tidak lulus akan:</p>
-                <ul class="list-disc pl-5 text-sm space-y-1 text-yellow-700 mb-3">
-                    <li>Tetap berada di kelas yang sama pada tahun ajaran berikutnya</li>
-                    <li>Perlu mengulang seluruh mata pelajaran</li>
-                    <li>Mendapatkan bimbingan khusus dari wali kelas</li>
-                </ul>
-
-                <div class="bg-white p-3 rounded-md border border-gray-200">
-                    <h5 class="font-medium text-gray-800 mb-2">Pilih Kelas Tujuan</h5>
-                    <p class="text-sm text-gray-600 mb-3">Pilih kelas tempat siswa akan mengulang:</p>
-
-                    <select name="kelas_tinggal_id" x-bind:required="selectedStatus === 'pindah'" class="w-full rounded-md border-yellow-300 shadow-sm focus:border-yellow-500 focus:ring-yellow-500">
-                        <option value="">-- Pilih Kelas --</option>
-                        @php
-                            $kelasTinggal = \App\Models\Kelas::where('tahun_ajaran_id', $tahunAjaranBaru->id)
-                                    ->where('nomor_kelas', $kelas->nomor_kelas)
-                                    ->orderBy('nama_kelas')
-                                    ->get();
-                        @endphp
-                        @foreach($kelasTinggal as $kelasOption)
-                        <option value="{{ $kelasOption->id }}">Kelas {{ $kelasOption->nomor_kelas }} {{ $kelasOption->nama_kelas }}</option>
-                        @endforeach
-                    </select>
-                </div>
-            </div>
-
             <div class="flex justify-end">
-                <button type="submit" class="check-rapor-btn px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500" data-action="proses kelulusan" x-bind:class="{'bg-yellow-600 hover:bg-yellow-700': selectedStatus === 'pindah'}">
-                    <span x-text="selectedStatus === 'pindah' ? 'Proses Siswa Tidak Lulus' : 'Proses Kelulusan'">Proses Kelulusan</span>
+                <button type="submit" class="check-rapor-btn px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500" data-action="proses status akhir">
+                    <span x-text="selectedStatus === 'pindah' ? 'Proses Pindah/Keluar' : (selectedStatus === 'dropout' ? 'Proses Tidak Aktif' : 'Proses Kelulusan')">Proses Kelulusan</span>
                 </button>
             </div>
         </form>
@@ -150,6 +211,9 @@
             <div class="flex flex-col md:flex-row gap-4">
                 <form action="{{ route('admin.kenaikan-kelas.process-kenaikan') }}" method="POST" class="flex-1 bg-white p-4 rounded-lg border border-gray-200" id="naik-kelas-form">
                     @csrf
+                    <input type="hidden" name="source_kelas_id" value="{{ $kelas->id }}">
+                    <input type="hidden" name="source_tahun_ajaran_id" value="{{ $tahunAjaranAktif->id }}">
+                    <input type="hidden" name="target_tahun_ajaran_id" value="{{ $tahunAjaranBaru->id }}">
                     <div id="selectedNaikIds"></div>
 
                     <h4 class="text-md font-semibold text-green-700 mb-3">Naik Kelas</h4>
@@ -178,6 +242,9 @@
 
                 <form action="{{ route('admin.kenaikan-kelas.process-tinggal') }}" method="POST" class="flex-1 bg-white p-4 rounded-lg border border-gray-200" id="tinggal-kelas-form">
                     @csrf
+                    <input type="hidden" name="source_kelas_id" value="{{ $kelas->id }}">
+                    <input type="hidden" name="source_tahun_ajaran_id" value="{{ $tahunAjaranAktif->id }}">
+                    <input type="hidden" name="target_tahun_ajaran_id" value="{{ $tahunAjaranBaru->id }}">
                     <div id="selectedTinggalIds"></div>
 
                     <h4 class="text-md font-semibold text-red-700 mb-3">Tinggal Kelas</h4>
@@ -186,15 +253,6 @@
                         <label for="kelas_tinggal_id" class="block text-sm font-medium text-gray-700">Kelas Tujuan (Tingkat yang Sama)</label>
                         <select name="kelas_tujuan_id" id="kelas_tinggal_id" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-red-500 focus:ring-yellow-500">
                             <option value="">-- Pilih Kelas Tinggal --</option>
-                            @php
-                                $kelasTinggal = \App\Models\Kelas::where('tahun_ajaran_id', $tahunAjaranBaru->id)
-                                        ->where('nomor_kelas', $kelas->nomor_kelas)
-                                        ->orderBy('nama_kelas')
-                                        ->get()
-                                        ->unique(function($item) {
-                                            return $item->nomor_kelas . $item->nama_kelas;
-                                        });
-                            @endphp
                             @foreach($kelasTinggal as $target)
                             <option value="{{ $target->id }}">Kelas {{ $target->nomor_kelas }} {{ $target->nama_kelas }}</option>
                             @endforeach
@@ -211,6 +269,7 @@
         </div>
         @endif
     </div>
+    @endif
     @endif
     @endif
 </div>

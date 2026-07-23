@@ -69,10 +69,10 @@
                 <div class="space-y-4">
                     <div>
                         <label class="block text-sm font-medium text-gray-700">NUPTK</label>
-                        <input type="number" name="nuptk" id="nuptk" value="{{ old('nuptk') }}" min="0" pattern="[0-9]+" inputmode="numeric" placeholder="Kosongkan jika belum ada"
+                        <input type="text" name="nuptk" id="nuptk" value="{{ old('nuptk') }}" pattern="[0-9]{16}" inputmode="numeric" maxlength="16" placeholder="Kosongkan jika belum ada"
                             class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500 @error('nuptk') border-red-500 @enderror"
-                            oninput="this.value = this.value.replace(/[^0-9]/g, '')">
-                        <p class="mt-1 text-sm text-gray-500">Kosongkan jika belum ada. Jika diisi, masukkan hanya angka (9-15 digit)</p>
+                            oninput="this.value = this.value.replace(/[^0-9]/g, '').slice(0, 16);">
+                        <p class="mt-1 text-sm text-gray-500">Kosongkan jika belum ada. Jika diisi, masukkan tepat 16 digit angka.</p>
                         @error('nuptk')
                             <p class="mt-1 text-sm text-red-500">{{ $message }}</p>
                         @enderror
@@ -96,55 +96,61 @@
 
                     <div>
                         <label class="block text-sm font-medium text-gray-700">Tanggal Lahir</label>
-                        <input type="date" name="tanggal_lahir" value="{{ old('tanggal_lahir') }}" required
+                        <input type="date" name="tanggal_lahir" value="{{ old('tanggal_lahir') }}" max="{{ now()->subDay()->format('Y-m-d') }}"
                             class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500">
+                        <p class="mt-1 text-sm text-gray-500">Opsional. Jika diisi, tanggal harus sebelum hari ini.</p>
+                        @error('tanggal_lahir')
+                            <p class="mt-1 text-sm text-red-500">{{ $message }}</p>
+                        @enderror
                     </div>
 
                     <div>
                         <label class="block text-sm font-medium text-gray-700">No. Handphone</label>
-                        <input type="number" name="no_handphone" id="no_handphone" value="{{ old('no_handphone') }}" required min="0" pattern="[0-9]+" inputmode="numeric"
+                        <input type="number" name="no_handphone" id="no_handphone" value="{{ old('no_handphone') }}" min="0" pattern="[0-9]+" inputmode="numeric"
                             class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500"
                             oninput="this.value = this.value.replace(/[^0-9]/g, ''); if(this.value.length > 15) this.value = this.value.slice(0, 15);">
-                        <p class="mt-1 text-sm text-gray-500">Masukkan hanya angka (10-15 digit)</p>
+                        <p class="mt-1 text-sm text-gray-500">Opsional. Jika diisi, masukkan hanya angka (10-15 digit).</p>
                     </div>
 
                     <div>
                         <label class="block text-sm font-medium text-gray-700">Email</label>
-                        <input type="email" name="email" value="{{ old('email') }}" required
+                        <input type="email" name="email" value="{{ old('email') }}"
                             class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500">
+                        <p class="mt-1 text-sm text-gray-500">Opsional. Jika diisi, gunakan format email yang valid.</p>
                     </div>
 
                     <div>
                         <label class="block text-sm font-medium text-gray-700">Alamat</label>
-                        <textarea name="alamat" rows="3" required
+                        <textarea name="alamat" rows="3"
                             class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500">{{ old('alamat') }}</textarea>
+                        <p class="mt-1 text-sm text-gray-500">Opsional. Tidak digunakan pada rapor.</p>
                     </div>
                 </div>
 
                 <!-- Kolom Kanan -->
                 <div class="space-y-4">
                     <div>
-                        <label class="block text-sm font-medium text-gray-700">Jabatan</label>
+                        <label class="block text-sm font-medium text-gray-700">Tanggung Jawab Guru</label>
                         <select name="jabatan" id="jabatan" onchange="handleJabatanChange()" required
                             class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500">
-                            <option value="">Pilih Jabatan</option>
-                            <option value="guru" {{ old('jabatan') == 'guru' ? 'selected' : '' }}>Guru</option>
-                            <option value="guru_wali" {{ old('jabatan') == 'guru_wali' ? 'selected' : '' }}>Guru & Wali Kelas</option>
+                            <option value="">Pilih tanggung jawab</option>
+                            <option value="guru" {{ old('jabatan') == 'guru' ? 'selected' : '' }}>Pengajar Biasa</option>
+                            <option value="guru_wali" {{ old('jabatan') == 'guru_wali' ? 'selected' : '' }}>Wali Kelas</option>
                         </select>
                     </div>
 
                     <div id="kelas_mengajar_section" style="display:none;">
-                        <label class="block text-sm font-medium text-gray-700">Kelas yang Diajar</label>
+                        <label class="block text-sm font-medium text-gray-700">Kelas yang diajar sebagai pengajar khusus/muatan lokal</label>
                         @if(isset($kelasForMengajar) && $kelasForMengajar->count() > 0)
                             <select name="kelas_ids[]" multiple required
                                 class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500 min-h-[120px]">
                                 @foreach($kelasForMengajar as $kelas)
                                     <option value="{{ $kelas->id }}" {{ (is_array(old('kelas_ids')) && in_array($kelas->id, old('kelas_ids'))) ? 'selected' : '' }}>
-                                        Kelas {{ $kelas->nomor_kelas }} {{ $kelas->nama_kelas }}
+                                        {{ $kelas->label_kelas }}
                                     </option>
                                 @endforeach
                             </select>
-                            <p class="mt-1 text-sm text-gray-500">Tekan CTRL untuk memilih beberapa kelas yang akan diajar</p>
+                            <p class="mt-1 text-sm text-gray-500">Untuk wali kelas, mata pelajaran wajib reguler otomatis mengikuti kelas wali dan tidak perlu dipilih di sini.</p>
                         @else
                             <div class="mt-1 p-3 bg-green-50 border border-green-200 rounded-lg">
                                 <p class="text-sm text-green-800">
@@ -158,18 +164,18 @@
                         @endif
                     </div>
                     <div id="wali_kelas_section" style="display:none;">
-                        <label class="block text-sm font-medium text-gray-700">Wali Kelas Untuk</label>
+                        <label class="block text-sm font-medium text-gray-700">Pilih kelas wali</label>
                         @if(isset($kelasForWali) && $kelasForWali->count() > 0)
                             <select name="wali_kelas_id" 
                                 class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500">
                                 <option value="">Pilih Kelas</option>
                                 @foreach($kelasForWali as $kelas)
                                     <option value="{{ $kelas->id }}" {{ old('wali_kelas_id') == $kelas->id ? 'selected' : '' }}>
-                                        Kelas {{ $kelas->nomor_kelas }} {{ $kelas->nama_kelas }}
+                                        {{ $kelas->label_kelas }}
                                     </option>
                                 @endforeach
                             </select>
-                            <p class="mt-1 text-sm text-gray-500">Pilih kelas yang akan diwalikan</p>
+                            <p class="mt-1 text-sm text-gray-500">Wali kelas hanya mengampu mata pelajaran wajib reguler di kelas ini.</p>
                         @else
                             <div class="mt-1 p-3 bg-green-50 border border-green-200 rounded-lg">
                                 <p class="text-sm text-green-800">
@@ -210,9 +216,12 @@
 
                     <div>
                         <label class="block text-sm font-medium text-gray-700">Foto</label>
-                        <input type="file" name="photo" accept="image/*"
+                        <input type="file" name="photo" accept="image/jpeg,image/png,image/webp"
                             class="mt-1 block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-green-50 file:text-green-700 hover:file:bg-green-100">
-                        <p class="mt-1 text-sm text-gray-500">Format: JPG, JPEG, atau PNG (Maks. 2MB)</p>
+                        <p class="mt-1 text-sm text-gray-500">Format JPG, JPEG, PNG, atau WebP. Maksimal 2 MB.</p>
+                        @error('photo')
+                            <p class="mt-1 text-sm text-red-500">{{ $message }}</p>
+                        @enderror
                     </div>
                 </div>
             </div>

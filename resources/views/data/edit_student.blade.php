@@ -33,10 +33,12 @@
                         <div>
                             <label for="nis" class="block text-sm font-medium text-gray-700 mb-1">NIS <span class="text-red-500">*</span></label>
                             <input type="text" id="nis" name="nis" 
-                                maxlength="10" 
-                                pattern="[0-9]*"
+                                maxlength="10"
+                                inputmode="numeric"
+                                pattern="[0-9]{1,10}"
                                 class="w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring focus:ring-green-200 @error('nis') border-red-500 @enderror" 
                                 value="{{ old('nis', $student->nis) }}" required>
+                            <p class="mt-1 text-sm text-gray-500">Maksimal 10 digit angka.</p>
                             @error('nis')
                                 <p class="mt-1 text-sm text-red-500">{{ $message }}</p>
                             @enderror
@@ -46,10 +48,12 @@
                         <div>
                             <label for="nisn" class="block text-sm font-medium text-gray-700 mb-1">NISN <span class="text-red-500">*</span></label>
                             <input type="text" id="nisn" name="nisn" 
-                                maxlength="10" 
-                                pattern="[0-9]*"
+                                maxlength="10"
+                                inputmode="numeric"
+                                pattern="[0-9]{1,10}"
                                 class="w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring focus:ring-green-200 @error('nisn') border-red-500 @enderror" 
                                 value="{{ old('nisn', $student->nisn) }}" required>
+                            <p class="mt-1 text-sm text-gray-500">Maksimal 10 digit angka.</p>
                             @error('nisn')
                                 <p class="mt-1 text-sm text-red-500">{{ $message }}</p>
                             @enderror
@@ -69,7 +73,7 @@
                         <!-- Tanggal Lahir -->
                         <div>
                             <label for="tanggal_lahir" class="block text-sm font-medium text-gray-700 mb-1">Tanggal Lahir <span class="text-red-500">*</span></label>
-                            <input type="date" id="tanggal_lahir" name="tanggal_lahir" 
+                            <input type="date" id="tanggal_lahir" name="tanggal_lahir" max="{{ now()->subDay()->format('Y-m-d') }}"
                                 class="w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring focus:ring-green-200 @error('tanggal_lahir') border-red-500 @enderror" 
                                 value="{{ old('tanggal_lahir', $student->tanggal_lahir) }}" required>
                             @error('tanggal_lahir')

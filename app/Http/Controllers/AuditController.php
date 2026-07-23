@@ -139,7 +139,8 @@ class AuditController extends Controller
     public function clear(Request $request)
     {
         $request->validate([
-            'period' => 'required|in:1month,3months,6months,1year,all'
+            'period' => 'required|in:1month,3months,6months,1year,all',
+            'confirmation' => 'required_if:period,all|nullable|string|in:HAPUS AUDIT LOG',
         ]);
         
         $period = $request->period;

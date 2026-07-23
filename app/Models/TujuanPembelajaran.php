@@ -18,6 +18,22 @@ class TujuanPembelajaran extends Model
         'deskripsi_tp',
     ];
 
+    public static function formatDisplayKodeTp(?string $kodeTp): string
+    {
+        $label = trim((string) $kodeTp);
+
+        if (preg_match('/^TP\s*(\d+(?:\.\d+)*)$/i', $label, $matches)) {
+            return $matches[1];
+        }
+
+        return $label;
+    }
+
+    public function getDisplayKodeTpAttribute(): string
+    {
+        return self::formatDisplayKodeTp($this->kode_tp);
+    }
+
     // Relasi ke LingkupMateri
     public function lingkupMateri()
     {

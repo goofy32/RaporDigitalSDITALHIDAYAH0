@@ -11,19 +11,57 @@ export function registerReportStore() {
 
         async downloadPdf(siswaId) {
             try {
-                const response = await fetch(`/wali-kelas/rapor/download-pdf/${siswaId}`);
-                const blob = await response.blob();
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `rapor_${siswaId}.pdf`;
-                document.body.appendChild(a);
-                a.click();
-                window.URL.revokeObjectURL(url);
-                document.body.removeChild(a);
+                const response = await fetch(`/wali-kelas/rapor/download-pdf/${siswaId}`, {
+                    headers: {
+                        Accept: 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest'
+                    }
+                });
+                const data = await response.json();
+
+                if (data.status === 'ready' || data.ready) {
+                    window.location.href = data.url || data.download_url;
+                    return;
+                }
+
+                if (data.status === 'processing') {
+                    this.setFeedback('PDF sedang disiapkan. Unduhan akan dimulai setelah selesai.', 'info');
+                    await this.pollPdfUntilReady(data.poll_url || data.progress_url);
+                    return;
+                }
+
+                throw new Error(data.message || 'Gagal mengunduh PDF');
             } catch {
                 this.setFeedback('Gagal mengunduh PDF', 'error');
             }
+        },
+
+        async pollPdfUntilReady(pollUrl) {
+            for (let attempt = 0; attempt < 180; attempt++) {
+                await new Promise((resolve) => setTimeout(resolve, 1000));
+
+                const pollRequestUrl = new URL(pollUrl, window.location.origin);
+                pollRequestUrl.searchParams.set('disposition', 'attachment');
+
+                const response = await fetch(pollRequestUrl.toString(), {
+                    headers: {
+                        Accept: 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest'
+                    }
+                });
+                const data = await response.json();
+
+                if (data.status === 'ready' || data.ready) {
+                    window.location.href = data.url || data.download_url;
+                    return;
+                }
+
+                if (data.status === 'failed') {
+                    throw new Error(data.message || 'PDF gagal disiapkan');
+                }
+            }
+
+            throw new Error('PDF masih belum selesai disiapkan');
         },
 
         showPreviewModal(siswaId) {

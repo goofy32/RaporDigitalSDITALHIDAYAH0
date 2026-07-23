@@ -5,6 +5,7 @@ export function initPengajarInputScorePage() {
 // Single source of truth for form change state
 let formChanged = false;
 let navigationListenersAttached = false;
+let intentionalNavigation = false;
 
 function isInputScorePage() {
     return Boolean(document.getElementById('saveForm') && document.getElementById('students-table'));
@@ -19,7 +20,19 @@ function getFormProtectionStore() {
 }
 
 function hasUnsavedChanges() {
-    return formChanged || Boolean(getFormProtectionStore()?.formChanged);
+    return formChanged || Boolean(window.formChanged) || Boolean(getFormProtectionStore()?.formChanged);
+}
+
+function clearUnsavedState() {
+    formChanged = false;
+    window.formChanged = false;
+    getFormProtectionStore()?.reset();
+}
+
+function beginIntentionalNavigation() {
+    intentionalNavigation = true;
+    window.formChanged = false;
+    getFormProtectionStore()?.startSubmitting?.();
 }
 
 function parseNumericInputValue(input) {
@@ -57,17 +70,30 @@ function calculateSemesterAverage(nilaiTes, nilaiNonTes) {
 }
 
 function calculateNilaiAkhirRapor(naTP, naLM, nilaiAkhirSemester) {
-    if (nilaiAkhirSemester === null) {
+    const { rawTP, rawLM, rawAS } = getBobotNilai();
+    let weightedTotal = 0;
+    let totalBobot = 0;
+
+    if (naTP !== null) {
+        weightedTotal += naTP * rawTP;
+        totalBobot += rawTP;
+    }
+
+    if (naLM !== null) {
+        weightedTotal += naLM * rawLM;
+        totalBobot += rawLM;
+    }
+
+    if (nilaiAkhirSemester !== null) {
+        weightedTotal += nilaiAkhirSemester * rawAS;
+        totalBobot += rawAS;
+    }
+
+    if (totalBobot === 0) {
         return null;
     }
 
-    const { bobotTP, bobotLM, bobotAS } = getBobotNilai();
-
-    return Math.round(
-        ((naTP ?? 0) * bobotTP) +
-        ((naLM ?? 0) * bobotLM) +
-        (nilaiAkhirSemester * bobotAS)
-    );
+    return Math.round(weightedTotal / totalBobot);
 }
 
 function calculateFilledAverage(inputs) {
@@ -161,6 +187,7 @@ function updateCompletionCounter() {
 
 function bindInputScorePage() {
     if (!isInputScorePage()) return;
+    intentionalNavigation = false;
 
     // Remove any existing event listeners first to avoid duplicates
     document.querySelectorAll('input').forEach(input => {
@@ -186,6 +213,12 @@ function bindInputScorePage() {
     });
 
     updateCompletionCounter();
+    bindIntentionalSubmitForms();
+
+    const saveForm = document.getElementById('saveForm');
+    if (saveForm?.dataset.excelImportLoaded === 'true') {
+        markFormChanged();
+    }
     
     // Only add these event listeners once
     setupNavigationListeners();
@@ -194,6 +227,7 @@ function bindInputScorePage() {
 function markFormChanged() {
     // Set our local formChanged variable
     formChanged = true;
+    window.formChanged = true;
     
     // Try to access the Alpine store only if it exists
     try {
@@ -217,6 +251,7 @@ function updateCalculations(e) {
         
         // Mark form as changed without relying on Alpine.js
         formChanged = true;
+        window.formChanged = true;
         
         // Try to use Alpine store if available
         try {
@@ -264,8 +299,8 @@ function calculateIntermediateValues(row) {
     // 4. Calculate Nilai Akhir Rapor if empty
     let nilaiAkhirRaporInput = row.querySelector('input[name*="[nilai_akhir_rapor]"]');
     if (!nilaiAkhirRaporInput.value) {
-        let naTP = parseNumericInputValue(row.querySelector('.na-tp')) ?? 0;
-        let naLM = parseNumericInputValue(row.querySelector('.na-lm')) ?? 0;
+        let naTP = parseNumericInputValue(row.querySelector('.na-tp'));
+        let naLM = parseNumericInputValue(row.querySelector('.na-lm'));
         let nilaiAkhirSemester = parseNumericInputValue(nilaiAkhirInput);
         let nilaiAkhirRapor = calculateNilaiAkhirRapor(naTP, naLM, nilaiAkhirSemester);
 
@@ -409,7 +444,25 @@ function highlightBelowKkm(row) {
     }
 }
 
+function bindIntentionalSubmitForms() {
+    const importForm = document.getElementById('excelImportForm');
+
+    if (importForm && importForm.dataset.intentionalSubmitBound !== 'true') {
+        importForm.dataset.intentionalSubmitBound = 'true';
+        importForm.addEventListener('submit', () => {
+            beginIntentionalNavigation();
+        });
+    }
+}
+
 function validateForm() {
+    const form = document.getElementById('saveForm');
+
+    if (form?.dataset.importBlockingErrors === 'true') {
+        alert('Import Excel masih memiliki error validasi. Perbaiki file Excel lalu unggah ulang sebelum menyimpan.');
+        return false;
+    }
+
     const rows = document.querySelectorAll('#students-table tbody tr');
     let hasIncompleteDrafts = false;
 
@@ -436,6 +489,7 @@ function setupNavigationListeners() {
 }
 
 function handleBeforeUnload(event) {
+    if (intentionalNavigation) return;
     if (!isInputScorePage() || !hasUnsavedChanges()) return;
     event.preventDefault();
     event.returnValue = '';
@@ -443,13 +497,13 @@ function handleBeforeUnload(event) {
 }
 
 function handleTurboBeforeVisit(event) {
+    if (intentionalNavigation) return;
     if (!isInputScorePage() || !hasUnsavedChanges()) return;
-    if (!confirm('Perubahan belum disimpan. Yakin ingin keluar?')) {
+    if (!confirm('Nilai yang sudah diubah atau dimuat dari Excel belum disimpan. Yakin ingin kembali?')) {
         event.preventDefault();
         return;
     }
-    formChanged = false;
-    getFormProtectionStore()?.reset();
+    clearUnsavedState();
 }
 
 function cleanupInputScorePage() {
@@ -457,6 +511,7 @@ function cleanupInputScorePage() {
     document.removeEventListener('turbo:before-visit', handleTurboBeforeVisit);
     document.removeEventListener('turbo:before-cache', cleanupInputScorePage);
     navigationListenersAttached = false;
+    intentionalNavigation = false;
 }
 
 window.handleKembali = function() {
@@ -467,7 +522,7 @@ window.handleKembali = function() {
 
     Swal.fire({
         title: 'Perubahan belum disimpan',
-        text: 'Yakin ingin keluar? Nilai yang belum disimpan akan hilang.',
+        text: 'Nilai yang sudah diubah atau dimuat dari Excel belum disimpan. Yakin ingin kembali?',
         icon: 'warning',
         showCancelButton: true,
         confirmButtonText: 'Keluar tanpa simpan',
@@ -476,8 +531,8 @@ window.handleKembali = function() {
         cancelButtonColor: '#3F7858'
     }).then(result => {
         if (result.isConfirmed) {
-            formChanged = false;
-            getFormProtectionStore()?.reset();
+            beginIntentionalNavigation();
+            clearUnsavedState();
             window.history.back();
         }
     });
@@ -576,6 +631,8 @@ window.saveData = async function() {
             return;
         }
 
+        beginIntentionalNavigation();
+
         // Show loading indicator
         Swal.fire({
             title: 'Menyimpan Nilai...',
@@ -604,13 +661,11 @@ window.saveData = async function() {
         // Handle success
         if (data.success) {
             // Reset changed flags
-            formChanged = false;
+            clearUnsavedState();
             
             // Try to use Alpine store if available
             try {
-                if (window.Alpine && window.Alpine.store('formProtection')) {
-                    window.Alpine.store('formProtection').reset();
-                }
+                getFormProtectionStore()?.reset?.();
             } catch (e) {
                 console.warn('Could not access Alpine formProtection store', e);
             }
@@ -650,6 +705,8 @@ window.saveData = async function() {
             throw new Error(data.message || 'Terjadi kesalahan saat menyimpan nilai');
         }
     } catch (error) {
+        intentionalNavigation = false;
+        markFormChanged();
         console.error('Error:', error);
         
         // Try to reset Alpine store's submitting flag if available

@@ -7,7 +7,12 @@ use App\Models\Kelas;
 use App\Models\MataPelajaran;
 use App\Models\ReportTemplate;
 use App\Models\Siswa;
+use App\Models\SiswaKelasSemester;
 use App\Models\ProfilSekolah;
+use App\Models\BobotNilai;
+use App\Services\SiswaKelasSemesterResolver;
+use App\Services\TahunAjaranPurgeException;
+use App\Services\TahunAjaranPurgeService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\DB;
@@ -15,9 +20,23 @@ use Carbon\Carbon;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Storage;
+use DomainException;
+use RuntimeException;
+use Throwable;
 
 class TahunAjaranController extends Controller
 {
+    private const PERMANENT_DELETE_SUCCESS_MESSAGE = 'Tahun ajaran berhasil dihapus permanen.';
+    private const SEMESTER_TEMPLATE_COPY_DIRECTORY = 'templates/semester-copies';
+    private const SEMESTER_GENAP_CONFIRMATION = 'LANJUTKAN KE SEMESTER GENAP';
+    private const NEXT_YEAR_CONFIRMATION = 'BUAT TAHUN AJARAN BERIKUTNYA';
+    private const CONFIRMATION_MISMATCH_MESSAGE = 'Konfirmasi tidak sesuai. Ketik kalimat yang diminta untuk melanjutkan.';
+
+    public function __construct(private readonly TahunAjaranPurgeService $tahunAjaranPurgeService)
+    {
+    }
+
     /**
      * Display a listing of tahun ajaran.
      */
@@ -35,11 +54,12 @@ class TahunAjaranController extends Controller
         }
         
         $tahunAjarans = $query->get();
+        $permanentDeleteProtectionMessages = $this->tahunAjaranPurgeService->protectionMessagesFor($tahunAjarans);
         
         // Hitung jumlah arsip secara terpisah
         $archivedCount = TahunAjaran::onlyTrashed()->count();
         
-        return view('admin.tahun_ajaran.index', compact('tahunAjarans', 'tampilkanArsip', 'archivedCount'));
+        return view('admin.tahun_ajaran.index', compact('tahunAjarans', 'tampilkanArsip', 'archivedCount', 'permanentDeleteProtectionMessages'));
     }
 
     /**
@@ -49,220 +69,551 @@ class TahunAjaranController extends Controller
      * @param TahunAjaran $newTahunAjaran The target (semester 2) academic year
      * @return void
      */
-    private function copyRelatedDataToNewSemester($sourceTahunAjaran, $newTahunAjaran)
+    private function copyRelatedDataToNewSemester($sourceTahunAjaran, $newTahunAjaran, array &$copiedStoragePaths = [])
     {
-        DB::beginTransaction();
-        
-        try {
-            // Log for debugging
-            \Log::info("Copying related data from semester 1 to semester 2", [
-                'source_id' => $sourceTahunAjaran->id,
-                'source_semester' => $sourceTahunAjaran->semester,
-                'target_id' => $newTahunAjaran->id,
-                'target_semester' => $newTahunAjaran->semester
+        \Log::info("Copying related data from semester 1 to semester 2", [
+            'source_id' => $sourceTahunAjaran->id,
+            'source_semester' => $sourceTahunAjaran->semester,
+            'target_id' => $newTahunAjaran->id,
+            'target_semester' => $newTahunAjaran->semester
+        ]);
+
+        $kelasMapping = [];
+        $sourceClassStudents = [];
+
+        $sourceKelas = Kelas::where('tahun_ajaran_id', $sourceTahunAjaran->id)->get();
+        foreach ($sourceKelas as $kelas) {
+            $students = $this->studentsForSemesterTransitionClass($kelas, $sourceTahunAjaran);
+            $this->assertNoLegacyS2StudentsInTransition($students, $kelas, $sourceTahunAjaran);
+
+            $newKelas = $kelas->replicate();
+            $newKelas->tahun_ajaran_id = $newTahunAjaran->id;
+            $newKelas->save();
+
+            \Log::info("Created new kelas for semester 2", [
+                'original_kelas_id' => $kelas->id,
+                'new_kelas_id' => $newKelas->id,
+                'kelas_name' => $kelas->nomor_kelas . ' ' . $kelas->nama_kelas
             ]);
-            
-            // Map kelas IDs to maintain relationships
-            $kelasMapping = [];
-            
-            // Copy kelas without incrementing numbers (same class structure, just different semester)
-            $sourceKelas = Kelas::where('tahun_ajaran_id', $sourceTahunAjaran->id)->get();
-            foreach ($sourceKelas as $kelas) {
-                $newKelas = $kelas->replicate();
-                $newKelas->tahun_ajaran_id = $newTahunAjaran->id;
-                $newKelas->save();
-                
-                \Log::info("Created new kelas for semester 2", [
-                    'original_kelas_id' => $kelas->id,
-                    'new_kelas_id' => $newKelas->id,
-                    'kelas_name' => $kelas->nomor_kelas . ' ' . $kelas->nama_kelas
+
+            $kelasMapping[$kelas->id] = $newKelas->id;
+            $sourceClassStudents[$kelas->id] = $students;
+
+            $guruRelations = DB::table('guru_kelas')
+                ->where('kelas_id', $kelas->id)
+                ->get();
+
+            foreach ($guruRelations as $relation) {
+                DB::table('guru_kelas')->insert([
+                    'guru_id' => $relation->guru_id,
+                    'kelas_id' => $newKelas->id,
+                    'is_wali_kelas' => $relation->is_wali_kelas,
+                    'role' => $relation->role,
+                    'created_at' => now(),
+                    'updated_at' => now()
                 ]);
-                
-                // Store mapping from old kelas ID to new kelas ID
-                $kelasMapping[$kelas->id] = $newKelas->id;
-                
-                // Copy guru relationships
-                $guruRelations = DB::table('guru_kelas')
-                    ->where('kelas_id', $kelas->id)
-                    ->get();
-                
-                foreach ($guruRelations as $relation) {
-                    DB::table('guru_kelas')->insert([
-                        'guru_id' => $relation->guru_id,
-                        'kelas_id' => $newKelas->id,
-                        'is_wali_kelas' => $relation->is_wali_kelas,
-                        'role' => $relation->role,
-                        'created_at' => now(),
-                        'updated_at' => now()
-                    ]);
-                    
-                    \Log::info("Copied guru relationship", [
-                        'guru_id' => $relation->guru_id,
-                        'kelas_id' => $newKelas->id,
-                        'is_wali_kelas' => $relation->is_wali_kelas,
-                        'role' => $relation->role
-                    ]);
-                }
-                
-                // Copy student records with modified NIS/NISN to avoid unique constraint violations
-                $students = Siswa::where('kelas_id', $kelas->id)->get();
-                
-                foreach ($students as $student) {
-                    // Create new student record with semester 2 prefix on NIS/NISN
-                    $newStudent = new Siswa();
-                    $newStudent->nis = 'S2-' . $student->nis; // Prefix with S2 to make it unique
-                    $newStudent->nisn = 'S2-' . $student->nisn; // Prefix with S2 to make it unique
-                    $newStudent->nama = $student->nama;
-                    $newStudent->tanggal_lahir = $student->tanggal_lahir;
-                    $newStudent->jenis_kelamin = $student->jenis_kelamin;
-                    $newStudent->agama = $student->agama;
-                    $newStudent->alamat = $student->alamat;
-                    $newStudent->kelas_id = $newKelas->id; // Use the new kelas ID
-                    $newStudent->nama_ayah = $student->nama_ayah;
-                    $newStudent->nama_ibu = $student->nama_ibu;
-                    $newStudent->pekerjaan_ayah = $student->pekerjaan_ayah;
-                    $newStudent->pekerjaan_ibu = $student->pekerjaan_ibu;
-                    $newStudent->alamat_orangtua = $student->alamat_orangtua;
-                    $newStudent->photo = $student->photo; // Reuse the same photo
-                    $newStudent->wali_siswa = $student->wali_siswa;
-                    $newStudent->pekerjaan_wali = $student->pekerjaan_wali;
-                    $newStudent->tahun_ajaran_id = $newTahunAjaran->id; // Set to the new tahun ajaran
-                    $newStudent->save();
-                    
-                    \Log::info("Created new student for semester 2", [
-                        'original_student_id' => $student->id,
-                        'new_student_id' => $newStudent->id,
-                        'student_name' => $student->nama,
-                        'original_nis' => $student->nis,
-                        'new_nis' => $newStudent->nis
-                    ]);
+
+                \Log::info("Copied guru relationship", [
+                    'guru_id' => $relation->guru_id,
+                    'kelas_id' => $newKelas->id,
+                    'is_wali_kelas' => $relation->is_wali_kelas,
+                    'role' => $relation->role
+                ]);
+            }
+
+            foreach ($students as $student) {
+                SiswaKelasSemester::firstOrCreate([
+                    'siswa_id' => $student->id,
+                    'tahun_ajaran_id' => $newTahunAjaran->id,
+                    'semester' => 2,
+                ], [
+                    'kelas_id' => $newKelas->id,
+                ]);
+
+                \Log::info("Created semester 2 enrollment for existing student", [
+                    'siswa_id' => $student->id,
+                    'source_kelas_id' => $kelas->id,
+                    'target_kelas_id' => $newKelas->id,
+                    'target_tahun_ajaran_id' => $newTahunAjaran->id,
+                ]);
+            }
+        }
+
+        $mapelMapping = [];
+
+        $sourceMataPelajaran = MataPelajaran::where('tahun_ajaran_id', $sourceTahunAjaran->id)->get();
+
+        foreach ($sourceMataPelajaran as $mapel) {
+            $newMapel = $mapel->replicate();
+            $newMapel->tahun_ajaran_id = $newTahunAjaran->id;
+            $newMapel->semester = 2;
+
+            if (isset($kelasMapping[$mapel->kelas_id])) {
+                $newMapel->kelas_id = $kelasMapping[$mapel->kelas_id];
+            }
+
+            $newMapel->save();
+            $mapelMapping[$mapel->id] = $newMapel->id;
+
+            \Log::info("Created new mata pelajaran for semester 2", [
+                'original_mapel_id' => $mapel->id,
+                'new_mapel_id' => $newMapel->id,
+                'mapel_name' => $mapel->nama_pelajaran
+            ]);
+
+            foreach ($mapel->lingkupMateris as $lm) {
+                $newLM = $lm->replicate();
+                $newLM->mata_pelajaran_id = $newMapel->id;
+                $newLM->save();
+
+                foreach ($lm->tujuanPembelajarans as $tp) {
+                    $newTP = $tp->replicate();
+                    $newTP->lingkup_materi_id = $newLM->id;
+                    $newTP->save();
                 }
             }
-            
-            // Copy mata pelajaran with semester updated to 2
-            $sourceMataPelajaran = MataPelajaran::where('tahun_ajaran_id', $sourceTahunAjaran->id)->get();
-            
-            foreach ($sourceMataPelajaran as $mapel) {
-                $newMapel = $mapel->replicate();
-                $newMapel->tahun_ajaran_id = $newTahunAjaran->id;
-                $newMapel->semester = 2; // Set to semester 2
-                
-                // Use the new kelas ID if available in mapping
-                if (isset($kelasMapping[$mapel->kelas_id])) {
-                    $newMapel->kelas_id = $kelasMapping[$mapel->kelas_id];
+        }
+
+        $ekstrakurikulers = \App\Models\Ekstrakurikuler::where('tahun_ajaran_id', $sourceTahunAjaran->id)->get();
+        foreach ($ekstrakurikulers as $ekskul) {
+            $newEkskul = $ekskul->replicate();
+            $newEkskul->tahun_ajaran_id = $newTahunAjaran->id;
+            $newEkskul->save();
+        }
+
+        $kkms = \App\Models\Kkm::where('tahun_ajaran_id', $sourceTahunAjaran->id)->get();
+        foreach ($kkms as $kkm) {
+            if (isset($kelasMapping[$kkm->kelas_id])) {
+                $newKkm = $kkm->replicate();
+                $newKkm->tahun_ajaran_id = $newTahunAjaran->id;
+                $newKkm->kelas_id = $kelasMapping[$kkm->kelas_id];
+
+                if ($kkm->mata_pelajaran_id && isset($mapelMapping[$kkm->mata_pelajaran_id])) {
+                    $newKkm->mata_pelajaran_id = $mapelMapping[$kkm->mata_pelajaran_id];
                 }
-                
-                $newMapel->save();
-                
-                \Log::info("Created new mata pelajaran for semester 2", [
-                    'original_mapel_id' => $mapel->id,
-                    'new_mapel_id' => $newMapel->id,
-                    'mapel_name' => $mapel->nama_pelajaran
-                ]);
-                
-                // Copy lingkup materi and tujuan pembelajaran
-                foreach ($mapel->lingkupMateris as $lm) {
-                    $newLM = $lm->replicate();
-                    $newLM->mata_pelajaran_id = $newMapel->id;
-                    $newLM->save();
-                    
-                    foreach ($lm->tujuanPembelajarans as $tp) {
-                        $newTP = $tp->replicate();
-                        $newTP->lingkup_materi_id = $newLM->id;
-                        $newTP->save();
+
+                $newKkm->save();
+            }
+        }
+
+        $bobotNilai = \App\Models\BobotNilai::where('tahun_ajaran_id', $sourceTahunAjaran->id)->first();
+        if ($bobotNilai) {
+            $newBobotNilai = $bobotNilai->replicate();
+            $newBobotNilai->tahun_ajaran_id = $newTahunAjaran->id;
+            $newBobotNilai->save();
+        }
+
+        $reportTemplates = \App\Models\ReportTemplate::where('tahun_ajaran_id', $sourceTahunAjaran->id)->get();
+        foreach ($reportTemplates as $template) {
+            $newPath = $this->copyReportTemplateFileForSemester($template, $newTahunAjaran, $copiedStoragePaths);
+
+            $newTemplate = $template->replicate();
+            $newTemplate->tahun_ajaran_id = $newTahunAjaran->id;
+            $newTemplate->semester = 2;
+            $newTemplate->path = $newPath;
+            $newTemplate->is_active = false;
+
+            if ($template->kelas_id && isset($kelasMapping[$template->kelas_id])) {
+                $newTemplate->kelas_id = $kelasMapping[$template->kelas_id];
+            }
+
+            $newTemplate->save();
+
+            if (Schema::hasTable('report_template_kelas')) {
+                $templateClassIds = DB::table('report_template_kelas')
+                    ->where('report_template_id', $template->id)
+                    ->pluck('kelas_id');
+
+                foreach ($templateClassIds as $templateClassId) {
+                    if (isset($kelasMapping[$templateClassId])) {
+                        DB::table('report_template_kelas')->insert([
+                            'report_template_id' => $newTemplate->id,
+                            'kelas_id' => $kelasMapping[$templateClassId],
+                            'created_at' => now(),
+                            'updated_at' => now(),
+                        ]);
                     }
                 }
             }
-            
-            // Copy ekstrakurikuler
-            $ekstrakurikulers = \App\Models\Ekstrakurikuler::where('tahun_ajaran_id', $sourceTahunAjaran->id)->get();
-            foreach ($ekstrakurikulers as $ekskul) {
-                $newEkskul = $ekskul->replicate();
-                $newEkskul->tahun_ajaran_id = $newTahunAjaran->id;
-                $newEkskul->save();
+
+            foreach ($template->mappings as $mapping) {
+                $newMapping = $mapping->replicate();
+                $newMapping->report_template_id = $newTemplate->id;
+                $newMapping->save();
             }
-            
-            // Copy KKM settings
-            $kkms = \App\Models\Kkm::where('tahun_ajaran_id', $sourceTahunAjaran->id)->get();
-            foreach ($kkms as $kkm) {
-                // Only copy if we have a mapping for the kelas
-                if (isset($kelasMapping[$kkm->kelas_id])) {
-                    $newKkm = $kkm->replicate();
-                    $newKkm->tahun_ajaran_id = $newTahunAjaran->id;
-                    $newKkm->kelas_id = $kelasMapping[$kkm->kelas_id];
-                    $newKkm->save();
+        }
+
+        foreach ($sourceClassStudents as $sourceKelasId => $students) {
+            $targetKelasId = $kelasMapping[$sourceKelasId] ?? null;
+
+            if (! $targetKelasId) {
+                continue;
+            }
+
+            foreach ($students as $student) {
+                \App\Models\Absensi::firstOrCreate([
+                    'siswa_id' => $student->id,
+                    'semester' => 2,
+                    'tahun_ajaran_id' => $newTahunAjaran->id,
+                ], [
+                    'sakit' => 0,
+                    'izin' => 0,
+                    'tanpa_keterangan' => 0,
+                ]);
+            }
+        }
+
+        app(SiswaKelasSemesterResolver::class)->resetMemoization();
+
+        \Log::info("Successfully prepared all related data for semester 2", [
+            'target_id' => $newTahunAjaran->id,
+            'classes_copied' => count($kelasMapping),
+            'subjects_copied' => count($mapelMapping),
+        ]);
+    }
+
+    private function studentsForSemesterTransitionClass(Kelas $kelas, TahunAjaran $sourceTahunAjaran)
+    {
+        return app(SiswaKelasSemesterResolver::class)
+            ->studentsForClass($kelas->id, $sourceTahunAjaran->id, 1, true);
+    }
+
+    private function assertNoLegacyS2StudentsInTransition($students, Kelas $kelas, TahunAjaran $sourceTahunAjaran): void
+    {
+        $hasLegacyS2Student = $students->contains(function ($student) {
+            return str_starts_with((string) $student->nis, 'S2-')
+                || str_starts_with((string) $student->nisn, 'S2-');
+        });
+
+        if ($hasLegacyS2Student) {
+            throw new DomainException(
+                "Source class {$kelas->id} in tahun_ajaran {$sourceTahunAjaran->id} contains legacy S2 student rows."
+            );
+        }
+    }
+
+    private function buildTransitionReadiness(TahunAjaran $sourceTahunAjaran, string $workflow): array
+    {
+        $kelasCount = $this->countRowsForTahunAjaran('kelas', (int) $sourceTahunAjaran->id);
+        $rosterCount = $this->countRosterStudentsForSource($sourceTahunAjaran);
+        $kelasTanpaWali = $this->countClassesWithoutHomeroom((int) $sourceTahunAjaran->id);
+        $mapelCount = $this->countRowsForTahunAjaran('mata_pelajarans', (int) $sourceTahunAjaran->id);
+        $mapelTanpaGuru = $this->countSubjectsWithoutTeacher((int) $sourceTahunAjaran->id);
+        $mapelBelumLengkap = $this->countSubjectsWithIncompleteLearningStructure((int) $sourceTahunAjaran->id);
+        $kkmCount = $this->countRowsForTahunAjaran('kkms', (int) $sourceTahunAjaran->id);
+        $ekstrakurikulerCount = $this->countRowsForTahunAjaran('ekstrakurikulers', (int) $sourceTahunAjaran->id);
+        $templateCount = $this->countRowsForTahunAjaran('report_templates', (int) $sourceTahunAjaran->id);
+        $activeTemplateCount = $this->countActiveReportTemplates((int) $sourceTahunAjaran->id);
+        $bobot = Schema::hasTable('bobot_nilais')
+            ? BobotNilai::resolveForRead((int) $sourceTahunAjaran->id)
+            : null;
+
+        $ready = [];
+        $warnings = [];
+        $info = [];
+
+        if ($kelasCount > 0) {
+            $ready[] = ['label' => 'Kelas', 'value' => "{$kelasCount} kelas tersedia"];
+        } else {
+            $warnings[] = ['label' => 'Kelas', 'value' => 'Belum ada kelas pada tahun ajaran sumber.'];
+        }
+
+        if ($workflow === 'semester_genap') {
+            $info[] = ['label' => 'Roster siswa sumber', 'value' => "{$rosterCount} siswa terdeteksi dari kelas sumber"];
+        }
+
+        if ($kelasTanpaWali === 0 && $kelasCount > 0) {
+            $ready[] = ['label' => 'Wali kelas', 'value' => 'Semua kelas memiliki wali kelas'];
+        } elseif ($kelasCount > 0) {
+            $warnings[] = ['label' => 'Wali kelas', 'value' => "{$kelasTanpaWali} kelas belum memiliki wali kelas"];
+        }
+
+        if ($mapelCount > 0) {
+            $ready[] = ['label' => 'Mata pelajaran', 'value' => "{$mapelCount} mata pelajaran tersedia"];
+        } else {
+            $warnings[] = ['label' => 'Mata pelajaran', 'value' => 'Belum ada mata pelajaran pada tahun ajaran sumber.'];
+        }
+
+        if ($mapelTanpaGuru === 0 && $mapelCount > 0) {
+            $ready[] = ['label' => 'Guru pengajar', 'value' => 'Semua mata pelajaran memiliki guru pengajar'];
+        } elseif ($mapelCount > 0) {
+            $warnings[] = ['label' => 'Guru pengajar', 'value' => "{$mapelTanpaGuru} mata pelajaran belum memiliki guru pengajar"];
+        }
+
+        if ($mapelBelumLengkap === 0 && $mapelCount > 0) {
+            $ready[] = ['label' => 'LM/TP', 'value' => 'Struktur LM/TP sudah tersedia'];
+        } elseif ($mapelCount > 0) {
+            $warnings[] = ['label' => 'LM/TP', 'value' => "{$mapelBelumLengkap} mata pelajaran belum memiliki LM/TP lengkap"];
+        }
+
+        if ($kkmCount > 0) {
+            $ready[] = ['label' => 'KKM', 'value' => "{$kkmCount} pengaturan KKM tersedia"];
+        } else {
+            $warnings[] = ['label' => 'KKM', 'value' => 'Belum ada pengaturan KKM tersimpan.'];
+        }
+
+        if ($bobot) {
+            $info[] = [
+                'label' => 'Bobot Nilai',
+                'value' => $bobot->exists
+                    ? "Tersimpan ({$bobot->bobot_tp}:{$bobot->bobot_lm}:{$bobot->bobot_as})"
+                    : "Menggunakan default sementara ({$bobot->bobot_tp}:{$bobot->bobot_lm}:{$bobot->bobot_as}), belum tersimpan",
+            ];
+        }
+
+        if ($workflow === 'next_year') {
+            $info[] = ['label' => 'Ekstrakurikuler', 'value' => "{$ekstrakurikulerCount} data ekstrakurikuler tersedia"];
+        }
+
+        if ($templateCount > 0) {
+            $info[] = ['label' => 'Template rapor', 'value' => "{$templateCount} template tersedia, {$activeTemplateCount} aktif"];
+        } else {
+            $warnings[] = ['label' => 'Template rapor', 'value' => 'Belum ada template rapor pada tahun ajaran sumber.'];
+        }
+
+        $info[] = [
+            'label' => $workflow === 'semester_genap' ? 'Data pekerjaan siswa' : 'Data siswa',
+            'value' => $workflow === 'semester_genap'
+                ? 'Nilai, catatan, rapor, dan hasil pekerjaan siswa Semester Ganjil tidak disalin sebagai pekerjaan Semester Genap.'
+                : 'Siswa tidak disalin sebagai data baru; penempatan tahun ajaran berikutnya melalui Kenaikan Kelas.',
+        ];
+
+        return [
+            'workflow' => $workflow,
+            'source' => [
+                'id' => $sourceTahunAjaran->id,
+                'tahun_ajaran' => $sourceTahunAjaran->tahun_ajaran,
+                'semester' => (int) $sourceTahunAjaran->semester,
+            ],
+            'counts' => [
+                'kelas' => $kelasCount,
+                'roster_siswa' => $rosterCount,
+                'kelas_tanpa_wali' => $kelasTanpaWali,
+                'mata_pelajaran' => $mapelCount,
+                'mata_pelajaran_tanpa_guru' => $mapelTanpaGuru,
+                'mata_pelajaran_lm_tp_belum_lengkap' => $mapelBelumLengkap,
+                'kkm' => $kkmCount,
+                'bobot_persisted' => $bobot?->exists ?? false,
+                'template_rapor' => $templateCount,
+                'template_rapor_aktif' => $activeTemplateCount,
+                'ekstrakurikuler' => $ekstrakurikulerCount,
+            ],
+            'siap' => $ready,
+            'perlu_diperiksa' => $warnings,
+            'informasi' => $info,
+        ];
+    }
+
+    private function countRowsForTahunAjaran(string $table, int $tahunAjaranId): int
+    {
+        if (! Schema::hasTable($table) || ! Schema::hasColumn($table, 'tahun_ajaran_id')) {
+            return 0;
+        }
+
+        $query = DB::table($table)->where('tahun_ajaran_id', $tahunAjaranId);
+
+        if (Schema::hasColumn($table, 'deleted_at')) {
+            $query->whereNull('deleted_at');
+        }
+
+        return (int) $query->count();
+    }
+
+    private function countRosterStudentsForSource(TahunAjaran $sourceTahunAjaran): int
+    {
+        if (! Schema::hasTable('kelas') || ! Schema::hasTable('siswas')) {
+            return 0;
+        }
+
+        $studentIds = [];
+        $classes = Kelas::where('tahun_ajaran_id', $sourceTahunAjaran->id)->get();
+
+        foreach ($classes as $kelas) {
+            foreach ($this->studentsForSemesterTransitionClass($kelas, $sourceTahunAjaran) as $student) {
+                $studentIds[(int) $student->id] = true;
+            }
+        }
+
+        return count($studentIds);
+    }
+
+    private function countClassesWithoutHomeroom(int $tahunAjaranId): int
+    {
+        if (! Schema::hasTable('kelas') || ! Schema::hasTable('guru_kelas')) {
+            return $this->countRowsForTahunAjaran('kelas', $tahunAjaranId);
+        }
+
+        return (int) DB::table('kelas as k')
+            ->where('k.tahun_ajaran_id', $tahunAjaranId)
+            ->when(Schema::hasColumn('kelas', 'deleted_at'), fn ($query) => $query->whereNull('k.deleted_at'))
+            ->whereNotExists(function ($query) {
+                $query->select(DB::raw(1))
+                    ->from('guru_kelas as gk')
+                    ->whereColumn('gk.kelas_id', 'k.id')
+                    ->where(function ($nested) {
+                        $nested->where('gk.is_wali_kelas', true)
+                            ->orWhere('gk.role', 'wali_kelas');
+                    });
+            })
+            ->count();
+    }
+
+    private function countSubjectsWithoutTeacher(int $tahunAjaranId): int
+    {
+        if (! Schema::hasTable('mata_pelajarans') || ! Schema::hasColumn('mata_pelajarans', 'guru_id')) {
+            return 0;
+        }
+
+        $query = DB::table('mata_pelajarans')
+            ->where('tahun_ajaran_id', $tahunAjaranId)
+            ->whereNull('guru_id');
+
+        if (Schema::hasColumn('mata_pelajarans', 'deleted_at')) {
+            $query->whereNull('deleted_at');
+        }
+
+        return (int) $query->count();
+    }
+
+    private function countSubjectsWithIncompleteLearningStructure(int $tahunAjaranId): int
+    {
+        if (! Schema::hasTable('mata_pelajarans')) {
+            return 0;
+        }
+
+        $subjects = DB::table('mata_pelajarans')
+            ->where('tahun_ajaran_id', $tahunAjaranId)
+            ->when(Schema::hasColumn('mata_pelajarans', 'deleted_at'), fn ($query) => $query->whereNull('deleted_at'))
+            ->pluck('id');
+
+        if ($subjects->isEmpty() || ! Schema::hasTable('lingkup_materis') || ! Schema::hasTable('tujuan_pembelajarans')) {
+            return 0;
+        }
+
+        $incomplete = 0;
+
+        foreach ($subjects as $subjectId) {
+            $lingkupMateriIds = DB::table('lingkup_materis')
+                ->where('mata_pelajaran_id', $subjectId)
+                ->when(Schema::hasColumn('lingkup_materis', 'deleted_at'), fn ($query) => $query->whereNull('deleted_at'))
+                ->pluck('id');
+
+            if ($lingkupMateriIds->isEmpty()) {
+                $incomplete++;
+                continue;
+            }
+
+            $hasLmWithoutTp = $lingkupMateriIds->contains(function ($lingkupMateriId) {
+                $tpQuery = DB::table('tujuan_pembelajarans')
+                    ->where('lingkup_materi_id', $lingkupMateriId);
+
+                if (Schema::hasColumn('tujuan_pembelajarans', 'deleted_at')) {
+                    $tpQuery->whereNull('deleted_at');
                 }
+
+                return ! $tpQuery->exists();
+            });
+
+            if ($hasLmWithoutTp) {
+                $incomplete++;
             }
-            
-            // Copy bobot nilai
-            $bobotNilai = \App\Models\BobotNilai::where('tahun_ajaran_id', $sourceTahunAjaran->id)->first();
-            if ($bobotNilai) {
-                $newBobotNilai = $bobotNilai->replicate();
-                $newBobotNilai->tahun_ajaran_id = $newTahunAjaran->id;
-                $newBobotNilai->save();
-            }
-            
-            // Copy Report Templates with updated semester
-            $reportTemplates = \App\Models\ReportTemplate::where('tahun_ajaran_id', $sourceTahunAjaran->id)->get();
-            foreach ($reportTemplates as $template) {
-                // Create a new filepath for the copy
-                $newPath = str_replace(
-                    basename($template->path),
-                    'semester2_' . basename($template->path),
-                    $template->path
-                );
-                
-                // Copy the template file
-                if (\Storage::exists('public/' . $template->path)) {
-                    \Storage::copy('public/' . $template->path, 'public/' . $newPath);
-                }
-                
-                $newTemplate = $template->replicate();
-                $newTemplate->tahun_ajaran_id = $newTahunAjaran->id;
-                $newTemplate->semester = 2; // Set to semester 2
-                $newTemplate->path = $newPath;
-                $newTemplate->is_active = false; // Default to not active
-                
-                // Map to new kelas ID if available
-                if ($template->kelas_id && isset($kelasMapping[$template->kelas_id])) {
-                    $newTemplate->kelas_id = $kelasMapping[$template->kelas_id];
-                }
-                
-                $newTemplate->save();
-                
-                // Copy template mappings
-                foreach ($template->mappings as $mapping) {
-                    $newMapping = $mapping->replicate();
-                    $newMapping->report_template_id = $newTemplate->id;
-                    $newMapping->save();
-                }
-            }
-            
-            // Create absensi records for all students in semester 2
-            $semester2Students = Siswa::whereIn('kelas_id', array_values($kelasMapping))->get();
-            foreach ($semester2Students as $student) {
-                $absensi = new \App\Models\Absensi();
-                $absensi->siswa_id = $student->id;
-                $absensi->sakit = 0;
-                $absensi->izin = 0;
-                $absensi->tanpa_keterangan = 0;
-                $absensi->semester = 2;
-                $absensi->tahun_ajaran_id = $newTahunAjaran->id;
-                $absensi->save();
-            }
-            
-            DB::commit();
-            
-            \Log::info("Successfully copied all related data to semester 2", [
-                'target_id' => $newTahunAjaran->id,
+        }
+
+        return $incomplete;
+    }
+
+    private function countActiveReportTemplates(int $tahunAjaranId): int
+    {
+        if (! Schema::hasTable('report_templates') || ! Schema::hasColumn('report_templates', 'tahun_ajaran_id')) {
+            return 0;
+        }
+
+        $query = DB::table('report_templates')
+            ->where('tahun_ajaran_id', $tahunAjaranId)
+            ->where('is_active', true);
+
+        if (Schema::hasColumn('report_templates', 'deleted_at')) {
+            $query->whereNull('deleted_at');
+        }
+
+        return (int) $query->count();
+    }
+
+    private function copyReportTemplateFileForSemester(ReportTemplate $template, TahunAjaran $newTahunAjaran, array &$copiedStoragePaths): ?string
+    {
+        $sourcePath = $this->normalizePublicDiskRelativeTemplatePath($template->path);
+
+        if (! $sourcePath) {
+            return $sourcePath;
+        }
+
+        $disk = Storage::disk('public');
+
+        if (! $disk->exists($sourcePath)) {
+            Log::warning('Report template file missing during semester transition; copied template metadata will reuse existing path.', [
+                'report_template_id' => $template->id,
+                'path' => $sourcePath,
             ]);
-        } catch (\Exception $e) {
-            DB::rollBack();
-            \Log::error("Error copying related data to new semester", [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-            throw $e; // Re-throw the exception for handling in the calling method
+
+            return $sourcePath;
+        }
+
+        $targetDirectory = self::SEMESTER_TEMPLATE_COPY_DIRECTORY . '/' . $newTahunAjaran->id;
+        $disk->makeDirectory($targetDirectory);
+        $targetPath = $targetDirectory . '/' . $this->semesterTemplateCopyFilename($template, $newTahunAjaran, $sourcePath);
+
+        if (! $disk->copy($sourcePath, $targetPath)) {
+            throw new RuntimeException("Failed to copy report template file for template {$template->id}.");
+        }
+
+        $copiedStoragePaths[] = $targetPath;
+
+        return $targetPath;
+    }
+
+    private function normalizePublicDiskRelativeTemplatePath(?string $path): ?string
+    {
+        if ($path === null) {
+            return null;
+        }
+
+        $normalized = str_replace('\\', '/', trim($path));
+        $normalized = preg_replace('#/+#', '/', $normalized);
+        $normalized = ltrim($normalized, '/');
+
+        if (str_starts_with($normalized, 'public/')) {
+            $normalized = substr($normalized, strlen('public/'));
+        }
+
+        return $normalized === '' ? null : $normalized;
+    }
+
+    private function semesterTemplateCopyFilename(ReportTemplate $template, TahunAjaran $newTahunAjaran, string $sourcePath): string
+    {
+        $type = strtolower((string) ($template->type ?: 'template'));
+        $safeType = preg_replace('/[^a-z0-9]+/', '-', $type) ?: 'template';
+        $safeOriginalName = preg_replace('/[^A-Za-z0-9._-]+/', '-', basename($sourcePath)) ?: 'template.docx';
+
+        return "semester2-target-{$newTahunAjaran->id}-template-{$template->id}-{$safeType}-{$safeOriginalName}";
+    }
+
+    private function cleanupCopiedTransitionFiles(array $copiedStoragePaths): void
+    {
+        $disk = Storage::disk('public');
+
+        foreach (array_unique($copiedStoragePaths) as $path) {
+            try {
+                $relativePath = $this->normalizePublicDiskRelativeTemplatePath($path);
+
+                if ($relativePath && $disk->exists($relativePath)) {
+                    $disk->delete($relativePath);
+                }
+            } catch (Throwable $exception) {
+                Log::warning('Failed to clean up copied report template file after transition rollback.', [
+                    'path' => $path,
+                    'error' => $exception->getMessage(),
+                ]);
+            }
         }
     }
 
@@ -332,32 +683,72 @@ class TahunAjaranController extends Controller
     }
 
 
-    public function advanceToNextSemester($id)
+    public function advanceToNextSemester(Request $request, $id)
     {
+        $copiedStoragePaths = [];
+
+        try {
+            $sourceTahunAjaran = TahunAjaran::withTrashed()->findOrFail($id);
+            $this->assertSemesterTransitionSourceIsEligible($sourceTahunAjaran);
+        } catch (DomainException $e) {
+            Log::warning('[TahunAjaranController] Advance semester rejected before confirmation', [
+                'error' => $e->getMessage(),
+                'user_id' => auth()->id(),
+                'tahun_ajaran_id' => $id,
+            ]);
+
+            return redirect()->back()->with('error', $e->getMessage());
+        }
+
+        if (! $this->hasValidTransitionConfirmation($request, self::SEMESTER_GENAP_CONFIRMATION)) {
+            return $this->rejectTransitionConfirmation($request);
+        }
+
         DB::beginTransaction();
         
         try {
             // Find the source academic year
-            $sourceTahunAjaran = TahunAjaran::findOrFail($id);
-            
-            // Check if it's already semester 2
-            if ($sourceTahunAjaran->semester == 2) {
-                return redirect()->back()->with('error', 'Tahun ajaran ini sudah berada di semester Genap.');
+            $sourceTahunAjaran = TahunAjaran::withTrashed()
+                ->whereKey($id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            $this->assertSemesterTransitionSourceIsEligible($sourceTahunAjaran);
+
+            if (TahunAjaran::where('is_active', true)->where('id', '!=', $sourceTahunAjaran->id)->exists()) {
+                throw new DomainException('Ada tahun ajaran lain yang sedang aktif. Transisi semester tidak dapat dilanjutkan dengan aman.');
+            }
+
+            $existingSemesterGenap = TahunAjaran::withTrashed()
+                ->where('tahun_ajaran', $sourceTahunAjaran->tahun_ajaran)
+                ->where('semester', 2)
+                ->where('id', '!=', $sourceTahunAjaran->id)
+                ->first();
+
+            if ($existingSemesterGenap) {
+                if ($existingSemesterGenap->trashed()) {
+                    throw new DomainException('Semester Genap untuk tahun ajaran ini sudah ada di arsip. Pulihkan Semester Genap dari arsip terlebih dahulu, lalu aktifkan semester tersebut jika ingin melanjutkan.');
+                }
+
+                throw new DomainException('Semester Genap untuk tahun ajaran ini sudah ada. Aktifkan Semester Genap tersebut dari daftar tahun ajaran; transisi tidak dibuat ulang.');
             }
             
             // Create a new academic year record with semester 2
             $newTahunAjaran = $sourceTahunAjaran->replicate();
             $newTahunAjaran->semester = 2;
-            $newTahunAjaran->is_active = true; // Make the new semester active
+            $newTahunAjaran->is_active = false;
             $newTahunAjaran->deskripsi = $sourceTahunAjaran->deskripsi . ' (Semester Genap)';
             $newTahunAjaran->save();
             
-            // Set the old semester to inactive
+            // Copy related data (similar to your existing copy methods)
+            $this->copyRelatedDataToNewSemester($sourceTahunAjaran, $newTahunAjaran, $copiedStoragePaths);
+
+            // Switch active year only after the target semester is fully prepared
             $sourceTahunAjaran->is_active = false;
             $sourceTahunAjaran->save();
-            
-            // Copy related data (similar to your existing copy methods)
-            $this->copyRelatedDataToNewSemester($sourceTahunAjaran, $newTahunAjaran);
+
+            $newTahunAjaran->is_active = true;
+            $newTahunAjaran->save();
             
             // Update school profile to use the new semester
             $this->updateProfilSekolah($newTahunAjaran);
@@ -389,8 +780,21 @@ class TahunAjaranController extends Controller
             
             return redirect()->route('tahun.ajaran.index')
                 ->with('success', 'Berhasil melanjutkan ke semester Genap. Data semester Ganjil tetap tersimpan.');
+        } catch (DomainException $e) {
+            DB::rollback();
+            $this->cleanupCopiedTransitionFiles($copiedStoragePaths);
+
+            Log::warning('[TahunAjaranController] Advance semester rejected', [
+                'error' => $e->getMessage(),
+                'user_id' => auth()->id(),
+                'tahun_ajaran_id' => $id,
+            ]);
+
+            return redirect()->back()->with('error', $e->getMessage());
         } catch (\Exception $e) {
             DB::rollback();
+            $this->cleanupCopiedTransitionFiles($copiedStoragePaths);
+
             Log::error('[TahunAjaranController] Advance semester failed', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
@@ -402,6 +806,69 @@ class TahunAjaranController extends Controller
 
             return redirect()->back()->with('error', 'Gagal melanjutkan semester. Silakan coba lagi.');
         }
+    }
+
+    private function assertSemesterTransitionSourceIsEligible(TahunAjaran $sourceTahunAjaran): void
+    {
+        if ($sourceTahunAjaran->trashed()) {
+            throw new DomainException('Tahun ajaran yang berada di arsip harus dipulihkan terlebih dahulu sebelum dapat dilanjutkan ke semester berikutnya.');
+        }
+
+        if (! $sourceTahunAjaran->is_active) {
+            throw new DomainException('Hanya Semester Ganjil yang sedang aktif yang dapat dilanjutkan ke Semester Genap.');
+        }
+
+        if ((int) $sourceTahunAjaran->semester !== 1) {
+            throw new DomainException('Pembuatan Semester Genap hanya dapat dilakukan dari Semester Ganjil.');
+        }
+    }
+
+    private function assertNextYearCopySourceIsEligible(TahunAjaran $sourceTahunAjaran): void
+    {
+        if ($sourceTahunAjaran->trashed()) {
+            throw new DomainException('Tahun ajaran yang berada di arsip harus dipulihkan terlebih dahulu sebelum dapat digunakan untuk membuat tahun ajaran berikutnya.');
+        }
+
+        if ((int) $sourceTahunAjaran->semester !== 2) {
+            throw new DomainException('Pembuatan tahun ajaran berikutnya hanya dapat dilakukan dari Semester Genap.');
+        }
+    }
+
+    private function hasValidTransitionConfirmation(Request $request, string $requiredPhrase): bool
+    {
+        return trim((string) $request->input('transition_confirmation')) === $requiredPhrase;
+    }
+
+    private function rejectTransitionConfirmation(Request $request)
+    {
+        if ($request->expectsJson()) {
+            return response()->json([
+                'success' => false,
+                'message' => self::CONFIRMATION_MISMATCH_MESSAGE,
+                'errors' => [
+                    'transition_confirmation' => [self::CONFIRMATION_MISMATCH_MESSAGE],
+                ],
+            ], 422);
+        }
+
+        return redirect()->back()
+            ->withErrors(['transition_confirmation' => self::CONFIRMATION_MISMATCH_MESSAGE])
+            ->with('error', self::CONFIRMATION_MISMATCH_MESSAGE)
+            ->withInput();
+    }
+
+    private function rejectCopyRequest(Request $request, string $message, int $status = 422)
+    {
+        if ($request->expectsJson()) {
+            return response()->json([
+                'success' => false,
+                'message' => $message,
+            ], $status);
+        }
+
+        return redirect()->back()
+            ->with('error', $message)
+            ->withInput();
     }
 
     /**
@@ -458,15 +925,6 @@ class TahunAjaranController extends Controller
             // Buat tahun ajaran baru
             $tahunAjaran = TahunAjaran::create($request->all());
 
-            // TAMBAHAN: Auto-copy struktur dari tahun ajaran sebelumnya
-            $previousTahunAjaran = TahunAjaran::where('id', '!=', $tahunAjaran->id)
-                                            ->orderBy('tanggal_mulai', 'desc')
-                                            ->first();
-            
-            if ($previousTahunAjaran) {
-                $this->copyBasicStructureFromPrevious($previousTahunAjaran, $tahunAjaran);
-            }
-
             // Jika aktif, update profil sekolah
             if ($request->has('is_active') && $request->is_active) {
                 $this->updateProfilSekolah($tahunAjaran);
@@ -476,11 +934,20 @@ class TahunAjaranController extends Controller
             $this->clearTahunAjaranCaches($tahunAjaran->id);
 
             return redirect()->route('tahun.ajaran.index')
-                        ->with('success', 'Tahun ajaran berhasil dibuat dengan struktur dasar!');
+                        ->with('success', 'Tahun ajaran berhasil dibuat.');
         } catch (\Exception $e) {
             DB::rollback();
+
+            \Log::error('Gagal membuat tahun ajaran manual', [
+                'tahun_ajaran' => $request->input('tahun_ajaran'),
+                'semester' => $request->input('semester'),
+                'is_active' => $request->boolean('is_active'),
+                'error' => $e->getMessage(),
+                'exception' => get_class($e),
+            ]);
+
             return redirect()->back()
-                    ->with('error', 'Gagal membuat tahun ajaran: ' . $e->getMessage())
+                    ->with('error', 'Gagal membuat tahun ajaran. Silakan coba lagi.')
                     ->withInput();
         }
     }
@@ -606,12 +1073,27 @@ class TahunAjaranController extends Controller
             $query->where('tahun_ajaran_id', $id);
         })->count();
         $totalMataPelajaran = MataPelajaran::where('tahun_ajaran_id', $id)->count();
+        $permanentPurgePreview = $tahunAjaran->trashed()
+            ? $this->tahunAjaranPurgeService->preview($tahunAjaran)
+            : null;
+        $permanentDeleteProtectionMessage = $permanentPurgePreview['can_purge'] ?? false
+            ? null
+            : ($permanentPurgePreview['blocked_message'] ?? null);
+        $permanentPurgeConfirmationPhrase = $permanentPurgePreview['confirmation_phrase']
+            ?? $this->tahunAjaranPurgeService->confirmationPhrase($tahunAjaran);
+        $semesterGenapReadiness = (! $tahunAjaran->trashed() && $tahunAjaran->is_active && (int) $tahunAjaran->semester === 1)
+            ? $this->buildTransitionReadiness($tahunAjaran, 'semester_genap')
+            : null;
         
         return view('admin.tahun_ajaran.show', compact(
             'tahunAjaran', 
             'totalKelas', 
             'totalSiswa', 
-            'totalMataPelajaran'
+            'totalMataPelajaran',
+            'permanentDeleteProtectionMessage',
+            'permanentPurgePreview',
+            'permanentPurgeConfirmationPhrase',
+            'semesterGenapReadiness'
         ));
     }
 
@@ -896,60 +1378,95 @@ class TahunAjaranController extends Controller
     public function forceDelete($id)
     {
         try {
-            // Cari tahun ajaran yang sudah diarsipkan
-            $tahunAjaran = TahunAjaran::withTrashed()->findOrFail($id);
-            
-            // Pastikan tahun ajaran sudah diarsipkan
-            if (!$tahunAjaran->trashed()) {
+            $tahunAjaran = TahunAjaran::withTrashed()->find($id);
+
+            if (! $tahunAjaran) {
+                $message = 'Tahun ajaran tidak ditemukan.';
+
                 if (request()->expectsJson()) {
                     return response()->json([
                         'success' => false,
-                        'message' => 'Hanya tahun ajaran yang sudah diarsipkan yang dapat dihapus permanen.'
+                        'message' => $message,
+                    ], 404);
+                }
+
+                return redirect()->route('tahun.ajaran.index', ['showArchived' => 'true'])
+                    ->with('error', $message);
+            }
+
+            $expectedConfirmation = $this->tahunAjaranPurgeService->confirmationPhrase($tahunAjaran);
+            $submittedConfirmation = (string) request()->input('purge_confirmation', '');
+            $confirmation = trim($submittedConfirmation);
+
+            if ($confirmation !== $expectedConfirmation) {
+                $message = TahunAjaranPurgeService::CONFIRMATION_MISMATCH_MESSAGE;
+
+                if (request()->expectsJson()) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => $message,
                     ], 422);
                 }
 
                 return redirect()->back()
-                    ->with('error', 'Hanya tahun ajaran yang sudah diarsipkan yang dapat dihapus permanen.');
+                    ->withErrors(['purge_confirmation' => $message])
+                    ->withInput()
+                    ->with('error', $message);
             }
-            
-            // Pastikan tidak sedang digunakan di session
-            if (session('tahun_ajaran_id') == $id) {
-                // Cari tahun ajaran aktif lain untuk diset ke session
-                $newTahunAjaran = TahunAjaran::where('is_active', true)->first();
-                
-                if (!$newTahunAjaran) {
-                    // Jika tidak ada yang aktif, ambil yang terbaru
-                    $newTahunAjaran = TahunAjaran::orderBy('tanggal_mulai', 'desc')->first();
-                }
-                
-                if ($newTahunAjaran) {
-                    session(['tahun_ajaran_id' => $newTahunAjaran->id]);
-                } else {
-                    session()->forget('tahun_ajaran_id');
-                }
-            }
-            
-            // Hapus data terkait (optional, tergantung setup relasi foreign key di database)
-            // Jika FK di database sudah setting ON DELETE CASCADE, maka ini tidak perlu
-            
-            // Hapus permanen
-            $tahunAjaran->forceDelete();
-            $this->clearTahunAjaranCaches($id);
+
+            $purgeResult = $this->tahunAjaranPurgeService->purge((int) $id, $submittedConfirmation);
+
+            $sessionFinalized = $this->tahunAjaranPurgeService->finalizeSessionAfterCommitSafely(
+                (int) $id,
+                (int) $purgeResult['active_replacement_id'],
+                auth()->id(),
+                fn () => session('tahun_ajaran_id'),
+                fn (int $activeReplacementId) => session(['tahun_ajaran_id' => $activeReplacementId])
+            );
+            $cleanupComplete = $this->tahunAjaranPurgeService->runPostCommitCleanupSafely($purgeResult);
+            $message = $sessionFinalized && $cleanupComplete
+                ? self::PERMANENT_DELETE_SUCCESS_MESSAGE
+                : TahunAjaranPurgeService::FILE_CLEANUP_WARNING;
 
             if (request()->expectsJson()) {
                 return response()->json([
                     'success' => true,
-                    'message' => 'Tahun ajaran berhasil dihapus permanen.'
+                    'message' => $message
                 ]);
             }
             
             return redirect()->route('tahun.ajaran.index', ['showArchived' => 'true'])
-                ->with('success', 'Tahun ajaran berhasil dihapus permanen.');
-                
-        } catch (\Exception $e) {
-            \Log::error('Error saat menghapus permanen tahun ajaran: ' . $e->getMessage(), [
+                ->with('success', $message);
+        } catch (TahunAjaranPurgeException $exception) {
+            Log::warning('[TahunAjaranController] Safe academic year purge blocked.', [
                 'tahun_ajaran_id' => $id,
-                'trace' => $e->getTraceAsString()
+                'user_id' => auth()->id(),
+                'context' => $exception->context(),
+            ]);
+
+            if (request()->expectsJson()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $exception->getMessage(),
+                ], 422);
+            }
+
+            $redirect = redirect()->back()
+                ->with('error', $exception->getMessage());
+
+            if ($exception->getMessage() === TahunAjaranPurgeService::CONFIRMATION_MISMATCH_MESSAGE) {
+                $redirect = $redirect
+                    ->withErrors(['purge_confirmation' => $exception->getMessage()])
+                    ->withInput();
+            }
+
+            return $redirect;
+        } catch (Throwable $e) {
+            Log::error('[TahunAjaranController] Unexpected safe academic year purge failure.', [
+                'tahun_ajaran_id' => $id,
+                'user_id' => auth()->id(),
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
             ]);
 
             if (request()->expectsJson()) {
@@ -958,12 +1475,12 @@ class TahunAjaranController extends Controller
                     'message' => 'Terjadi kesalahan saat menghapus permanen tahun ajaran.'
                 ], 500);
             }
-            
+
             return redirect()->back()
-                ->with('error', 'Terjadi kesalahan saat menghapus permanen tahun ajaran: ' . $e->getMessage());
+                ->with('error', 'Terjadi kesalahan saat menghapus permanen tahun ajaran. Silakan coba lagi.');
         }
     }
-    
+
     /**
      * Menghapus tahun ajaran yang spesifik.
      *
@@ -1035,16 +1552,18 @@ class TahunAjaranController extends Controller
     {
         $sourceTahunAjaran = TahunAjaran::withTrashed()->findOrFail($id);
         
-        // Validasi: hanya bisa copy dari semester genap
-        if ($sourceTahunAjaran->semester != 2) {
-            return redirect()->back()->with('error', 'Pembuatan tahun ajaran berikutnya hanya dapat dilakukan dari semester genap (semester 2). Saat ini semester: ' . ($sourceTahunAjaran->semester == 1 ? 'ganjil' : 'genap'));
+        try {
+            $this->assertNextYearCopySourceIsEligible($sourceTahunAjaran);
+        } catch (DomainException $e) {
+            return redirect()->back()->with('error', $e->getMessage());
         }
         
         // Generate tahun ajaran baru
         $tahunParts = explode('/', $sourceTahunAjaran->tahun_ajaran);
         $newTahunAjaran = (intval($tahunParts[0]) + 1) . '/' . (intval($tahunParts[1]) + 1);
+        $nextYearReadiness = $this->buildTransitionReadiness($sourceTahunAjaran, 'next_year');
         
-        return view('admin.tahun_ajaran.copy', compact('sourceTahunAjaran', 'newTahunAjaran'));
+        return view('admin.tahun_ajaran.copy', compact('sourceTahunAjaran', 'newTahunAjaran', 'nextYearReadiness'));
     }
 
     private function findCopyConflictRecord(string $tahunAjaran, int $semester): ?TahunAjaran
@@ -1096,15 +1615,14 @@ class TahunAjaranController extends Controller
     {
         $sourceTahunAjaran = TahunAjaran::withTrashed()->findOrFail($id);
 
-        if ($sourceTahunAjaran->semester != 2) {
-            if ($request->expectsJson()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Pembuatan tahun ajaran berikutnya hanya dapat dilakukan dari semester genap.'
-                ], 422);
-            }
+        try {
+            $this->assertNextYearCopySourceIsEligible($sourceTahunAjaran);
+        } catch (DomainException $e) {
+            return $this->rejectCopyRequest($request, $e->getMessage());
+        }
 
-            return redirect()->back()->with('error', 'Pembuatan tahun ajaran berikutnya hanya dapat dilakukan dari semester genap.');
+        if (! $this->hasValidTransitionConfirmation($request, self::NEXT_YEAR_CONFIRMATION)) {
+            return $this->rejectTransitionConfirmation($request);
         }
 
         $validator = Validator::make($request->all(), [
@@ -1112,16 +1630,40 @@ class TahunAjaranController extends Controller
                 'required',
                 'string',
                 'regex:/^\d{4}\/\d{4}$/',
+                function ($attribute, $value, $fail) use ($sourceTahunAjaran) {
+                    if (! preg_match('/^(\d{4})\/(\d{4})$/', $value, $targetMatches)) {
+                        return;
+                    }
+
+                    $targetStart = (int) $targetMatches[1];
+                    $targetEnd = (int) $targetMatches[2];
+
+                    if ($targetEnd !== $targetStart + 1) {
+                        $fail('Format tahun ajaran target harus berurutan, misalnya 2027/2028.');
+
+                        return;
+                    }
+
+                    if (preg_match('/^(\d{4})\/(\d{4})$/', (string) $sourceTahunAjaran->tahun_ajaran, $sourceMatches)) {
+                        $expectedStart = (int) $sourceMatches[1] + 1;
+                        $expectedEnd = (int) $sourceMatches[2] + 1;
+
+                        if ($targetStart !== $expectedStart || $targetEnd !== $expectedEnd) {
+                            $fail('Tahun ajaran target harus tahun ajaran berikutnya dari sumber.');
+                        }
+                    }
+                },
             ],
             'tanggal_mulai' => 'required|date',
             'tanggal_selesai' => 'required|date|after:tanggal_mulai',
-            'semester' => 'required|integer|in:1,2',
+            'semester' => 'required|integer|in:1',
             'copy_kelas' => 'boolean',
             'copy_mata_pelajaran' => 'boolean',
             'copy_templates' => 'boolean',
             'copy_ekstrakurikuler' => 'boolean',
             'copy_kkm' => 'boolean',
             'copy_bobot_nilai' => 'boolean',
+            'transition_confirmation' => 'required|string',
             'is_active' => 'boolean'
         ]);
 
@@ -1139,22 +1681,41 @@ class TahunAjaranController extends Controller
                             ->withInput();
         }
 
+        $copyKelas = $request->boolean('copy_kelas');
+        $copyMataPelajaran = $request->boolean('copy_mata_pelajaran');
+        $copyTemplates = $request->boolean('copy_templates');
+        $copyKkm = $request->boolean('copy_kkm');
+        $copyEkstrakurikuler = $request->boolean('copy_ekstrakurikuler');
+        $copyBobotNilai = $request->boolean('copy_bobot_nilai');
+
+        if ((! $copyKelas && ($copyMataPelajaran || $copyTemplates || $copyKkm)) || ($copyKkm && ! $copyMataPelajaran)) {
+            $message = 'Copy mata pelajaran, template, dan KKM memerlukan copy kelas dan mata pelajaran yang sesuai.';
+
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $message,
+                ], 422);
+            }
+
+            return redirect()->back()
+                            ->with('error', $message)
+                            ->withInput();
+        }
+
         $conflict = $this->findCopyConflictRecord($request->tahun_ajaran, (int) $request->semester);
         if ($conflict) {
             return $this->respondToCopyConflict($request, $conflict, $request->tahun_ajaran);
         }
 
+        $copiedStoragePaths = [];
+
         DB::beginTransaction();
         
         try {
-            if ($request->is_active) {
-                TahunAjaran::where('is_active', true)
-                        ->update(['is_active' => false]);
-            }
-
             $newTahunAjaran = TahunAjaran::create([
                 'tahun_ajaran' => $request->tahun_ajaran,
-                'is_active' => $request->is_active ?? false,
+                'is_active' => false,
                 'tanggal_mulai' => $request->tanggal_mulai,
                 'tanggal_selesai' => $request->tanggal_selesai,
                 'semester' => $request->semester,
@@ -1162,39 +1723,52 @@ class TahunAjaranController extends Controller
             ]);
 
             $kelasMapping = [];
+            $mapelMapping = [];
             
             // SIMPLIFIED: Copy kelas dengan struktur yang sama (tanpa increment)
-            if ($request->copy_kelas) {
+            if ($copyKelas) {
                 $kelasMapping = $this->copyKelasExact($sourceTahunAjaran, $newTahunAjaran);
             }
 
             // Copy data lainnya
-            if ($request->copy_mata_pelajaran) {
-                $this->copyMataPelajaran($sourceTahunAjaran, $newTahunAjaran, $request->semester, $kelasMapping);
+            if ($copyMataPelajaran) {
+                $mapelMapping = $this->copyMataPelajaran($sourceTahunAjaran, $newTahunAjaran, $request->semester, $kelasMapping);
             }
 
-            if ($request->copy_templates) {
-                $this->copyReportTemplates($sourceTahunAjaran, $newTahunAjaran, $request->semester, $kelasMapping);
+            if ($copyTemplates) {
+                $this->copyReportTemplates($sourceTahunAjaran, $newTahunAjaran, $request->semester, $kelasMapping, $copiedStoragePaths);
             }
             
-            if ($request->copy_ekstrakurikuler) {
+            if ($copyEkstrakurikuler) {
                 $this->copyEkstrakurikuler($sourceTahunAjaran, $newTahunAjaran);
             }
             
-            if ($request->copy_kkm) {
-                $this->copyKkm($sourceTahunAjaran, $newTahunAjaran, $kelasMapping);
+            if ($copyKkm) {
+                $this->copyKkm($sourceTahunAjaran, $newTahunAjaran, $kelasMapping, $mapelMapping);
             }
             
-            if ($request->copy_bobot_nilai) {
+            if ($copyBobotNilai) {
                 $this->copyBobotNilai($sourceTahunAjaran, $newTahunAjaran);
             }
             
-            if ($newTahunAjaran->is_active) {
+            if ($request->boolean('is_active')) {
+                TahunAjaran::where('is_active', true)
+                        ->update(['is_active' => false]);
+
+                $newTahunAjaran->forceFill(['is_active' => true])->save();
                 $this->updateProfilSekolah($newTahunAjaran);
             }
             
             DB::commit();
             $this->clearTahunAjaranCaches($newTahunAjaran->id);
+
+            if ($newTahunAjaran->is_active) {
+                session([
+                    'tahun_ajaran_id' => $newTahunAjaran->id,
+                    'selected_semester' => 1,
+                    'no_tahun_ajaran' => false,
+                ]);
+            }
 
             if ($request->expectsJson()) {
                 return response()->json([
@@ -1208,6 +1782,7 @@ class TahunAjaranController extends Controller
                             ->with('success', 'Tahun ajaran berikutnya berhasil dibuat dengan struktur kelas yang sama!');
         } catch (\Exception $e) {
             DB::rollback();
+            $this->cleanupCopiedNewYearFiles($copiedStoragePaths);
             \Log::error('Error in processCopy: ' . $e->getMessage(), [
                 'trace' => $e->getTraceAsString()
             ]);
@@ -1219,7 +1794,7 @@ class TahunAjaranController extends Controller
                 ], 500);
             }
 
-            return redirect()->back()->with('error', 'Gagal membuat tahun ajaran berikutnya: ' . $e->getMessage());
+            return redirect()->back()->with('error', 'Gagal membuat tahun ajaran berikutnya. Silakan coba lagi.');
         }
     }
 
@@ -1299,7 +1874,7 @@ class TahunAjaranController extends Controller
     
         
     // Metode baru untuk menyalin KKM
-    private function copyKkm($sourceTahunAjaran, $newTahunAjaran, $kelasMapping = [])
+    private function copyKkm($sourceTahunAjaran, $newTahunAjaran, $kelasMapping = [], $mapelMapping = [])
     {
         if (empty($kelasMapping)) {
             return;
@@ -1313,6 +1888,22 @@ class TahunAjaranController extends Controller
                 $newKkm = $kkm->replicate();
                 $newKkm->tahun_ajaran_id = $newTahunAjaran->id;
                 $newKkm->kelas_id = $kelasMapping[$kkm->kelas_id];
+
+                if ($kkm->mata_pelajaran_id) {
+                    if (! isset($mapelMapping[$kkm->mata_pelajaran_id])) {
+                        Log::warning('Skipping KKM copy because copied subject mapping is missing.', [
+                            'kkm_id' => $kkm->id,
+                            'source_mata_pelajaran_id' => $kkm->mata_pelajaran_id,
+                            'source_tahun_ajaran_id' => $sourceTahunAjaran->id,
+                            'target_tahun_ajaran_id' => $newTahunAjaran->id,
+                        ]);
+
+                        continue;
+                    }
+
+                    $newKkm->mata_pelajaran_id = $mapelMapping[$kkm->mata_pelajaran_id];
+                }
+
                 $newKkm->save();
             }
         }
@@ -1439,6 +2030,7 @@ class TahunAjaranController extends Controller
     private function copyMataPelajaran($sourceTahunAjaran, $newTahunAjaran, $newSemester = null, $kelasMapping = [])
     {
         $sourceMataPelajaran = MataPelajaran::where('tahun_ajaran_id', $sourceTahunAjaran->id)->get();
+        $mapelMapping = [];
         
         \Log::info("Starting copyMataPelajaran", [
             'source_mapel_count' => $sourceMataPelajaran->count(),
@@ -1446,6 +2038,17 @@ class TahunAjaranController extends Controller
         ]);
         
         foreach ($sourceMataPelajaran as $mapel) {
+            if ($mapel->kelas_id && ! isset($kelasMapping[$mapel->kelas_id])) {
+                Log::warning('Skipping subject copy because copied class mapping is missing.', [
+                    'mata_pelajaran_id' => $mapel->id,
+                    'source_kelas_id' => $mapel->kelas_id,
+                    'source_tahun_ajaran_id' => $sourceTahunAjaran->id,
+                    'target_tahun_ajaran_id' => $newTahunAjaran->id,
+                ]);
+
+                continue;
+            }
+
             $newMapel = $mapel->replicate();
             $newMapel->tahun_ajaran_id = $newTahunAjaran->id;
             
@@ -1454,13 +2057,13 @@ class TahunAjaranController extends Controller
                 $newMapel->semester = $newSemester;
             }
             
-            // Update kelas_id berdasarkan mapping
-            if (isset($kelasMapping[$mapel->kelas_id])) {
+            if ($mapel->kelas_id) {
                 $newMapel->kelas_id = $kelasMapping[$mapel->kelas_id];
             }
             
             // Guru tetap sama (tidak perlu update guru_id)
             $newMapel->save();
+            $mapelMapping[$mapel->id] = $newMapel->id;
             
             \Log::info("Created new mata pelajaran", [
                 'original_id' => $mapel->id,
@@ -1483,34 +2086,19 @@ class TahunAjaranController extends Controller
                 }
             }
         }
+
+        return $mapelMapping;
     }
 
     /**
      * Helper method untuk copy template rapor dari satu tahun ajaran ke tahun ajaran lain.
      */
-    private function copyReportTemplates($sourceTahunAjaran, $newTahunAjaran, $newSemester = null)
+    private function copyReportTemplates($sourceTahunAjaran, $newTahunAjaran, $newSemester = null, $kelasMapping = [], array &$copiedStoragePaths = [])
     {
         $sourceTemplates = ReportTemplate::where('tahun_ajaran_id', $sourceTahunAjaran->id)->get();
         
-        // Ambil mapping kelas lama ke kelas baru jika perlu
-        $kelasMapping = [];
-        $oldKelasIds = Kelas::where('tahun_ajaran_id', $sourceTahunAjaran->id)->pluck('id')->toArray();
-        $newKelasIds = Kelas::where('tahun_ajaran_id', $newTahunAjaran->id)->pluck('id')->toArray();
-        
-        // Jika jumlah kelas sama, asumsikan mereka berkorespondensi 1-1
-        if (count($oldKelasIds) === count($newKelasIds)) {
-            $kelasMapping = array_combine($oldKelasIds, $newKelasIds);
-        }
-        
         foreach ($sourceTemplates as $template) {
-            // Salin file template
-            $newPath = str_replace(
-                basename($template->path),
-                'copy_' . $newTahunAjaran->tahun_ajaran . '_' . basename($template->path),
-                $template->path
-            );
-            
-            \Storage::copy('public/' . $template->path, 'public/' . $newPath);
+            $newPath = $this->copyReportTemplateFileForNewYear($template, $newTahunAjaran, $copiedStoragePaths);
             
             $newTemplate = $template->replicate();
             $newTemplate->tahun_ajaran_id = $newTahunAjaran->id;
@@ -1523,18 +2111,95 @@ class TahunAjaranController extends Controller
                 $newTemplate->semester = $newSemester;
             }
             
-            // Jika ada mapping kelas, gunakan kelas baru
-            if ($template->kelas_id && isset($kelasMapping[$template->kelas_id])) {
-                $newTemplate->kelas_id = $kelasMapping[$template->kelas_id];
+            if ($template->kelas_id) {
+                if (isset($kelasMapping[$template->kelas_id])) {
+                    $newTemplate->kelas_id = $kelasMapping[$template->kelas_id];
+                } else {
+                    Log::warning('Clearing copied report template class because copied class mapping is missing.', [
+                        'report_template_id' => $template->id,
+                        'source_kelas_id' => $template->kelas_id,
+                        'source_tahun_ajaran_id' => $sourceTahunAjaran->id,
+                        'target_tahun_ajaran_id' => $newTahunAjaran->id,
+                    ]);
+
+                    $newTemplate->kelas_id = null;
+                }
             }
             
             $newTemplate->save();
+
+            if (Schema::hasTable('report_template_kelas')) {
+                $templateClassIds = DB::table('report_template_kelas')
+                    ->where('report_template_id', $template->id)
+                    ->pluck('kelas_id');
+
+                foreach ($templateClassIds as $templateClassId) {
+                    if (isset($kelasMapping[$templateClassId])) {
+                        DB::table('report_template_kelas')->insert([
+                            'report_template_id' => $newTemplate->id,
+                            'kelas_id' => $kelasMapping[$templateClassId],
+                            'created_at' => now(),
+                            'updated_at' => now(),
+                        ]);
+                    }
+                }
+            }
             
             // Copy mappings jika ada
             foreach ($template->mappings as $mapping) {
                 $newMapping = $mapping->replicate();
                 $newMapping->report_template_id = $newTemplate->id;
                 $newMapping->save();
+            }
+        }
+    }
+
+    private function copyReportTemplateFileForNewYear(ReportTemplate $template, TahunAjaran $newTahunAjaran, array &$copiedStoragePaths): ?string
+    {
+        if (! $template->path) {
+            return $template->path;
+        }
+
+        $sourcePath = 'public/' . $template->path;
+
+        if (! Storage::exists($sourcePath)) {
+            Log::warning('Report template file missing during new academic year copy; copied template metadata will reuse existing path.', [
+                'report_template_id' => $template->id,
+                'path' => $template->path,
+            ]);
+
+            return $template->path;
+        }
+
+        $safeYearLabel = str_replace(['/', '\\'], '-', $newTahunAjaran->tahun_ajaran);
+        $newPath = str_replace(
+            basename($template->path),
+            'copy_' . $safeYearLabel . '_' . basename($template->path),
+            $template->path
+        );
+        $targetPath = 'public/' . $newPath;
+
+        if (! Storage::copy($sourcePath, $targetPath)) {
+            throw new RuntimeException("Failed to copy report template file for template {$template->id}.");
+        }
+
+        $copiedStoragePaths[] = $targetPath;
+
+        return $newPath;
+    }
+
+    private function cleanupCopiedNewYearFiles(array $copiedStoragePaths): void
+    {
+        foreach ($copiedStoragePaths as $path) {
+            try {
+                if (Storage::exists($path)) {
+                    Storage::delete($path);
+                }
+            } catch (Throwable $exception) {
+                Log::warning('Failed to clean up copied report template file after new academic year copy rollback.', [
+                    'path' => $path,
+                    'error' => $exception->getMessage(),
+                ]);
             }
         }
     }
@@ -1570,14 +2235,19 @@ class TahunAjaranController extends Controller
                     ->with('error', 'Tahun ajaran ini tidak dalam status diarsipkan.');
             }
             
-            // Cek apakah ada tahun ajaran dengan nama yang sama yang sudah aktif
-            $existingActive = TahunAjaran::where('tahun_ajaran', $tahunAjaran->tahun_ajaran)
-                                        ->where('id', '!=', $id)
-                                        ->exists();
-            
-            if ($existingActive) {
+            $sameSemesterExists = TahunAjaran::where('tahun_ajaran', $tahunAjaran->tahun_ajaran)
+                ->where('semester', $tahunAjaran->semester)
+                ->where('id', '!=', $id)
+                ->exists();
+
+            if ($sameSemesterExists) {
                 return redirect()->back()
-                    ->with('error', 'Tidak dapat memulihkan tahun ajaran ini karena sudah ada tahun ajaran aktif dengan nama yang sama. Hapus permanen atau ubah nama salah satunya terlebih dahulu.');
+                    ->with('error', 'Tidak dapat memulihkan tahun ajaran ini karena semester yang sama sudah ada. Periksa daftar tahun ajaran sebelum memulihkan.');
+            }
+
+            if ($tahunAjaran->is_active && TahunAjaran::where('is_active', true)->where('id', '!=', $id)->exists()) {
+                return redirect()->back()
+                    ->with('error', 'Tidak dapat memulihkan tahun ajaran ini sebagai aktif karena sudah ada tahun ajaran aktif lain. Nonaktifkan salah satunya terlebih dahulu.');
             }
             
             $tahunAjaran->restore();

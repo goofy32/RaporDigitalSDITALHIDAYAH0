@@ -19,6 +19,8 @@ import { registerFormDiagnostics } from './features/form-diagnostics';
 import { registerSidebarFeatures } from './features/sidebar';
 import { registerTopbarFeatures } from './features/topbar';
 import { registerDashboard } from './features/dashboard';
+import { registerSettingsModalFeatures } from './features/settings-modal';
+import { registerLiveList } from './features/live-list';
 
 import { registerFormProtectionComponent } from './components/form-protection';
 
@@ -58,6 +60,7 @@ const pageLoaders = {
     'tahun-ajaran-index': () => import('./pages/tahun-ajaran-index').then(module => module.initTahunAjaranIndexPage()),
     'admin-profile': () => import('./pages/admin-profile').then(module => module.initAdminProfilePage()),
     'edit-class': () => import('./pages/edit-class').then(module => module.initEditClassPage()),
+    'staging-simulation': () => import('./pages/staging-simulation').then(module => module.initStagingSimulationPage()),
 };
 
 function shouldLoadFlowbite() {
@@ -143,14 +146,6 @@ function getConditionalModules() {
             },
         },
         {
-            key: 'settings-modal',
-            shouldLoad: () => Boolean(document.getElementById('settings-modal')),
-            load: async () => {
-                const module = await import('./features/settings-modal');
-                module.registerSettingsModalFeatures();
-            },
-        },
-        {
             key: 'report-template-manager',
             shouldLoad: () => Boolean(document.querySelector('[x-data="reportTemplateManager"]')),
             load: async () => {
@@ -204,8 +199,16 @@ function getConditionalModules() {
             },
         },
         {
+            key: 'help-center',
+            shouldLoad: () => Boolean(document.querySelector('[x-data="helpCenter"]')),
+            load: async () => {
+                const module = await import('./features/help-center');
+                module.registerHelpCenter();
+            },
+        },
+        {
             key: 'gemini-chat-debug',
-            shouldLoad: () => Boolean(document.querySelector('.chatbot-container, [x-data="geminiChatDebug"]')),
+            shouldLoad: () => Boolean(document.querySelector('[x-data="geminiChatDebug"]')),
             load: async () => {
                 const module = await import('./features/gemini-chat-debug');
                 module.registerGeminiChatDebug();
@@ -244,6 +247,8 @@ registerTurboCore();
 registerDashboard();
 registerFormDiagnostics();
 registerTopbarFeatures();
+registerSettingsModalFeatures();
+registerLiveList();
 
 registerHelpersStore();
 registerSidebarStore();

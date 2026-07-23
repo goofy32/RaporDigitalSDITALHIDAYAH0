@@ -184,7 +184,7 @@
                                 </a>
                                 
                                 <!-- Tombol Preview -->
-                                <button onclick="previewSiswa({{ $s->id }}, '{{ $s->nama }}')"
+                                <button onclick="previewSiswa({{ $s->id }}, @js($s->nama))"
                                         class="inline-flex items-center px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
                                         title="Preview Data">
                                     <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
