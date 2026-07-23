@@ -20,6 +20,8 @@ return [
 
     'max_requests' => 20,
 
+    'simulation_teacher_password' => env('STAGING_SIMULATION_TEACHER_PASSWORD'),
+
     'score_confirmation' => 'SAYA PAHAM INI DATA DUMMY',
 
     'dummy_markers' => [

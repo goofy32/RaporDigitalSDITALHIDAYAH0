@@ -21,9 +21,9 @@ class CreateStagingSimulationData extends Command
 
     private const TEACHER_NUPTK = 'SIMLOADNUPTK01';
 
-    private const TEACHER_PASSWORD = 'Simulasi123!';
-
     private const SUBJECT_NAME = 'Mapel Dummy Simulasi Load Test';
+
+    private ?string $simulationTeacherPassword = null;
 
     private const STUDENT_COUNT = 20;
 
@@ -62,6 +62,14 @@ class CreateStagingSimulationData extends Command
             $this->displayDryRun($tahunAjaran);
 
             return self::SUCCESS;
+        }
+
+        try {
+            $this->simulationTeacherPassword = $this->configuredSimulationTeacherPassword();
+        } catch (RuntimeException $exception) {
+            $this->error($exception->getMessage());
+
+            return self::FAILURE;
         }
 
         $stats = [
@@ -114,7 +122,7 @@ class CreateStagingSimulationData extends Command
 
         $this->line('Kelas dummy: '.self::CLASS_NAME.' (#'.$context['kelasId'].')');
         $this->line('Guru dummy: '.self::TEACHER_NAME.' / username: '.self::TEACHER_USERNAME);
-        $this->line('Password dummy: '.self::TEACHER_PASSWORD);
+        $this->line('Credential guru dummy dikonfigurasi dari environment.');
         $this->line('Mapel dummy: '.self::SUBJECT_NAME.' (#'.$context['subjectId'].')');
         $this->line('Siswa dummy: '.count($context['studentIds']).' siswa');
         $this->warn('Gunakan hanya untuk staging/local. Jangan gunakan pada data testing guru nyata.');
@@ -128,6 +136,17 @@ class CreateStagingSimulationData extends Command
 
         return in_array($environment, ['local', 'testing', 'staging'], true)
             || (bool) config('staging_test_tools.enabled');
+    }
+
+    private function configuredSimulationTeacherPassword(): string
+    {
+        $password = config('staging_test_tools.simulation_teacher_password');
+
+        if (! is_string($password) || trim($password) === '') {
+            throw new RuntimeException('Password guru dummy simulasi belum dikonfigurasi. Set STAGING_SIMULATION_TEACHER_PASSWORD sebelum menjalankan command ini.');
+        }
+
+        return $password;
     }
 
     private function displayDryRun(TahunAjaran $tahunAjaran): void
@@ -205,7 +224,7 @@ class CreateStagingSimulationData extends Command
             'jabatan' => 'Guru Simulasi',
             'kelas_pengajar_id' => $kelasId,
             'username' => self::TEACHER_USERNAME,
-            'password' => Hash::make(self::TEACHER_PASSWORD),
+            'password' => Hash::make($this->simulationTeacherPassword()),
             'password_plain' => null,
             'must_change_password' => false,
             'photo' => null,
@@ -225,6 +244,15 @@ class CreateStagingSimulationData extends Command
         $stats['teachers_created']++;
 
         return (int) DB::table('gurus')->insertGetId($payload);
+    }
+
+    private function simulationTeacherPassword(): string
+    {
+        if ($this->simulationTeacherPassword === null) {
+            throw new RuntimeException('Password guru dummy simulasi belum dikonfigurasi.');
+        }
+
+        return $this->simulationTeacherPassword;
     }
 
     private function assertGuruIdentityIsSafe(): void
