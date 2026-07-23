@@ -198,6 +198,53 @@ class InitialGuruStructureImportTest extends TestCase
         $this->assertSame(0, Guru::count());
     }
 
+    public function test_command_rejects_stream_wrapper_file_paths_safely(): void
+    {
+        foreach ([
+            'phar://evil.xlsx',
+            'php://filter/resource=evil.xlsx',
+            'http://example.test/evil.xlsx',
+            'https://example.test/evil.xlsx',
+            'ftp://example.test/evil.xlsx',
+            'data://text/plain,abc',
+            'zip://evil.xlsx#xl/workbook.xml',
+            'file:///tmp/evil.xlsx',
+            'PHAR://evil.xlsx',
+            'Php://filter/resource=evil.xlsx',
+            'HtTp://example.test/evil.xlsx',
+            '  phar://evil.xlsx  ',
+        ] as $path) {
+            $this->artisan('initial-data:import-guru-structure', ['--file' => $path])
+                ->expectsOutput('Format file tidak didukung. Gunakan file Excel XLSX dari template aplikasi.')
+                ->assertExitCode(1);
+
+            $this->assertSame(0, Guru::count());
+            $this->assertSame(0, DB::table('kelas')->count());
+            $this->assertSame(0, DB::table('mata_pelajarans')->count());
+        }
+    }
+
+    public function test_command_reports_missing_and_malformed_files_without_uncaught_exception(): void
+    {
+        $this->artisan('initial-data:import-guru-structure', ['--file' => 'missing-guru-import.xlsx'])
+            ->expectsOutput('File Excel tidak dapat diproses. Pastikan file XLSX berasal dari template aplikasi.')
+            ->assertExitCode(1);
+
+        $directory = storage_path('framework/testing');
+        File::ensureDirectoryExists($directory);
+        $path = $directory.'/malformed-guru-import-'.uniqid('', true).'.xlsx';
+        File::put($path, 'not an xlsx workbook');
+        $this->workbooks[] = $path;
+
+        $this->artisan('initial-data:import-guru-structure', ['--file' => $path])
+            ->expectsOutput('Format file tidak didukung. Gunakan file Excel XLSX dari template aplikasi.')
+            ->assertExitCode(1);
+
+        $this->assertSame(0, Guru::count());
+        $this->assertSame(0, DB::table('kelas')->count());
+        $this->assertSame(0, DB::table('mata_pelajarans')->count());
+    }
+
     /**
      * @param  array<int, array<int, mixed>>  $rows
      */

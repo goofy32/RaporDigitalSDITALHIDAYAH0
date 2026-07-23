@@ -154,7 +154,7 @@
                             </label>
                             <input type="file" 
                                 name="file" 
-                                accept=".xlsx,.xls" 
+                                accept=".xlsx"
                                 class="block w-full text-sm text-gray-500
                                         file:mr-4 file:py-2 file:px-4
                                         file:rounded-md file:border-0
@@ -163,7 +163,7 @@
                                         hover:file:bg-green-100
                                         border border-gray-300 rounded-lg cursor-pointer
                                         focus:outline-none">
-                            <p class="mt-1 text-sm text-gray-500">File Excel (.xlsx, .xls)</p>
+                            <p class="mt-1 text-sm text-gray-500">File Excel (.xlsx)</p>
                         </div>
 
                         @error('file')

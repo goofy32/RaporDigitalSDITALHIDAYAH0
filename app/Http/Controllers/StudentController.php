@@ -818,10 +818,10 @@ class StudentController extends Controller
     public function importExcel(Request $request, StudentExcelImportService $studentImportService)
     {
         $request->validate([
-            'file' => 'required|mimes:xlsx,xls|max:2048',
+            'file' => 'required|mimes:xlsx|max:2048',
         ], [
             'file.required' => 'File Excel siswa wajib dipilih.',
-            'file.mimes' => 'File harus berformat Excel (.xlsx atau .xls).',
+            'file.mimes' => 'File harus berformat Excel XLSX dari template aplikasi.',
             'file.max' => 'Ukuran file Excel maksimal 2 MB.',
         ]);
 
@@ -842,6 +842,10 @@ class StudentController extends Controller
             return redirect()->route('student')
                 ->with('success', "Data siswa berhasil diimpor ({$result['imported_count']} siswa).");
 
+        } catch (\DomainException $e) {
+            return back()
+                ->with('error', 'Import siswa dibatalkan. Periksa daftar kesalahan pada file Excel.')
+                ->with('import_errors', [$e->getMessage()]);
         } catch (\Exception $e) {
             Log::error('Student import failed', [
                 'error' => $e->getMessage(),

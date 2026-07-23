@@ -35,7 +35,7 @@
 
             <div>
                 <label for="file" class="block mb-2 text-sm font-medium text-gray-700">File Excel</label>
-                <input type="file" name="file" id="file" accept=".xlsx,.xls"
+                <input type="file" name="file" id="file" accept=".xlsx"
                     class="block w-full text-sm text-gray-900 border border-gray-300 rounded-lg cursor-pointer bg-gray-50 focus:outline-none">
                 @error('file')
                     <p class="mt-2 text-sm text-red-600">{{ $message }}</p>

@@ -3,6 +3,8 @@
 namespace Tests\Feature;
 
 use App\Models\Kelas;
+use App\Services\SpreadsheetImportGuard;
+use DomainException;
 use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Database\Schema\Blueprint;
@@ -289,6 +291,164 @@ class StudentImportSafetyTest extends TestCase
         $this->assertStringContainsString('Baris 6, NIS Error: NIS tidak boleh berupa tanggal, formula, boolean, atau error cell.', $errors);
         $this->assertSame(0, DB::table('siswas')->count());
         $this->assertSame(0, DB::table('siswa_kelas_semester')->count());
+    }
+
+    public function test_import_rejects_sparse_workbook_with_row_index_above_limit_before_processing(): void
+    {
+        $path = $this->createWorkbookWithCellCallbacks(function ($sheet): void {
+            $this->writeImportRow(
+                $sheet,
+                SpreadsheetImportGuard::MAX_STUDENT_IMPORT_ROWS + 2,
+                $this->validRow(['nama' => 'Sparse Attack Row'])
+            );
+        });
+
+        $response = $this->postWorkbook($path);
+
+        $response->assertRedirect();
+        $response->assertSessionHas('import_errors');
+        $this->assertStringContainsString('File memiliki terlalu banyak baris untuk diproses.', $this->importErrorText());
+        $this->assertStringNotContainsString((string) (SpreadsheetImportGuard::MAX_STUDENT_IMPORT_ROWS + 2), $this->importErrorText());
+        $this->assertSame(0, DB::table('siswas')->count());
+        $this->assertSame(0, DB::table('siswa_kelas_semester')->count());
+    }
+
+    public function test_import_rejects_workbook_with_too_many_worksheets(): void
+    {
+        $spreadsheet = new Spreadsheet;
+        $sheet = $spreadsheet->getActiveSheet();
+        $sheet->fromArray($this->headers());
+        $this->writeImportRow($sheet, 2, $this->validRow());
+
+        for ($index = 0; $index < 5; $index++) {
+            $spreadsheet->createSheet()->setTitle("Extra {$index}");
+        }
+
+        $response = $this->postWorkbook($this->saveWorkbook($spreadsheet));
+
+        $response->assertRedirect();
+        $response->assertSessionHas('import_errors');
+        $this->assertStringContainsString('Workbook memiliki terlalu banyak worksheet untuk diproses.', $this->importErrorText());
+        $this->assertSame(0, DB::table('siswas')->count());
+    }
+
+    public function test_import_rejects_oversized_upload_before_parsing(): void
+    {
+        $response = $this->actingAs($this->admin, 'web')
+            ->withSession(['tahun_ajaran_id' => $this->activeYearId, 'selected_semester' => 1])
+            ->post(route('student.import'), [
+                'file' => UploadedFile::fake()->create(
+                    'student-import.xlsx',
+                    2049,
+                    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                ),
+            ]);
+
+        $response->assertRedirect();
+        $response->assertSessionHasErrors('file');
+        $this->assertSame(0, DB::table('siswas')->count());
+        $this->assertSame(0, DB::table('siswa_kelas_semester')->count());
+    }
+
+    public function test_import_rejects_malformed_xlsx_without_server_error(): void
+    {
+        $directory = storage_path('framework/testing');
+        File::ensureDirectoryExists($directory);
+        $path = $directory.'/malformed-student-import-'.uniqid('', true).'.xlsx';
+        File::put($path, 'not an xlsx workbook');
+        $this->workbooks[] = $path;
+
+        $response = $this->postWorkbook($path);
+
+        $response->assertRedirect();
+        $this->assertTrue(
+            session()->has('errors') || session()->has('import_errors') || session()->has('error'),
+            'Malformed XLSX should be rejected through validation or safe import error.'
+        );
+        $this->assertSame(0, DB::table('siswas')->count());
+        $this->assertSame(0, DB::table('siswa_kelas_semester')->count());
+    }
+
+    public function test_spreadsheet_guard_rejects_stream_wrapper_paths_before_reader_load(): void
+    {
+        $guard = app(SpreadsheetImportGuard::class);
+
+        foreach ([
+            'phar://evil.xlsx',
+            'php://filter/resource=evil.xlsx',
+            'http://example.test/evil.xlsx',
+            'https://example.test/evil.xlsx',
+            'ftp://example.test/evil.xlsx',
+            'data://text/plain,abc',
+            'zip://evil.xlsx#xl/workbook.xml',
+            'file:///tmp/evil.xlsx',
+            'PHAR://evil.xlsx',
+            'Php://filter/resource=evil.xlsx',
+            'HtTp://example.test/evil.xlsx',
+            '  phar://evil.xlsx  ',
+        ] as $path) {
+            try {
+                $guard->loadXlsxFromPath($path, SpreadsheetImportGuard::PROFILE_STUDENT);
+                $this->fail("Path {$path} should have been rejected.");
+            } catch (DomainException $exception) {
+                $this->assertSame('Format file tidak didukung. Gunakan file Excel XLSX dari template aplikasi.', $exception->getMessage());
+            }
+        }
+    }
+
+    public function test_spreadsheet_guard_scheme_detection_does_not_block_windows_local_paths(): void
+    {
+        $guard = app(SpreadsheetImportGuard::class);
+        $method = new \ReflectionMethod(SpreadsheetImportGuard::class, 'hasDisallowedStreamScheme');
+        $method->setAccessible(true);
+
+        $this->assertFalse($method->invoke($guard, 'C:\Users\Tahrir\import.xlsx'));
+        $this->assertFalse($method->invoke($guard, 'C:/Users/Tahrir/import.xlsx'));
+        $this->assertFalse($method->invoke($guard, '\\\\server\\share\\import.xlsx'));
+        $this->assertTrue($method->invoke($guard, 'file:///C:/Users/Tahrir/import.xlsx'));
+        $this->assertTrue($method->invoke($guard, 'PHAR://evil.xlsx'));
+    }
+
+    public function test_spreadsheet_guard_rejects_invalid_zip_metadata_without_divide_by_zero(): void
+    {
+        $guard = app(SpreadsheetImportGuard::class);
+        $sizeMethod = new \ReflectionMethod(SpreadsheetImportGuard::class, 'zipStatSize');
+        $sizeMethod->setAccessible(true);
+        $ratioMethod = new \ReflectionMethod(SpreadsheetImportGuard::class, 'assertZipCompressionRatio');
+        $ratioMethod->setAccessible(true);
+
+        $this->assertSame(12, $sizeMethod->invoke($guard, ['size' => '12'], 'size'));
+        $this->assertSame(0, $sizeMethod->invoke($guard, ['comp_size' => 0], 'comp_size'));
+        $ratioMethod->invoke($guard, 0, 0, 100);
+        $ratioMethod->invoke($guard, 2 * 1048576, 2 * 1048576, 100);
+
+        foreach ([
+            [['size' => -1], 'size'],
+            [['size' => '-1'], 'size'],
+            [['size' => 1.5], 'size'],
+            [['size' => (string) PHP_INT_MAX.'0'], 'size'],
+            [[], 'size'],
+        ] as [$stat, $key]) {
+            try {
+                $sizeMethod->invoke($guard, $stat, $key);
+                $this->fail('Invalid ZIP metadata should have been rejected.');
+            } catch (\ReflectionException $exception) {
+                throw $exception;
+            } catch (\Throwable $exception) {
+                $this->assertInstanceOf(DomainException::class, $exception->getPrevious() ?? $exception);
+            }
+        }
+
+        foreach ([[1, 0], [1, -1], [2 * 1048576, 1]] as [$size, $compressedSize]) {
+            try {
+                $ratioMethod->invoke($guard, $size, $compressedSize, 100);
+                $this->fail('Suspicious compression metadata should have been rejected.');
+            } catch (\ReflectionException $exception) {
+                throw $exception;
+            } catch (\Throwable $exception) {
+                $this->assertInstanceOf(DomainException::class, $exception->getPrevious() ?? $exception);
+            }
+        }
     }
 
     public function test_import_accepts_canonical_and_legacy_class_aliases(): void
