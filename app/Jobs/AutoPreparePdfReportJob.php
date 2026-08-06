@@ -27,7 +27,8 @@ class AutoPreparePdfReportJob implements ShouldQueue
         public string $type,
         public int $tahunAjaranId,
         public string $token,
-        public ?string $reason = null
+        public ?string $reason = null,
+        public ?int $semester = null
     ) {
         $this->type = strtoupper($this->type);
     }
@@ -43,7 +44,7 @@ class AutoPreparePdfReportJob implements ShouldQueue
             return;
         }
 
-        if (! $autoPrepare->isLatestToken($siswa, $this->type, $this->tahunAjaranId, $this->token)) {
+        if (! $autoPrepare->isLatestToken($siswa, $this->type, $this->tahunAjaranId, $this->token, $this->semester)) {
             $this->log('report.pdf.auto_prepare_skipped_stale', $startedAt, $siswa);
 
             return;
@@ -57,13 +58,13 @@ class AutoPreparePdfReportJob implements ShouldQueue
             return;
         }
 
-        if (PdfCacheService::getCachedPdf($siswa, $this->type, $this->tahunAjaranId)) {
+        if (PdfCacheService::getCachedPdf($siswa, $this->type, $this->tahunAjaranId, $this->semester)) {
             $this->log('report.pdf.auto_prepare_skipped_cache_hit', $startedAt, $siswa);
 
             return;
         }
 
-        if ($autoPrepare->hasActiveUserGeneration($siswa, $this->type, $this->tahunAjaranId)) {
+        if ($autoPrepare->hasActiveUserGeneration($siswa, $this->type, $this->tahunAjaranId, $this->semester)) {
             $this->log('report.pdf.auto_prepare_skipped_user_request', $startedAt, $siswa);
 
             return;
@@ -73,12 +74,19 @@ class AutoPreparePdfReportJob implements ShouldQueue
             $requestId = 'auto_pdf_'.Str::uuid();
 
             app()->call([
-                new GeneratePdfReportJob($siswa, $this->type, $this->tahunAjaranId, $requestId),
+                new GeneratePdfReportJob(
+                    $siswa,
+                    $this->type,
+                    $this->tahunAjaranId,
+                    $requestId,
+                    null,
+                    $this->semester
+                ),
                 'handle',
             ]);
 
-            if (! $autoPrepare->isLatestToken($siswa, $this->type, $this->tahunAjaranId, $this->token)) {
-                PdfCacheService::removeCachedPdf($siswa, $this->type, $this->tahunAjaranId);
+            if (! $autoPrepare->isLatestToken($siswa, $this->type, $this->tahunAjaranId, $this->token, $this->semester)) {
+                PdfCacheService::removeCachedPdf($siswa, $this->type, $this->tahunAjaranId, $this->semester);
                 $this->log('report.pdf.auto_prepare_skipped_stale', $startedAt, $siswa);
 
                 return;
@@ -98,9 +106,9 @@ class AutoPreparePdfReportJob implements ShouldQueue
             'siswa_id' => $siswa?->id ?? $this->siswaId,
             'report_type' => $this->type,
             'tahun_ajaran_id' => $this->tahunAjaranId,
-            'semester' => $this->type === 'UTS' ? 1 : 2,
+            'semester' => $this->semester,
             'cache_key' => $siswa
-                ? PdfCacheService::getCacheKey($siswa, $this->type, $this->tahunAjaranId)
+                ? PdfCacheService::getCacheKey($siswa, $this->type, $this->tahunAjaranId, $this->semester)
                 : null,
             'duration_ms' => round((microtime(true) - $startedAt) * 1000, 2),
             'reason' => $this->reason,

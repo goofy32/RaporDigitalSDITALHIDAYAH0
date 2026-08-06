@@ -8,7 +8,7 @@
     <!-- Header -->
     <div class="flex justify-between items-center mb-6">
         <div>
-            <h2 class="text-2xl font-bold text-gray-800">Cetak Rapor HTML</h2>
+            <h2 class="text-2xl font-bold text-gray-800">Cetak Rapor {{ $type }} HTML</h2>
             <p class="text-gray-600">Kelas {{ $kelas->nomor_kelas }}{{ $kelas->nama_kelas }} - {{ $tahunAjaran->tahun_ajaran ?? '2024/2025' }}</p>
         </div>
         
@@ -173,7 +173,11 @@
                         <div class="flex items-center space-x-3">
                             @if($diagnosisResults[$s->id]['complete'] ?? false)
                                 <!-- Tombol Print HTML -->
-                                <a href="{{ route('wali_kelas.rapor.print_html', $s->id) }}" 
+                                <a href="{{ route('wali_kelas.rapor.print_html', [
+                                    'siswa' => $s->id,
+                                    'type' => $type,
+                                    'tahun_ajaran_id' => $tahunAjaran->id,
+                                ]) }}"
                                    target="_blank"
                                    class="inline-flex items-center px-3 py-2 text-sm font-medium text-white bg-green-600 border border-transparent rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
                                    title="Cetak Rapor HTML">

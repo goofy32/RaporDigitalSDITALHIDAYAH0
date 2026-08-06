@@ -11,6 +11,7 @@ use App\Models\SiswaKelasSemester;
 use App\Models\ProfilSekolah;
 use App\Models\BobotNilai;
 use App\Services\SiswaKelasSemesterResolver;
+use App\Services\PdfCacheService;
 use App\Services\TahunAjaranPurgeException;
 use App\Services\TahunAjaranPurgeService;
 use Illuminate\Http\Request;
@@ -1188,6 +1189,10 @@ class TahunAjaranController extends Controller
             
             DB::commit();
             $this->clearTahunAjaranCaches($tahunAjaran->id);
+
+            if ((int) $oldSemester !== (int) $newSemester) {
+                PdfCacheService::clearYearCaches((int) $tahunAjaran->id);
+            }
             
             // Pesan sukses khusus untuk perubahan semester
             if ($oldSemester != $newSemester) {

@@ -2,20 +2,29 @@
 
 namespace Tests\Feature;
 
+use App\Http\Controllers\RecycleBinController;
 use App\Http\Controllers\ScoreController;
 use App\Jobs\AutoPreparePdfReportJob;
 use App\Models\Guru;
+use App\Models\LingkupMateri;
+use App\Models\Nilai;
+use App\Models\TujuanPembelajaran;
+use App\Services\PdfCacheService;
 use App\Services\PengajarScoreExcelTemplateService;
+use App\Services\ReportScoreEligibilityService;
+use App\Services\ScoreAggregateRecalculationService;
 use App\Services\SpreadsheetImportGuard;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Storage;
 use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
@@ -164,6 +173,279 @@ class PengajarScoreAuthorizationTest extends TestCase
         $this->assertNotNull($aggregate);
         $this->assertEquals(0.0, (float) $aggregate->nilai_akhir_semester);
         $this->assertEquals(45.0, (float) $aggregate->nilai_akhir_rapor);
+    }
+
+    public function test_mid_semester_score_uses_tp_and_lm_without_final_semester_components(): void
+    {
+        $this->actingAsPengajar($this->budi)
+            ->postJson(route('pengajar.score.save_scores', $this->subjectId), [
+                'scores' => $this->scoresPayloadWithComponents(80, 90, '', ''),
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $aggregate = $this->aggregateNilai();
+
+        $this->assertNotNull($aggregate);
+        $this->assertEquals(80.0, (float) $aggregate->na_tp);
+        $this->assertEquals(90.0, (float) $aggregate->na_lm);
+        $this->assertNull($aggregate->nilai_akhir_semester);
+        $this->assertEquals(85.0, (float) $aggregate->nilai_akhir_rapor);
+        $this->assertFalse((bool) $aggregate->is_submitted);
+    }
+
+    public function test_mid_semester_score_keeps_zero_lm_in_dynamic_weighting(): void
+    {
+        $this->actingAsPengajar($this->budi)
+            ->postJson(route('pengajar.score.save_scores', $this->subjectId), [
+                'scores' => $this->scoresPayloadWithComponents(80, 0, '', ''),
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $aggregate = $this->aggregateNilai();
+
+        $this->assertNotNull($aggregate);
+        $this->assertEquals(0.0, (float) $aggregate->na_lm);
+        $this->assertEquals(40.0, (float) $aggregate->nilai_akhir_rapor);
+        $this->assertFalse((bool) $aggregate->is_submitted);
+    }
+
+    public function test_clearing_lm_recalculates_aggregate_and_invalidates_mid_semester_report(): void
+    {
+        Storage::fake('public');
+        $this->actingAsPengajar($this->budi)
+            ->postJson(route('pengajar.score.save_scores', $this->subjectId), [
+                'scores' => $this->scoresPayloadWithComponents(80, 90, '', ''),
+            ])
+            ->assertOk();
+
+        $student = \App\Models\Siswa::findOrFail($this->studentId);
+        Storage::disk('public')->put('pdf_reports/old-mid-semester.pdf', 'PDF');
+        PdfCacheService::cachePdf(
+            $student,
+            'UTS',
+            $this->activeYearId,
+            'pdf_reports/old-mid-semester.pdf',
+            'old-mid-semester.pdf',
+            3
+        );
+
+        $this->actingAsPengajar($this->budi)
+            ->postJson(route('pengajar.score.save_scores', $this->subjectId), [
+                'scores' => $this->scoresPayloadWithComponents(80, '', '', ''),
+            ])
+            ->assertOk();
+
+        $aggregate = $this->aggregateNilaiModel();
+        $this->assertNotNull($aggregate);
+        $this->assertEquals(80.0, (float) $aggregate->na_tp);
+        $this->assertNull($aggregate->na_lm);
+        $this->assertEquals(80.0, (float) $aggregate->nilai_akhir_rapor);
+        $this->assertFalse(app(ReportScoreEligibilityService::class)->isEligible($aggregate, 'UTS', $this->classId));
+        $this->assertNull(PdfCacheService::getCachedPdf($student, 'UTS', $this->activeYearId));
+        $this->assertFalse(Storage::disk('public')->exists('pdf_reports/old-mid-semester.pdf'));
+    }
+
+    public function test_soft_deleted_tp_clears_tp_aggregate_and_uts_eligibility(): void
+    {
+        $this->actingAsPengajar($this->budi)
+            ->postJson(route('pengajar.score.save_scores', $this->subjectId), [
+                'scores' => $this->scoresPayloadWithComponents(80, 90, '', ''),
+            ])
+            ->assertOk();
+
+        TujuanPembelajaran::findOrFail($this->tujuanPembelajaranId)->delete();
+
+        $aggregate = $this->aggregateNilaiModel();
+        $this->assertNotNull($aggregate);
+        $this->assertNull($aggregate->na_tp);
+        $this->assertEquals(90.0, (float) $aggregate->na_lm);
+        $this->assertEquals(90.0, (float) $aggregate->nilai_akhir_rapor);
+        $this->assertFalse(app(ReportScoreEligibilityService::class)->isEligible($aggregate, 'UTS', $this->classId));
+    }
+
+    public function test_soft_deleted_lm_clears_all_related_aggregates(): void
+    {
+        $this->actingAsPengajar($this->budi)
+            ->postJson(route('pengajar.score.save_scores', $this->subjectId), [
+                'scores' => $this->scoresPayloadWithComponents(80, 90, '', ''),
+            ])
+            ->assertOk();
+
+        LingkupMateri::findOrFail($this->lingkupMateriId)->delete();
+
+        $aggregate = $this->aggregateNilaiModel();
+        $this->assertNotNull($aggregate);
+        $this->assertNull($aggregate->na_tp);
+        $this->assertNull($aggregate->na_lm);
+        $this->assertNull($aggregate->nilai_akhir_rapor);
+        $this->assertFalse(app(ReportScoreEligibilityService::class)->isEligible($aggregate, 'UTS', $this->classId));
+    }
+
+    public function test_inactive_lm_is_removed_from_aggregate_and_eligibility(): void
+    {
+        $this->actingAsPengajar($this->budi)
+            ->postJson(route('pengajar.score.save_scores', $this->subjectId), [
+                'scores' => $this->scoresPayloadWithComponents(80, 90, '', ''),
+            ])
+            ->assertOk();
+
+        LingkupMateri::findOrFail($this->lingkupMateriId)->update(['is_active' => false]);
+
+        $aggregate = $this->aggregateNilaiModel();
+        $this->assertNotNull($aggregate);
+        $this->assertNull($aggregate->na_tp);
+        $this->assertNull($aggregate->na_lm);
+        $this->assertNull($aggregate->nilai_akhir_rapor);
+        $this->assertFalse(app(ReportScoreEligibilityService::class)->isEligible($aggregate, 'UTS', $this->classId));
+    }
+
+    public function test_restore_rolls_back_source_rows_when_aggregate_recalculation_fails(): void
+    {
+        $this->actingAsPengajar($this->budi)
+            ->postJson(route('pengajar.score.save_scores', $this->subjectId), [
+                'scores' => $this->scoresPayloadWithComponents(80, 90, '', ''),
+            ])
+            ->assertOk();
+
+        TujuanPembelajaran::findOrFail($this->tujuanPembelajaranId)->delete();
+        $deletedScoreIds = Nilai::onlyTrashed()
+            ->where('tujuan_pembelajaran_id', $this->tujuanPembelajaranId)
+            ->pluck('id');
+        $this->assertNotEmpty($deletedScoreIds);
+
+        $this->mock(ScoreAggregateRecalculationService::class, function ($mock) {
+            $mock->shouldReceive('recalculateMany')
+                ->once()
+                ->andThrow(new \Exception('Simulated aggregate recalculation failure.'));
+        });
+
+        $request = Request::create('/admin/recycle-bin/restore', 'POST', server: [
+            'HTTP_ACCEPT' => 'application/json',
+        ]);
+        $response = app(RecycleBinController::class)->restore(
+            $request,
+            'tujuan-pembelajaran',
+            $this->tujuanPembelajaranId
+        );
+
+        $this->assertSame(500, $response->getStatusCode());
+        $this->assertSame(
+            'Terjadi kesalahan saat memulihkan data. Silakan coba lagi.',
+            $response->getData(true)['message'] ?? null
+        );
+        $this->assertTrue(TujuanPembelajaran::onlyTrashed()->whereKey($this->tujuanPembelajaranId)->exists());
+        $this->assertSame(
+            $deletedScoreIds->count(),
+            Nilai::onlyTrashed()->whereIn('id', $deletedScoreIds)->count()
+        );
+        $this->assertNull($this->aggregateNilaiModel()?->na_tp);
+    }
+
+    public function test_rebuilt_uts_uses_latest_final_score_after_as_changes(): void
+    {
+        Storage::fake('public');
+        $this->actingAsPengajar($this->budi)
+            ->postJson(route('pengajar.score.save_scores', $this->subjectId), [
+                'scores' => $this->scoresPayloadWithComponents(80, 90, '', ''),
+            ])
+            ->assertOk();
+        $this->assertEquals(85.0, (float) $this->aggregateNilaiModel()->nilai_akhir_rapor);
+
+        $student = \App\Models\Siswa::findOrFail($this->studentId);
+        Storage::disk('public')->put('pdf_reports/uts-before-as.pdf', 'PDF');
+        PdfCacheService::cachePdf(
+            $student,
+            'UTS',
+            $this->activeYearId,
+            'pdf_reports/uts-before-as.pdf',
+            'uts-before-as.pdf',
+            3
+        );
+        Storage::disk('public')->put('pdf_reports/uas-before-as.pdf', 'PDF');
+        PdfCacheService::cachePdf(
+            $student,
+            'UAS',
+            $this->activeYearId,
+            'pdf_reports/uas-before-as.pdf',
+            'uas-before-as.pdf',
+            3
+        );
+        Storage::disk('public')->put('docx_reports/uts-before-as.docx', 'PK DOCX');
+        Cache::put(PdfCacheService::getDocxCacheKey($student, 'UTS', $this->activeYearId), [
+            'path' => 'docx_reports/uts-before-as.docx',
+            'filename' => 'uts-before-as.docx',
+            'file_size' => 7,
+            'generated_at' => now()->toISOString(),
+            'freshness_version' => PdfCacheService::currentFreshnessVersion(
+                $student,
+                'UTS',
+                $this->activeYearId
+            ),
+            'semester' => 1,
+        ], now()->addHour());
+
+        $this->actingAsPengajar($this->budi)
+            ->postJson(route('pengajar.score.save_scores', $this->subjectId), [
+                'scores' => $this->scoresPayloadWithComponents(80, 90, 70, 90),
+            ])
+            ->assertOk();
+
+        $aggregate = $this->aggregateNilaiModel();
+        $this->assertEquals(80.0, (float) $aggregate->nilai_akhir_semester);
+        $this->assertEquals(83.0, (float) $aggregate->nilai_akhir_rapor);
+        $this->assertTrue(app(ReportScoreEligibilityService::class)->isEligible($aggregate, 'UTS', $this->classId));
+        $this->assertNull(PdfCacheService::getCachedPdf($student, 'UTS', $this->activeYearId));
+        $this->assertNull(PdfCacheService::getCachedPdf($student, 'UAS', $this->activeYearId));
+        $this->assertNull(PdfCacheService::getCachedDocx($student, 'UTS', $this->activeYearId));
+        $this->assertFalse(Storage::disk('public')->exists('pdf_reports/uts-before-as.pdf'));
+        $this->assertFalse(Storage::disk('public')->exists('pdf_reports/uas-before-as.pdf'));
+        $this->assertFalse(Storage::disk('public')->exists('docx_reports/uts-before-as.docx'));
+    }
+
+    public function test_score_save_profiling_uses_normal_freshness_invalidation_for_both_report_types(): void
+    {
+        config()->set('report.score_save_profiling.enabled', true);
+        Storage::fake('public');
+
+        $student = \App\Models\Siswa::findOrFail($this->studentId);
+        $utsVersion = PdfCacheService::currentFreshnessVersion($student, 'UTS', $this->activeYearId, 1);
+        $uasVersion = PdfCacheService::currentFreshnessVersion($student, 'UAS', $this->activeYearId, 1);
+
+        Storage::disk('public')->put('pdf_reports/profiled-uts.pdf', 'PDF');
+        PdfCacheService::cachePdf(
+            $student,
+            'UTS',
+            $this->activeYearId,
+            'pdf_reports/profiled-uts.pdf',
+            'profiled-uts.pdf',
+            3,
+            $utsVersion,
+            1
+        );
+        Storage::disk('public')->put('pdf_reports/profiled-uas.pdf', 'PDF');
+        PdfCacheService::cachePdf(
+            $student,
+            'UAS',
+            $this->activeYearId,
+            'pdf_reports/profiled-uas.pdf',
+            'profiled-uas.pdf',
+            3,
+            $uasVersion,
+            1
+        );
+
+        $this->actingAsPengajar($this->budi)
+            ->postJson(route('pengajar.score.save_scores', $this->subjectId), [
+                'scores' => $this->scoresPayloadWithComponents(80, 90, '', ''),
+            ])
+            ->assertOk();
+
+        $this->assertGreaterThan($utsVersion, PdfCacheService::currentFreshnessVersion($student, 'UTS', $this->activeYearId, 1));
+        $this->assertGreaterThan($uasVersion, PdfCacheService::currentFreshnessVersion($student, 'UAS', $this->activeYearId, 1));
+        $this->assertNull(PdfCacheService::getCachedPdf($student, 'UTS', $this->activeYearId, 1));
+        $this->assertNull(PdfCacheService::getCachedPdf($student, 'UAS', $this->activeYearId, 1));
     }
 
     public function test_all_blank_final_score_components_remain_blank_not_zero(): void
@@ -833,12 +1115,25 @@ class PengajarScoreAuthorizationTest extends TestCase
 
     public function test_single_score_import_blank_cell_clears_existing_score(): void
     {
-        $existingId = $this->insertTpScore(80);
+        $this->actingAsPengajar($this->budi)
+            ->postJson(route('pengajar.score.save_scores', $this->subjectId), [
+                'scores' => $this->scoresPayloadWithComponents(80, 90, 70, 90),
+            ])
+            ->assertOk();
+        $existingId = (int) DB::table('nilais')
+            ->where('siswa_id', $this->studentId)
+            ->where('mata_pelajaran_id', $this->subjectId)
+            ->where('tujuan_pembelajaran_id', $this->tujuanPembelajaranId)
+            ->whereNull('deleted_at')
+            ->value('id');
 
         $response = $this->actingAsPengajar($this->budi)
             ->post(route('pengajar.score.import_preview', $this->subjectId), [
                 'file' => $this->validScoreImportUpload([
                     "tp_{$this->lingkupMateriId}_{$this->tujuanPembelajaranId}" => null,
+                    "lm_{$this->lingkupMateriId}" => null,
+                    'nilai_tes' => null,
+                    'nilai_non_tes' => null,
                 ]),
             ])
             ->assertOk()
@@ -858,6 +1153,7 @@ class PengajarScoreAuthorizationTest extends TestCase
             ->assertJsonPath('success', true);
 
         $this->assertClearedScoreRow($existingId, 'nilai_tp');
+        $this->assertNull($this->aggregateNilaiModel());
     }
 
     public function test_single_score_import_zero_cell_overwrites_existing_score(): void
@@ -2230,6 +2526,18 @@ class PengajarScoreAuthorizationTest extends TestCase
             ->where('tahun_ajaran_id', $this->activeYearId)
             ->whereNull('lingkup_materi_id')
             ->whereNull('tujuan_pembelajaran_id')
+            ->whereNull('deleted_at')
+            ->first();
+    }
+
+    private function aggregateNilaiModel(): ?Nilai
+    {
+        return Nilai::query()
+            ->where('siswa_id', $this->studentId)
+            ->where('mata_pelajaran_id', $this->subjectId)
+            ->where('tahun_ajaran_id', $this->activeYearId)
+            ->whereNull('lingkup_materi_id')
+            ->whereNull('tujuan_pembelajaran_id')
             ->first();
     }
 
@@ -2342,6 +2650,7 @@ class PengajarScoreAuthorizationTest extends TestCase
     private function createSchema(): void
     {
         foreach ([
+            'audit_logs',
             'notifications',
             'report_templates',
             'nilais',
@@ -2369,6 +2678,21 @@ class PengajarScoreAuthorizationTest extends TestCase
             $table->string('password');
             $table->timestamps();
             $table->softDeletes();
+        });
+
+        Schema::create('audit_logs', function (Blueprint $table) {
+            $table->id();
+            $table->string('user_type')->nullable();
+            $table->unsignedBigInteger('user_id')->nullable();
+            $table->string('action');
+            $table->string('model_type')->nullable();
+            $table->unsignedBigInteger('model_id')->nullable();
+            $table->text('description')->nullable();
+            $table->json('old_values')->nullable();
+            $table->json('new_values')->nullable();
+            $table->ipAddress('ip_address')->nullable();
+            $table->text('user_agent')->nullable();
+            $table->timestamps();
         });
 
         Schema::create('tahun_ajarans', function (Blueprint $table) {
@@ -2461,6 +2785,7 @@ class PengajarScoreAuthorizationTest extends TestCase
             $table->id();
             $table->foreignId('mata_pelajaran_id');
             $table->string('judul_lingkup_materi');
+            $table->boolean('is_active')->default(true);
             $table->timestamps();
             $table->softDeletes();
         });

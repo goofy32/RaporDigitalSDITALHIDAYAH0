@@ -77,6 +77,15 @@ class ReportDashboardSemesterContextTest extends TestCase
 
     public function test_genap_preview_does_not_include_ganjil_supporting_data(): void
     {
+        $genapLmId = $this->firstLingkupMateriId($this->genapSubjectId);
+        $this->insertCompleteScore(
+            $this->studentId,
+            $this->genapSubjectId,
+            $genapLmId,
+            $this->genapYearId,
+            true
+        );
+
         $response = $this->actingAsWali($this->genapYearId, 2)
             ->get(route('wali_kelas.rapor.preview', [
                 'siswa' => $this->studentId,
@@ -646,6 +655,8 @@ class ReportDashboardSemesterContextTest extends TestCase
             $table->foreignId('lingkup_materi_id')->nullable();
             $table->decimal('nilai_tp', 5, 2)->nullable();
             $table->decimal('nilai_lm', 5, 2)->nullable();
+            $table->decimal('na_tp', 5, 2)->nullable();
+            $table->decimal('na_lm', 5, 2)->nullable();
             $table->decimal('nilai_akhir_rapor', 5, 2)->nullable();
             $table->text('deskripsi')->nullable();
             $table->boolean('is_submitted')->default(false);
@@ -1064,7 +1075,13 @@ class ReportDashboardSemesterContextTest extends TestCase
         ]);
     }
 
-    private function insertCompleteScore(int $studentId, int $subjectId, int $lmId, int $tahunAjaranId): void
+    private function insertCompleteScore(
+        int $studentId,
+        int $subjectId,
+        int $lmId,
+        int $tahunAjaranId,
+        bool $isSubmitted = false
+    ): void
     {
         $tpId = (int) DB::table('tujuan_pembelajarans')
             ->where('lingkup_materi_id', $lmId)
@@ -1078,6 +1095,8 @@ class ReportDashboardSemesterContextTest extends TestCase
                 'tujuan_pembelajaran_id' => $tpId,
                 'nilai_tp' => 88,
                 'nilai_lm' => null,
+                'na_tp' => null,
+                'na_lm' => null,
                 'nilai_akhir_rapor' => null,
                 'is_submitted' => false,
                 'tahun_ajaran_id' => $tahunAjaranId,
@@ -1091,8 +1110,10 @@ class ReportDashboardSemesterContextTest extends TestCase
                 'tujuan_pembelajaran_id' => null,
                 'nilai_tp' => null,
                 'nilai_lm' => 88,
+                'na_tp' => 88,
+                'na_lm' => 88,
                 'nilai_akhir_rapor' => 88,
-                'is_submitted' => false,
+                'is_submitted' => $isSubmitted,
                 'tahun_ajaran_id' => $tahunAjaranId,
                 'created_at' => now(),
                 'updated_at' => now(),

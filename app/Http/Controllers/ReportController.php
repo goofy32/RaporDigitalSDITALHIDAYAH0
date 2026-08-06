@@ -16,6 +16,7 @@ use App\Models\ProfilSekolah;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Schema;
 use Barryvdh\DomPDF\Facade\PDF;
 use App\Models\ReportGeneration;
 use App\Models\TahunAjaran;
@@ -27,8 +28,10 @@ use App\Services\ReportPeriodService;
 use App\Services\ReportTemplateDocxValidationService;
 use App\Services\SiswaKelasSemesterResolver;
 use App\Services\ReportPerformanceTracker;
+use App\Services\ReportScoreEligibilityService;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\URL;
+use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 
 class ReportController extends Controller
@@ -127,7 +130,7 @@ class ReportController extends Controller
             if (!Storage::disk('public')->exists($filePath)) {
                 throw new \RuntimeException('Gagal menyimpan file template ke storage.');
             }
-            
+
             // Validasi placeholder dalam template
             $templatePath = Storage::disk('public')->path($filePath);
             if ($typeValidationMessage = app(ReportTemplateDocxValidationService::class)->validateTypeFromDocxText($templatePath, $request->type)) {
@@ -159,7 +162,7 @@ class ReportController extends Controller
             if (count($missingPlaceholders) > 0) {
                 // Hapus file yang sudah diupload
                 \Storage::disk('public')->delete($filePath);
-                
+
                 return response()->json([
                     'success' => false,
                     'message' => 'Template tidak valid. Placeholder wajib yang tidak ditemukan: ' . implode(', ', $missingPlaceholders)
@@ -246,14 +249,16 @@ class ReportController extends Controller
                 return $response;
             }
 
-            ReportPerformanceTracker::measureSegment('preload', function () use ($siswa, $tahunAjaranId, $semester) {
+            ReportPerformanceTracker::measureSegment('preload', function () use ($siswa, $tahunAjaranId, $semester, $type, $kelas) {
                 $siswa->load([
-                    'nilais' => function($query) use ($tahunAjaranId, $semester) {
+                    'nilais' => function($query) use ($tahunAjaranId, $semester, $type, $kelas) {
                         $query->where('tahun_ajaran_id', $tahunAjaranId)
-                            ->whereHas('mataPelajaran', function($q) use ($semester) {
-                                $q->where('semester', $semester);
-                            })
-                            ->where('is_submitted', true);
+                            ->whereHas('mataPelajaran', function($q) use ($semester, $kelas, $tahunAjaranId) {
+                                $q->where('semester', $semester)
+                                    ->where('kelas_id', $kelas->id)
+                                    ->where('tahun_ajaran_id', $tahunAjaranId);
+                            });
+                        $this->constrainEligibleReportScores($query, $type, null, (int) $kelas->id);
                     },
                     'nilais.mataPelajaran',
                     'nilaiEkstrakurikuler' => function($query) use ($tahunAjaranId, $semester) {
@@ -273,7 +278,7 @@ class ReportController extends Controller
 
             if ($siswa->nilais->isEmpty()) {
                 return redirect()->back()
-                    ->with('error', 'Data nilai siswa belum lengkap. Pastikan semua nilai sudah diinput untuk semester ' . $semester);
+                    ->with('error', $this->incompleteReportScoreMessage($type, (int) $semester));
             }
 
             if (!$siswa->absensi) {
@@ -310,7 +315,7 @@ class ReportController extends Controller
      * 
      * @return \Illuminate\View\View
      */
-    public function indexPrintRapor()
+    public function indexPrintRapor(Request $request)
     {
         $guru = auth()->guard('guru')->user();
         $tahunAjaranId = session('tahun_ajaran_id');
@@ -335,6 +340,11 @@ class ReportController extends Controller
         
         $tahunAjaran = TahunAjaran::find($tahunAjaranId);
         $semester = $tahunAjaran ? $tahunAjaran->semester : 1;
+        $type = $this->resolveReportTypeForRequest($request, (int) $tahunAjaranId);
+
+        if ($response = $this->ensureReportPeriodOpened($request, $type, (int) $tahunAjaranId)) {
+            return $response;
+        }
 
         $kelasModel = Kelas::with([
                 'mataPelajarans' => function ($query) use ($tahunAjaranId, $semester) {
@@ -348,12 +358,14 @@ class ReportController extends Controller
         $siswa = app(SiswaKelasSemesterResolver::class)
             ->studentQueryForClass((int) $kelas->id, (int) $tahunAjaranId, (int) $semester, true)
             ->with([
-                'nilais' => function ($query) use ($tahunAjaranId, $semester) {
+                'nilais' => function ($query) use ($tahunAjaranId, $semester, $type, $kelas) {
                     $query->where('tahun_ajaran_id', $tahunAjaranId)
-                        ->whereHas('mataPelajaran', function ($subQuery) use ($semester) {
-                            $subQuery->where('semester', $semester);
-                        })
-                        ->where('is_submitted', true);
+                        ->whereHas('mataPelajaran', function ($subQuery) use ($semester, $kelas, $tahunAjaranId) {
+                            $subQuery->where('semester', $semester)
+                                ->where('kelas_id', $kelas->id)
+                                ->where('tahun_ajaran_id', $tahunAjaranId);
+                        });
+                    $this->constrainEligibleReportScores($query, $type, null, (int) $kelas->id);
                 },
                 'nilais.mataPelajaran',
                 'absensi' => function ($query) use ($tahunAjaranId, $semester) {
@@ -372,14 +384,15 @@ class ReportController extends Controller
         
         $diagnosisResults = [];
         foreach ($siswa as $s) {
-            $diagnosisResults[$s->id] = $s->diagnoseDataCompleteness('UTS');
+            $diagnosisResults[$s->id] = $s->diagnoseDataCompleteness($type);
         }
         
         return view('wali_kelas.rapor.index_print', compact(
             'siswa',
             'kelas', 
             'diagnosisResults',
-            'tahunAjaran'
+            'tahunAjaran',
+            'type'
         ));
     }
 
@@ -727,9 +740,9 @@ class ReportController extends Controller
     
     public function getCurrentTemplate(Request $request)
     {
+        $type = $this->normalizeReportType($request->input('type', 'UTS'));
+
         try {
-            $type = $request->type ?? 'UTS';
-            
             \Log::info('getCurrentTemplate request:', [
                 'type' => $type,
                 'all_params' => $request->all()
@@ -773,12 +786,7 @@ class ReportController extends Controller
      */
     public function downloadSampleTemplate(Request $request)
     {
-        $type = $request->input('type', 'UTS');
-        
-        // Ensure valid type
-        if (!in_array($type, ['UTS', 'UAS'])) {
-            $type = 'UTS';
-        }
+        $type = $this->normalizeReportType($request->input('type', 'UTS'));
         
         // Lokasi file template
         $templatePaths = [
@@ -906,7 +914,7 @@ class ReportController extends Controller
      */
     public function downloadTemplateStreamed(Request $request)
     {
-        $type = $request->input('type', 'UTS');
+        $type = $this->normalizeReportType($request->input('type', 'UTS'));
         
         // Find file (sama seperti method sebelumnya)
         $templatePaths = [
@@ -1082,18 +1090,72 @@ class ReportController extends Controller
         return (int) (TahunAjaran::whereKey($tahunAjaranId)->value('semester') ?: 1);
     }
 
-    private function normalizeReportType(?string $type): string
+    private function normalizeReportType(mixed $type): string
     {
-        return app(ReportPeriodService::class)->normalizeType($type) ?: 'UTS';
+        $normalized = app(ReportPeriodService::class)->normalizeType($type);
+
+        if (! $normalized) {
+            throw ValidationException::withMessages([
+                'type' => 'Jenis rapor tidak valid.',
+            ]);
+        }
+
+        return $normalized;
+    }
+
+    private function constrainEligibleReportScores(
+        $query,
+        string $type,
+        ?string $table = null,
+        ?int $kelasId = null
+    )
+    {
+        return app(ReportScoreEligibilityService::class)->apply($query, $type, $table, $kelasId);
+    }
+
+    private function hasEligibleReportScore(
+        Siswa $siswa,
+        string $type,
+        int $tahunAjaranId,
+        int $semester
+    ): bool {
+        $kelas = app(SiswaKelasSemesterResolver::class)
+            ->resolveClass($siswa, $tahunAjaranId, $semester, true);
+
+        if (! $kelas) {
+            return false;
+        }
+
+        $query = $siswa->nilais()
+            ->whereHas('mataPelajaran', function ($query) use ($semester, $kelas, $tahunAjaranId) {
+                $query->where('semester', $semester)
+                    ->where('kelas_id', $kelas->id)
+                    ->where('tahun_ajaran_id', $tahunAjaranId);
+            })
+            ->where('tahun_ajaran_id', $tahunAjaranId);
+
+        return $this->constrainEligibleReportScores($query, $type, null, (int) $kelas->id)->exists();
+    }
+
+    private function incompleteReportScoreMessage(string $type, int $semester): string
+    {
+        if ($type === 'UTS') {
+            return "Data nilai tengah semester belum lengkap. Pastikan nilai TP dan LM untuk semester {$semester} sudah diisi.";
+        }
+
+        return "Data nilai akhir semester belum lengkap. Pastikan nilai TP, LM, tes AS, dan non-tes AS untuk semester {$semester} sudah diisi.";
     }
 
     private function resolveReportTypeForRequest(Request $request, int $tahunAjaranId, string $source = 'query'): string
     {
+        $hasExplicitType = $source === 'input'
+            ? $request->request->has('type')
+            : $request->query->has('type');
         $value = $source === 'input'
             ? $request->input('type')
             : $request->query('type');
 
-        if ($value !== null && $value !== '') {
+        if ($hasExplicitType) {
             return $this->normalizeReportType($value);
         }
 
@@ -1103,6 +1165,58 @@ class ReportController extends Controller
     private function openedReportTypeForYear(int $tahunAjaranId): string
     {
         return app(ReportPeriodService::class)->openedType(null, $tahunAjaranId);
+    }
+
+    private function invalidateTemplateArtifacts(ReportTemplate $template, array $kelasIds = []): void
+    {
+        $tahunAjaranId = (int) $template->tahun_ajaran_id;
+        $type = app(ReportPeriodService::class)->normalizeType($template->type);
+
+        if (! $tahunAjaranId || ! $type
+            || ! Schema::hasTable('siswas')
+            || ! Schema::hasTable('nilais')
+            || ! Schema::hasTable('mata_pelajarans')) {
+            return;
+        }
+
+        $tahunAjaran = TahunAjaran::find($tahunAjaranId);
+        if (! $tahunAjaran) {
+            return;
+        }
+
+        $kelasIds = collect($kelasIds ?: $template->getAllKelasIds())
+            ->map(fn ($id) => (int) $id)
+            ->filter()
+            ->unique()
+            ->values();
+
+        if ($kelasIds->isEmpty()) {
+            $students = Siswa::query()
+                ->whereHas('nilais', function ($query) use ($tahunAjaranId, $tahunAjaran) {
+                    $query->where('tahun_ajaran_id', $tahunAjaranId)
+                        ->whereHas('mataPelajaran', function ($subjectQuery) use ($tahunAjaranId, $tahunAjaran) {
+                            $subjectQuery->where('tahun_ajaran_id', $tahunAjaranId)
+                                ->where('semester', (int) $tahunAjaran->semester);
+                        });
+                })
+                ->get();
+        } else {
+            $students = $kelasIds->flatMap(fn (int $kelasId) => app(SiswaKelasSemesterResolver::class)
+                ->studentsForClass(
+                    $kelasId,
+                    $tahunAjaranId,
+                    (int) $tahunAjaran->semester,
+                    true
+                ));
+        }
+
+        $students->unique('id')->each(fn (Siswa $siswa) => PdfCacheService::invalidateStudentReportType(
+            $siswa,
+            $type,
+            $tahunAjaranId,
+            true,
+            (int) $tahunAjaran->semester
+        ));
     }
 
     private function reportPeriodUnavailableResponse(Request $request, string $type, int $tahunAjaranId)
@@ -1293,15 +1407,25 @@ class ReportController extends Controller
             ]);
             
             // Cari siswa dengan relasi yang dibutuhkan
-            ReportPerformanceTracker::measureSegment('preload', function () use ($siswa, $tahunAjaranId, $semester) {
+            if (! $this->hasEligibleReportScore($siswa, $type, (int) $tahunAjaranId, (int) $semester)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $this->incompleteReportScoreMessage($type, (int) $semester),
+                    'error_type' => 'data_incomplete',
+                ], 422);
+            }
+
+            ReportPerformanceTracker::measureSegment('preload', function () use ($siswa, $tahunAjaranId, $semester, $type, $kelas) {
                 $siswa->load([
-                    'nilais' => function($query) use ($tahunAjaranId, $semester) {
+                    'nilais' => function($query) use ($tahunAjaranId, $semester, $type, $kelas) {
                         // Filter nilai berdasarkan semester dan tahun ajaran
                         $query->where('tahun_ajaran_id', $tahunAjaranId);
-                        $query->whereHas('mataPelajaran', function($q) use ($semester) {
-                            $q->where('semester', $semester);
+                        $query->whereHas('mataPelajaran', function($q) use ($semester, $kelas, $tahunAjaranId) {
+                            $q->where('semester', $semester)
+                                ->where('kelas_id', $kelas->id)
+                                ->where('tahun_ajaran_id', $tahunAjaranId);
                         });
-                        $query->where('is_submitted', true);
+                        $this->constrainEligibleReportScores($query, $type, null, (int) $kelas->id);
                     },
                     'nilais.mataPelajaran',
                     'nilaiEkstrakurikuler' => function($query) use ($tahunAjaranId, $semester) {
@@ -1342,7 +1466,7 @@ class ReportController extends Controller
                 'html' => $html
             ]);
         } catch (\Exception $e) {
-            if ($e instanceof HttpExceptionInterface) {
+            if ($e instanceof HttpExceptionInterface || $e instanceof ValidationException) {
                 throw $e;
             }
 
@@ -1362,7 +1486,7 @@ class ReportController extends Controller
 
     public function diagnoseSiswaData(Request $request, Siswa $siswa)
     {
-        $type = $request->input('type', 'UTS');
+        $type = $this->normalizeReportType($request->input('type', 'UTS'));
         $tahunAjaranId = session('tahun_ajaran_id');
         
         try {
@@ -1463,7 +1587,7 @@ class ReportController extends Controller
             if ($result['success'] && isset($result['path']) && file_exists($result['path'])) {
                 $pdfSize = filesize($result['path']);
                 unlink($result['path']); // Cleanup PDF
-                
+
                 return response()->json([
                     'success' => true,
                     'message' => 'PDF conversion is working correctly!',
@@ -1578,11 +1702,22 @@ class ReportController extends Controller
                 return $this->pdfTemplateUnavailableResponse($request, $siswa, $type, $tahunAjaranId, $kelas?->id);
             }
 
+            $semester = $this->getRaporSemester((int) $tahunAjaranId);
+            if (! $this->hasEligibleReportScore($siswa, $type, (int) $tahunAjaranId, $semester)) {
+                return response()->json([
+                    'success' => false,
+                    'status' => 'failed',
+                    'message' => $this->incompleteReportScoreMessage($type, $semester),
+                    'error_type' => 'data_incomplete',
+                ], 422);
+            }
+
             // Cache lookup happens before LibreOffice checks so valid cached PDFs remain fast and reusable.
             $cachedPdf = PdfCacheService::getCachedPdf(
                 $siswa,
                 $type,
-                $tahunAjaranId
+                $tahunAjaranId,
+                $semester
             );
 
             if ($cachedPdf) {
@@ -1603,7 +1738,7 @@ class ReportController extends Controller
             );
             
         } catch (\Exception $e) {
-            if ($e instanceof HttpExceptionInterface) {
+            if ($e instanceof HttpExceptionInterface || $e instanceof ValidationException) {
                 throw $e;
             }
 
@@ -1633,7 +1768,8 @@ class ReportController extends Controller
         string $disposition,
         string $flowPrefix
     ) {
-        $existingRequestId = $this->activePdfGenerationRequestId($siswa, $type, $tahunAjaranId);
+        $semester = $this->getRaporSemester($tahunAjaranId);
+        $existingRequestId = $this->activePdfGenerationRequestId($siswa, $type, $tahunAjaranId, $semester);
 
         if ($existingRequestId) {
             return $this->pdfProcessingResponse($request, $existingRequestId, $disposition, true);
@@ -1652,6 +1788,7 @@ class ReportController extends Controller
             'siswa_id' => $siswa->id,
             'type' => $type,
             'tahun_ajaran_id' => $tahunAjaranId,
+            'semester' => $semester,
             'user_id' => $userId,
             'cached' => false,
             'updated_at' => time(),
@@ -1659,19 +1796,24 @@ class ReportController extends Controller
         ], now()->addMinutes(PdfCacheService::PROGRESS_TTL_MINUTES));
 
         Cache::put(
-            PdfCacheService::getGenerationRequestKey($siswa, $type, $tahunAjaranId),
+            PdfCacheService::getGenerationRequestKey($siswa, $type, $tahunAjaranId, $semester),
             $requestId,
             now()->addMinutes(PdfCacheService::PROGRESS_TTL_MINUTES)
         );
 
-        GeneratePdfReportJob::dispatch($siswa, $type, $tahunAjaranId, $requestId, $userId);
+        GeneratePdfReportJob::dispatch($siswa, $type, $tahunAjaranId, $requestId, $userId, $semester);
 
         return $this->pdfProcessingResponse($request, $requestId, $disposition, false);
     }
 
-    protected function activePdfGenerationRequestId(Siswa $siswa, string $type, int $tahunAjaranId): ?string
+    protected function activePdfGenerationRequestId(
+        Siswa $siswa,
+        string $type,
+        int $tahunAjaranId,
+        int $semester
+    ): ?string
     {
-        $requestKey = PdfCacheService::getGenerationRequestKey($siswa, $type, $tahunAjaranId);
+        $requestKey = PdfCacheService::getGenerationRequestKey($siswa, $type, $tahunAjaranId, $semester);
         $requestId = Cache::get($requestKey);
 
         if (! is_string($requestId) || $requestId === '') {
@@ -1688,7 +1830,8 @@ class ReportController extends Controller
 
         if ((int) ($progress['siswa_id'] ?? 0) !== (int) $siswa->id ||
             (string) ($progress['type'] ?? '') !== (string) $type ||
-            (int) ($progress['tahun_ajaran_id'] ?? 0) !== (int) $tahunAjaranId) {
+            (int) ($progress['tahun_ajaran_id'] ?? 0) !== (int) $tahunAjaranId ||
+            (int) ($progress['semester'] ?? 0) !== $semester) {
             Cache::forget($requestKey);
 
             return null;
@@ -1810,7 +1953,17 @@ class ReportController extends Controller
                 return $this->pdfTemplateUnavailableResponse($request, $siswa, $type, $tahunAjaranId, $kelas?->id);
             }
 
-            $cachedPdf = PdfCacheService::getCachedPdf($siswa, $type, $tahunAjaranId);
+            $semester = $this->getRaporSemester((int) $tahunAjaranId);
+            if (! $this->hasEligibleReportScore($siswa, $type, (int) $tahunAjaranId, $semester)) {
+                return response()->json([
+                    'success' => false,
+                    'status' => 'failed',
+                    'message' => $this->incompleteReportScoreMessage($type, $semester),
+                    'error_type' => 'data_incomplete',
+                ], 422);
+            }
+
+            $cachedPdf = PdfCacheService::getCachedPdf($siswa, $type, $tahunAjaranId, $semester);
             
             if ($cachedPdf) {
                 ReportPerformanceTracker::setFlowTypeIfEnabled('pdf_request_cache_hit');
@@ -1830,7 +1983,7 @@ class ReportController extends Controller
             );
 
         } catch (\Exception $e) {
-            if ($e instanceof HttpExceptionInterface) {
+            if ($e instanceof HttpExceptionInterface || $e instanceof ValidationException) {
                 throw $e;
             }
 
@@ -1886,12 +2039,26 @@ class ReportController extends Controller
             }
 
             $siswaId = (int) ($progress['siswa_id'] ?? 0);
-            $type = (string) ($progress['type'] ?? 'UTS');
+            $type = app(ReportPeriodService::class)->normalizeType($progress['type'] ?? null);
             $tahunAjaranId = (int) ($progress['tahun_ajaran_id'] ?? 0);
+            $semester = (int) ($progress['semester'] ?? 0);
             $siswa = $siswaId ? Siswa::find($siswaId) : null;
 
+            $tahunAjaran = $tahunAjaranId ? TahunAjaran::find($tahunAjaranId) : null;
+            if (! $siswa || ! $type || ! $tahunAjaran || ! in_array($semester, [1, 2], true)
+                || (int) $tahunAjaran->semester !== $semester
+                || ! app(ReportPeriodService::class)->isOpened($type, $tahunAjaran, $tahunAjaranId)
+                || ! $this->hasEligibleReportScore($siswa, $type, $tahunAjaranId, $semester)) {
+                return response()->json([
+                    'success' => false,
+                    'status' => 'failed',
+                    'message' => 'Konteks rapor berubah atau data rapor belum memenuhi syarat.',
+                    'request_id' => $requestId,
+                ], 422);
+            }
+
             if ($siswa && $tahunAjaranId) {
-                $cachedPdf = PdfCacheService::getCachedPdf($siswa, $type, $tahunAjaranId);
+                $cachedPdf = PdfCacheService::getCachedPdf($siswa, $type, $tahunAjaranId, $semester);
 
                 if ($cachedPdf) {
                     $disposition = $request->query('disposition') === 'inline' ? 'inline' : 'attachment';
@@ -2128,7 +2295,51 @@ class ReportController extends Controller
                 ], 404);
             }
 
-            $cachedDocx = PdfCacheService::getCachedDocx($siswa, $type, $tahunAjaranId);
+            // Better validation - verify data for the CURRENT semester, not based on report type
+            $tahunAjaran = ReportPerformanceTracker::measureSegment('context', fn () => \App\Models\TahunAjaran::find($tahunAjaranId));
+            $currentSemester = $tahunAjaran ? $tahunAjaran->semester : ($type === 'UTS' ? 1 : 2);
+
+            // Check for proper data in the current semester
+            [$hasNilai, $hasAbsensi] = ReportPerformanceTracker::measureSegment('preload', function () use ($siswa, $currentSemester, $tahunAjaranId, $type) {
+                return [
+                    $this->hasEligibleReportScore(
+                        $siswa,
+                        $type,
+                        (int) $tahunAjaranId,
+                        (int) $currentSemester
+                    ),
+                    $siswa->absensi()
+                        ->where('semester', $currentSemester)
+                        ->where('tahun_ajaran_id', $tahunAjaranId)
+                        ->exists(),
+                ];
+            });
+
+            if (!$hasNilai || !$hasAbsensi) {
+                \Log::warning('Data incomplete for report generation', [
+                    'siswa_id' => $siswa->id,
+                    'type' => $type,
+                    'semester' => $currentSemester,
+                    'hasNilai' => $hasNilai,
+                    'hasAbsensi' => $hasAbsensi
+                ]);
+
+                return response()->json([
+                    'success' => false,
+                    'message' => ! $hasNilai
+                        ? $this->incompleteReportScoreMessage($type, (int) $currentSemester)
+                        : "Data absensi siswa belum lengkap untuk semester {$currentSemester}.",
+                    'error_type' => 'data_incomplete'
+                ], 422);
+            }
+
+            $freshnessVersion = PdfCacheService::currentFreshnessVersion(
+                $siswa,
+                $type,
+                (int) $tahunAjaranId,
+                (int) $currentSemester
+            );
+            $cachedDocx = PdfCacheService::getCachedDocx($siswa, $type, $tahunAjaranId, (int) $currentSemester);
             if ($cachedDocx) {
                 ReportPerformanceTracker::setFlowTypeIfEnabled('docx_cache_hit');
 
@@ -2157,49 +2368,9 @@ class ReportController extends Controller
 
             ReportPerformanceTracker::setFlowTypeIfEnabled('docx_cache_miss');
             
-            // Better validation - verify data for the CURRENT semester, not based on report type
-            $tahunAjaran = ReportPerformanceTracker::measureSegment('context', fn () => \App\Models\TahunAjaran::find($tahunAjaranId));
-            $currentSemester = $tahunAjaran ? $tahunAjaran->semester : ($type === 'UTS' ? 1 : 2);
-            
-            // Check for proper data in the current semester
-            [$hasNilai, $hasAbsensi] = ReportPerformanceTracker::measureSegment('preload', function () use ($siswa, $currentSemester, $tahunAjaranId) {
-                return [
-                    $siswa->nilais()
-                        ->whereHas('mataPelajaran', function($q) use ($currentSemester) {
-                            $q->where('semester', $currentSemester);
-                        })
-                        ->where('tahun_ajaran_id', $tahunAjaranId)
-                        ->where('is_submitted', true)
-                        ->exists(),
-                    $siswa->absensi()
-                        ->where('semester', $currentSemester)
-                        ->where('tahun_ajaran_id', $tahunAjaranId)
-                        ->exists(),
-                ];
-            });
-                
-            if (!$hasNilai || !$hasAbsensi) {
-                \Log::warning('Data incomplete for report generation', [
-                    'siswa_id' => $siswa->id,
-                    'type' => $type,
-                    'semester' => $currentSemester,
-                    'hasNilai' => $hasNilai,
-                    'hasAbsensi' => $hasAbsensi
-                ]);
-                
-                return response()->json([
-                    'success' => false,
-                    'message' => "Data siswa belum lengkap untuk menghasilkan rapor. Pastikan nilai akhir dan data absensi untuk semester {$currentSemester} sudah diisi.",
-                    'error_type' => 'data_incomplete'
-                ], 422);
-            }
-            
             // Continue with report generation
             $processor = new \App\Services\RaporTemplateProcessor($template, $siswa, $type, $tahunAjaranId);
             $result = $processor->generate();
-            
-            // Save history
-            $this->saveGenerationHistory($siswa, $template, $type, $tahunAjaranId, $result['path']);
             
             // **CRITICAL: Get full path dan verify file**
             $fullPath = storage_path('app/public/' . $result['path']);
@@ -2230,14 +2401,76 @@ class ReportController extends Controller
                     'error_type' => 'file_corrupt'
                 ], 500);
             }
-            
+
+            if (! PdfCacheService::freshnessIsCurrent(
+                $siswa,
+                $type,
+                (int) $tahunAjaranId,
+                $freshnessVersion,
+                (int) $currentSemester
+            )) {
+                Storage::disk('public')->delete($result['path']);
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Data rapor berubah saat dokumen diproses. Silakan buat ulang rapor.',
+                    'error_type' => 'report_data_changed',
+                ], 409);
+            }
+
             \Log::info('Report generated successfully', [
                 'file_path' => $fullPath,
                 'file_size' => $fileSize,
                 'action' => $action
             ]);
 
-            $cachedDocx = PdfCacheService::cacheDocx($siswa, $type, $tahunAjaranId, $fullPath, $result['filename']);
+            $cachedDocx = PdfCacheService::cacheDocx(
+                $siswa,
+                $type,
+                $tahunAjaranId,
+                $fullPath,
+                $result['filename'],
+                $freshnessVersion,
+                (int) $currentSemester
+            );
+
+            if (! $cachedDocx && ! PdfCacheService::freshnessIsCurrent(
+                $siswa,
+                $type,
+                (int) $tahunAjaranId,
+                $freshnessVersion,
+                (int) $currentSemester
+            )) {
+                Storage::disk('public')->delete($result['path']);
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Data rapor berubah saat dokumen diproses. Silakan buat ulang rapor.',
+                    'error_type' => 'report_data_changed',
+                ], 409);
+            }
+
+            if (! PdfCacheService::freshnessIsCurrent(
+                $siswa,
+                $type,
+                (int) $tahunAjaranId,
+                $freshnessVersion,
+                (int) $currentSemester
+            )) {
+                if ($cachedDocx) {
+                    PdfCacheService::removeCachedDocx($siswa, $type, $tahunAjaranId, (int) $currentSemester);
+                }
+                Storage::disk('public')->delete($result['path']);
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Data rapor berubah saat dokumen diproses. Silakan buat ulang rapor.',
+                    'error_type' => 'report_data_changed',
+                ], 409);
+            }
+
+            // Save history only after the generated document is still current.
+            $this->saveGenerationHistory($siswa, $template, $type, $tahunAjaranId, $result['path']);
             $responsePath = $cachedDocx
                 ? storage_path('app/public/' . $cachedDocx['path'])
                 : $fullPath;
@@ -2281,6 +2514,10 @@ class ReportController extends Controller
             ], 422);
         } 
         catch (\Exception $e) {
+            if ($e instanceof ValidationException) {
+                throw $e;
+            }
+
             \Log::error('Error in generateReport: ' . $e->getMessage(), [
                 'siswa_id' => $siswa->id,
                 'type' => $type,
@@ -2440,7 +2677,7 @@ class ReportController extends Controller
                 return [
                     $report->siswa,
                     $report->template,
-                    $report->type,
+                    $this->normalizeReportType($report->type),
                     $report->tahun_ajaran_id,
                 ];
             });
@@ -2461,7 +2698,7 @@ class ReportController extends Controller
             
             // Generate rapor baru
             $processor = new \App\Services\RaporTemplateProcessor($template, $siswa, $type, $tahunAjaranId);
-            $result = $processor->generate(true); // Bypass validation
+            $result = $processor->generate();
             
             if (!$result['success']) {
                 throw new \Exception($result['message'] ?? 'Gagal regenerate rapor');
@@ -2484,7 +2721,7 @@ class ReportController extends Controller
             
             return response()->json([
                 'success' => false,
-                'message' => 'Terjadi kesalahan saat regenerasi rapor: ' . $e->getMessage()
+                'message' => 'Terjadi kesalahan saat regenerasi rapor. Silakan coba lagi.'
             ], 500);
         } finally {
             ReportPerformanceTracker::finishIfEnabled($performance);
@@ -2507,13 +2744,23 @@ class ReportController extends Controller
             $siswa = $report->siswa()->with([
                 'nilais' => function($query) use ($report, $reportSemester) {
                     // Filter nilai sesuai dengan semester dan tahun ajaran rapor
-                    $query->whereHas('mataPelajaran', function($q) use ($reportSemester) {
-                        $q->where('semester', $reportSemester);
+                    $query->whereHas('mataPelajaran', function($q) use ($reportSemester, $report) {
+                        $q->where('semester', $reportSemester)
+                            ->where('kelas_id', $report->kelas_id);
+
+                        if ($report->tahun_ajaran_id) {
+                            $q->where('tahun_ajaran_id', $report->tahun_ajaran_id);
+                        }
                     })
                     ->when($report->tahun_ajaran_id, function($q) use ($report) {
                         $q->where('tahun_ajaran_id', $report->tahun_ajaran_id);
-                    })
-                    ->where('is_submitted', true);
+                    });
+                    $this->constrainEligibleReportScores(
+                        $query,
+                        $this->normalizeReportType($report->type),
+                        null,
+                        (int) $report->kelas_id
+                    );
                 },
                 'nilais.mataPelajaran',
                 'nilaiEkstrakurikuler' => function($query) use ($report, $reportSemester) {
@@ -2532,6 +2779,13 @@ class ReportController extends Controller
             
             if (!$siswa) {
                 return redirect()->back()->with('error', 'Data siswa tidak ditemukan.');
+            }
+
+            if ($siswa->nilais->isEmpty()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Data nilai rapor belum memenuhi syarat untuk ditampilkan.',
+                ], 422);
             }
 
             if ($report->kelas) {
@@ -2561,7 +2815,7 @@ class ReportController extends Controller
             
             return response()->json([
                 'success' => false,
-                'message' => 'Terjadi kesalahan saat memuat preview rapor: ' . $e->getMessage()
+                'message' => 'Terjadi kesalahan saat memuat preview rapor. Silakan coba lagi.'
             ], 500);
         }
     }
@@ -2629,12 +2883,14 @@ class ReportController extends Controller
         $siswa = app(SiswaKelasSemesterResolver::class)
             ->studentQueryForClass((int) $kelas->id, (int) $tahunAjaranId, (int) $semester, true)
             ->with([
-                'nilais' => function ($query) use ($tahunAjaranId, $semester) {
+                'nilais' => function ($query) use ($tahunAjaranId, $semester, $type, $kelas) {
                     $query->where('tahun_ajaran_id', $tahunAjaranId)
-                        ->whereHas('mataPelajaran', function ($subQuery) use ($semester) {
-                            $subQuery->where('semester', $semester);
-                        })
-                        ->where('is_submitted', true);
+                        ->whereHas('mataPelajaran', function ($subQuery) use ($semester, $kelas, $tahunAjaranId) {
+                            $subQuery->where('semester', $semester)
+                                ->where('kelas_id', $kelas->id)
+                                ->where('tahun_ajaran_id', $tahunAjaranId);
+                        });
+                    $this->constrainEligibleReportScores($query, $type, null, (int) $kelas->id);
                 },
                 'nilais.mataPelajaran',
                 'absensi' => function ($query) use ($tahunAjaranId, $semester) {
@@ -2643,12 +2899,14 @@ class ReportController extends Controller
                 },
             ])
             ->withCount([
-                'nilais as completed_nilai_count' => function ($query) use ($tahunAjaranId, $semester) {
+                'nilais as completed_nilai_count' => function ($query) use ($tahunAjaranId, $semester, $type, $kelas) {
                     $query->where('tahun_ajaran_id', $tahunAjaranId)
-                        ->where('is_submitted', true)
-                        ->whereHas('mataPelajaran', function ($subQuery) use ($semester) {
-                            $subQuery->where('semester', $semester);
+                        ->whereHas('mataPelajaran', function ($subQuery) use ($semester, $kelas, $tahunAjaranId) {
+                            $subQuery->where('semester', $semester)
+                                ->where('kelas_id', $kelas->id)
+                                ->where('tahun_ajaran_id', $tahunAjaranId);
                         });
+                    $this->constrainEligibleReportScores($query, $type, null, (int) $kelas->id);
                 }
             ])
             ->orderBy('nama')
@@ -2668,17 +2926,18 @@ class ReportController extends Controller
             })
             ->count();
 
-        $completedMapelCounts = DB::table('nilais')
+        $completedMapelQuery = DB::table('nilais')
             ->join('mata_pelajarans', 'nilais.mata_pelajaran_id', '=', 'mata_pelajarans.id')
             ->where('mata_pelajarans.kelas_id', $kelas->id)
             ->where('mata_pelajarans.semester', $semester)
-            ->where('nilais.is_submitted', true)
             ->whereNull('nilais.deleted_at')
             ->whereNull('mata_pelajarans.deleted_at')
             ->when($tahunAjaranId, function ($query) use ($tahunAjaranId) {
                 return $query->where('nilais.tahun_ajaran_id', $tahunAjaranId)
                     ->where('mata_pelajarans.tahun_ajaran_id', $tahunAjaranId);
-            })
+            });
+        $this->constrainEligibleReportScores($completedMapelQuery, $type, 'nilais', (int) $kelas->id);
+        $completedMapelCounts = $completedMapelQuery
             ->groupBy('nilais.siswa_id')
             ->select('nilais.siswa_id', DB::raw('COUNT(DISTINCT nilais.mata_pelajaran_id) as completed'))
             ->pluck('completed', 'nilais.siswa_id');
@@ -2715,8 +2974,8 @@ class ReportController extends Controller
                 'UAS' => $openedReportType === 'UAS' && (bool) $this->getTemplateForSiswa($student, 'UAS', $tahunAjaranId),
             ];
             $pdfStatuses[$student->id] = [
-                'UTS' => $openedReportType === 'UTS' ? PdfCacheService::getPdfPreparationStatus($student, 'UTS', $tahunAjaranId) : 'missing',
-                'UAS' => $openedReportType === 'UAS' ? PdfCacheService::getPdfPreparationStatus($student, 'UAS', $tahunAjaranId) : 'missing',
+                'UTS' => $openedReportType === 'UTS' ? PdfCacheService::getPdfPreparationStatus($student, 'UTS', $tahunAjaranId, (int) $semester) : 'missing',
+                'UAS' => $openedReportType === 'UAS' ? PdfCacheService::getPdfPreparationStatus($student, 'UAS', $tahunAjaranId, (int) $semester) : 'missing',
             ];
         }
 
@@ -2727,7 +2986,12 @@ class ReportController extends Controller
                 if (($pdfTemplateAvailability[$student->id][$openedReportType] ?? false) &&
                     ($pdfStatuses[$student->id][$openedReportType] ?? 'missing') === 'missing') {
                     $autoPrepare->scheduleForStudent($student, (int) $tahunAjaranId, [$openedReportType], 'report_page_warmup');
-                    $pdfStatuses[$student->id][$openedReportType] = PdfCacheService::getPdfPreparationStatus($student, $openedReportType, (int) $tahunAjaranId);
+                    $pdfStatuses[$student->id][$openedReportType] = PdfCacheService::getPdfPreparationStatus(
+                        $student,
+                        $openedReportType,
+                        (int) $tahunAjaranId,
+                        (int) $semester
+                    );
                 }
             }
         }
@@ -2826,7 +3090,12 @@ class ReportController extends Controller
 
         $statuses = [];
         foreach ($students as $student) {
-            $statuses[$student->id] = PdfCacheService::getPdfPreparationStatus($student, $type, $tahunAjaranId);
+            $statuses[$student->id] = PdfCacheService::getPdfPreparationStatus(
+                $student,
+                $type,
+                $tahunAjaranId,
+                (int) $tahunAjaran->semester
+            );
         }
 
         return response()->json([
@@ -2840,8 +3109,11 @@ class ReportController extends Controller
     public function activate(ReportTemplate $template)
     {
         try {
+            $kelasIds = $template->getAllKelasIds();
+
             if ($template->is_active) {
                 $template->update(['is_active' => false]);
+                $this->invalidateTemplateArtifacts($template, $kelasIds);
 
                 return response()->json([
                     'success' => true,
@@ -2857,6 +3129,7 @@ class ReportController extends Controller
             ]);
 
             $template->update(['is_active' => true]);
+            $this->invalidateTemplateArtifacts($template, $kelasIds);
             
             return response()->json([
                 'success' => true,
@@ -3010,15 +3283,21 @@ class ReportController extends Controller
                 try {
                     // Validasi data siswa berdasarkan semester SAAT INI
                     // Cek nilai di semester yang aktif saat ini
-                    $hasNilai = $siswa->nilais()
-                        ->whereHas('mataPelajaran', function($q) use ($currentSemester) {
-                            $q->where('semester', $currentSemester);
+                    $hasNilaiQuery = $siswa->nilais()
+                        ->whereHas('mataPelajaran', function($q) use ($currentSemester, $kelas, $tahunAjaranId) {
+                            $q->where('semester', $currentSemester)
+                                ->where('kelas_id', $kelas->id)
+                                ->where('tahun_ajaran_id', $tahunAjaranId);
                         })
                         ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
                             return $query->where('tahun_ajaran_id', $tahunAjaranId);
-                        })
-                        ->where('is_submitted', true)
-                        ->exists();
+                        });
+                    $hasNilai = $this->constrainEligibleReportScores(
+                        $hasNilaiQuery,
+                        $type,
+                        null,
+                        (int) $kelas->id
+                    )->exists();
                         
                     // Cek kehadiran di semester yang aktif saat ini
                     $hasAbsensi = $siswa->absensi()
@@ -3173,7 +3452,7 @@ class ReportController extends Controller
             ]));
             
         } catch (\Exception $e) {
-            if ($e instanceof HttpExceptionInterface) {
+            if ($e instanceof HttpExceptionInterface || $e instanceof ValidationException) {
                 throw $e;
             }
 
@@ -3351,6 +3630,7 @@ class ReportController extends Controller
     public function destroy(ReportTemplate $template)
     {
         try {
+            $kelasIds = $template->getAllKelasIds();
             DB::beginTransaction();
 
             // Hapus file
@@ -3362,6 +3642,7 @@ class ReportController extends Controller
             $template->delete();
 
             DB::commit();
+            $this->invalidateTemplateArtifacts($template, $kelasIds);
 
             return response()->json([
                 'success' => true,

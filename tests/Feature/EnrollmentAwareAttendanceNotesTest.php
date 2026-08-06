@@ -594,6 +594,7 @@ class EnrollmentAwareAttendanceNotesTest extends TestCase
             'catatan_mata_pelajaran',
             'catatan_siswa',
             'absensis',
+            'nilais',
             'mata_pelajarans',
             'siswa_kelas_semester',
             'siswas',
@@ -683,6 +684,19 @@ class EnrollmentAwareAttendanceNotesTest extends TestCase
             $table->foreignId('tahun_ajaran_id')->nullable();
             $table->boolean('is_muatan_lokal')->default(false);
             $table->boolean('allow_non_wali')->default(false);
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('nilais', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('siswa_id');
+            $table->foreignId('mata_pelajaran_id')->nullable();
+            $table->foreignId('tahun_ajaran_id')->nullable();
+            $table->decimal('na_tp', 5, 2)->nullable();
+            $table->decimal('na_lm', 5, 2)->nullable();
+            $table->decimal('nilai_akhir_rapor', 5, 2)->nullable();
+            $table->boolean('is_submitted')->default(false);
             $table->timestamps();
             $table->softDeletes();
         });
@@ -777,6 +791,18 @@ class EnrollmentAwareAttendanceNotesTest extends TestCase
 
         $this->ganjilSubjectId = $this->insertSubject('Matematika Ganjil', $waliId, $this->waliGanjilClassId, $this->ganjilYearId, 1);
         $this->genapSubjectId = $this->insertSubject('Matematika Genap', $waliId, $this->waliGenapClassId, $this->genapYearId, 2);
+
+        DB::table('nilais')->insert([
+            'siswa_id' => $this->ahmadId,
+            'mata_pelajaran_id' => $this->ganjilSubjectId,
+            'tahun_ajaran_id' => $this->ganjilYearId,
+            'na_tp' => 80,
+            'na_lm' => 90,
+            'nilai_akhir_rapor' => 85,
+            'is_submitted' => false,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
 
         $this->wali = Guru::findOrFail($waliId);
     }

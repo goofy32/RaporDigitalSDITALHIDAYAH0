@@ -9,6 +9,8 @@ use App\Services\DocumentConversionService;
 use App\Services\PdfCacheService;
 use App\Services\RaporTemplateProcessor;
 use App\Services\ReportPerformanceTracker;
+use App\Services\ReportPeriodService;
+use App\Services\ReportScoreEligibilityService;
 use App\Services\SiswaKelasSemesterResolver;
 use Exception;
 use Illuminate\Bus\Queueable;
@@ -19,6 +21,7 @@ use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\URL;
 
 class GeneratePdfReportJob implements ShouldQueue
@@ -41,13 +44,27 @@ class GeneratePdfReportJob implements ShouldQueue
 
     protected $userId;
 
-    public function __construct(Siswa $siswa, $type, $tahunAjaranId, $requestId, $userId = null)
+    protected ?int $reportClassId = null;
+
+    protected ?int $reportSemester = null;
+
+    protected ?ReportTemplate $validatedTemplate = null;
+
+    public function __construct(
+        Siswa $siswa,
+        $type,
+        $tahunAjaranId,
+        $requestId,
+        $userId = null,
+        ?int $semester = null
+    )
     {
         $this->siswa = $siswa;
         $this->type = $type;
         $this->tahunAjaranId = $tahunAjaranId;
         $this->requestId = $requestId;
         $this->userId = $userId;
+        $this->reportSemester = $semester;
 
         // Set queue name untuk PDF processing
         $this->onQueue('pdf');
@@ -73,6 +90,12 @@ class GeneratePdfReportJob implements ShouldQueue
 
         try {
             $this->validateGenerationContext();
+            $freshnessVersion = PdfCacheService::currentFreshnessVersion(
+                $this->siswa,
+                $this->type,
+                (int) $this->tahunAjaranId,
+                $this->reportSemester
+            );
 
             // Update progress: Started
             $this->updateProgress(null, 'Menyiapkan data rapor', [
@@ -81,14 +104,26 @@ class GeneratePdfReportJob implements ShouldQueue
             ]);
 
             // Step 1: Check if PDF already cached
-            $cacheKey = PdfCacheService::getCacheKey($this->siswa, $this->type, $this->tahunAjaranId);
+            $cacheKey = PdfCacheService::getCacheKey(
+                $this->siswa,
+                $this->type,
+                $this->tahunAjaranId,
+                $this->reportSemester
+            );
             $cachedPdf = PdfCacheService::getCachedPdf(
                 $this->siswa,
                 $this->type,
-                $this->tahunAjaranId
+                $this->tahunAjaranId,
+                $this->reportSemester
             );
 
-            if ($cachedPdf) {
+            if ($cachedPdf && PdfCacheService::freshnessIsCurrent(
+                $this->siswa,
+                $this->type,
+                (int) $this->tahunAjaranId,
+                $freshnessVersion,
+                $this->reportSemester
+            )) {
                 ReportPerformanceTracker::setFlowTypeIfEnabled('pdf_job_cache_hit');
 
                 Log::info('PDF found in cache', [
@@ -108,7 +143,12 @@ class GeneratePdfReportJob implements ShouldQueue
             }
 
             $generationLock = Cache::lock(
-                PdfCacheService::getGenerationLockKey($this->siswa, $this->type, $this->tahunAjaranId),
+                PdfCacheService::getGenerationLockKey(
+                    $this->siswa,
+                    $this->type,
+                    $this->tahunAjaranId,
+                    $this->reportSemester
+                ),
                 180
             );
 
@@ -127,10 +167,17 @@ class GeneratePdfReportJob implements ShouldQueue
             $cachedPdf = PdfCacheService::getCachedPdf(
                 $this->siswa,
                 $this->type,
-                $this->tahunAjaranId
+                $this->tahunAjaranId,
+                $this->reportSemester
             );
 
-            if ($cachedPdf) {
+            if ($cachedPdf && PdfCacheService::freshnessIsCurrent(
+                $this->siswa,
+                $this->type,
+                (int) $this->tahunAjaranId,
+                $freshnessVersion,
+                $this->reportSemester
+            )) {
                 ReportPerformanceTracker::setFlowTypeIfEnabled('pdf_job_cache_hit');
 
                 $this->updateProgress(100, 'PDF siap dibuka', [
@@ -153,7 +200,7 @@ class GeneratePdfReportJob implements ShouldQueue
             ]);
 
             // Step 2: Get template
-            $template = $this->getTemplateForSiswa();
+            $template = $this->validatedTemplate ?: $this->getTemplateForSiswa();
             if (! $template) {
                 throw new Exception('Template rapor tidak ditemukan untuk tipe '.$this->type);
             }
@@ -166,7 +213,7 @@ class GeneratePdfReportJob implements ShouldQueue
 
             // Step 3: Generate DOCX
             $processor = new RaporTemplateProcessor($template, $this->siswa, $this->type, $this->tahunAjaranId);
-            $result = $processor->generate(true);
+            $result = $processor->generate();
 
             if (! $result['success'] || ! isset($result['path'])) {
                 throw new Exception('Gagal generate file DOCX: '.($result['message'] ?? 'Unknown error'));
@@ -213,14 +260,21 @@ class GeneratePdfReportJob implements ShouldQueue
             $filename = "Rapor_{$this->type}_{$cleanName}_{$this->siswa->nis}.pdf";
 
             // Cache the result for 24 hours
-            PdfCacheService::cachePdf(
+            $cachedResult = PdfCacheService::cachePdf(
                 $this->siswa,
                 $this->type,
                 $this->tahunAjaranId,
                 $pdfPath,
                 $filename,
-                $fileSize
+                $fileSize,
+                $freshnessVersion,
+                $this->reportSemester
             );
+
+            if (! $cachedResult) {
+                Storage::disk(PdfCacheService::STORAGE_DISK)->delete($pdfPath);
+                throw new Exception('Data rapor berubah selama PDF diproses. PDF akan dibuat ulang.');
+            }
 
             // Update progress: Completed
             $this->updateProgress(100, 'PDF siap dibuka', [
@@ -292,7 +346,11 @@ class GeneratePdfReportJob implements ShouldQueue
 
     private function getTemplateForSiswa()
     {
-        $kelasId = $this->resolveReportClassId() ?: $this->siswa->kelas_id;
+        $kelasId = $this->reportClassId ?: $this->resolveReportClassId();
+
+        if (! $kelasId) {
+            return null;
+        }
 
         // First look for class-specific template using many-to-many relationship
         $template = ReportTemplate::where('type', $this->type)
@@ -362,11 +420,13 @@ class GeneratePdfReportJob implements ShouldQueue
 
     private function validateGenerationContext(): void
     {
-        if (! $this->userId) {
-            return;
+        $normalizedType = app(ReportPeriodService::class)->normalizeType($this->type);
+        if (! $normalizedType) {
+            throw new Exception('Jenis rapor PDF tidak valid.');
         }
+        $this->type = $normalizedType;
 
-        if (! Schema::hasTable('tahun_ajarans') || ! Schema::hasTable('guru_kelas')) {
+        if (! Schema::hasTable('tahun_ajarans')) {
             return;
         }
 
@@ -376,8 +436,48 @@ class GeneratePdfReportJob implements ShouldQueue
             throw new Exception('Konteks tahun ajaran PDF tidak valid.');
         }
 
-        if (! $this->siswa->isInKelasWali($this->userId, $this->tahunAjaranId, (int) $tahunAjaran->semester)) {
+        $currentSemester = (int) $tahunAjaran->semester;
+        if ($this->reportSemester !== null && $this->reportSemester !== $currentSemester) {
+            throw new Exception('Konteks semester PDF sudah berubah.');
+        }
+        $this->reportSemester = $currentSemester;
+
+        if (! app(ReportPeriodService::class)->isOpened($this->type, $tahunAjaran, (int) $this->tahunAjaranId)) {
+            throw new Exception('Periode rapor PDF tidak sedang dibuka.');
+        }
+
+        $this->reportClassId = $this->resolveReportClassId();
+        if (! $this->reportClassId) {
+            throw new Exception('Konteks kelas PDF tidak valid.');
+        }
+
+        if ($this->userId
+            && Schema::hasTable('guru_kelas')
+            && ! $this->siswa->isInKelasWali($this->userId, $this->tahunAjaranId, (int) $tahunAjaran->semester)) {
             throw new Exception('Konteks wali kelas PDF tidak valid.');
+        }
+
+        if (Schema::hasTable('nilais') && Schema::hasTable('mata_pelajarans')) {
+            $scoreQuery = $this->siswa->nilais()
+                ->where('tahun_ajaran_id', $this->tahunAjaranId)
+                ->whereHas('mataPelajaran', function ($query) use ($tahunAjaran) {
+                    $query->where('kelas_id', $this->reportClassId)
+                        ->where('tahun_ajaran_id', $this->tahunAjaranId)
+                        ->where('semester', (int) $tahunAjaran->semester);
+                });
+
+            if (! app(ReportScoreEligibilityService::class)
+                ->apply($scoreQuery, $this->type, null, $this->reportClassId)
+                ->exists()) {
+                throw new Exception('Data nilai untuk PDF belum memenuhi syarat.');
+            }
+        }
+
+        if (Schema::hasTable('report_templates')) {
+            $this->validatedTemplate = $this->getTemplateForSiswa();
+            if (! $this->validatedTemplate) {
+                throw new Exception('Template rapor PDF tidak tersedia.');
+            }
         }
     }
 
@@ -397,6 +497,7 @@ class GeneratePdfReportJob implements ShouldQueue
             'siswa_id' => $this->siswa->id,
             'type' => $this->type,
             'tahun_ajaran_id' => $this->tahunAjaranId,
+            'semester' => $this->reportSemester,
             'user_id' => $this->userId,
             'updated_at' => time(), // Add timestamp for debugging
         ]);
@@ -428,7 +529,16 @@ class GeneratePdfReportJob implements ShouldQueue
 
     private function forgetGenerationRequestIfCurrent(): void
     {
-        $requestKey = PdfCacheService::getGenerationRequestKey($this->siswa, $this->type, $this->tahunAjaranId);
+        if (! $this->reportSemester) {
+            return;
+        }
+
+        $requestKey = PdfCacheService::getGenerationRequestKey(
+            $this->siswa,
+            $this->type,
+            $this->tahunAjaranId,
+            $this->reportSemester
+        );
 
         if (Cache::get($requestKey) === $this->requestId) {
             Cache::forget($requestKey);

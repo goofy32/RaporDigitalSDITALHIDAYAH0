@@ -6,6 +6,7 @@ use App\Traits\RequiresTahunAjaran;
 use App\Traits\RespondsWithLiveList;
 use Illuminate\Http\Request;
 use App\Models\Siswa;
+use App\Models\SiswaKelasSemester;
 use App\Models\Kelas;
 use App\Models\TahunAjaran;
 use App\Services\StudentExcelImportService;
@@ -476,20 +477,18 @@ class StudentController extends Controller
 
     private function syncActiveSemesterEnrollment(Siswa $student, int $kelasId, TahunAjaran $tahunAjaran): void
     {
-        $now = now();
-
-        DB::table('siswa_kelas_semester')->upsert(
-            [[
+        $enrollment = SiswaKelasSemester::updateOrCreate(
+            [
                 'siswa_id' => $student->id,
-                'kelas_id' => $kelasId,
                 'tahun_ajaran_id' => $tahunAjaran->id,
                 'semester' => (int) $tahunAjaran->semester,
-                'created_at' => $now,
-                'updated_at' => $now,
-            ]],
-            ['siswa_id', 'tahun_ajaran_id', 'semester'],
-            ['kelas_id', 'updated_at']
+            ],
+            ['kelas_id' => $kelasId]
         );
+
+        if (! $enrollment->wasRecentlyCreated && ! $enrollment->wasChanged()) {
+            $enrollment->touch();
+        }
 
         if (app()->resolved(SiswaKelasSemesterResolver::class)) {
             app(SiswaKelasSemesterResolver::class)->resetMemoization();

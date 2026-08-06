@@ -5,10 +5,14 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use App\Services\ScoreAggregateRecalculationService;
 
 class TujuanPembelajaran extends Model
 {
     use HasFactory, SoftDeletes;
+
+    /** @var array<int, array{siswa_id:mixed, mata_pelajaran_id:mixed, tahun_ajaran_id:mixed}> */
+    private array $scoreAggregateContextsBeforeDelete = [];
 
     protected $table = 'tujuan_pembelajarans';
 
@@ -83,13 +87,42 @@ class TujuanPembelajaran extends Model
     protected static function booted()
     {
         static::deleting(function ($tujuanPembelajaran) {
-            if (method_exists($tujuanPembelajaran, 'isForceDeleting') && $tujuanPembelajaran->isForceDeleting()) {
+            $tujuanPembelajaran->scoreAggregateContextsBeforeDelete = $tujuanPembelajaran->nilais()
+                ->select(['siswa_id', 'mata_pelajaran_id', 'tahun_ajaran_id'])
+                ->distinct()
+                ->get()
+                ->map(fn (Nilai $nilai) => $nilai->only([
+                    'siswa_id',
+                    'mata_pelajaran_id',
+                    'tahun_ajaran_id',
+                ]))
+                ->all();
+
+            if (! (method_exists($tujuanPembelajaran, 'isForceDeleting') && $tujuanPembelajaran->isForceDeleting())) {
+                $ownsDeferredInvalidation = ! app()->bound('score_save.defer_nilai_pdf_cache_invalidation');
+                if ($ownsDeferredInvalidation) {
+                    app()->instance('score_save.defer_nilai_pdf_cache_invalidation', true);
+                }
+
+                try {
+                    $tujuanPembelajaran->nilais()->get()->each(function (Nilai $nilai) {
+                        $nilai->delete();
+                    });
+                } finally {
+                    if ($ownsDeferredInvalidation) {
+                        app()->forgetInstance('score_save.defer_nilai_pdf_cache_invalidation');
+                    }
+                }
+            }
+        });
+
+        static::deleted(function ($tujuanPembelajaran) {
+            if (app()->bound('score_aggregate.defer_recalculation')) {
                 return;
             }
 
-            $tujuanPembelajaran->nilais()->get()->each(function (Nilai $nilai) {
-                $nilai->delete();
-            });
+            app(ScoreAggregateRecalculationService::class)
+                ->recalculateMany($tujuanPembelajaran->scoreAggregateContextsBeforeDelete);
         });
     }
 }

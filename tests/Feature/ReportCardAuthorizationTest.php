@@ -5,13 +5,17 @@ namespace Tests\Feature;
 use App\Jobs\AutoPreparePdfReportJob;
 use App\Jobs\GeneratePdfReportJob;
 use App\Models\Guru;
+use App\Models\ProfilSekolah;
+use App\Models\ReportGeneration;
 use App\Models\Setting;
 use App\Models\Siswa;
 use App\Models\User;
 use App\Services\DocumentConversionService;
 use App\Services\PdfCacheService;
+use App\Services\SiswaKelasSemesterResolver;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -70,6 +74,252 @@ class ReportCardAuthorizationTest extends TestCase
 
         $response->assertOk()
             ->assertJsonPath('success', true);
+    }
+
+    public function test_removed_na_tp_recalculation_command_is_not_registered(): void
+    {
+        $this->assertArrayNotHasKey('nilai:recalculate-na-tp', Artisan::all());
+        $this->assertFileDoesNotExist(app_path('Console/Commands/RecalculateNaTp.php'));
+    }
+
+    public function test_uts_html_preview_uses_tp_and_lm_when_final_semester_scores_are_blank(): void
+    {
+        $this->setAuthorizedMidSemesterScore(80, 90, 85);
+
+        $response = $this->actingAsWali()
+            ->get(route('wali_kelas.rapor.preview', [
+                'siswa' => $this->authorizedStudentId,
+                'type' => 'UTS',
+                'tahun_ajaran_id' => $this->activeYearId,
+            ]))
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $this->assertStringContainsString('85.0', (string) $response->json('html'));
+        $this->assertDatabaseHas('nilais', [
+            'siswa_id' => $this->authorizedStudentId,
+            'nilai_akhir_rapor' => 85,
+            'is_submitted' => false,
+        ]);
+    }
+
+    public function test_uts_html_print_accepts_tp_and_lm_without_final_semester_scores(): void
+    {
+        $this->setAuthorizedMidSemesterScore(80, 90, 85);
+
+        $this->mock(\Illuminate\Contracts\View\Factory::class, function ($mock) {
+            $mock->shouldReceive('share')->andReturnNull();
+            $mock->shouldReceive('make')
+                ->with('wali_kelas.rapor.print_html', \Mockery::type('array'), [])
+                ->andReturn(response('mid-semester print ok'));
+        });
+
+        $this->actingAsWali()
+            ->get(route('wali_kelas.rapor_html.print', [
+                'siswa' => $this->authorizedStudentId,
+                'type' => 'UTS',
+                'tahun_ajaran_id' => $this->activeYearId,
+            ]))
+            ->assertOk()
+            ->assertSee('mid-semester print ok');
+    }
+
+    public function test_uts_report_rejects_score_when_tp_or_lm_is_missing(): void
+    {
+        $this->setAuthorizedMidSemesterScore(80, null, 80);
+
+        $this->actingAsWali()
+            ->getJson(route('wali_kelas.rapor.preview', [
+                'siswa' => $this->authorizedStudentId,
+                'type' => 'UTS',
+                'tahun_ajaran_id' => $this->activeYearId,
+            ]))
+            ->assertUnprocessable()
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('error_type', 'data_incomplete');
+    }
+
+    public function test_partial_uts_report_keeps_eligible_subjects_and_skips_ineligible_subjects(): void
+    {
+        $this->setAuthorizedMidSemesterScore(80, 90, 85);
+        $this->insertReportData(
+            $this->authorizedStudentId,
+            $this->currentClassId,
+            $this->activeYearId,
+            $this->wali->id
+        );
+        $secondSubjectId = (int) DB::table('mata_pelajarans')
+            ->where('kelas_id', $this->currentClassId)
+            ->latest('id')
+            ->value('id');
+        DB::table('mata_pelajarans')->where('id', $secondSubjectId)->update([
+            'nama_pelajaran' => 'Bahasa Indonesia',
+            'updated_at' => now(),
+        ]);
+        DB::table('nilais')
+            ->where('mata_pelajaran_id', $secondSubjectId)
+            ->whereNotNull('lingkup_materi_id')
+            ->whereNull('tujuan_pembelajaran_id')
+            ->update(['nilai_lm' => null, 'updated_at' => now()]);
+        DB::table('nilais')
+            ->where('mata_pelajaran_id', $secondSubjectId)
+            ->whereNull('lingkup_materi_id')
+            ->whereNull('tujuan_pembelajaran_id')
+            ->update([
+                'na_lm' => null,
+                'nilai_akhir_rapor' => 99,
+                'is_submitted' => false,
+                'updated_at' => now(),
+            ]);
+
+        $response = $this->actingAsWali()
+            ->getJson(route('wali_kelas.rapor.preview', [
+                'siswa' => $this->authorizedStudentId,
+                'type' => 'UTS',
+                'tahun_ajaran_id' => $this->activeYearId,
+            ]))
+            ->assertOk();
+
+        $html = (string) $response->json('html');
+        $this->assertStringContainsString('85.0', $html);
+        $this->assertStringNotContainsString('99.0', $html);
+    }
+
+    public function test_uts_report_includes_zero_as_a_real_lm_score(): void
+    {
+        $this->setAuthorizedMidSemesterScore(80, 0, 40);
+
+        $response = $this->actingAsWali()
+            ->getJson(route('wali_kelas.rapor.preview', [
+                'siswa' => $this->authorizedStudentId,
+                'type' => 'UTS',
+                'tahun_ajaran_id' => $this->activeYearId,
+            ]))
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        $this->assertStringContainsString('40.0', (string) $response->json('html'));
+    }
+
+    public function test_report_period_normalization_accepts_known_case_and_rejects_malformed_values(): void
+    {
+        $this->setAuthorizedMidSemesterScore(80, 90, 85);
+
+        $this->actingAsWali()
+            ->getJson(route('wali_kelas.rapor.preview', [
+                'siswa' => $this->authorizedStudentId,
+                'type' => 'uts',
+                'tahun_ajaran_id' => $this->activeYearId,
+            ]))
+            ->assertOk();
+
+        foreach (['UNKNOWN'] as $invalidType) {
+            $this->actingAsWali()
+                ->getJson(route('wali_kelas.rapor.preview', [
+                    'siswa' => $this->authorizedStudentId,
+                    'type' => $invalidType,
+                    'tahun_ajaran_id' => $this->activeYearId,
+                ]))
+                ->assertUnprocessable()
+                ->assertJsonValidationErrors('type');
+        }
+
+        $this->actingAsWali()
+            ->getJson(route('wali_kelas.rapor.preview', [
+                'siswa' => $this->authorizedStudentId,
+                'tahun_ajaran_id' => $this->activeYearId,
+            ]).'&type=')
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('type');
+
+        $this->actingAsWali()
+            ->getJson(route('wali_kelas.rapor.preview', [
+                'siswa' => $this->authorizedStudentId,
+                'type' => ['UTS'],
+                'tahun_ajaran_id' => $this->activeYearId,
+            ]))
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('type');
+    }
+
+    public function test_legacy_print_index_carries_the_validated_opened_report_type(): void
+    {
+        Setting::set('active_wali_report_period', 'UAS');
+
+        $this->actingAsWali()
+            ->get(route('wali_kelas.rapor.print_index', [
+                'tahun_ajaran_id' => $this->activeYearId,
+            ]))
+            ->assertOk()
+            ->assertSee('type=UAS', false);
+    }
+
+    public function test_report_uses_current_enrollment_class_and_excludes_old_class_scores(): void
+    {
+        DB::table('guru_kelas')->insert([
+            'guru_id' => $this->wali->id,
+            'kelas_id' => $this->otherClassId,
+            'is_wali_kelas' => true,
+            'role' => 'wali_kelas',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $oldSubjectId = (int) DB::table('mata_pelajarans')
+            ->where('kelas_id', $this->currentClassId)
+            ->where('tahun_ajaran_id', $this->activeYearId)
+            ->value('id');
+        $this->insertReportData(
+            $this->authorizedStudentId,
+            $this->otherClassId,
+            $this->activeYearId,
+            $this->wali->id
+        );
+        $newSubjectId = (int) DB::table('mata_pelajarans')
+            ->where('kelas_id', $this->otherClassId)
+            ->where('tahun_ajaran_id', $this->activeYearId)
+            ->latest('id')
+            ->value('id');
+        $this->setSubjectScore($oldSubjectId, 77);
+        $this->setSubjectScore($newSubjectId, 91);
+
+        DB::table('siswa_kelas_semester')
+            ->where('siswa_id', $this->authorizedStudentId)
+            ->where('tahun_ajaran_id', $this->activeYearId)
+            ->where('semester', 1)
+            ->update(['kelas_id' => $this->otherClassId, 'updated_at' => now()]);
+        DB::table('siswas')->where('id', $this->authorizedStudentId)->update([
+            'kelas_id' => $this->otherClassId,
+            'updated_at' => now(),
+        ]);
+        app(SiswaKelasSemesterResolver::class)->resetMemoization();
+
+        $response = $this->actingAsWali()
+            ->getJson(route('wali_kelas.rapor.preview', [
+                'siswa' => $this->authorizedStudentId,
+                'type' => 'UTS',
+                'tahun_ajaran_id' => $this->activeYearId,
+            ]))
+            ->assertOk();
+
+        $html = (string) $response->json('html');
+        $this->assertStringContainsString('91.0', $html);
+        $this->assertStringNotContainsString('77.0', $html);
+    }
+
+    public function test_uas_report_still_rejects_tp_lm_only_score(): void
+    {
+        Setting::set('active_wali_report_period', 'UAS');
+        $this->setAuthorizedMidSemesterScore(80, 90, 85);
+
+        $this->actingAsWali()
+            ->getJson(route('wali_kelas.rapor.preview', [
+                'siswa' => $this->authorizedStudentId,
+                'type' => 'UAS',
+                'tahun_ajaran_id' => $this->activeYearId,
+            ]))
+            ->assertUnprocessable()
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('error_type', 'data_incomplete');
     }
 
     public function test_wali_cannot_preview_report_for_student_from_another_class(): void
@@ -252,6 +502,12 @@ class ReportCardAuthorizationTest extends TestCase
             'filename' => 'cached-report.pdf',
             'file_size' => 3,
             'generated_at' => now()->toISOString(),
+            'freshness_version' => PdfCacheService::currentFreshnessVersion(
+                Siswa::findOrFail($this->authorizedStudentId),
+                'UTS',
+                $this->activeYearId
+            ),
+            'semester' => 1,
         ], now()->addHour());
 
         $this->mock(DocumentConversionService::class, function ($mock) {
@@ -297,6 +553,12 @@ class ReportCardAuthorizationTest extends TestCase
             'filename' => 'cached-preview.pdf',
             'file_size' => 3,
             'generated_at' => now()->toISOString(),
+            'freshness_version' => PdfCacheService::currentFreshnessVersion(
+                Siswa::findOrFail($this->authorizedStudentId),
+                'UTS',
+                $this->activeYearId
+            ),
+            'semester' => 1,
         ], now()->addHour());
 
         $response = $this->actingAsWali()
@@ -327,6 +589,12 @@ class ReportCardAuthorizationTest extends TestCase
             'filename' => 'cached-download.pdf',
             'file_size' => 3,
             'generated_at' => now()->toISOString(),
+            'freshness_version' => PdfCacheService::currentFreshnessVersion(
+                Siswa::findOrFail($this->authorizedStudentId),
+                'UTS',
+                $this->activeYearId
+            ),
+            'semester' => 1,
         ], now()->addHour());
 
         $response = $this->actingAsWali()
@@ -453,6 +721,7 @@ class ReportCardAuthorizationTest extends TestCase
             'siswa_id' => $this->authorizedStudentId,
             'type' => 'UTS',
             'tahun_ajaran_id' => $this->activeYearId,
+            'semester' => 1,
             'user_id' => $this->wali->id + 999,
             'updated_at' => time(),
         ], now()->addMinutes(30));
@@ -472,6 +741,8 @@ class ReportCardAuthorizationTest extends TestCase
             'filename' => 'ready.pdf',
             'file_size' => 3,
             'generated_at' => now()->toISOString(),
+            'freshness_version' => PdfCacheService::currentFreshnessVersion($siswa, 'UTS', $this->activeYearId),
+            'semester' => 1,
         ], now()->addHour());
 
         $requestId = 'pdf_ready_request';
@@ -484,6 +755,7 @@ class ReportCardAuthorizationTest extends TestCase
             'siswa_id' => $this->authorizedStudentId,
             'type' => 'UTS',
             'tahun_ajaran_id' => $this->activeYearId,
+            'semester' => 1,
             'user_id' => $this->wali->id,
             'cached' => false,
             'updated_at' => time(),
@@ -697,6 +969,9 @@ class ReportCardAuthorizationTest extends TestCase
             ->where('id', $this->activeYearId)
             ->update(['semester' => 2]);
         DB::table('profil_sekolah')->update(['semester' => 2]);
+        DB::table('mata_pelajarans')
+            ->where('tahun_ajaran_id', $this->activeYearId)
+            ->update(['semester' => 2]);
         $this->insertEnrollment($this->authorizedStudentId, $this->currentClassId, $this->activeYearId, 2);
         $this->insertReportTemplate($this->currentClassId, 'UTS', $this->activeYearId, 2);
 
@@ -1071,6 +1346,43 @@ class ReportCardAuthorizationTest extends TestCase
         Bus::assertDispatched(GeneratePdfReportJob::class);
     }
 
+    public function test_uts_pdf_request_queues_tp_lm_only_report(): void
+    {
+        $this->setAuthorizedMidSemesterScore(80, 90, 85);
+        $this->insertReportTemplate($this->currentClassId);
+        Bus::fake([GeneratePdfReportJob::class]);
+
+        $this->actingAsWali()
+            ->postJson(route('wali_kelas.rapor.request-pdf', $this->authorizedStudentId), [
+                'type' => 'UTS',
+                'tahun_ajaran_id' => $this->activeYearId,
+            ])
+            ->assertAccepted()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('status', 'processing');
+
+        Bus::assertDispatchedTimes(GeneratePdfReportJob::class, 1);
+    }
+
+    public function test_uas_pdf_request_rejects_tp_lm_only_report(): void
+    {
+        Setting::set('active_wali_report_period', 'UAS');
+        $this->setAuthorizedMidSemesterScore(80, 90, 85);
+        $this->insertReportTemplate($this->currentClassId, 'UAS', $this->activeYearId, 1);
+        Bus::fake([GeneratePdfReportJob::class]);
+
+        $this->actingAsWali()
+            ->postJson(route('wali_kelas.rapor.request-pdf', $this->authorizedStudentId), [
+                'type' => 'UAS',
+                'tahun_ajaran_id' => $this->activeYearId,
+            ])
+            ->assertUnprocessable()
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('error_type', 'data_incomplete');
+
+        Bus::assertNotDispatched(GeneratePdfReportJob::class);
+    }
+
     public function test_wali_cannot_request_pdf_for_student_from_another_class(): void
     {
         Bus::fake([GeneratePdfReportJob::class]);
@@ -1122,6 +1434,8 @@ class ReportCardAuthorizationTest extends TestCase
             'filename' => 'cached-report.docx',
             'file_size' => 14,
             'generated_at' => now()->toISOString(),
+            'freshness_version' => PdfCacheService::currentFreshnessVersion($siswa, 'UTS', $this->activeYearId),
+            'semester' => 1,
         ], now()->addHour());
 
         $response = $this->actingAsWali()
@@ -1138,6 +1452,92 @@ class ReportCardAuthorizationTest extends TestCase
         $this->assertStringContainsString('/wali-kelas/rapor/secure-file', (string) $response->json('file_url'));
         $this->assertStringContainsString('docx_reports%2Fcached-report.docx', (string) $response->json('file_url'));
         Bus::assertNotDispatched(GeneratePdfReportJob::class);
+    }
+
+    public function test_uas_docx_cache_does_not_bypass_final_semester_eligibility(): void
+    {
+        Setting::set('active_wali_report_period', 'UAS');
+        $this->setAuthorizedMidSemesterScore(80, 90, 85);
+        $this->insertReportTemplate($this->currentClassId, 'UAS', $this->activeYearId, 1);
+
+        $student = Siswa::findOrFail($this->authorizedStudentId);
+        Storage::disk('public')->put('docx_reports/stale-u-arsip.docx', 'PK cached docx');
+        Cache::put(PdfCacheService::getDocxCacheKey($student, 'UAS', $this->activeYearId), [
+            'path' => 'docx_reports/stale-u-arsip.docx',
+            'filename' => 'stale-u-arsip.docx',
+            'file_size' => 14,
+            'generated_at' => now()->toISOString(),
+            'freshness_version' => PdfCacheService::currentFreshnessVersion($student, 'UAS', $this->activeYearId),
+            'semester' => 1,
+        ], now()->addHour());
+
+        $this->actingAsWali()
+            ->postJson(route('wali_kelas.rapor.generate', $this->authorizedStudentId), [
+                'type' => 'UAS',
+                'tahun_ajaran_id' => $this->activeYearId,
+                'action' => 'preview',
+            ])
+            ->assertUnprocessable()
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('error_type', 'data_incomplete');
+    }
+
+    public function test_template_status_change_invalidates_related_report_artifact(): void
+    {
+        $templateId = $this->insertReportTemplate($this->currentClassId);
+        $this->cachePdfForAuthorizedStudent('template-before-change.pdf');
+        $student = Siswa::findOrFail($this->authorizedStudentId);
+
+        \App\Models\ReportTemplate::withoutEvents(function () use ($templateId) {
+            $this->actingAs($this->admin, 'web')
+                ->postJson(route('report.template.activate', $templateId))
+                ->assertOk()
+                ->assertJsonPath('status', 'inactive');
+        });
+
+        $this->assertNull(PdfCacheService::getCachedPdf($student, 'UTS', $this->activeYearId));
+        $this->assertFalse(Storage::disk('public')->exists('pdf_reports/template-before-change.pdf'));
+    }
+
+    public function test_school_profile_change_invalidates_existing_report_artifact(): void
+    {
+        $this->cachePdfForAuthorizedStudent('profile-before-change.pdf');
+        $student = Siswa::findOrFail($this->authorizedStudentId);
+
+        $this->assertNotNull(PdfCacheService::getCachedPdf($student, 'UTS', $this->activeYearId, 1));
+
+        ProfilSekolah::query()->firstOrFail()->update([
+            'nama_sekolah' => 'Nama Sekolah Setelah Perubahan',
+        ]);
+
+        $this->assertNull(PdfCacheService::getCachedPdf($student, 'UTS', $this->activeYearId, 1));
+        $this->assertFalse(Storage::disk('public')->exists('pdf_reports/profile-before-change.pdf'));
+    }
+
+    public function test_student_report_identity_change_invalidates_existing_artifact(): void
+    {
+        $this->cachePdfForAuthorizedStudent('student-before-change.pdf');
+        $student = Siswa::findOrFail($this->authorizedStudentId);
+
+        $student->update([
+            'nama' => 'Nama Siswa Setelah Perubahan',
+            'nis' => '0099887766',
+            'nisn' => '0011223344',
+        ]);
+
+        $this->assertNull(PdfCacheService::getCachedPdf($student->fresh(), 'UTS', $this->activeYearId, 1));
+        $this->assertFalse(Storage::disk('public')->exists('pdf_reports/student-before-change.pdf'));
+    }
+
+    public function test_wali_name_change_invalidates_reports_for_related_class(): void
+    {
+        $this->cachePdfForAuthorizedStudent('wali-before-change.pdf');
+        $student = Siswa::findOrFail($this->authorizedStudentId);
+
+        $this->wali->update(['nama' => 'Nama Wali Setelah Perubahan']);
+
+        $this->assertNull(PdfCacheService::getCachedPdf($student, 'UTS', $this->activeYearId, 1));
+        $this->assertFalse(Storage::disk('public')->exists('pdf_reports/wali-before-change.pdf'));
     }
 
     public function test_admin_report_history_access_is_not_restricted_by_wali_authorization(): void
@@ -1183,6 +1583,44 @@ class ReportCardAuthorizationTest extends TestCase
             ->assertSee('Wali Kelas');
     }
 
+    public function test_history_preview_rejects_report_with_no_eligible_subject(): void
+    {
+        $report = $this->insertHistoryReport();
+        DB::table('nilais')->where('siswa_id', $this->authorizedStudentId)->delete();
+
+        $this->actingAs($this->admin, 'web')
+            ->getJson(route('admin.report.history.preview', $report))
+            ->assertUnprocessable()
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('message', 'Data nilai rapor belum memenuhi syarat untuk ditampilkan.');
+    }
+
+    public function test_history_preview_allows_partial_report_when_one_subject_is_eligible(): void
+    {
+        $report = $this->insertHistoryReport();
+
+        $this->actingAs($this->admin, 'web')
+            ->getJson(route('admin.report.history.preview', $report))
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonStructure(['html']);
+    }
+
+    public function test_history_preview_uses_generic_message_for_unexpected_error(): void
+    {
+        $report = $this->insertHistoryReport();
+        Schema::drop('nilais');
+
+        $response = $this->actingAs($this->admin, 'web')
+            ->getJson(route('admin.report.history.preview', $report))
+            ->assertStatus(500)
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('message', 'Terjadi kesalahan saat memuat preview rapor. Silakan coba lagi.');
+
+        $this->assertStringNotContainsString('SQLSTATE', (string) $response->getContent());
+        $this->assertStringNotContainsString('nilais', (string) $response->getContent());
+    }
+
     private function actingAsWali(): self
     {
         return $this->actingAsWaliWithSession([
@@ -1202,6 +1640,7 @@ class ReportCardAuthorizationTest extends TestCase
     private function createSchema(): void
     {
         foreach ([
+            'audit_logs',
             'report_generations',
             'report_template_kelas',
             'report_templates',
@@ -1212,6 +1651,8 @@ class ReportCardAuthorizationTest extends TestCase
             'ekstrakurikulers',
             'absensis',
             'nilais',
+            'tujuan_pembelajarans',
+            'lingkup_materis',
             'mata_pelajarans',
             'siswa_kelas_semester',
             'siswas',
@@ -1230,6 +1671,21 @@ class ReportCardAuthorizationTest extends TestCase
             $table->string('name');
             $table->string('email')->unique();
             $table->string('password');
+            $table->timestamps();
+        });
+
+        Schema::create('audit_logs', function (Blueprint $table) {
+            $table->id();
+            $table->string('user_type')->nullable();
+            $table->foreignId('user_id')->nullable();
+            $table->string('action');
+            $table->string('model_type')->nullable();
+            $table->foreignId('model_id')->nullable();
+            $table->text('description')->nullable();
+            $table->json('old_values')->nullable();
+            $table->json('new_values')->nullable();
+            $table->string('ip_address')->nullable();
+            $table->string('user_agent')->nullable();
             $table->timestamps();
         });
 
@@ -1315,11 +1771,34 @@ class ReportCardAuthorizationTest extends TestCase
             $table->softDeletes();
         });
 
+        Schema::create('lingkup_materis', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('mata_pelajaran_id');
+            $table->string('judul_lingkup_materi');
+            $table->boolean('is_active')->default(true);
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('tujuan_pembelajarans', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('lingkup_materi_id');
+            $table->string('kode_tp');
+            $table->text('deskripsi_tp')->nullable();
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
         Schema::create('nilais', function (Blueprint $table) {
             $table->id();
             $table->foreignId('siswa_id');
             $table->foreignId('mata_pelajaran_id')->nullable();
-            $table->json('nilai_tp')->nullable();
+            $table->foreignId('tujuan_pembelajaran_id')->nullable();
+            $table->foreignId('lingkup_materi_id')->nullable();
+            $table->decimal('nilai_tp', 5, 2)->nullable();
+            $table->decimal('nilai_lm', 5, 2)->nullable();
+            $table->decimal('na_tp', 5, 2)->nullable();
+            $table->decimal('na_lm', 5, 2)->nullable();
             $table->decimal('nilai_akhir_rapor', 5, 2)->nullable();
             $table->boolean('is_submitted')->default(false);
             $table->foreignId('tahun_ajaran_id')->nullable();
@@ -1546,9 +2025,63 @@ class ReportCardAuthorizationTest extends TestCase
             'updated_at' => now(),
         ]);
 
+        $lingkupMateriId = DB::table('lingkup_materis')->insertGetId([
+            'mata_pelajaran_id' => $subjectId,
+            'judul_lingkup_materi' => 'Bilangan',
+            'is_active' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $tujuanPembelajaranId = DB::table('tujuan_pembelajarans')->insertGetId([
+            'lingkup_materi_id' => $lingkupMateriId,
+            'kode_tp' => 'TP 1',
+            'deskripsi_tp' => 'Memahami bilangan',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        DB::table('nilais')->insert([
+            [
+                'siswa_id' => $studentId,
+                'mata_pelajaran_id' => $subjectId,
+                'lingkup_materi_id' => $lingkupMateriId,
+                'tujuan_pembelajaran_id' => $tujuanPembelajaranId,
+                'nilai_tp' => 88,
+                'nilai_lm' => null,
+                'na_tp' => null,
+                'na_lm' => null,
+                'nilai_akhir_rapor' => null,
+                'is_submitted' => false,
+                'tahun_ajaran_id' => $yearId,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+            [
+                'siswa_id' => $studentId,
+                'mata_pelajaran_id' => $subjectId,
+                'lingkup_materi_id' => $lingkupMateriId,
+                'tujuan_pembelajaran_id' => null,
+                'nilai_tp' => null,
+                'nilai_lm' => 88,
+                'na_tp' => null,
+                'na_lm' => null,
+                'nilai_akhir_rapor' => null,
+                'is_submitted' => false,
+                'tahun_ajaran_id' => $yearId,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+        ]);
+
         DB::table('nilais')->insert([
             'siswa_id' => $studentId,
             'mata_pelajaran_id' => $subjectId,
+            'lingkup_materi_id' => null,
+            'tujuan_pembelajaran_id' => null,
+            'nilai_tp' => null,
+            'nilai_lm' => null,
+            'na_tp' => 88,
+            'na_lm' => 88,
             'nilai_akhir_rapor' => 88,
             'is_submitted' => true,
             'tahun_ajaran_id' => $yearId,
@@ -1568,6 +2101,61 @@ class ReportCardAuthorizationTest extends TestCase
         ]);
     }
 
+    private function setAuthorizedMidSemesterScore(?float $naTp, ?float $naLm, ?float $finalScore): void
+    {
+        DB::table('nilais')
+            ->where('siswa_id', $this->authorizedStudentId)
+            ->where('tahun_ajaran_id', $this->activeYearId)
+            ->whereNotNull('tujuan_pembelajaran_id')
+            ->update(['nilai_tp' => $naTp, 'updated_at' => now()]);
+
+        DB::table('nilais')
+            ->where('siswa_id', $this->authorizedStudentId)
+            ->where('tahun_ajaran_id', $this->activeYearId)
+            ->whereNotNull('lingkup_materi_id')
+            ->whereNull('tujuan_pembelajaran_id')
+            ->update(['nilai_lm' => $naLm, 'updated_at' => now()]);
+
+        DB::table('nilais')
+            ->where('siswa_id', $this->authorizedStudentId)
+            ->where('tahun_ajaran_id', $this->activeYearId)
+            ->whereNull('lingkup_materi_id')
+            ->whereNull('tujuan_pembelajaran_id')
+            ->update([
+                'na_tp' => $naTp,
+                'na_lm' => $naLm,
+                'nilai_akhir_rapor' => $finalScore,
+                'is_submitted' => false,
+                'updated_at' => now(),
+            ]);
+    }
+
+    private function setSubjectScore(int $subjectId, float $score): void
+    {
+        DB::table('nilais')
+            ->where('siswa_id', $this->authorizedStudentId)
+            ->where('mata_pelajaran_id', $subjectId)
+            ->whereNotNull('tujuan_pembelajaran_id')
+            ->update(['nilai_tp' => $score, 'updated_at' => now()]);
+        DB::table('nilais')
+            ->where('siswa_id', $this->authorizedStudentId)
+            ->where('mata_pelajaran_id', $subjectId)
+            ->whereNotNull('lingkup_materi_id')
+            ->whereNull('tujuan_pembelajaran_id')
+            ->update(['nilai_lm' => $score, 'updated_at' => now()]);
+        DB::table('nilais')
+            ->where('siswa_id', $this->authorizedStudentId)
+            ->where('mata_pelajaran_id', $subjectId)
+            ->whereNull('lingkup_materi_id')
+            ->whereNull('tujuan_pembelajaran_id')
+            ->update([
+                'na_tp' => $score,
+                'na_lm' => $score,
+                'nilai_akhir_rapor' => $score,
+                'updated_at' => now(),
+            ]);
+    }
+
     private function insertReportTemplate(int $classId, string $type = 'UTS', ?int $yearId = null, ?int $semester = 1): int
     {
         return DB::table('report_templates')->insertGetId([
@@ -1580,6 +2168,23 @@ class ReportCardAuthorizationTest extends TestCase
             'semester' => $semester,
             'created_at' => now(),
             'updated_at' => now(),
+        ]);
+    }
+
+    private function insertHistoryReport(string $type = 'UTS'): ReportGeneration
+    {
+        $templateId = $this->insertReportTemplate($this->currentClassId, $type, $this->activeYearId, 1);
+
+        return ReportGeneration::create([
+            'siswa_id' => $this->authorizedStudentId,
+            'kelas_id' => $this->currentClassId,
+            'report_template_id' => $templateId,
+            'generated_file' => 'generated/history-preview.docx',
+            'type' => $type,
+            'semester' => 1,
+            'tahun_ajaran_id' => $this->activeYearId,
+            'generated_by' => $this->wali->id,
+            'generated_at' => now(),
         ]);
     }
 
@@ -1626,6 +2231,12 @@ class ReportCardAuthorizationTest extends TestCase
             'filename' => $filename,
             'file_size' => 3,
             'generated_at' => now()->toISOString(),
+            'freshness_version' => PdfCacheService::currentFreshnessVersion(
+                Siswa::findOrFail($studentId),
+                'UTS',
+                $this->activeYearId
+            ),
+            'semester' => 1,
         ], now()->addHour());
     }
 

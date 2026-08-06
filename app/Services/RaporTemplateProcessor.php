@@ -41,9 +41,18 @@ class RaporTemplateProcessor
 
     public function __construct(ReportTemplate $template, Siswa $siswa, $type = 'UTS', $tahunAjaranId = null)
     {
+        $normalizedType = app(ReportPeriodService::class)->normalizeType($type);
+        if (! $normalizedType) {
+            throw new RaporException(
+                'Jenis rapor tidak valid.',
+                'report_type_invalid',
+                self::ERROR_DATA_INCOMPLETE
+            );
+        }
+
         $this->template = $template;
         $this->siswa = $siswa;
-        $this->type = $type;
+        $this->type = $normalizedType;
         $this->schoolProfile = ProfilSekolah::first();
         // Ambil tahun ajaran dari parameter, session, atau dari kelas siswa
         $this->tahunAjaranId = $tahunAjaranId ?: session('tahun_ajaran_id') ?: ($siswa->kelas->tahun_ajaran_id ?? null);
@@ -124,6 +133,16 @@ class RaporTemplateProcessor
         }
 
         Log::debug($message, $context);
+    }
+
+    private function constrainEligibleReportScores($query)
+    {
+        return app(ReportScoreEligibilityService::class)->apply(
+            $query,
+            (string) $this->type,
+            null,
+            $this->reportKelas?->id
+        );
     }
 
     protected function resolveReportClass(): ?Kelas
@@ -222,13 +241,17 @@ class RaporTemplateProcessor
         ]);
 
         // Cek juga semua mata pelajaran untuk siswa ini
-        $allMapel = $this->siswa->nilais()
+        $allMapelQuery = $this->siswa->nilais()
             ->with(['mataPelajaran'])
             ->whereHas('mataPelajaran', function($q) use ($semester) {
                 $q->where('semester', $semester);
+
+                if ($this->reportKelas) {
+                    $q->where('kelas_id', $this->reportKelas->id);
+                }
             })
-            ->where('tahun_ajaran_id', $tahunAjaranId)
-            ->where('is_submitted', true)
+            ->where('tahun_ajaran_id', $tahunAjaranId);
+        $allMapel = $this->constrainEligibleReportScores($allMapelQuery)
             ->get()
             ->groupBy('mata_pelajaran_id');
 
@@ -297,9 +320,13 @@ class RaporTemplateProcessor
             ->with(['mataPelajaran'])
             ->whereHas('mataPelajaran', function($q) use ($semester) {
                 $q->where('semester', $semester);
+
+                if ($this->reportKelas) {
+                    $q->where('kelas_id', $this->reportKelas->id);
+                }
             })
-            ->where('tahun_ajaran_id', $tahunAjaranId)
-            ->where('is_submitted', true);
+            ->where('tahun_ajaran_id', $tahunAjaranId);
+        $this->constrainEligibleReportScores($nilaiQuery);
             
         $nilaiCollection = $nilaiQuery->get();
         
@@ -1703,21 +1730,34 @@ class RaporTemplateProcessor
             );
         }
 
+        if (! $this->reportKelas) {
+            throw new RaporException(
+                'Konteks kelas rapor tidak valid.',
+                'class_context_invalid',
+                self::ERROR_DATA_INCOMPLETE
+            );
+        }
+
         // Validasi apakah siswa memiliki nilai untuk tahun ajaran yang aktif
         // Use the determined semester instead of type-based semester
-        $hasAnyNilai = $this->siswa->nilais()
+        $nilaiQuery = $this->siswa->nilais()
             ->whereHas('mataPelajaran', function($q) use ($semester) {
                 $q->where('semester', $semester);
+
+                if ($this->reportKelas) {
+                    $q->where('kelas_id', $this->reportKelas->id);
+                }
             })
             ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
                 return $query->where('tahun_ajaran_id', $tahunAjaranId);
-            })
-            ->where('is_submitted', true)
-            ->exists();
+            });
+        $hasAnyNilai = $this->constrainEligibleReportScores($nilaiQuery)->exists();
             
         if (!$hasAnyNilai) {
             throw new RaporException(
-                'Siswa belum memiliki nilai pada tahun ajaran ini untuk semester ' . $semester . '. Mohon input nilai terlebih dahulu.',
+                $this->type === 'UTS'
+                    ? 'Nilai tengah semester belum lengkap. Pastikan nilai TP dan LM sudah diisi.'
+                    : 'Nilai akhir semester belum lengkap. Pastikan nilai TP, LM, tes AS, dan non-tes AS sudah diisi.',
                 'data_incomplete',
                 self::ERROR_DATA_INCOMPLETE
             );

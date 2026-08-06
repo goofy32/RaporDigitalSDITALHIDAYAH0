@@ -66,9 +66,13 @@ class ReportPeriodService
         return "Rapor {$type} belum dibuka oleh admin.";
     }
 
-    public function normalizeType(?string $type): ?string
+    public function normalizeType(mixed $type): ?string
     {
-        $type = strtoupper(trim((string) $type));
+        if (! is_string($type)) {
+            return null;
+        }
+
+        $type = strtoupper(trim($type));
 
         return in_array($type, self::TYPES, true) ? $type : null;
     }

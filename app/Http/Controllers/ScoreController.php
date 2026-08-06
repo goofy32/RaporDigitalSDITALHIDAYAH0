@@ -120,35 +120,13 @@ class ScoreController extends Controller
 
         $students = Siswa::whereIn('id', $studentIds)->get();
 
-        if (! $this->scoreSaveProfilingEnabled()) {
-            $startedAt = microtime(true);
-
-            $students->each(fn (Siswa $siswa) => PdfCacheService::clearStudentCache($siswa, $tahunAjaranId, true));
-
-            return [
-                'students' => $students->count(),
-                'cache_invalidation_ms' => $this->elapsedMs($startedAt),
-                'pdf_warmup_scheduling_ms' => 0.0,
-                'jobs_scheduled' => 0,
-            ];
-        }
-
         $cacheStartedAt = microtime(true);
-
-        $reportTypes = app(ReportPeriodService::class)->filterOpenedTypes(['UTS', 'UAS'], null, $tahunAjaranId);
-
-        foreach ($students as $siswa) {
-            foreach ($reportTypes as $type) {
-                PdfCacheService::removeCachedPdf($siswa, $type, $tahunAjaranId);
-                PdfCacheService::removeCachedDocx($siswa, $type, $tahunAjaranId);
-            }
-
-            Log::info('Student PDF cache cleared', ['siswa_id' => $siswa->id]);
-        }
+        $students->each(fn (Siswa $siswa) => PdfCacheService::clearStudentCache($siswa, $tahunAjaranId));
 
         $cacheInvalidationMs = $this->elapsedMs($cacheStartedAt);
         $warmupStartedAt = microtime(true);
         $jobsScheduled = 0;
+        $reportTypes = app(ReportPeriodService::class)->filterOpenedTypes(['UTS', 'UAS'], null, $tahunAjaranId);
 
         if (config('report.pdf_auto_prepare.enabled', false)) {
             $autoPrepare = app(ReportPdfAutoPrepareService::class);

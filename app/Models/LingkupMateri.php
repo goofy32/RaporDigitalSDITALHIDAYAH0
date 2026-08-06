@@ -5,16 +5,25 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use App\Services\ScoreAggregateRecalculationService;
 
 class LingkupMateri extends Model
 {
     use HasFactory, SoftDeletes;
+
+    /** @var array<int, array{siswa_id:mixed, mata_pelajaran_id:mixed, tahun_ajaran_id:mixed}> */
+    private array $scoreAggregateContextsBeforeDelete = [];
 
     protected $table = 'lingkup_materis';
 
     protected $fillable = [
         'mata_pelajaran_id',
         'judul_lingkup_materi',
+        'is_active',
+    ];
+
+    protected $casts = [
+        'is_active' => 'boolean',
     ];
 
     // Menambahkan eager loading default
@@ -43,11 +52,21 @@ class LingkupMateri extends Model
     protected static function booted()
     {
         static::deleting(function ($lingkupMateri) {
+            $lingkupMateri->loadMissing(['tujuanPembelajarans', 'nilais']);
+
+            $lingkupMateri->scoreAggregateContextsBeforeDelete = $lingkupMateri->nilais
+                ->map(fn (Nilai $nilai) => $nilai->only([
+                    'siswa_id',
+                    'mata_pelajaran_id',
+                    'tahun_ajaran_id',
+                ]))
+                ->unique(fn (array $context) => implode(':', $context))
+                ->values()
+                ->all();
+
             if (method_exists($lingkupMateri, 'isForceDeleting') && $lingkupMateri->isForceDeleting()) {
                 return;
             }
-
-            $lingkupMateri->loadMissing(['tujuanPembelajarans', 'nilais']);
 
             AuditLog::create([
                 'user_type' => static::resolveAuditActorType(),
@@ -72,13 +91,55 @@ class LingkupMateri extends Model
                 'user_agent' => request()?->userAgent(),
             ]);
 
-            $lingkupMateri->nilais->each(function (Nilai $nilai) {
-                $nilai->delete();
-            });
+            $ownsDeferredInvalidation = ! app()->bound('score_save.defer_nilai_pdf_cache_invalidation');
+            $ownsDeferredRecalculation = ! app()->bound('score_aggregate.defer_recalculation');
 
-            $lingkupMateri->tujuanPembelajarans->each(function ($tujuanPembelajaran) {
-                $tujuanPembelajaran->delete();
-            });
+            if ($ownsDeferredInvalidation) {
+                app()->instance('score_save.defer_nilai_pdf_cache_invalidation', true);
+            }
+            if ($ownsDeferredRecalculation) {
+                app()->instance('score_aggregate.defer_recalculation', true);
+            }
+
+            try {
+                $lingkupMateri->nilais->each(function (Nilai $nilai) {
+                    $nilai->delete();
+                });
+
+                $lingkupMateri->tujuanPembelajarans->each(function ($tujuanPembelajaran) {
+                    $tujuanPembelajaran->delete();
+                });
+            } finally {
+                if ($ownsDeferredRecalculation) {
+                    app()->forgetInstance('score_aggregate.defer_recalculation');
+                }
+                if ($ownsDeferredInvalidation) {
+                    app()->forgetInstance('score_save.defer_nilai_pdf_cache_invalidation');
+                }
+            }
+        });
+
+        static::deleted(function ($lingkupMateri) {
+            app(ScoreAggregateRecalculationService::class)
+                ->recalculateMany($lingkupMateri->scoreAggregateContextsBeforeDelete);
+        });
+
+        static::updated(function ($lingkupMateri) {
+            if (! $lingkupMateri->wasChanged('is_active')) {
+                return;
+            }
+
+            $contexts = $lingkupMateri->nilais()
+                ->select(['siswa_id', 'mata_pelajaran_id', 'tahun_ajaran_id'])
+                ->distinct()
+                ->get()
+                ->map(fn (Nilai $nilai) => $nilai->only([
+                    'siswa_id',
+                    'mata_pelajaran_id',
+                    'tahun_ajaran_id',
+                ]));
+
+            app(ScoreAggregateRecalculationService::class)->recalculateMany($contexts);
         });
     }
 

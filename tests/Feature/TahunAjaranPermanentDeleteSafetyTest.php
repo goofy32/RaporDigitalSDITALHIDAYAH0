@@ -121,17 +121,17 @@ class TahunAjaranPermanentDeleteSafetyTest extends TestCase
         ]);
         $otherSubjectId = $this->insertSubject($otherYearId, $otherClassId, 'Matematika');
         $siswa = Siswa::findOrFail($siswaId);
-        Cache::put(PdfCacheService::getCacheKey($siswa, 'UTS', $targetYearId), [
+        Cache::put(PdfCacheService::getCacheKey($siswa, 'UTS', $targetYearId, 2), [
             'path' => 'pdf_reports/cached-target.pdf',
             'generated_at' => now()->toISOString(),
         ], now()->addHour());
-        Cache::put(PdfCacheService::getDocxCacheKey($siswa, 'UTS', $targetYearId), [
+        Cache::put(PdfCacheService::getDocxCacheKey($siswa, 'UTS', $targetYearId, 2), [
             'path' => 'docx_reports/cached-target.docx',
             'generated_at' => now()->toISOString(),
         ], now()->addHour());
-        Cache::put(PdfCacheService::getGenerationRequestKey($siswa, 'UTS', $targetYearId), 'request-target', now()->addHour());
+        Cache::put(PdfCacheService::getGenerationRequestKey($siswa, 'UTS', $targetYearId, 2), 'request-target', now()->addHour());
         Cache::put(PdfCacheService::getProgressKey('request-target'), ['completed' => false, 'updated_at' => now()->timestamp], now()->addHour());
-        Cache::put(PdfCacheService::getAutoPrepareTokenKey($siswa, 'UTS', $targetYearId), 'token-target', now()->addHour());
+        Cache::put(PdfCacheService::getAutoPrepareTokenKey($siswa, 'UTS', $targetYearId, 2), 'token-target', now()->addHour());
 
         $studentIdsBefore = DB::table('siswas')->pluck('id')->all();
         $guruIdsBefore = DB::table('gurus')->pluck('id')->all();
@@ -179,11 +179,11 @@ class TahunAjaranPermanentDeleteSafetyTest extends TestCase
         Storage::disk('public')->assertMissing('pdf_reports/cached-target.pdf');
         Storage::disk('public')->assertMissing('docx_reports/cached-target.docx');
         Storage::disk('public')->assertExists($otherTemplatePath);
-        $this->assertFalse(Cache::has(PdfCacheService::getCacheKey($siswa, 'UTS', $targetYearId)));
-        $this->assertFalse(Cache::has(PdfCacheService::getDocxCacheKey($siswa, 'UTS', $targetYearId)));
-        $this->assertFalse(Cache::has(PdfCacheService::getGenerationRequestKey($siswa, 'UTS', $targetYearId)));
+        $this->assertFalse(Cache::has(PdfCacheService::getCacheKey($siswa, 'UTS', $targetYearId, 2)));
+        $this->assertFalse(Cache::has(PdfCacheService::getDocxCacheKey($siswa, 'UTS', $targetYearId, 2)));
+        $this->assertFalse(Cache::has(PdfCacheService::getGenerationRequestKey($siswa, 'UTS', $targetYearId, 2)));
         $this->assertFalse(Cache::has(PdfCacheService::getProgressKey('request-target')));
-        $this->assertFalse(Cache::has(PdfCacheService::getAutoPrepareTokenKey($siswa, 'UTS', $targetYearId)));
+        $this->assertFalse(Cache::has(PdfCacheService::getAutoPrepareTokenKey($siswa, 'UTS', $targetYearId, 2)));
 
         $this->assertSame(1, DB::table('audit_logs')->where('action', 'permanent_purge')->where('model_id', $targetYearId)->count());
     }
