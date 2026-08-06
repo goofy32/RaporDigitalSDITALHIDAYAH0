@@ -3,7 +3,10 @@
 namespace App\Services;
 
 use App\Models\Siswa;
+use App\Models\TahunAjaran;
+use InvalidArgumentException;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -21,24 +24,32 @@ class PdfCacheService
     /**
      * Generate cache key for PDF
      */
-    public static function getCacheKey(Siswa $siswa, $type, $tahunAjaranId)
+    public static function getCacheKey(Siswa $siswa, $type, $tahunAjaranId, ?int $semester = null)
     {
-        return self::CACHE_PREFIX . "{$siswa->id}_{$type}_{$tahunAjaranId}";
+        [$type, $semester] = self::normalizeContext((string) $type, (int) $tahunAjaranId, $semester);
+
+        return self::CACHE_PREFIX . "{$siswa->id}_{$type}_{$tahunAjaranId}_semester_{$semester}";
     }
 
-    public static function getDocxCacheKey(Siswa $siswa, $type, $tahunAjaranId): string
+    public static function getDocxCacheKey(Siswa $siswa, $type, $tahunAjaranId, ?int $semester = null): string
     {
-        return self::CACHE_PREFIX . "docx_{$siswa->id}_{$type}_{$tahunAjaranId}";
+        [$type, $semester] = self::normalizeContext((string) $type, (int) $tahunAjaranId, $semester);
+
+        return self::CACHE_PREFIX . "docx_{$siswa->id}_{$type}_{$tahunAjaranId}_semester_{$semester}";
     }
 
-    public static function getGenerationLockKey(Siswa $siswa, $type, $tahunAjaranId): string
+    public static function getGenerationLockKey(Siswa $siswa, $type, $tahunAjaranId, ?int $semester = null): string
     {
-        return self::CACHE_PREFIX . "generation_lock_{$siswa->id}_{$type}_{$tahunAjaranId}";
+        [$type, $semester] = self::normalizeContext((string) $type, (int) $tahunAjaranId, $semester);
+
+        return self::CACHE_PREFIX . "generation_lock_{$siswa->id}_{$type}_{$tahunAjaranId}_semester_{$semester}";
     }
 
-    public static function getGenerationRequestKey(Siswa $siswa, $type, $tahunAjaranId): string
+    public static function getGenerationRequestKey(Siswa $siswa, $type, $tahunAjaranId, ?int $semester = null): string
     {
-        return self::CACHE_PREFIX . "generation_request_{$siswa->id}_{$type}_{$tahunAjaranId}";
+        [$type, $semester] = self::normalizeContext((string) $type, (int) $tahunAjaranId, $semester);
+
+        return self::CACHE_PREFIX . "generation_request_{$siswa->id}_{$type}_{$tahunAjaranId}_semester_{$semester}";
     }
 
     public static function getProgressKey(string $requestId): string
@@ -46,30 +57,69 @@ class PdfCacheService
         return "pdf_progress_{$requestId}";
     }
 
-    public static function getAutoPrepareTokenKey(Siswa $siswa, $type, $tahunAjaranId): string
+    public static function getAutoPrepareTokenKey(Siswa $siswa, $type, $tahunAjaranId, ?int $semester = null): string
     {
-        return self::CACHE_PREFIX . "auto_prepare_token_{$siswa->id}_{$type}_{$tahunAjaranId}";
+        [$type, $semester] = self::normalizeContext((string) $type, (int) $tahunAjaranId, $semester);
+
+        return self::CACHE_PREFIX . "auto_prepare_token_{$siswa->id}_{$type}_{$tahunAjaranId}_semester_{$semester}";
     }
 
-    public static function getPdfPreparationStatus(Siswa $siswa, $type, $tahunAjaranId): string
+    public static function getFreshnessKey(Siswa $siswa, string $type, int $tahunAjaranId, ?int $semester = null): string
     {
-        if (self::hasValidCachedPdf($siswa, $type, $tahunAjaranId)) {
+        [$type, $semester] = self::normalizeContext($type, $tahunAjaranId, $semester);
+
+        return self::CACHE_PREFIX . "freshness_{$siswa->id}_{$type}_{$tahunAjaranId}_semester_{$semester}";
+    }
+
+    public static function currentFreshnessVersion(
+        Siswa $siswa,
+        string $type,
+        int $tahunAjaranId,
+        ?int $semester = null
+    ): int
+    {
+        [$type, $semester] = self::normalizeContext($type, $tahunAjaranId, $semester);
+        self::rememberCacheIndex($siswa, $type, $tahunAjaranId, $semester);
+
+        return (int) Cache::get(self::getFreshnessKey($siswa, $type, $tahunAjaranId, $semester), 0);
+    }
+
+    public static function freshnessIsCurrent(
+        Siswa $siswa,
+        string $type,
+        int $tahunAjaranId,
+        int $expectedVersion,
+        ?int $semester = null
+    ): bool {
+        return self::currentFreshnessVersion($siswa, $type, $tahunAjaranId, $semester) === $expectedVersion;
+    }
+
+    public static function getPdfPreparationStatus(Siswa $siswa, $type, $tahunAjaranId, ?int $semester = null): string
+    {
+        if (self::hasValidCachedPdf($siswa, $type, $tahunAjaranId, $semester)) {
             return 'ready';
         }
 
-        if (self::hasActiveGenerationRequest($siswa, $type, $tahunAjaranId) ||
-            Cache::has(self::getAutoPrepareTokenKey($siswa, $type, $tahunAjaranId))) {
+        if (self::hasActiveGenerationRequest($siswa, $type, $tahunAjaranId, $semester) ||
+            Cache::has(self::getAutoPrepareTokenKey($siswa, $type, $tahunAjaranId, $semester))) {
             return 'preparing';
         }
 
         return 'missing';
     }
 
-    public static function hasValidCachedPdf(Siswa $siswa, $type, $tahunAjaranId): bool
+    public static function hasValidCachedPdf(Siswa $siswa, $type, $tahunAjaranId, ?int $semester = null): bool
     {
-        $cachedData = Cache::get(self::getCacheKey($siswa, $type, $tahunAjaranId));
+        $semester = self::resolveSemester((int) $tahunAjaranId, $semester);
+        $cachedData = Cache::get(self::getCacheKey($siswa, $type, $tahunAjaranId, $semester));
 
         if (! $cachedData || ! isset($cachedData['path'], $cachedData['generated_at'])) {
+            return false;
+        }
+
+        if (! self::cacheMatchesFreshness($cachedData, $siswa, (string) $type, (int) $tahunAjaranId, $semester)) {
+            self::removeCachedPdf($siswa, $type, $tahunAjaranId, $semester);
+
             return false;
         }
 
@@ -80,11 +130,18 @@ class PdfCacheService
         return now()->diffInHours($cachedData['generated_at']) <= self::CACHE_DURATION;
     }
 
-    public static function hasValidCachedDocx(Siswa $siswa, $type, $tahunAjaranId): bool
+    public static function hasValidCachedDocx(Siswa $siswa, $type, $tahunAjaranId, ?int $semester = null): bool
     {
-        $cachedData = Cache::get(self::getDocxCacheKey($siswa, $type, $tahunAjaranId));
+        $semester = self::resolveSemester((int) $tahunAjaranId, $semester);
+        $cachedData = Cache::get(self::getDocxCacheKey($siswa, $type, $tahunAjaranId, $semester));
 
         if (! $cachedData || ! isset($cachedData['path'], $cachedData['generated_at'])) {
+            return false;
+        }
+
+        if (! self::cacheMatchesFreshness($cachedData, $siswa, (string) $type, (int) $tahunAjaranId, $semester)) {
+            self::removeCachedDocx($siswa, $type, $tahunAjaranId, $semester);
+
             return false;
         }
 
@@ -95,9 +152,9 @@ class PdfCacheService
         return now()->diffInHours($cachedData['generated_at']) <= self::CACHE_DURATION;
     }
 
-    public static function hasActiveGenerationRequest(Siswa $siswa, $type, $tahunAjaranId): bool
+    public static function hasActiveGenerationRequest(Siswa $siswa, $type, $tahunAjaranId, ?int $semester = null): bool
     {
-        $requestKey = self::getGenerationRequestKey($siswa, $type, $tahunAjaranId);
+        $requestKey = self::getGenerationRequestKey($siswa, $type, $tahunAjaranId, $semester);
         $requestId = Cache::get($requestKey);
 
         if (! is_string($requestId) || $requestId === '') {
@@ -131,15 +188,23 @@ class PdfCacheService
     /**
      * Check if PDF exists in cache
      */
-    public static function getCachedPdf(Siswa $siswa, $type, $tahunAjaranId)
+    public static function getCachedPdf(Siswa $siswa, $type, $tahunAjaranId, ?int $semester = null)
     {
         $token = ReportPerformanceTracker::startSegmentIfEnabled('cache_lookup');
+        $semester = self::resolveSemester((int) $tahunAjaranId, $semester);
 
         try {
-            $cacheKey = self::getCacheKey($siswa, $type, $tahunAjaranId);
+            $cacheKey = self::getCacheKey($siswa, $type, $tahunAjaranId, $semester);
             $cachedData = Cache::get($cacheKey);
 
             if (!$cachedData) {
+                ReportPerformanceTracker::setCacheHitIfEnabled(false);
+
+                return null;
+            }
+
+            if (! self::cacheMatchesFreshness($cachedData, $siswa, (string) $type, (int) $tahunAjaranId, $semester)) {
+                self::removeCachedPdf($siswa, $type, $tahunAjaranId, $semester);
                 ReportPerformanceTracker::setCacheHitIfEnabled(false);
 
                 return null;
@@ -160,7 +225,7 @@ class PdfCacheService
             // Check if file is too old (older than cache duration)
             $fileAge = now()->diffInHours($cachedData['generated_at']);
             if ($fileAge > self::CACHE_DURATION) {
-                self::removeCachedPdf($siswa, $type, $tahunAjaranId);
+                self::removeCachedPdf($siswa, $type, $tahunAjaranId, $semester);
                 ReportPerformanceTracker::setCacheHitIfEnabled(false);
 
                 return null;
@@ -180,15 +245,23 @@ class PdfCacheService
         }
     }
 
-    public static function getCachedDocx(Siswa $siswa, $type, $tahunAjaranId): ?array
+    public static function getCachedDocx(Siswa $siswa, $type, $tahunAjaranId, ?int $semester = null): ?array
     {
         $token = ReportPerformanceTracker::startSegmentIfEnabled('cache_lookup');
+        $semester = self::resolveSemester((int) $tahunAjaranId, $semester);
 
         try {
-            $cacheKey = self::getDocxCacheKey($siswa, $type, $tahunAjaranId);
+            $cacheKey = self::getDocxCacheKey($siswa, $type, $tahunAjaranId, $semester);
             $cachedData = Cache::get($cacheKey);
 
             if (! $cachedData) {
+                ReportPerformanceTracker::setCacheHitIfEnabled(false);
+
+                return null;
+            }
+
+            if (! self::cacheMatchesFreshness($cachedData, $siswa, (string) $type, (int) $tahunAjaranId, $semester)) {
+                self::removeCachedDocx($siswa, $type, $tahunAjaranId, $semester);
                 ReportPerformanceTracker::setCacheHitIfEnabled(false);
 
                 return null;
@@ -208,7 +281,7 @@ class PdfCacheService
 
             $fileAge = now()->diffInHours($cachedData['generated_at']);
             if ($fileAge > self::CACHE_DURATION) {
-                self::removeCachedDocx($siswa, $type, $tahunAjaranId);
+                self::removeCachedDocx($siswa, $type, $tahunAjaranId, $semester);
                 ReportPerformanceTracker::setCacheHitIfEnabled(false);
 
                 return null;
@@ -225,9 +298,24 @@ class PdfCacheService
     /**
      * Store PDF in cache
      */
-    public static function cachePdf(Siswa $siswa, $type, $tahunAjaranId, $filePath, $filename, $fileSize)
+    public static function cachePdf(
+        Siswa $siswa,
+        $type,
+        $tahunAjaranId,
+        $filePath,
+        $filename,
+        $fileSize,
+        ?int $expectedFreshnessVersion = null,
+        ?int $semester = null
+    )
     {
-        $cacheKey = self::getCacheKey($siswa, $type, $tahunAjaranId);
+        $semester = self::resolveSemester((int) $tahunAjaranId, $semester);
+        $currentVersion = self::currentFreshnessVersion($siswa, (string) $type, (int) $tahunAjaranId, $semester);
+        if ($expectedFreshnessVersion !== null && $currentVersion !== $expectedFreshnessVersion) {
+            return null;
+        }
+
+        $cacheKey = self::getCacheKey($siswa, $type, $tahunAjaranId, $semester);
         
         $cacheData = [
             'path' => $filePath,
@@ -238,12 +326,14 @@ class PdfCacheService
             'siswa_name' => $siswa->nama,
             'type' => $type,
             'tahun_ajaran_id' => $tahunAjaranId,
+            'semester' => $semester,
+            'freshness_version' => $currentVersion,
             'cache_key' => $cacheKey
         ];
 
-        ReportPerformanceTracker::measureSegment('cache_write', function () use ($cacheKey, $cacheData, $siswa, $type, $tahunAjaranId) {
+        ReportPerformanceTracker::measureSegment('cache_write', function () use ($cacheKey, $cacheData, $siswa, $type, $tahunAjaranId, $semester) {
             Cache::put($cacheKey, $cacheData, now()->addHours(self::CACHE_DURATION));
-            self::rememberCacheIndex($siswa, $type, $tahunAjaranId);
+            self::rememberCacheIndex($siswa, $type, $tahunAjaranId, $semester);
         });
 
         Log::info("PDF cached successfully", [
@@ -255,8 +345,22 @@ class PdfCacheService
         return $cacheData;
     }
 
-    public static function cacheDocx(Siswa $siswa, $type, $tahunAjaranId, string $sourcePath, string $filename): ?array
+    public static function cacheDocx(
+        Siswa $siswa,
+        $type,
+        $tahunAjaranId,
+        string $sourcePath,
+        string $filename,
+        ?int $expectedFreshnessVersion = null,
+        ?int $semester = null
+    ): ?array
     {
+        $semester = self::resolveSemester((int) $tahunAjaranId, $semester);
+        $currentVersion = self::currentFreshnessVersion($siswa, (string) $type, (int) $tahunAjaranId, $semester);
+        if ($expectedFreshnessVersion !== null && $currentVersion !== $expectedFreshnessVersion) {
+            return null;
+        }
+
         if (! is_file($sourcePath) || ! is_readable($sourcePath)) {
             return null;
         }
@@ -283,7 +387,14 @@ class PdfCacheService
             return null;
         }
 
-        $cacheKey = self::getDocxCacheKey($siswa, $type, $tahunAjaranId);
+        if ($expectedFreshnessVersion !== null
+            && ! self::freshnessIsCurrent($siswa, (string) $type, (int) $tahunAjaranId, $expectedFreshnessVersion, $semester)) {
+            Storage::disk(self::STORAGE_DISK)->delete($cachedPath);
+
+            return null;
+        }
+
+        $cacheKey = self::getDocxCacheKey($siswa, $type, $tahunAjaranId, $semester);
         $cacheData = [
             'path' => $cachedPath,
             'filename' => $filename,
@@ -292,12 +403,14 @@ class PdfCacheService
             'siswa_id' => $siswa->id,
             'type' => $type,
             'tahun_ajaran_id' => $tahunAjaranId,
+            'semester' => $semester,
+            'freshness_version' => $currentVersion,
             'cache_key' => $cacheKey,
         ];
 
-        ReportPerformanceTracker::measureSegment('cache_write', function () use ($cacheKey, $cacheData, $siswa, $type, $tahunAjaranId) {
+        ReportPerformanceTracker::measureSegment('cache_write', function () use ($cacheKey, $cacheData, $siswa, $type, $tahunAjaranId, $semester) {
             Cache::put($cacheKey, $cacheData, now()->addHours(self::CACHE_DURATION));
-            self::rememberCacheIndex($siswa, $type, $tahunAjaranId);
+            self::rememberCacheIndex($siswa, $type, $tahunAjaranId, $semester);
         });
 
         Log::info('DOCX cached successfully', [
@@ -312,9 +425,9 @@ class PdfCacheService
     /**
      * Remove PDF from cache
      */
-    public static function removeCachedPdf(Siswa $siswa, $type, $tahunAjaranId)
+    public static function removeCachedPdf(Siswa $siswa, $type, $tahunAjaranId, ?int $semester = null)
     {
-        $cacheKey = self::getCacheKey($siswa, $type, $tahunAjaranId);
+        $cacheKey = self::getCacheKey($siswa, $type, $tahunAjaranId, $semester);
         $cachedData = Cache::get($cacheKey);
 
         if ($cachedData) {
@@ -330,9 +443,9 @@ class PdfCacheService
         }
     }
 
-    public static function removeCachedDocx(Siswa $siswa, $type, $tahunAjaranId): void
+    public static function removeCachedDocx(Siswa $siswa, $type, $tahunAjaranId, ?int $semester = null): void
     {
-        $cacheKey = self::getDocxCacheKey($siswa, $type, $tahunAjaranId);
+        $cacheKey = self::getDocxCacheKey($siswa, $type, $tahunAjaranId, $semester);
         $cachedData = Cache::get($cacheKey);
 
         if ($cachedData) {
@@ -346,16 +459,21 @@ class PdfCacheService
         }
     }
 
-    private static function rememberCacheIndex(Siswa $siswa, $type, $tahunAjaranId): void
+    private static function rememberCacheIndex(Siswa $siswa, $type, $tahunAjaranId, int $semester): void
     {
         $indexKey = "pdf_cache_index_{$siswa->id}";
         $index = Cache::get($indexKey, []);
         $index[] = [
             'type' => $type,
             'tahun_ajaran_id' => $tahunAjaranId,
+            'semester' => $semester,
         ];
         $index = collect($index)
-            ->unique(fn ($item) => ($item['type'] ?? '') . '_' . ($item['tahun_ajaran_id'] ?? ''))
+            ->unique(fn ($item) => implode('_', [
+                $item['type'] ?? '',
+                $item['tahun_ajaran_id'] ?? '',
+                $item['semester'] ?? '',
+            ]))
             ->values()
             ->toArray();
 
@@ -369,21 +487,25 @@ class PdfCacheService
         Siswa $siswa,
         ?int $tahunAjaranId = null,
         bool $scheduleAutoPrepare = false,
-        ?int $autoPrepareDelaySeconds = null
+        ?int $autoPrepareDelaySeconds = null,
+        ?int $semester = null
     ): void {
-        $types = $tahunAjaranId
-            ? app(ReportPeriodService::class)->filterOpenedTypes(['UTS', 'UAS'], null, $tahunAjaranId)
-            : ['UTS', 'UAS'];
+        $types = ['UTS', 'UAS'];
 
         if ($tahunAjaranId) {
-            foreach ($types as $type) {
-                self::removeCachedPdf($siswa, $type, $tahunAjaranId);
-                self::removeCachedDocx($siswa, $type, $tahunAjaranId);
+            foreach (self::semestersForInvalidation($semester) as $reportSemester) {
+                foreach ($types as $type) {
+                    self::incrementFreshnessVersion($siswa, $type, $tahunAjaranId, $reportSemester);
+                    self::removeCachedPdf($siswa, $type, $tahunAjaranId, $reportSemester);
+                    self::removeCachedDocx($siswa, $type, $tahunAjaranId, $reportSemester);
+                }
             }
 
             if ($scheduleAutoPrepare) {
+                $openedTypes = app(ReportPeriodService::class)
+                    ->filterOpenedTypes($types, null, $tahunAjaranId);
                 app(ReportPdfAutoPrepareService::class)
-                    ->scheduleForStudent($siswa, $tahunAjaranId, $types, 'pdf_cache_invalidated', $autoPrepareDelaySeconds);
+                    ->scheduleForStudent($siswa, $tahunAjaranId, $openedTypes, 'pdf_cache_invalidated', $autoPrepareDelaySeconds);
             }
         } else {
             $indexKey = "pdf_cache_index_{$siswa->id}";
@@ -394,16 +516,27 @@ class PdfCacheService
                     continue;
                 }
 
-                self::removeCachedPdf(
-                    $siswa,
-                    $entry['type'],
-                    $entry['tahun_ajaran_id']
-                );
-                self::removeCachedDocx(
-                    $siswa,
-                    $entry['type'],
-                    $entry['tahun_ajaran_id']
-                );
+                foreach (self::semestersForInvalidation(isset($entry['semester']) ? (int) $entry['semester'] : null) as $reportSemester) {
+                    self::incrementFreshnessVersion(
+                        $siswa,
+                        (string) $entry['type'],
+                        (int) $entry['tahun_ajaran_id'],
+                        $reportSemester
+                    );
+
+                    self::removeCachedPdf(
+                        $siswa,
+                        $entry['type'],
+                        $entry['tahun_ajaran_id'],
+                        $reportSemester
+                    );
+                    self::removeCachedDocx(
+                        $siswa,
+                        $entry['type'],
+                        $entry['tahun_ajaran_id'],
+                        $reportSemester
+                    );
+                }
 
                 if ($scheduleAutoPrepare) {
                     app(ReportPdfAutoPrepareService::class)
@@ -421,6 +554,161 @@ class PdfCacheService
         }
 
         Log::info("Student PDF cache cleared", ['siswa_id' => $siswa->id]);
+    }
+
+    public static function invalidateStudentReportType(
+        Siswa $siswa,
+        string $type,
+        int $tahunAjaranId,
+        bool $scheduleAutoPrepare = false,
+        ?int $semester = null
+    ): void {
+        foreach (self::semestersForInvalidation($semester) as $reportSemester) {
+            self::incrementFreshnessVersion($siswa, $type, $tahunAjaranId, $reportSemester);
+            self::removeCachedPdf($siswa, $type, $tahunAjaranId, $reportSemester);
+            self::removeCachedDocx($siswa, $type, $tahunAjaranId, $reportSemester);
+        }
+
+        if ($scheduleAutoPrepare) {
+            app(ReportPdfAutoPrepareService::class)->scheduleForStudent(
+                $siswa,
+                $tahunAjaranId,
+                [$type],
+                'report_template_changed'
+            );
+        }
+    }
+
+    private static function cacheMatchesFreshness(
+        array $cachedData,
+        Siswa $siswa,
+        string $type,
+        int $tahunAjaranId,
+        int $semester
+    ): bool {
+        if (! array_key_exists('freshness_version', $cachedData)
+            || (int) ($cachedData['semester'] ?? 0) !== $semester) {
+            return false;
+        }
+
+        return (int) $cachedData['freshness_version']
+            === self::currentFreshnessVersion($siswa, $type, $tahunAjaranId, $semester);
+    }
+
+    private static function incrementFreshnessVersion(
+        Siswa $siswa,
+        string $type,
+        int $tahunAjaranId,
+        int $semester
+    ): int
+    {
+        $key = self::getFreshnessKey($siswa, $type, $tahunAjaranId, $semester);
+
+        if (! Cache::has($key)) {
+            Cache::forever($key, 0);
+        }
+
+        return (int) Cache::increment($key);
+    }
+
+    public static function clearAllStudentCaches(): void
+    {
+        if (! Schema::hasTable('siswas')) {
+            return;
+        }
+
+        Siswa::withoutGlobalScopes()
+            ->select('id')
+            ->chunkById(200, function ($students) {
+                $students->each(fn (Siswa $siswa) => self::clearStudentCache($siswa));
+            });
+    }
+
+    public static function clearYearCaches(int $tahunAjaranId): void
+    {
+        if (! Schema::hasTable('siswas')) {
+            return;
+        }
+
+        Siswa::withoutGlobalScopes()
+            ->select('id')
+            ->chunkById(200, function ($students) use ($tahunAjaranId) {
+                $students->each(fn (Siswa $siswa) => self::clearStudentCache($siswa, $tahunAjaranId));
+            });
+    }
+
+    public static function clearClassCaches(iterable $classIds): void
+    {
+        $classIds = collect($classIds)->map(fn ($id) => (int) $id)->filter()->unique()->values();
+        if ($classIds->isEmpty() || ! Schema::hasTable('siswas')) {
+            return;
+        }
+
+        $hasCurrentClass = Schema::hasColumn('siswas', 'kelas_id');
+        $hasEnrollments = Schema::hasTable('siswa_kelas_semester');
+        if (! $hasCurrentClass && ! $hasEnrollments) {
+            return;
+        }
+
+        Siswa::withoutGlobalScopes()
+            ->where(function ($query) use ($classIds, $hasCurrentClass, $hasEnrollments) {
+                if ($hasCurrentClass) {
+                    $query->whereIn('kelas_id', $classIds);
+                }
+
+                if ($hasEnrollments) {
+                    $method = $hasCurrentClass ? 'orWhereHas' : 'whereHas';
+                    $query->{$method}('semesterEnrollments', fn ($enrollments) => $enrollments->whereIn('kelas_id', $classIds));
+                }
+            })
+            ->select('siswas.id')
+            ->distinct()
+            ->chunkById(200, function ($students) {
+                $students->each(fn (Siswa $siswa) => self::clearStudentCache($siswa));
+            }, 'siswas.id', 'id');
+    }
+
+    private static function normalizeContext(string $type, int $tahunAjaranId, ?int $semester): array
+    {
+        $type = app(ReportPeriodService::class)->normalizeType($type);
+        if (! $type) {
+            throw new InvalidArgumentException('Jenis rapor cache tidak valid.');
+        }
+
+        return [$type, self::resolveSemester($tahunAjaranId, $semester)];
+    }
+
+    private static function resolveSemester(int $tahunAjaranId, ?int $semester): int
+    {
+        if ($semester !== null) {
+            if (! in_array($semester, [1, 2], true)) {
+                throw new InvalidArgumentException('Semester rapor cache tidak valid.');
+            }
+
+            return $semester;
+        }
+
+        $resolved = TahunAjaran::withTrashed()->whereKey($tahunAjaranId)->value('semester');
+        $resolved = $resolved === null ? null : (int) $resolved;
+
+        if (! in_array($resolved, [1, 2], true)) {
+            throw new InvalidArgumentException('Konteks semester rapor cache tidak tersedia.');
+        }
+
+        return $resolved;
+    }
+
+    private static function semestersForInvalidation(?int $semester): array
+    {
+        if ($semester === null) {
+            return [1, 2];
+        }
+
+        if (! in_array($semester, [1, 2], true)) {
+            throw new InvalidArgumentException('Semester rapor cache tidak valid.');
+        }
+
+        return [$semester];
     }
 
     /**

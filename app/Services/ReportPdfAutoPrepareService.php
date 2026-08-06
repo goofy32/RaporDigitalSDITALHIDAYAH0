@@ -42,6 +42,11 @@ class ReportPdfAutoPrepareService
 
         $scheduled = 0;
         $resolvedDelaySeconds = $this->delaySeconds($delaySeconds);
+        $semester = $this->semesterForYear($tahunAjaranId);
+
+        if (! $semester) {
+            return 0;
+        }
 
         foreach ($types as $type) {
             $unavailableReason = $this->unavailableReason($siswa, $type, $tahunAjaranId);
@@ -52,11 +57,11 @@ class ReportPdfAutoPrepareService
                 continue;
             }
 
-            if (PdfCacheService::getPdfPreparationStatus($siswa, $type, $tahunAjaranId) === 'ready') {
+            if (PdfCacheService::getPdfPreparationStatus($siswa, $type, $tahunAjaranId, $semester) === 'ready') {
                 continue;
             }
 
-            $scopeKey = $this->scopeKey($siswa->id, $type, $tahunAjaranId);
+            $scopeKey = $this->scopeKey($siswa->id, $type, $tahunAjaranId, $semester);
 
             if (isset($this->scheduledThisScope[$scopeKey])) {
                 continue;
@@ -65,12 +70,12 @@ class ReportPdfAutoPrepareService
             $token = (string) Str::uuid();
 
             Cache::put(
-                PdfCacheService::getAutoPrepareTokenKey($siswa, $type, $tahunAjaranId),
+                PdfCacheService::getAutoPrepareTokenKey($siswa, $type, $tahunAjaranId, $semester),
                 $token,
                 now()->addHours(PdfCacheService::CACHE_DURATION)
             );
 
-            AutoPreparePdfReportJob::dispatch($siswa->id, $type, $tahunAjaranId, $token, $reason)
+            AutoPreparePdfReportJob::dispatch($siswa->id, $type, $tahunAjaranId, $token, $reason, $semester)
                 ->delay(now()->addSeconds($resolvedDelaySeconds))
                 ->onQueue($this->queueName());
 
@@ -81,8 +86,8 @@ class ReportPdfAutoPrepareService
                 'siswa_id' => $siswa->id,
                 'report_type' => $type,
                 'tahun_ajaran_id' => $tahunAjaranId,
-                'semester' => $this->semesterForYear($tahunAjaranId),
-                'cache_key' => PdfCacheService::getCacheKey($siswa, $type, $tahunAjaranId),
+                'semester' => $semester,
+                'cache_key' => PdfCacheService::getCacheKey($siswa, $type, $tahunAjaranId, $semester),
                 'delay_seconds' => $resolvedDelaySeconds,
                 'queue' => $this->queueName(),
                 'reason' => $reason,
@@ -149,7 +154,7 @@ class ReportPdfAutoPrepareService
             foreach ($students as $student) {
                 $summary['students']++;
 
-                if (PdfCacheService::getPdfPreparationStatus($student, $type, (int) $tahunAjaran->id) === 'ready') {
+                if (PdfCacheService::getPdfPreparationStatus($student, $type, (int) $tahunAjaran->id, $semester) === 'ready') {
                     $summary['cached']++;
 
                     continue;
@@ -208,6 +213,23 @@ class ReportPdfAutoPrepareService
             return 'report_period_unopened';
         }
 
+        $kelasId = $this->resolveReportClassId($siswa, $tahunAjaranId, (int) $tahunAjaran->semester);
+        if (! $kelasId) {
+            return 'class_context_unavailable';
+        }
+
+        $scoreQuery = $siswa->nilais()
+            ->where('tahun_ajaran_id', $tahunAjaranId)
+            ->whereHas('mataPelajaran', function ($query) use ($tahunAjaran, $tahunAjaranId, $kelasId) {
+                $query->where('semester', (int) $tahunAjaran->semester)
+                    ->where('tahun_ajaran_id', $tahunAjaranId)
+                    ->where('kelas_id', $kelasId);
+            });
+
+        if (! app(ReportScoreEligibilityService::class)->apply($scoreQuery, $type, null, $kelasId)->exists()) {
+            return 'score_incomplete';
+        }
+
         if (! Schema::hasTable('report_templates')) {
             return null;
         }
@@ -219,21 +241,32 @@ class ReportPdfAutoPrepareService
         return null;
     }
 
-    public function isLatestToken(Siswa $siswa, string $type, int $tahunAjaranId, string $token): bool
+    public function isLatestToken(
+        Siswa $siswa,
+        string $type,
+        int $tahunAjaranId,
+        string $token,
+        ?int $semester = null
+    ): bool
     {
         return hash_equals(
-            (string) Cache::get(PdfCacheService::getAutoPrepareTokenKey($siswa, $type, $tahunAjaranId), ''),
+            (string) Cache::get(PdfCacheService::getAutoPrepareTokenKey($siswa, $type, $tahunAjaranId, $semester), ''),
             $token
         );
     }
 
-    public function hasActiveUserGeneration(Siswa $siswa, string $type, int $tahunAjaranId): bool
+    public function hasActiveUserGeneration(
+        Siswa $siswa,
+        string $type,
+        int $tahunAjaranId,
+        ?int $semester = null
+    ): bool
     {
-        if (! PdfCacheService::hasActiveGenerationRequest($siswa, $type, $tahunAjaranId)) {
+        if (! PdfCacheService::hasActiveGenerationRequest($siswa, $type, $tahunAjaranId, $semester)) {
             return false;
         }
 
-        $requestKey = PdfCacheService::getGenerationRequestKey($siswa, $type, $tahunAjaranId);
+        $requestKey = PdfCacheService::getGenerationRequestKey($siswa, $type, $tahunAjaranId, $semester);
         $requestId = Cache::get($requestKey);
 
         $progress = Cache::get(PdfCacheService::getProgressKey($requestId));
@@ -297,7 +330,12 @@ class ReportPdfAutoPrepareService
             'report_type' => $type,
             'tahun_ajaran_id' => $tahunAjaranId,
             'semester' => $this->semesterForYear($tahunAjaranId),
-            'cache_key' => PdfCacheService::getCacheKey($siswa, $type, $tahunAjaranId),
+            'cache_key' => PdfCacheService::getCacheKey(
+                $siswa,
+                $type,
+                $tahunAjaranId,
+                $this->semesterForYear($tahunAjaranId)
+            ),
             'unavailable_reason' => $unavailableReason,
             'reason' => $reason,
         ]);
@@ -339,9 +377,9 @@ class ReportPdfAutoPrepareService
         return $queue !== '' ? $queue : 'pdf-warm';
     }
 
-    private function scopeKey(int $siswaId, string $type, int $tahunAjaranId): string
+    private function scopeKey(int $siswaId, string $type, int $tahunAjaranId, int $semester): string
     {
-        return "{$siswaId}:{$type}:{$tahunAjaranId}";
+        return "{$siswaId}:{$type}:{$tahunAjaranId}:{$semester}";
     }
 
     private function semesterForYear(int $tahunAjaranId): ?int

@@ -204,16 +204,18 @@ class ReportPerformanceTest extends TestCase
         );
 
         Storage::disk('public')->put('pdf_reports/cached.pdf', 'PDF');
-        Cache::put(PdfCacheService::getCacheKey($siswa, 'UTS', 1), [
+        Cache::put(PdfCacheService::getCacheKey($siswa, 'UTS', 1, 1), [
             'path' => 'pdf_reports/cached.pdf',
             'filename' => 'Rapor_Siswa_Rahasia.pdf',
             'file_size' => 3,
             'generated_at' => now()->toISOString(),
+            'freshness_version' => PdfCacheService::currentFreshnessVersion($siswa, 'UTS', 1, 1),
+            'semester' => 1,
         ], now()->addHour());
 
         $tracker = ReportPerformanceTracker::startFlowIfEnabled('pdf_preview_pending', 'UTS', 'wali_kelas.rapor.pdf.preview');
 
-        $cached = PdfCacheService::getCachedPdf($siswa, 'UTS', 1);
+        $cached = PdfCacheService::getCachedPdf($siswa, 'UTS', 1, 1);
         ReportPerformanceTracker::setFlowTypeIfEnabled('pdf_preview_cache_hit');
 
         $this->assertNotNull($cached);
@@ -251,6 +253,21 @@ class ReportPerformanceTest extends TestCase
         $this->assertStringNotContainsString(storage_path(), $encoded);
     }
 
+    public function test_legacy_cache_without_freshness_version_is_rejected(): void
+    {
+        $siswa = $this->createStudent('Legacy Cache Student', 'LEGACY-001', 'LEGACY-NISN-001');
+        Storage::disk('public')->put('pdf_reports/legacy-without-version.pdf', 'PDF');
+        Cache::put(PdfCacheService::getCacheKey($siswa, 'UTS', 1, 1), [
+            'path' => 'pdf_reports/legacy-without-version.pdf',
+            'filename' => 'legacy-without-version.pdf',
+            'file_size' => 3,
+            'generated_at' => now()->toISOString(),
+        ], now()->addHour());
+
+        $this->assertNull(PdfCacheService::getCachedPdf($siswa, 'UTS', 1, 1));
+        $this->assertFalse(Storage::disk('public')->exists('pdf_reports/legacy-without-version.pdf'));
+    }
+
     public function test_pdf_cache_miss_records_cache_miss_without_sql_or_absolute_paths(): void
     {
         $this->resetReportPerformance(true);
@@ -264,7 +281,7 @@ class ReportPerformanceTest extends TestCase
 
         $tracker = ReportPerformanceTracker::startFlowIfEnabled('pdf_download_pending', 'UAS', 'wali_kelas.rapor.pdf.download');
 
-        $cached = PdfCacheService::getCachedPdf($siswa, 'UAS', 1);
+        $cached = PdfCacheService::getCachedPdf($siswa, 'UAS', 1, 1);
         ReportPerformanceTracker::setFlowTypeIfEnabled('pdf_download_cache_miss');
 
         $this->assertNull($cached);
@@ -312,7 +329,9 @@ class ReportPerformanceTest extends TestCase
             1,
             'pdf_reports/cache-write.pdf',
             'Rapor_Siswa_Cache_Rahasia.pdf',
-            1024
+            1024,
+            null,
+            1
         );
 
         ReportPerformanceTracker::finishIfEnabled($tracker);
@@ -341,7 +360,10 @@ class ReportPerformanceTest extends TestCase
     public function test_pdf_job_does_not_convert_when_generation_lock_is_already_held(): void
     {
         $siswa = $this->createStudent('Locked Student', 'LOCK-001', 'LOCK-NISN-001');
-        $lock = Cache::lock(PdfCacheService::getGenerationLockKey($siswa, 'UTS', 1), 180);
+        $this->insertAcademicYear(1, 1);
+        $this->insertReportTemplate('UTS', 1, 1);
+        $this->insertEligibleMidSemesterScore($siswa, 1, 1);
+        $lock = Cache::lock(PdfCacheService::getGenerationLockKey($siswa, 'UTS', 1, 1), 180);
         $this->assertTrue($lock->get());
 
         $this->mock(DocumentConversionService::class, function ($mock) {
@@ -365,12 +387,17 @@ class ReportPerformanceTest extends TestCase
     public function test_pdf_job_rechecks_cache_before_conversion(): void
     {
         $siswa = $this->createStudent('Cached Job Student', 'JOB-001', 'JOB-NISN-001');
+        $this->insertAcademicYear(1, 1);
+        $this->insertReportTemplate('UTS', 1, 1);
+        $this->insertEligibleMidSemesterScore($siswa, 1, 1);
         Storage::disk('public')->put('pdf_reports/job-cached.pdf', 'PDF');
-        Cache::put(PdfCacheService::getCacheKey($siswa, 'UTS', 1), [
+        Cache::put(PdfCacheService::getCacheKey($siswa, 'UTS', 1, 1), [
             'path' => 'pdf_reports/job-cached.pdf',
             'filename' => 'job-cached.pdf',
             'file_size' => 3,
             'generated_at' => now()->toISOString(),
+            'freshness_version' => PdfCacheService::currentFreshnessVersion($siswa, 'UTS', 1, 1),
+            'semester' => 1,
         ], now()->addHour());
 
         $this->mock(DocumentConversionService::class, function ($mock) {
@@ -389,7 +416,7 @@ class ReportPerformanceTest extends TestCase
     public function test_pdf_generation_lock_is_released_after_job_failure(): void
     {
         $siswa = $this->createStudent('Failure Student', 'FAIL-001', 'FAIL-NISN-001');
-        $key = PdfCacheService::getGenerationLockKey($siswa, 'UTS', 1);
+        $key = PdfCacheService::getGenerationLockKey($siswa, 'UTS', 1, 1);
 
         try {
             (new GeneratePdfReportJob($siswa, 'UTS', 1, 'failed-request', 99))->handle();
@@ -419,19 +446,78 @@ class ReportPerformanceTest extends TestCase
         $second = $this->createStudent('Second Student', 'LOCK-102', 'LOCK-NISN-102');
 
         $this->assertNotSame(
-            PdfCacheService::getGenerationLockKey($first, 'UTS', 1),
-            PdfCacheService::getGenerationLockKey($second, 'UTS', 1)
+            PdfCacheService::getGenerationLockKey($first, 'UTS', 1, 1),
+            PdfCacheService::getGenerationLockKey($second, 'UTS', 1, 1)
         );
 
         $this->assertNotSame(
-            PdfCacheService::getGenerationLockKey($first, 'UTS', 1),
-            PdfCacheService::getGenerationLockKey($first, 'UAS', 1)
+            PdfCacheService::getGenerationLockKey($first, 'UTS', 1, 1),
+            PdfCacheService::getGenerationLockKey($first, 'UAS', 1, 1)
         );
 
         $this->assertNotSame(
-            PdfCacheService::getGenerationLockKey($first, 'UTS', 1),
-            PdfCacheService::getGenerationLockKey($first, 'UTS', 2)
+            PdfCacheService::getGenerationLockKey($first, 'UTS', 1, 1),
+            PdfCacheService::getGenerationLockKey($first, 'UTS', 2, 1)
         );
+    }
+
+    public function test_report_cache_identity_distinguishes_semester_for_every_context_key(): void
+    {
+        $siswa = $this->createStudent('Semester Cache', 'SEM-001', 'SEM-NISN-001');
+
+        foreach ([
+            fn (int $semester) => PdfCacheService::getCacheKey($siswa, 'UTS', 1, $semester),
+            fn (int $semester) => PdfCacheService::getDocxCacheKey($siswa, 'UTS', 1, $semester),
+            fn (int $semester) => PdfCacheService::getGenerationLockKey($siswa, 'UTS', 1, $semester),
+            fn (int $semester) => PdfCacheService::getGenerationRequestKey($siswa, 'UTS', 1, $semester),
+            fn (int $semester) => PdfCacheService::getAutoPrepareTokenKey($siswa, 'UTS', 1, $semester),
+            fn (int $semester) => PdfCacheService::getFreshnessKey($siswa, 'UTS', 1, $semester),
+        ] as $keyFactory) {
+            $this->assertNotSame($keyFactory(1), $keyFactory(2));
+        }
+
+        $this->assertNotSame(
+            PdfCacheService::getCacheKey($siswa, 'UTS', 1, 1),
+            PdfCacheService::getCacheKey($siswa, 'UAS', 1, 1)
+        );
+    }
+
+    public function test_same_year_cache_from_semester_one_is_not_used_after_semester_changes(): void
+    {
+        $this->insertAcademicYear(1, 1);
+        $siswa = $this->createStudent('Semester Transition', 'SEM-002', 'SEM-NISN-002');
+        Storage::disk('public')->put('pdf_reports/semester-one.pdf', 'PDF');
+        Storage::disk('public')->put('pdf_reports/semester-one-uas.pdf', 'PDF');
+
+        PdfCacheService::cachePdf(
+            $siswa,
+            'UTS',
+            1,
+            'pdf_reports/semester-one.pdf',
+            'semester-one.pdf',
+            3,
+            null,
+            1
+        );
+        PdfCacheService::cachePdf(
+            $siswa,
+            'UAS',
+            1,
+            'pdf_reports/semester-one-uas.pdf',
+            'semester-one-uas.pdf',
+            3,
+            null,
+            1
+        );
+
+        $this->assertNotNull(PdfCacheService::getCachedPdf($siswa, 'UTS', 1, 1));
+        $this->assertNotNull(PdfCacheService::getCachedPdf($siswa, 'UAS', 1, 1));
+        DB::table('tahun_ajarans')->where('id', 1)->update(['semester' => 2]);
+
+        $this->assertNull(PdfCacheService::getCachedPdf($siswa, 'UTS', 1));
+        $this->assertNull(PdfCacheService::getCachedPdf($siswa, 'UAS', 1));
+        $this->assertNotNull(PdfCacheService::getCachedPdf($siswa, 'UTS', 1, 1));
+        $this->assertNotNull(PdfCacheService::getCachedPdf($siswa, 'UAS', 1, 1));
     }
 
     public function test_pdf_auto_prepare_is_disabled_by_default_even_when_cache_is_cleared(): void
@@ -456,12 +542,15 @@ class ReportPerformanceTest extends TestCase
         $this->insertReportTemplate('UTS', 1, 1);
 
         $siswa = $this->createStudent('Enabled Auto Prepare', 'AUTO-EN-001', 'AUTO-EN-NISN-001');
+        $this->insertEligibleMidSemesterScore($siswa, 1, 1);
         Storage::disk('public')->put('pdf_reports/old.pdf', 'PDF');
         Cache::put(PdfCacheService::getCacheKey($siswa, 'UTS', 1), [
             'path' => 'pdf_reports/old.pdf',
             'filename' => 'old.pdf',
             'file_size' => 3,
             'generated_at' => now()->toISOString(),
+            'freshness_version' => PdfCacheService::currentFreshnessVersion($siswa, 'UTS', 1),
+            'semester' => 1,
         ], now()->addHour());
 
         PdfCacheService::clearStudentCache($siswa, 1, true);
@@ -484,6 +573,7 @@ class ReportPerformanceTest extends TestCase
         $this->insertReportTemplate('UTS', 1, 1);
 
         $siswa = $this->createStudent('Stale Auto Prepare', 'AUTO-ST-001', 'AUTO-ST-NISN-001');
+        $this->insertEligibleMidSemesterScore($siswa, 1, 1);
 
         (new ReportPdfAutoPrepareService())->scheduleForStudent($siswa, 1, ['UTS'], 'first_change');
         $oldToken = Cache::get(PdfCacheService::getAutoPrepareTokenKey($siswa, 'UTS', 1));
@@ -513,12 +603,15 @@ class ReportPerformanceTest extends TestCase
         $this->insertReportTemplate('UTS', 1, 1);
 
         $siswa = $this->createStudent('Cache Hit Auto Prepare', 'AUTO-HIT-001', 'AUTO-HIT-NISN-001');
+        $this->insertEligibleMidSemesterScore($siswa, 1, 1);
         Storage::disk('public')->put('pdf_reports/auto-hit.pdf', 'PDF');
         Cache::put(PdfCacheService::getCacheKey($siswa, 'UTS', 1), [
             'path' => 'pdf_reports/auto-hit.pdf',
             'filename' => 'auto-hit.pdf',
             'file_size' => 3,
             'generated_at' => now()->toISOString(),
+            'freshness_version' => PdfCacheService::currentFreshnessVersion($siswa, 'UTS', 1),
+            'semester' => 1,
         ], now()->addHour());
 
         Cache::put(PdfCacheService::getAutoPrepareTokenKey($siswa, 'UTS', 1), 'current-token', now()->addHour());
@@ -627,6 +720,51 @@ class ReportPerformanceTest extends TestCase
         ]);
     }
 
+    private function insertEligibleMidSemesterScore(Siswa $siswa, int $tahunAjaranId, int $semester): void
+    {
+        $kelasId = DB::table('kelas')->insertGetId([
+            'nama_kelas' => 'Kelas '.$siswa->id,
+            'tahun_ajaran_id' => $tahunAjaranId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        DB::table('siswas')->where('id', $siswa->id)->update([
+            'kelas_id' => $kelasId,
+            'tahun_ajaran_id' => $tahunAjaranId,
+        ]);
+        DB::table('siswa_kelas_semester')->insert([
+            'siswa_id' => $siswa->id,
+            'kelas_id' => $kelasId,
+            'tahun_ajaran_id' => $tahunAjaranId,
+            'semester' => $semester,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $siswa->refresh();
+
+        $subjectId = DB::table('mata_pelajarans')->insertGetId([
+            'nama_pelajaran' => 'Matematika '.$siswa->id,
+            'kelas_id' => $kelasId,
+            'semester' => $semester,
+            'tahun_ajaran_id' => $tahunAjaranId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        DB::table('nilais')->insert([
+            'siswa_id' => $siswa->id,
+            'mata_pelajaran_id' => $subjectId,
+            'tahun_ajaran_id' => $tahunAjaranId,
+            'na_tp' => 80,
+            'na_lm' => 90,
+            'nilai_akhir_rapor' => 85,
+            'is_submitted' => false,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
     private function createSchema(): void
     {
         Schema::create('tahun_ajarans', function (Blueprint $table) {
@@ -661,6 +799,46 @@ class ReportPerformanceTest extends TestCase
             $table->softDeletes();
         });
 
+        Schema::create('kelas', function (Blueprint $table) {
+            $table->id();
+            $table->string('nama_kelas');
+            $table->foreignId('tahun_ajaran_id');
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('siswa_kelas_semester', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('siswa_id');
+            $table->foreignId('kelas_id');
+            $table->foreignId('tahun_ajaran_id');
+            $table->unsignedTinyInteger('semester');
+            $table->timestamps();
+        });
+
+        Schema::create('mata_pelajarans', function (Blueprint $table) {
+            $table->id();
+            $table->string('nama_pelajaran');
+            $table->foreignId('kelas_id')->nullable();
+            $table->integer('semester')->default(1);
+            $table->foreignId('tahun_ajaran_id')->nullable();
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('nilais', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('siswa_id');
+            $table->foreignId('mata_pelajaran_id')->nullable();
+            $table->foreignId('tahun_ajaran_id')->nullable();
+            $table->decimal('na_tp', 5, 2)->nullable();
+            $table->decimal('na_lm', 5, 2)->nullable();
+            $table->decimal('nilai_akhir_rapor', 5, 2)->nullable();
+            $table->boolean('is_submitted')->default(false);
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
         Schema::create('report_templates', function (Blueprint $table) {
             $table->id();
             $table->string('filename')->nullable();
@@ -670,6 +848,13 @@ class ReportPerformanceTest extends TestCase
             $table->foreignId('kelas_id')->nullable();
             $table->foreignId('tahun_ajaran_id')->nullable();
             $table->integer('semester')->nullable();
+            $table->timestamps();
+        });
+
+        Schema::create('report_template_kelas', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('report_template_id');
+            $table->foreignId('kelas_id');
             $table->timestamps();
         });
     }

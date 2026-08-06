@@ -10,6 +10,7 @@ use App\Models\Kelas;
 use App\Models\LingkupMateri;
 use App\Models\MataPelajaran;
 use App\Models\Nilai;
+use App\Services\ScoreAggregateRecalculationService;
 use App\Models\NilaiEkstrakurikuler;
 use App\Models\Prestasi;
 use App\Models\Siswa;
@@ -64,7 +65,7 @@ class RecycleBinController extends Controller
     public function restore(Request $request, string $type, int $id): JsonResponse|RedirectResponse
     {
         try {
-            $message = match ($type) {
+            $message = DB::transaction(fn () => match ($type) {
                 'kelas' => $this->restoreKelas($id),
                 'lingkup-materi' => $this->restoreLingkupMateri($id),
                 'mata-pelajaran' => $this->restoreMataPelajaran($id),
@@ -75,7 +76,7 @@ class RecycleBinController extends Controller
                 'siswa' => $this->restoreSiswa($id),
                 'guru' => $this->restoreGuru($id),
                 default => abort(404),
-            };
+            });
 
             return $this->successResponse($request, $message);
         } catch (\RuntimeException $e) {
@@ -868,9 +869,11 @@ class RecycleBinController extends Controller
         }
 
         $tujuanPembelajaran->restore();
-        $restoredNilaiCount = Nilai::onlyTrashed()
-            ->where('tujuan_pembelajaran_id', $tujuanPembelajaran->id)
-            ->restore();
+        $nilaiQuery = Nilai::onlyTrashed()
+            ->where('tujuan_pembelajaran_id', $tujuanPembelajaran->id);
+        $contexts = $this->scoreAggregateContexts((clone $nilaiQuery)->get());
+        $restoredNilaiCount = $nilaiQuery->restore();
+        app(ScoreAggregateRecalculationService::class)->recalculateMany($contexts);
 
         if ($restoredNilaiCount > 0) {
             return "Tujuan Pembelajaran berhasil dipulihkan beserta {$restoredNilaiCount} Nilai.";
@@ -1050,27 +1053,45 @@ class RecycleBinController extends Controller
 
     protected function restoreNilaiForMataPelajaran(MataPelajaran $mataPelajaran): int
     {
-        return Nilai::onlyTrashed()
-            ->where('mata_pelajaran_id', $mataPelajaran->id)
-            ->restore();
+        $query = Nilai::onlyTrashed()->where('mata_pelajaran_id', $mataPelajaran->id);
+        $contexts = $this->scoreAggregateContexts((clone $query)->get());
+        $restored = $query->restore();
+        app(ScoreAggregateRecalculationService::class)->recalculateMany($contexts);
+
+        return $restored;
     }
 
     protected function restoreNilaiForLingkupMateri(LingkupMateri $lingkupMateri): int
     {
-        $restoredCount = Nilai::onlyTrashed()
-            ->where('lingkup_materi_id', $lingkupMateri->id)
-            ->restore();
-
         $tujuanPembelajaranIds = TujuanPembelajaran::where('lingkup_materi_id', $lingkupMateri->id)
             ->pluck('id');
 
-        if ($tujuanPembelajaranIds->isNotEmpty()) {
-            $restoredCount += Nilai::onlyTrashed()
-                ->whereIn('tujuan_pembelajaran_id', $tujuanPembelajaranIds->all())
-                ->restore();
-        }
+        $query = Nilai::onlyTrashed()->where(function ($query) use ($lingkupMateri, $tujuanPembelajaranIds) {
+            $query->where('lingkup_materi_id', $lingkupMateri->id);
+
+            if ($tujuanPembelajaranIds->isNotEmpty()) {
+                $query->orWhereIn('tujuan_pembelajaran_id', $tujuanPembelajaranIds->all());
+            }
+        });
+
+        $contexts = $this->scoreAggregateContexts((clone $query)->get());
+        $restoredCount = $query->restore();
+        app(ScoreAggregateRecalculationService::class)->recalculateMany($contexts);
 
         return $restoredCount;
+    }
+
+    private function scoreAggregateContexts($nilais): array
+    {
+        return collect($nilais)
+            ->map(fn (Nilai $nilai) => $nilai->only([
+                'siswa_id',
+                'mata_pelajaran_id',
+                'tahun_ajaran_id',
+            ]))
+            ->unique(fn (array $context) => implode(':', $context))
+            ->values()
+            ->all();
     }
 
     protected function resolveDisplayName(string $type, Model $record): string

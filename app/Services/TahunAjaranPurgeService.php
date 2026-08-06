@@ -313,6 +313,7 @@ class TahunAjaranPurgeService
             $siswaId = (int) ($entry['siswa_id'] ?? 0);
             $type = (string) ($entry['type'] ?? '');
             $entryTahunAjaranId = (int) ($entry['tahun_ajaran_id'] ?? 0);
+            $entrySemester = (int) ($entry['semester'] ?? 0);
 
             if ($siswaId <= 0 || $type === '' || $entryTahunAjaranId !== $tahunAjaranId) {
                 continue;
@@ -331,32 +332,35 @@ class TahunAjaranPurgeService
                 continue;
             }
 
-            if (! $this->cleanupSingleCacheCategory('cached_pdf_file', $tahunAjaranId, $siswaId, $type, fn () => PdfCacheService::removeCachedPdf($siswa, $type, $tahunAjaranId))) {
-                $allCachesCleaned = false;
-            }
-
-            if (! $this->cleanupSingleCacheCategory('cached_docx_file', $tahunAjaranId, $siswaId, $type, fn () => PdfCacheService::removeCachedDocx($siswa, $type, $tahunAjaranId))) {
-                $allCachesCleaned = false;
-            }
-
-            $requestKey = null;
-            $requestId = null;
-            if (! $this->cleanupSingleCacheCategory('generation_request_key', $tahunAjaranId, $siswaId, $type, function () use ($siswa, $type, $tahunAjaranId, &$requestKey, &$requestId) {
-                $requestKey = PdfCacheService::getGenerationRequestKey($siswa, $type, $tahunAjaranId);
-                $requestId = Cache::get($requestKey);
-                Cache::forget($requestKey);
-            })) {
-                $allCachesCleaned = false;
-            }
-
-            if (is_string($requestId) && $requestId !== '') {
-                if (! $this->cleanupSingleCacheCategory('generation_progress_key', $tahunAjaranId, $siswaId, $type, fn () => Cache::forget(PdfCacheService::getProgressKey($requestId)))) {
+            $semesters = in_array($entrySemester, [1, 2], true) ? [$entrySemester] : [1, 2];
+            foreach ($semesters as $semester) {
+                if (! $this->cleanupSingleCacheCategory('cached_pdf_file', $tahunAjaranId, $siswaId, $type, fn () => PdfCacheService::removeCachedPdf($siswa, $type, $tahunAjaranId, $semester))) {
                     $allCachesCleaned = false;
                 }
-            }
 
-            if (! $this->cleanupSingleCacheCategory('auto_prepare_token_key', $tahunAjaranId, $siswaId, $type, fn () => Cache::forget(PdfCacheService::getAutoPrepareTokenKey($siswa, $type, $tahunAjaranId)))) {
-                $allCachesCleaned = false;
+                if (! $this->cleanupSingleCacheCategory('cached_docx_file', $tahunAjaranId, $siswaId, $type, fn () => PdfCacheService::removeCachedDocx($siswa, $type, $tahunAjaranId, $semester))) {
+                    $allCachesCleaned = false;
+                }
+
+                $requestKey = null;
+                $requestId = null;
+                if (! $this->cleanupSingleCacheCategory('generation_request_key', $tahunAjaranId, $siswaId, $type, function () use ($siswa, $type, $tahunAjaranId, $semester, &$requestKey, &$requestId) {
+                    $requestKey = PdfCacheService::getGenerationRequestKey($siswa, $type, $tahunAjaranId, $semester);
+                    $requestId = Cache::get($requestKey);
+                    Cache::forget($requestKey);
+                })) {
+                    $allCachesCleaned = false;
+                }
+
+                if (is_string($requestId) && $requestId !== '') {
+                    if (! $this->cleanupSingleCacheCategory('generation_progress_key', $tahunAjaranId, $siswaId, $type, fn () => Cache::forget(PdfCacheService::getProgressKey($requestId)))) {
+                        $allCachesCleaned = false;
+                    }
+                }
+
+                if (! $this->cleanupSingleCacheCategory('auto_prepare_token_key', $tahunAjaranId, $siswaId, $type, fn () => Cache::forget(PdfCacheService::getAutoPrepareTokenKey($siswa, $type, $tahunAjaranId, $semester)))) {
+                    $allCachesCleaned = false;
+                }
             }
         }
 
@@ -1259,15 +1263,23 @@ class TahunAjaranPurgeService
             return [];
         }
 
+        $columns = ['siswa_id', 'type'];
+        if (Schema::hasColumn('report_generations', 'semester')) {
+            $columns[] = 'semester';
+        }
+
         return DB::table('report_generations')
             ->whereIn('id', $reportGenerationIds)
-            ->get(['siswa_id', 'type'])
+            ->get($columns)
             ->map(fn ($row) => [
                 'siswa_id' => (int) $row->siswa_id,
                 'type' => (string) $row->type,
                 'tahun_ajaran_id' => $targetId,
+                'semester' => isset($row->semester) ? (int) $row->semester : null,
             ])
-            ->unique(fn (array $entry) => $entry['siswa_id'].'_'.$entry['type'].'_'.$entry['tahun_ajaran_id'])
+            ->unique(fn (array $entry) => implode('_', [
+                $entry['siswa_id'], $entry['type'], $entry['tahun_ajaran_id'], $entry['semester'] ?? '',
+            ]))
             ->values()
             ->all();
     }

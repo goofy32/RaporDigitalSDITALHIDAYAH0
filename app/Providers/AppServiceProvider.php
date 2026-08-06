@@ -14,9 +14,12 @@ use App\Services\RaporTemplateProcessor;
 // Add these imports for the audit system
 use App\Observers\AuditObserver;
 use App\Observers\PdfCacheInvalidationObserver;
+use App\Observers\ReportContextCacheInvalidationObserver;
+use App\Observers\ReportMetadataCacheInvalidationObserver;
 use App\Models\User;
 use App\Models\Guru;
 use App\Models\Siswa;
+use App\Models\SiswaKelasSemester;
 use App\Models\Kelas;
 use App\Models\TahunAjaran;
 use App\Models\MataPelajaran;
@@ -163,5 +166,10 @@ class AppServiceProvider extends ServiceProvider
         CatatanMataPelajaran::observe(PdfCacheInvalidationObserver::class);
         NilaiEkstrakurikuler::observe(PdfCacheInvalidationObserver::class);
         CapaianKompetensiCustom::observe(PdfCacheInvalidationObserver::class);
+        SiswaKelasSemester::observe(ReportContextCacheInvalidationObserver::class);
+        ProfilSekolah::observe(ReportMetadataCacheInvalidationObserver::class);
+        Siswa::observe(ReportMetadataCacheInvalidationObserver::class);
+        Guru::observe(ReportMetadataCacheInvalidationObserver::class);
+        Kelas::observe(ReportMetadataCacheInvalidationObserver::class);
     }
 }

@@ -2,10 +2,12 @@
 
 namespace Tests\Feature;
 
+use App\Jobs\GeneratePdfReportJob;
 use App\Models\Guru;
 use App\Models\ReportTemplate;
 use App\Models\Siswa;
 use App\Models\User;
+use App\Services\DocumentConversionService;
 use App\Services\PdfCacheService;
 use App\Services\RaporTemplateProcessor;
 use Illuminate\Database\Schema\Blueprint;
@@ -73,6 +75,7 @@ class GuruSignatureTest extends TestCase
     {
         $this->deleteDirectory(storage_path('app/public/test-templates'));
         $this->deleteDirectory(storage_path('app/public/generated'));
+        $this->deleteDirectory(storage_path('app/public/pdf_reports'));
 
         parent::tearDown();
     }
@@ -610,6 +613,145 @@ class GuruSignatureTest extends TestCase
         $this->assertStringContainsString('Ahmad', $xml);
     }
 
+    public function test_uts_docx_generation_accepts_tp_and_lm_without_final_semester_scores(): void
+    {
+        $this->insertMidSemesterReportData(80, 90, 85);
+        $template = $this->createDocxTemplate('${nama_siswa} ${nilai_matematika}');
+
+        $result = (new RaporTemplateProcessor(
+            $template,
+            Siswa::findOrFail($this->studentId),
+            'UTS',
+            $this->activeYearId
+        ))->generate();
+
+        $xml = $this->docxXml(storage_path('app/public/'.$result['path']));
+
+        $this->assertStringContainsString('Ahmad', $xml);
+        $this->assertStringContainsString('85.0', $xml);
+        $this->assertDatabaseHas('nilais', [
+            'siswa_id' => $this->studentId,
+            'nilai_akhir_rapor' => 85,
+            'is_submitted' => false,
+        ]);
+    }
+
+    public function test_uts_pdf_job_processes_tp_and_lm_without_final_semester_scores(): void
+    {
+        $this->insertMidSemesterReportData(80, 90, 85);
+        $this->createDocxTemplate('${nama_siswa} ${nilai_matematika}');
+
+        $this->mock(DocumentConversionService::class, function ($mock) {
+            $mock->shouldReceive('convertStorageDocxToPdf')
+                ->once()
+                ->andReturnUsing(function () {
+                    $relativePath = 'pdf_reports/mid-semester-report.pdf';
+                    $fullPath = storage_path('app/public/'.$relativePath);
+
+                    if (! is_dir(dirname($fullPath))) {
+                        mkdir(dirname($fullPath), 0755, true);
+                    }
+
+                    file_put_contents($fullPath, 'PDF');
+
+                    return [
+                        'success' => true,
+                        'storage_path' => $relativePath,
+                    ];
+                });
+        });
+
+        $student = Siswa::findOrFail($this->studentId);
+        (new GeneratePdfReportJob(
+            $student,
+            'UTS',
+            $this->activeYearId,
+            'mid-semester-report-test'
+        ))->handle();
+
+        $this->assertNotNull(Cache::get(
+            PdfCacheService::getCacheKey($student, 'UTS', $this->activeYearId)
+        ));
+    }
+
+    public function test_pdf_job_does_not_publish_stale_artifact_after_report_data_changes(): void
+    {
+        $this->insertMidSemesterReportData(80, 90, 85);
+        $this->createDocxTemplate('${nama_siswa} ${nilai_matematika}');
+        $student = Siswa::findOrFail($this->studentId);
+
+        $this->mock(DocumentConversionService::class, function ($mock) use ($student) {
+            $mock->shouldReceive('convertStorageDocxToPdf')
+                ->once()
+                ->andReturnUsing(function () use ($student) {
+                    $relativePath = 'pdf_reports/stale-mid-semester-report.pdf';
+                    $fullPath = storage_path('app/public/'.$relativePath);
+
+                    if (! is_dir(dirname($fullPath))) {
+                        mkdir(dirname($fullPath), 0755, true);
+                    }
+
+                    file_put_contents($fullPath, 'PDF');
+                    PdfCacheService::clearStudentCache($student, $this->activeYearId, false, null, 1);
+
+                    return [
+                        'success' => true,
+                        'storage_path' => $relativePath,
+                    ];
+                });
+        });
+
+        try {
+            (new GeneratePdfReportJob(
+                $student,
+                'UTS',
+                $this->activeYearId,
+                'stale-mid-semester-report-test',
+                null,
+                1
+            ))->handle();
+            $this->fail('Job lama seharusnya menolak publikasi artifact setelah freshness berubah.');
+        } catch (\Exception $exception) {
+            $this->assertStringContainsString('Data rapor berubah selama PDF diproses', $exception->getMessage());
+        }
+
+        $this->assertNull(PdfCacheService::getCachedPdf($student, 'UTS', $this->activeYearId, 1));
+        $this->assertFalse(Storage::disk('public')->exists('pdf_reports/stale-mid-semester-report.pdf'));
+    }
+
+    public function test_uts_batch_report_processes_tp_and_lm_without_final_semester_scores(): void
+    {
+        $this->insertMidSemesterReportData(80, 90, 85);
+        $this->createDocxTemplate('${nama_siswa} ${nilai_matematika}');
+        $existingBatchDirectories = glob(public_path('downloads/rapor_batch_*'), GLOB_ONLYDIR) ?: [];
+
+        try {
+            $this->actingAs($this->wali, 'guru')
+                ->withSession($this->guruSession())
+                ->postJson(route('wali_kelas.rapor.batch.generate'), [
+                    'siswa_ids' => [$this->studentId],
+                    'type' => 'UTS',
+                    'tahun_ajaran_id' => $this->activeYearId,
+                ])
+                ->assertOk()
+                ->assertJsonPath('success', true)
+                ->assertJsonPath('stats.success', 1)
+                ->assertJsonPath('stats.error', 0);
+
+            $this->assertDatabaseHas('report_generations', [
+                'siswa_id' => $this->studentId,
+                'type' => 'UTS',
+                'tahun_ajaran_id' => $this->activeYearId,
+            ]);
+        } finally {
+            $currentBatchDirectories = glob(public_path('downloads/rapor_batch_*'), GLOB_ONLYDIR) ?: [];
+
+            foreach (array_diff($currentBatchDirectories, $existingBatchDirectories) as $directory) {
+                $this->deleteDirectory($directory);
+            }
+        }
+    }
+
     public function test_report_template_replaces_table_cell_student_photo_with_centered_inline_3x4_image(): void
     {
         Storage::disk('public')->put('student-photos/landscape.png', $this->pngBytesWithSize([20, 80, 180], 800, 400));
@@ -660,6 +802,7 @@ class GuruSignatureTest extends TestCase
     {
         foreach ([
             'audit_logs',
+            'notifications',
             'report_generations',
             'report_template_kelas',
             'report_templates',
@@ -671,6 +814,7 @@ class GuruSignatureTest extends TestCase
             'catatan_siswa',
             'kkms',
             'nilais',
+            'lingkup_materis',
             'mata_pelajarans',
             'siswa_kelas_semester',
             'siswas',
@@ -798,11 +942,24 @@ class GuruSignatureTest extends TestCase
             $table->softDeletes();
         });
 
+        Schema::create('lingkup_materis', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('mata_pelajaran_id');
+            $table->string('judul_lingkup_materi');
+            $table->foreignId('tahun_ajaran_id')->nullable();
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
         Schema::create('nilais', function (Blueprint $table) {
             $table->id();
             $table->foreignId('siswa_id')->nullable();
             $table->foreignId('mata_pelajaran_id')->nullable();
+            $table->foreignId('lingkup_materi_id')->nullable();
             $table->foreignId('tahun_ajaran_id')->nullable();
+            $table->decimal('nilai_lm', 5, 2)->nullable();
+            $table->decimal('na_tp', 5, 2)->nullable();
+            $table->decimal('na_lm', 5, 2)->nullable();
             $table->decimal('nilai_akhir_rapor', 5, 2)->nullable();
             $table->boolean('is_submitted')->default(false);
             $table->timestamps();
@@ -904,11 +1061,23 @@ class GuruSignatureTest extends TestCase
             $table->foreignId('report_template_id')->nullable();
             $table->string('generated_file')->nullable();
             $table->string('type')->nullable();
+            $table->string('tahun_ajaran')->nullable();
             $table->integer('semester')->nullable();
             $table->foreignId('tahun_ajaran_id')->nullable();
             $table->foreignId('generated_by')->nullable();
             $table->timestamp('generated_at')->nullable();
             $table->timestamps();
+        });
+
+        Schema::create('notifications', function (Blueprint $table) {
+            $table->id();
+            $table->string('title');
+            $table->text('content');
+            $table->string('target');
+            $table->json('specific_users')->nullable();
+            $table->boolean('is_read')->default(false);
+            $table->timestamps();
+            $table->softDeletes();
         });
     }
 
@@ -1057,6 +1226,37 @@ class GuruSignatureTest extends TestCase
 
         $this->wali = Guru::findOrFail($waliId);
         $this->subjectTeacher = Guru::findOrFail($subjectTeacherId);
+    }
+
+    private function insertMidSemesterReportData(float $naTp, float $naLm, float $finalScore): void
+    {
+        $subjectId = (int) DB::table('mata_pelajarans')
+            ->where('kelas_id', $this->classId)
+            ->where('tahun_ajaran_id', $this->activeYearId)
+            ->value('id');
+
+        DB::table('nilais')->insert([
+            'siswa_id' => $this->studentId,
+            'mata_pelajaran_id' => $subjectId,
+            'tahun_ajaran_id' => $this->activeYearId,
+            'na_tp' => $naTp,
+            'na_lm' => $naLm,
+            'nilai_akhir_rapor' => $finalScore,
+            'is_submitted' => false,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        DB::table('absensis')->insert([
+            'siswa_id' => $this->studentId,
+            'semester' => 1,
+            'tahun_ajaran_id' => $this->activeYearId,
+            'sakit' => 0,
+            'izin' => 0,
+            'tanpa_keterangan' => 0,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
     }
 
     private function actingAsAdmin(): self

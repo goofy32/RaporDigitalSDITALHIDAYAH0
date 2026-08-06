@@ -6,6 +6,7 @@ use App\Models\Guru;
 use App\Models\Kelas;
 use App\Models\MataPelajaran;
 use App\Traits\RespondsWithLiveList;
+use App\Services\PdfCacheService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -339,6 +340,10 @@ class TeacherController extends Controller
                 }
             }
 
+            if ($request->jabatan === 'guru_wali') {
+                PdfCacheService::clearClassCaches($attachedKelas);
+            }
+
             Log::info('Guru baru ditambahkan', [
                 'id' => $guru->id,
                 'nama' => $guru->nama,
@@ -591,6 +596,10 @@ class TeacherController extends Controller
                 ]);
 
                 $attachedClasses[] = $kelasId;
+            }
+
+            if ($request->jabatan === 'guru_wali') {
+                PdfCacheService::clearClassCaches($attachedClasses);
             }
 
             // Logging untuk debugging

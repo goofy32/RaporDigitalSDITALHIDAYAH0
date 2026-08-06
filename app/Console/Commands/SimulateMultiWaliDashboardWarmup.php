@@ -242,7 +242,12 @@ class SimulateMultiWaliDashboardWarmup extends Command
                     continue;
                 }
 
-                if (PdfCacheService::getPdfPreparationStatus($student, $reportType, (int) $tahunAjaran->id) === 'ready') {
+                if (PdfCacheService::getPdfPreparationStatus(
+                    $student,
+                    $reportType,
+                    (int) $tahunAjaran->id,
+                    (int) $tahunAjaran->semester
+                ) === 'ready') {
                     $summary['cached']++;
 
                     continue;

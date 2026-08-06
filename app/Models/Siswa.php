@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Services\ReportScoreEligibilityService;
 use App\Traits\HasTahunAjaran;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -137,7 +138,16 @@ class Siswa extends Model
         ];
 
         // Cek mata pelajaran untuk semester ini
-        $kelas = $this->relationLoaded('kelas') ? $this->kelas : $this->kelas()->first();
+        if ($tahunAjaranId) {
+            try {
+                $kelas = app(\App\Services\SiswaKelasSemesterResolver::class)
+                    ->resolveClass($this, (int) $tahunAjaranId, (int) $semester, true);
+            } catch (\RuntimeException) {
+                $kelas = null;
+            }
+        } else {
+            $kelas = $this->relationLoaded('kelas') ? $this->kelas : $this->kelas()->first();
+        }
 
         if ($kelas && $kelas->relationLoaded('mataPelajarans')) {
             $mataPelajarans = $kelas->mataPelajarans->filter(function ($mataPelajaran) use ($semester, $tahunAjaranId) {
@@ -159,28 +169,38 @@ class Siswa extends Model
         // PENTING: Untuk membedakan nilai UTS dan UAS, idealnya ada field tambahan
         // tapi untuk saat ini, kita bisa gunakan semua nilai yang ada di semester yang sama
         if ($this->relationLoaded('nilais')) {
-            $nilaiCount = $this->nilais->filter(function ($nilai) use ($semester, $tahunAjaranId) {
+            $eligibleIds = app(ReportScoreEligibilityService::class)
+                ->eligibleIds($this->nilais, (string) $type, $kelas?->id)
+                ->flip();
+            $nilaiCount = $this->nilais->filter(function ($nilai) use ($semester, $tahunAjaranId, $kelas, $eligibleIds) {
                 if ($tahunAjaranId && (int) $nilai->tahun_ajaran_id !== (int) $tahunAjaranId) {
                     return false;
                 }
 
-                if (! $nilai->is_submitted) {
+                if (! $eligibleIds->has((int) $nilai->id)) {
                     return false;
                 }
 
                 $mataPelajaran = $nilai->mataPelajaran;
 
-                return $mataPelajaran && (int) $mataPelajaran->semester === (int) $semester;
+                return $mataPelajaran
+                    && (int) $mataPelajaran->semester === (int) $semester
+                    && (! $kelas || (int) $mataPelajaran->kelas_id === (int) $kelas->id);
             })->pluck('mata_pelajaran_id')->filter()->unique()->count();
         } else {
-            $nilaiCount = $this->nilais()
-                ->whereHas('mataPelajaran', function ($q) use ($semester) {
+            $nilaiQuery = $this->nilais()
+                ->whereHas('mataPelajaran', function ($q) use ($semester, $kelas) {
                     $q->where('semester', $semester);
+
+                    if ($kelas) {
+                        $q->where('kelas_id', $kelas->id);
+                    }
                 })
                 ->when($tahunAjaranId, function ($query) use ($tahunAjaranId) {
                     return $query->where('tahun_ajaran_id', $tahunAjaranId);
-                })
-                ->where('is_submitted', true)
+                });
+            $nilaiCount = app(ReportScoreEligibilityService::class)
+                ->apply($nilaiQuery, (string) $type, null, $kelas?->id)
                 ->distinct('mata_pelajaran_id')
                 ->count('mata_pelajaran_id');
         }
@@ -394,16 +414,27 @@ class Siswa extends Model
         // Get the current semester from the tahun ajaran
         $tahunAjaran = \App\Models\TahunAjaran::find($tahunAjaranId);
         $semester = $tahunAjaran ? $tahunAjaran->semester : ($type === 'UTS' ? 1 : 2);
+        $kelas = $tahunAjaran
+            ? app(\App\Services\SiswaKelasSemesterResolver::class)
+                ->resolveClass($this, (int) $tahunAjaranId, (int) $semester, true)
+            : null;
+
+        if (! $kelas) {
+            return false;
+        }
 
         // Check nilai based on current semester
-        $hasNilai = $this->nilais()
-            ->whereHas('mataPelajaran', function ($q) use ($semester) {
-                $q->where('semester', $semester);
+        $nilaiQuery = $this->nilais()
+            ->whereHas('mataPelajaran', function ($q) use ($semester, $kelas, $tahunAjaranId) {
+                $q->where('semester', $semester)
+                    ->where('kelas_id', $kelas->id)
+                    ->where('tahun_ajaran_id', $tahunAjaranId);
             })
             ->when($tahunAjaranId, function ($query) use ($tahunAjaranId) {
                 return $query->where('tahun_ajaran_id', $tahunAjaranId);
-            })
-            ->where('is_submitted', true)
+            });
+        $hasNilai = app(ReportScoreEligibilityService::class)
+            ->apply($nilaiQuery, (string) $type, null, (int) $kelas->id)
             ->exists();
 
         // Check absensi for current semester
