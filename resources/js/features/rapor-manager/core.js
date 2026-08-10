@@ -6,6 +6,18 @@ export const raporManagerCore = {
         this.semester = parseInt(this.$el.dataset.semester || '0', 10);
         this.pdfStatusUrl = this.$el.dataset.pdfStatusUrl || '';
         this.dashboardWarmupEnabled = this.$el.dataset.dashboardWarmupEnabled === '1';
+        this.docxPrepareUrl = this.$el.dataset.docxPrepareUrl || '';
+        this.batchPackageUrl = this.$el.dataset.batchPackageUrl || '';
+        try {
+            this.batchStudentIds = [...new Set(
+                JSON.parse(this.$el.dataset.batchStudentIds || '[]')
+                    .map((id) => Number(id))
+                    .filter((id) => Number.isInteger(id) && id > 0)
+            )];
+        } catch (error) {
+            console.error('Error parsing batch student IDs:', error);
+            this.batchStudentIds = [];
+        }
         try {
             this.pdfTemplateAvailability = JSON.parse(this.$el.dataset.pdfTemplateAvailability || '{}');
         } catch (error) {
@@ -362,6 +374,194 @@ export const raporManagerCore = {
         } finally {
             this.loading = false;
         }
+    },
+
+    batchStatusText() {
+        if (this.batchState === 'preparing') {
+            return `Menyiapkan rapor... ${this.batchCurrent} / ${this.batchTotal}`;
+        }
+
+        if (this.batchState === 'packaging') {
+            return 'Menyusun paket rapor...';
+        }
+
+        return this.batchMessage;
+    },
+
+    async handleBatchDownload() {
+        if (this.batchProcessing) return;
+
+        if (!this.batchStudentIds.length) {
+            Swal.fire({
+                icon: 'info',
+                title: 'Belum Ada Siswa',
+                text: 'Tidak ada siswa yang dapat disiapkan pada konteks rapor ini.'
+            });
+            return;
+        }
+
+        const operation = Object.freeze({
+            studentIds: [...this.batchStudentIds],
+            type: this.activeTab,
+            yearId: this.tahunAjaranId
+        });
+
+        if (!['UTS', 'UAS'].includes(operation.type) || !operation.yearId || !this.docxPrepareUrl || !this.batchPackageUrl) {
+            Swal.fire({
+                icon: 'error',
+                title: 'Konteks Rapor Tidak Tersedia',
+                text: 'Muat ulang halaman lalu coba kembali.'
+            });
+            return;
+        }
+
+        this.batchProcessing = true;
+        this.batchState = 'preparing';
+        this.batchCurrent = 0;
+        this.batchTotal = operation.studentIds.length;
+        this.batchMessage = '';
+        this.batchPreparationFailures = [];
+
+        try {
+            for (const [index, studentId] of operation.studentIds.entries()) {
+                const prepared = await this.prepareBatchStudentDocx(studentId, operation);
+                if (!prepared) {
+                    this.batchPreparationFailures.push(studentId);
+                }
+                this.batchCurrent = index + 1;
+            }
+
+            this.batchState = 'packaging';
+            const response = await fetch(this.batchPackageUrl, {
+                method: 'POST',
+                headers: this.jsonRequestHeaders(),
+                body: JSON.stringify({
+                    siswa_ids: operation.studentIds,
+                    type: operation.type,
+                    tahun_ajaran_id: operation.yearId
+                })
+            });
+            const data = await this.readJsonResponse(response);
+
+            if (!response.ok || data.success !== true || !data.download_url) {
+                this.handleBatchFailure(response, data);
+                return;
+            }
+
+            const total = Number(data.stats?.total) || operation.studentIds.length;
+            const success = Number(data.stats?.success) || 0;
+            const unavailable = Number(data.stats?.unavailable) || 0;
+            const partial = unavailable > 0 || success < total;
+
+            this.batchState = partial ? 'partial' : 'completed';
+            this.batchMessage = partial
+                ? `${success} dari ${total} rapor berhasil disiapkan. ${unavailable} rapor belum dapat disertakan.`
+                : `${success} rapor berhasil disiapkan.`;
+
+            Swal.fire({
+                icon: partial ? 'warning' : 'success',
+                title: partial ? 'Paket Rapor Disiapkan Sebagian' : 'Paket Rapor Siap',
+                text: this.batchMessage,
+                confirmButtonText: 'Mengerti'
+            });
+            window.location.href = data.download_url;
+        } catch (error) {
+            console.error('Batch report preparation failed:', error);
+            this.setBatchFailure('Paket rapor belum dapat disiapkan. Silakan coba lagi nanti.');
+        } finally {
+            this.batchProcessing = false;
+        }
+    },
+
+    async prepareBatchStudentDocx(studentId, operation) {
+        const url = this.docxPrepareUrl.replace('__student__', encodeURIComponent(String(studentId)));
+        const maxRetries = 2;
+
+        for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+            try {
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: this.jsonRequestHeaders(),
+                    body: JSON.stringify({
+                        type: operation.type,
+                        tahun_ajaran_id: operation.yearId,
+                        action: 'preview'
+                    })
+                });
+
+                if (response.status === 429 && attempt < maxRetries) {
+                    await this.wait(this.retryDelay(response.headers.get('Retry-After'), attempt));
+                    continue;
+                }
+
+                const data = await this.readJsonResponse(response);
+                return response.ok && data.success === true && Boolean(data.file_url);
+            } catch (error) {
+                console.warn(`Rapor siswa ${studentId} belum dapat disiapkan.`);
+                return false;
+            }
+        }
+
+        return false;
+    },
+
+    retryDelay(retryAfter, attempt) {
+        let delay = Number(retryAfter) * 1000;
+
+        if (!Number.isFinite(delay) || delay <= 0) {
+            const retryAt = Date.parse(retryAfter || '');
+            delay = Number.isNaN(retryAt) ? 2000 * (attempt + 1) : retryAt - Date.now();
+        }
+
+        return Math.min(Math.max(delay, 1000), 60000);
+    },
+
+    wait(milliseconds) {
+        return new Promise((resolve) => setTimeout(resolve, milliseconds));
+    },
+
+    jsonRequestHeaders() {
+        return {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || '',
+            'X-Requested-With': 'XMLHttpRequest'
+        };
+    },
+
+    async readJsonResponse(response) {
+        try {
+            return await response.json();
+        } catch (error) {
+            return {};
+        }
+    },
+
+    handleBatchFailure(response, data) {
+        let message = 'Paket rapor belum dapat disiapkan. Silakan coba lagi nanti.';
+
+        if (response.status === 422 && data.error_type === 'docx_cache_unavailable') {
+            message = 'Belum ada rapor yang dapat disiapkan. Periksa kelengkapan data siswa lalu coba kembali.';
+        } else if (response.status === 403) {
+            message = 'Anda tidak memiliki akses untuk menyiapkan paket rapor tersebut.';
+        } else if (response.status === 404) {
+            message = 'Template atau konteks rapor belum tersedia.';
+        } else if (response.status === 422) {
+            message = 'Data permintaan rapor tidak valid. Muat ulang halaman lalu coba kembali.';
+        }
+
+        this.setBatchFailure(message);
+    },
+
+    setBatchFailure(message) {
+        this.batchState = 'failed';
+        this.batchMessage = message;
+        Swal.fire({
+            icon: 'error',
+            title: 'Gagal Menyiapkan Paket Rapor',
+            text: message,
+            confirmButtonText: 'Mengerti'
+        });
     },
 
     async downloadFile(blob, filename) {

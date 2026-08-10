@@ -33,6 +33,7 @@
     $readyCount = collect($siswa)->filter(function ($student) use ($nilaiCounts) {
         return ($nilaiCounts[$student->id] ?? 0) > 0 && !is_null($student->absensi);
     })->count();
+    $batchStudentIds = collect($siswa)->pluck('id')->map(fn ($id) => (int) $id)->values();
 @endphp
 
 <!-- Main Container with Single Alpine Instance -->
@@ -44,6 +45,9 @@
     data-opened-report-type="{{ $openedReportType }}"
     data-tahun-ajaran-id="{{ session('tahun_ajaran_id') }}"
     data-semester="{{ $semester }}"
+    data-batch-student-ids='@json($batchStudentIds)'
+    data-docx-prepare-url="{{ route('wali_kelas.rapor.generate', ['siswa' => '__student__']) }}"
+    data-batch-package-url="{{ route('wali_kelas.rapor.batch.generate') }}"
     @if($pdfAvailable)
         data-pdf-status-url="{{ route('wali_kelas.rapor.pdf-statuses') }}"
         data-dashboard-warmup-enabled="{{ config('report.pdf_dashboard_warmup.enabled') ? '1' : '0' }}"
@@ -152,20 +156,48 @@
                         placeholder="Cari siswa...">
                 </div>
 
-                <div class="w-full md:w-auto flex justify-end">
-                    <button
-                        type="button"
-                        @click="toggleReadyFilter()"
-                        :class="showReadyOnly
-                            ? 'bg-green-700 ring-2 ring-green-200'
-                            : 'bg-green-600 hover:bg-green-700'"
-                        class="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors">
-                        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 01.8 1.6L14 13.5V19a1 1 0 01-1.447.894l-2-1A1 1 0 0110 18v-4.5L3.2 4.6A1 1 0 013 4z" />
-                        </svg>
-                        <span x-text="showReadyOnly ? 'Semua Siswa' : 'Siap Cetak'"></span>
-                        <span x-show="!showReadyOnly" x-cloak class="rounded-full bg-white/20 px-2 py-0.5 text-xs font-semibold" x-text="readyCount"></span>
-                    </button>
+                <div class="w-full md:w-auto flex flex-col items-end gap-2">
+                    <div class="flex flex-wrap justify-end gap-2">
+                        <button
+                            type="button"
+                            @click="toggleReadyFilter()"
+                            :class="showReadyOnly
+                                ? 'bg-green-700 ring-2 ring-green-200'
+                                : 'bg-green-600 hover:bg-green-700'"
+                            class="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors">
+                            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 01.8 1.6L14 13.5V19a1 1 0 01-1.447.894l-2-1A1 1 0 0110 18v-4.5L3.2 4.6A1 1 0 013 4z" />
+                            </svg>
+                            <span x-text="showReadyOnly ? 'Semua Siswa' : 'Siap Cetak'"></span>
+                            <span x-show="!showReadyOnly" x-cloak class="rounded-full bg-white/20 px-2 py-0.5 text-xs font-semibold" x-text="readyCount"></span>
+                        </button>
+
+                        <button
+                            id="download-all-reports-button"
+                            type="button"
+                            @click="handleBatchDownload()"
+                            :disabled="batchProcessing || batchStudentIds.length === 0"
+                            :aria-busy="batchProcessing ? 'true' : 'false'"
+                            class="inline-flex min-w-48 items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">
+                            <svg x-show="batchProcessing" class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                            </svg>
+                            <svg x-show="!batchProcessing" class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m5 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                            </svg>
+                            <span>Unduh Semua Rapor</span>
+                        </button>
+                    </div>
+
+                    <p
+                        x-show="batchState !== 'idle'"
+                        x-cloak
+                        x-text="batchStatusText()"
+                        class="text-sm text-gray-600"
+                        role="status"
+                        aria-live="polite">
+                    </p>
                 </div>
             </div>
 

@@ -882,6 +882,7 @@ class ReportCardAuthorizationTest extends TestCase
             ->assertSee('Status PDF')
             ->assertSee('Preview PDF', false)
             ->assertSee('Unduh Rapor PDF', false)
+            ->assertSee('Unduh Semua Rapor')
             ->assertSee('data-pdf-status-url=', false);
     }
 
@@ -902,7 +903,42 @@ class ReportCardAuthorizationTest extends TestCase
             ->assertDontSee('Unduh Rapor PDF', false)
             ->assertDontSee('data-pdf-status-url=', false)
             ->assertSee('Unduh Rapor DOCX', false)
+            ->assertSee('Unduh Semua Rapor')
+            ->assertSee('data-batch-student-ids=', false)
+            ->assertSee('data-docx-prepare-url=', false)
+            ->assertSee('data-batch-package-url=', false)
             ->assertSee('handleGenerate(', false);
+    }
+
+    public function test_report_index_exposes_only_authoritative_roster_ids_for_batch_docx(): void
+    {
+        $this->fakeLibreOfficeAvailability(false);
+        $this->insertReportTemplate($this->currentClassId);
+        $secondStudentId = $this->insertStudent('1013', 'Second Batch Roster Student', $this->currentClassId);
+        $this->insertEnrollment($secondStudentId, $this->currentClassId, $this->activeYearId, 1);
+
+        $html = $this->actingAsWali()
+            ->get(route('wali_kelas.rapor.index', [
+                'type' => 'UTS',
+                'tahun_ajaran_id' => $this->activeYearId,
+            ]))
+            ->assertOk()
+            ->getContent();
+
+        $this->assertMatchesRegularExpression("/data-batch-student-ids='[^']*'/", $html);
+        preg_match("/data-batch-student-ids='([^']*)'/", $html, $matches);
+        $studentIds = json_decode(html_entity_decode($matches[1], ENT_QUOTES | ENT_HTML5), true, 512, JSON_THROW_ON_ERROR);
+        sort($studentIds);
+
+        $expectedIds = [$this->authorizedStudentId, $secondStudentId];
+        sort($expectedIds);
+
+        $this->assertSame($expectedIds, $studentIds);
+        $this->assertNotContains($this->otherClassStudentId, $studentIds);
+        $this->assertStringContainsString('/wali-kelas/rapor/generate/__student__', $html);
+        $this->assertStringContainsString('/wali-kelas/rapor/batch-generate', $html);
+        $this->assertStringContainsString('data-active-tab="UTS"', $html);
+        $this->assertStringContainsString('data-tahun-ajaran-id="'.$this->activeYearId.'"', $html);
     }
 
     public function test_wali_template_visibility_respects_opened_report_period(): void
