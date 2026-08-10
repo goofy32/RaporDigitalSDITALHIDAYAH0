@@ -723,33 +723,35 @@ class GuruSignatureTest extends TestCase
     {
         $this->insertMidSemesterReportData(80, 90, 85);
         $this->createDocxTemplate('${nama_siswa} ${nilai_matematika}');
-        $existingBatchDirectories = glob(public_path('downloads/rapor_batch_*'), GLOB_ONLYDIR) ?: [];
+        Storage::fake('local');
 
-        try {
-            $this->actingAs($this->wali, 'guru')
-                ->withSession($this->guruSession())
-                ->postJson(route('wali_kelas.rapor.batch.generate'), [
-                    'siswa_ids' => [$this->studentId],
-                    'type' => 'UTS',
-                    'tahun_ajaran_id' => $this->activeYearId,
-                ])
-                ->assertOk()
-                ->assertJsonPath('success', true)
-                ->assertJsonPath('stats.success', 1)
-                ->assertJsonPath('stats.error', 0);
-
-            $this->assertDatabaseHas('report_generations', [
-                'siswa_id' => $this->studentId,
+        $this->actingAs($this->wali, 'guru')
+            ->withSession($this->guruSession())
+            ->postJson(route('wali_kelas.rapor.generate', $this->studentId), [
                 'type' => 'UTS',
                 'tahun_ajaran_id' => $this->activeYearId,
-            ]);
-        } finally {
-            $currentBatchDirectories = glob(public_path('downloads/rapor_batch_*'), GLOB_ONLYDIR) ?: [];
+                'action' => 'preview',
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
 
-            foreach (array_diff($currentBatchDirectories, $existingBatchDirectories) as $directory) {
-                $this->deleteDirectory($directory);
-            }
-        }
+        $this->actingAs($this->wali, 'guru')
+            ->withSession($this->guruSession())
+            ->postJson(route('wali_kelas.rapor.batch.generate'), [
+                'siswa_ids' => [$this->studentId],
+                'type' => 'UTS',
+                'tahun_ajaran_id' => $this->activeYearId,
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('stats.success', 1)
+            ->assertJsonPath('stats.unavailable', 0);
+
+        $this->assertDatabaseHas('report_generations', [
+            'siswa_id' => $this->studentId,
+            'type' => 'UTS',
+            'tahun_ajaran_id' => $this->activeYearId,
+        ]);
     }
 
     public function test_report_template_replaces_table_cell_student_photo_with_centered_inline_3x4_image(): void

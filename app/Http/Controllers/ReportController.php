@@ -29,10 +29,12 @@ use App\Services\ReportTemplateDocxValidationService;
 use App\Services\SiswaKelasSemesterResolver;
 use App\Services\ReportPerformanceTracker;
 use App\Services\ReportScoreEligibilityService;
+use App\Services\BatchDocxArchiveService;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\URL;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
+use Throwable;
 
 class ReportController extends Controller
 {
@@ -3175,25 +3177,34 @@ class ReportController extends Controller
      * @param Request $request
      * @return \Illuminate\Http\Response
      */
-    public function generateBatchReport(Request $request)
+    public function generateBatchReport(Request $request, BatchDocxArchiveService $archives)
     {
-        $type = $this->normalizeReportType($request->input('type', 'UTS'));
+        $type = 'UTS';
         $guru = null;
-        $performance = ReportPerformanceTracker::startFlowIfEnabled(
-            'batch_docx',
-            $type,
-            $request->route()?->getName()
-        );
+        $performance = null;
 
         try {
-            $siswaIds = $request->input('siswa_ids', []);
-            $tahunAjaranId = ReportPerformanceTracker::measureSegment('context', function () use ($request) {
+            $validated = $request->validate([
+                'siswa_ids' => ['required', 'array', 'min:1', 'max:100'],
+                'siswa_ids.*' => ['required', 'integer', 'distinct'],
+                'type' => ['sometimes', 'string', 'max:10'],
+                'tahun_ajaran_id' => ['nullable', 'integer'],
+            ]);
+            $siswaIds = array_map('intval', $validated['siswa_ids']);
+            $type = $this->normalizeReportType($validated['type'] ?? 'UTS');
+            $performance = ReportPerformanceTracker::startFlowIfEnabled(
+                'batch_docx_package',
+                $type,
+                $request->route()?->getName()
+            );
+
+            $tahunAjaranId = ReportPerformanceTracker::measureSegment('context', function () use ($validated) {
                 return $this->getValidTahunAjaranId(
-                    $request->input('tahun_ajaran_id') ? (int) $request->input('tahun_ajaran_id') : null
+                    isset($validated['tahun_ajaran_id']) ? (int) $validated['tahun_ajaran_id'] : null
                 );
             });
 
-            if (!$tahunAjaranId) {
+            if (! $tahunAjaranId) {
                 return $this->failTahunAjaranNotSet($request, true);
             }
             $type = $this->resolveReportTypeForRequest($request, $tahunAjaranId, 'input');
@@ -3201,20 +3212,16 @@ class ReportController extends Controller
             if ($response = $this->ensureReportPeriodOpened($request, $type, $tahunAjaranId)) {
                 return $response;
             }
-            
-            // Get current semester from tahun ajaran
-            $tahunAjaran = ReportPerformanceTracker::measureSegment('context', fn () => \App\Models\TahunAjaran::find($tahunAjaranId));
-            $currentSemester = $tahunAjaran ? $tahunAjaran->semester : 1;
-            
-            // Log for debugging
-            \Log::info('Batch report generation requested', [
-                'siswa_count' => count($siswaIds),
-                'type' => $type,
-                'tahun_ajaran_id' => $tahunAjaranId,
-                'current_semester' => $currentSemester
-            ]);
-            
-            // Validasi siswa
+
+            $tahunAjaran = ReportPerformanceTracker::measureSegment(
+                'context',
+                fn () => TahunAjaran::find($tahunAjaranId)
+            );
+            if (! $tahunAjaran) {
+                return $this->failTahunAjaranNotSet($request, true);
+            }
+            $currentSemester = (int) $tahunAjaran->semester;
+
             $guru = ReportPerformanceTracker::measureSegment('authorization', fn () => auth()->guard('guru')->user());
             ReportPerformanceTracker::measureSegment('authorization', function () use ($guru) {
                 abort_unless($guru && session('selected_role') === 'wali_kelas', 403);
@@ -3230,278 +3237,204 @@ class ReportController extends Controller
                     ->select('kelas.*')
                     ->first();
             });
-            
-            if (!$kelas) {
-                throw new \Exception('Anda tidak memiliki kelas yang diwalikan');
-            }
-            
-            // Validasi siswa IDs
-            if (empty($siswaIds)) {
-                throw new \Exception('Tidak ada siswa yang dipilih');
-            }
-            
-            // Verifikasi siswa berdasarkan enrollment semester/tahun ajaran
-            $authorizedStudentIds = ReportPerformanceTracker::measureSegment('authorization', function () use ($kelas, $tahunAjaranId, $currentSemester) {
-                return app(SiswaKelasSemesterResolver::class)
-                    ->studentsForClass((int) $kelas->id, (int) $tahunAjaranId, (int) $currentSemester, true)
-                    ->pluck('id')
-                    ->all();
-            });
+            abort_unless($kelas, 403);
 
-            $siswaList = ReportPerformanceTracker::measureSegment('preload', function () use ($siswaIds, $authorizedStudentIds) {
-                return Siswa::whereIn('id', $siswaIds)
-                    ->whereIn('id', $authorizedStudentIds)
-                    ->get();
-            });
-                
-            if ($siswaList->count() !== count($siswaIds)) {
-                throw new \Exception('Cetak Semua Rapor Masih Maintenance di Tahun Ajaran ini, Harap Gunakan Fitur Download Rapor Satu per Satu di Icon Aksi');
+            $authorizedStudentIds = ReportPerformanceTracker::measureSegment(
+                'authorization',
+                fn () => app(SiswaKelasSemesterResolver::class)
+                    ->studentsForClass((int) $kelas->id, $tahunAjaranId, $currentSemester, true)
+                    ->pluck('id')
+                    ->map(fn ($id) => (int) $id)
+                    ->all()
+            );
+            abort_if(array_diff($siswaIds, $authorizedStudentIds) !== [], 403);
+
+            $studentsById = ReportPerformanceTracker::measureSegment(
+                'preload',
+                fn () => Siswa::whereIn('id', $siswaIds)->get()->keyBy('id')
+            );
+            abort_unless($studentsById->count() === count($siswaIds), 403);
+            $siswaList = collect($siswaIds)->map(fn (int $id) => $studentsById->get($id));
+
+            $template = ReportPerformanceTracker::measureSegment(
+                'context',
+                fn () => $this->findActiveReportTemplateForContext($type, (int) $kelas->id, $tahunAjaranId)
+            );
+            if (! $template) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $this->missingActiveTemplateMessage($type),
+                    'error_type' => 'template_missing',
+                ], 404);
             }
-            
-            // Cek template untuk tipe rapor yang diminta
-            $template = ReportPerformanceTracker::measureSegment('context', function () use ($type, $kelas, $tahunAjaranId) {
-                return ReportTemplate::where([
-                        'type' => $type,
-                        'is_active' => true,
-                    ])
-                    ->where(function($query) use ($kelas) {
-                        $query->where('kelas_id', $kelas->id)
-                            ->orWhereHas('kelasList', function($q) use ($kelas) {
-                                $q->where('kelas_id', $kelas->id);
-                            })
-                            ->orWhereNull('kelas_id'); // Template global
-                    })
-                    ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
-                        return $query->where('tahun_ajaran_id', $tahunAjaranId);
-                    })
-                    ->first();
-            });
-            
-            if (!$template) {
-                throw new \Exception("Tidak ada template {$type} aktif untuk kelas ini di tahun ajaran yang dipilih");
-            }
-            
-            // Persiapkan tracking dan files
-            $successSiswa = [];
-            $errorSiswa = [];
-            $files = [];
-            
-            // Buat direktori di public yang bisa diakses langsung
-            $timestamp = date('Ymd_His');
-            $publicDir = public_path('downloads/rapor_batch_' . $timestamp);
-            if (!file_exists($publicDir)) {
-                mkdir($publicDir, 0755, true);
-            }
-            
-            // Nama file ZIP yang akan dibuat di direktori public
-            $zipName = "Rapor_Batch_{$type}_{$kelas->nama_kelas}_{$timestamp}.zip";
-            $zipPath = $publicDir . '/' . $zipName;
-            $webPath = 'downloads/rapor_batch_' . $timestamp . '/' . $zipName;
-            
-            // Memproses setiap siswa
-            foreach ($siswaList as $index => $siswa) {
+
+            $documents = [];
+            $unavailable = [];
+
+            foreach ($siswaList as $siswa) {
                 try {
-                    // Validasi data siswa berdasarkan semester SAAT INI
-                    // Cek nilai di semester yang aktif saat ini
-                    $hasNilaiQuery = $siswa->nilais()
-                        ->whereHas('mataPelajaran', function($q) use ($currentSemester, $kelas, $tahunAjaranId) {
-                            $q->where('semester', $currentSemester)
-                                ->where('kelas_id', $kelas->id)
-                                ->where('tahun_ajaran_id', $tahunAjaranId);
-                        })
-                        ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
-                            return $query->where('tahun_ajaran_id', $tahunAjaranId);
-                        });
-                    $hasNilai = $this->constrainEligibleReportScores(
-                        $hasNilaiQuery,
+                    $hasNilai = $this->hasEligibleReportScore(
+                        $siswa,
                         $type,
-                        null,
-                        (int) $kelas->id
-                    )->exists();
-                        
-                    // Cek kehadiran di semester yang aktif saat ini
+                        $tahunAjaranId,
+                        $currentSemester
+                    );
                     $hasAbsensi = $siswa->absensi()
                         ->where('semester', $currentSemester)
-                        ->when($tahunAjaranId, function($query) use ($tahunAjaranId) {
-                            return $query->where('tahun_ajaran_id', $tahunAjaranId);
-                        })
+                        ->where('tahun_ajaran_id', $tahunAjaranId)
                         ->exists();
-                        
-                    if (!$hasNilai || !$hasAbsensi) {
-                        throw new \Exception("Data nilai atau kehadiran belum lengkap untuk semester {$currentSemester}");
+
+                    if (! $hasNilai || ! $hasAbsensi) {
+                        $unavailable[$siswa->id] = $this->batchUnavailableStudent($siswa);
+                        continue;
                     }
-                    
-                    // Generate rapor
-                    $processor = new \App\Services\RaporTemplateProcessor($template, $siswa, $type, $tahunAjaranId);
-                    $result = $processor->generate();
-                    
-                    // Salin file ke direktori public
-                    $sourcePath = storage_path('app/public/' . $result['path']);
-                    $sanitizedName = preg_replace('/[^\w\.-]/', '_', $siswa->nama); 
-                    $destFileName = "Rapor_{$type}_{$sanitizedName}.docx";
-                    $destPath = $publicDir . '/' . $destFileName;
-                    
-                    // Gunakan file_get_contents/file_put_contents yang lebih handal untuk menyalin
-                    $fileContent = file_get_contents($sourcePath);
-                    if ($fileContent !== false && file_put_contents($destPath, $fileContent) !== false) {
-                        $files[] = [
-                            'path' => $destPath,
-                            'name' => $destFileName
-                        ];
-                        
-                        // Simpan history generate
-                        \App\Models\ReportGeneration::create([
-                            'siswa_id' => $siswa->id,
-                            'kelas_id' => $kelas->id,
-                            'report_template_id' => $template->id,
-                            'generated_file' => $result['path'],
-                            'type' => $type,
-                            'tahun_ajaran' => $tahunAjaran?->tahun_ajaran ?: $template->tahun_ajaran,
-                            'semester' => $currentSemester, // Use current semester
-                            'tahun_ajaran_id' => $tahunAjaranId,
-                            'generated_at' => now(),
-                            'generated_by' => $guru->id
-                        ]);
-                        
-                        // Tracking siswa berhasil
-                        $successSiswa[] = [
-                            'id' => $siswa->id,
-                            'name' => $siswa->nama,
-                            'filename' => $destFileName
-                        ];
-                    } else {
-                        throw new \Exception("Gagal menyalin file rapor");
+
+                    $cachedDocx = PdfCacheService::getCachedDocx(
+                        $siswa,
+                        $type,
+                        $tahunAjaranId,
+                        $currentSemester
+                    );
+                    if (! $cachedDocx) {
+                        $unavailable[$siswa->id] = $this->batchUnavailableStudent($siswa);
+                        continue;
                     }
-                    
-                } catch (\Exception $e) {
-                    // Log error
-                    \Log::error("Error generating report for siswa {$siswa->id} ({$siswa->nama}): " . $e->getMessage());
-                    
-                    // Tracking siswa gagal
-                    $errorSiswa[] = [
-                        'id' => $siswa->id,
-                        'name' => $siswa->nama,
-                        'error' => $e->getMessage()
+
+                    $documents[] = [
+                        'student_id' => (int) $siswa->id,
+                        'student_name' => (string) $siswa->nama,
+                        'path' => (string) $cachedDocx['path'],
                     ];
+                } catch (Throwable $exception) {
+                    Log::warning('Unable to prepare cached DOCX for batch archive', [
+                        'siswa_id' => $siswa->id,
+                        'kelas_id' => $kelas->id,
+                        'tahun_ajaran_id' => $tahunAjaranId,
+                        'semester' => $currentSemester,
+                        'type' => $type,
+                        'exception' => $exception,
+                    ]);
+                    $unavailable[$siswa->id] = $this->batchUnavailableStudent($siswa);
                 }
             }
-            
-            // Cek jika tidak ada rapor berhasil
-            if (empty($files)) {
-                throw new \Exception('Tidak ada rapor yang dapat digenerate. ' . implode("\n", array_column($errorSiswa, 'error')));
+
+            if ($documents === []) {
+                return $this->batchNoCachedDocxResponse(count($siswaIds), $unavailable);
             }
-            
-            // Buat file summary
-            $summaryContent = "# Laporan Generate Batch Rapor\n\n";
-            $summaryContent .= "Tanggal: " . date('Y-m-d H:i:s') . "\n";
-            $summaryContent .= "Kelas: {$kelas->nama_kelas}\n";
-            $summaryContent .= "Tipe Rapor: $type\n";
-            $summaryContent .= "Tahun Ajaran: " . ($template->tahunAjaran ? $template->tahunAjaran->tahun_ajaran : $template->tahun_ajaran) . "\n";
-            $summaryContent .= "Semester: {$currentSemester}\n\n";
-            
-            $summaryContent .= "## Ringkasan\n";
-            $summaryContent .= "Total Siswa: " . count($siswaIds) . "\n";
-            $summaryContent .= "Berhasil: " . count($successSiswa) . "\n";
-            $summaryContent .= "Gagal: " . count($errorSiswa) . "\n\n";
-            
-            if (!empty($successSiswa)) {
-                $summaryContent .= "## Siswa Berhasil\n";
-                foreach ($successSiswa as $index => $siswa) {
-                    $summaryContent .= ($index + 1) . ". {$siswa['name']} - {$siswa['filename']}\n";
+
+            $archive = ReportPerformanceTracker::measureSegment(
+                'archive',
+                fn () => $archives->createArchive(
+                    (int) $guru->id,
+                    (string) $kelas->nama_kelas,
+                    $type,
+                    $documents
+                )
+            );
+
+            if (! $archive) {
+                foreach ($documents as $document) {
+                    $student = $studentsById->get($document['student_id']);
+                    $unavailable[$document['student_id']] = $this->batchUnavailableStudent($student);
                 }
-                $summaryContent .= "\n";
+
+                return $this->batchNoCachedDocxResponse(count($siswaIds), $unavailable);
             }
-            
-            if (!empty($errorSiswa)) {
-                $summaryContent .= "## Siswa Gagal\n";
-                foreach ($errorSiswa as $index => $siswa) {
-                    $summaryContent .= ($index + 1) . ". {$siswa['name']} - {$siswa['error']}\n";
-                }
+
+            foreach ($archive['skipped_student_ids'] as $studentId) {
+                $student = $studentsById->get($studentId);
+                $unavailable[$studentId] = $this->batchUnavailableStudent($student);
             }
-            
-            // Tulis file summary
-            $summaryPath = $publicDir . "/RINGKASAN_RAPOR.md";
-            file_put_contents($summaryPath, $summaryContent);
-            
-            // Buat ZIP file
-            $zip = new \ZipArchive();
-            if ($zip->open($zipPath, \ZipArchive::CREATE | \ZipArchive::OVERWRITE) !== true) {
-                throw new \Exception("Gagal membuat file ZIP");
-            }
-            
-            // Tambahkan file summary
-            $zip->addFile($summaryPath, "RINGKASAN_RAPOR.md");
-            
-            // Tambahkan semua file rapor
-            foreach ($files as $file) {
-                if (file_exists($file['path'])) {
-                    $zip->addFile($file['path'], $file['name']);
-                } else {
-                    \Log::warning("File not found: {$file['path']}");
-                }
-            }
-            
-            // Tutup ZIP
-            if (!$zip->close()) {
-                throw new \Exception("Gagal menutup file ZIP");
-            }
-            
-            // Buat notifikasi sukses
-            $notification = new \App\Models\Notification();
-            $notification->title = "Batch Rapor {$type} Kelas {$kelas->nama_kelas} Siap Diunduh";
-            $notification->content = "Generate batch rapor {$type} untuk kelas {$kelas->nama_kelas} telah selesai. " . 
-                                "Berhasil: " . count($successSiswa) . " siswa, " . 
-                                "Gagal: " . count($errorSiswa) . " siswa. " .
-                                "Silahkan unduh file ZIP dari link yang disediakan.";
-            $notification->target = 'specific';
-            $notification->specific_users = [$guru->id];
-            $notification->save();
-            
-            // Return signed URL download agar file batch tidak bisa diakses publik langsung
-            $downloadUrl = $this->createSecureBatchDownloadUrl($webPath, $zipName);
-            
+
+            $successCount = count($archive['entries']);
+            $unavailable = array_values($unavailable);
+
+            $this->createBatchNotificationSafely([
+                'title' => "Batch Rapor {$type} Kelas {$kelas->nama_kelas} Siap Diunduh",
+                'content' => "Paket rapor {$type} telah disiapkan. Berhasil: {$successCount} siswa, tidak tersedia: ".count($unavailable).' siswa.',
+                'target' => 'specific',
+                'specific_users' => [$guru->id],
+            ]);
+
+            $downloadUrl = $this->createSecureBatchDownloadUrl($archive['path'], $archive['filename']);
+
             return ReportPerformanceTracker::measureSegment('response', fn () => response()->json([
                 'success' => true,
-                'message' => 'Batch rapor berhasil digenerate',
+                'message' => 'Paket rapor berhasil disiapkan.',
                 'download_url' => $downloadUrl,
                 'stats' => [
                     'total' => count($siswaIds),
-                    'success' => count($successSiswa),
-                    'error' => count($errorSiswa)
-                ]
+                    'success' => $successCount,
+                    'unavailable' => count($unavailable),
+                    'error' => count($unavailable),
+                ],
+                'unavailable_students' => $unavailable,
             ]));
-            
-        } catch (\Exception $e) {
-            if ($e instanceof HttpExceptionInterface || $e instanceof ValidationException) {
-                throw $e;
+        } catch (Throwable $exception) {
+            if ($exception instanceof HttpExceptionInterface || $exception instanceof ValidationException) {
+                throw $exception;
             }
 
-            \Log::error("Batch generate report error: " . $e->getMessage(), [
-                'trace' => $e->getTraceAsString()
+            Log::error('Batch DOCX packaging failed', [
+                'type' => $type,
+                'guru_id' => $guru?->id,
+                'exception' => $exception,
             ]);
-            
-            // Buat notifikasi error
-            if (isset($guru) && $guru) {
-                $notification = new \App\Models\Notification();
-                $notification->title = "Gagal Generate Batch Rapor {$type}";
-                $notification->content = "Terjadi kesalahan saat membuat batch rapor {$type}: " . $e->getMessage() . 
-                                    ". Silahkan coba lagi atau hubungi admin jika masalah berlanjut.";
-                $notification->target = 'specific';
-                $notification->specific_users = [$guru->id];
-                $notification->save();
+
+            if ($guru) {
+                $this->createBatchNotificationSafely([
+                    'title' => "Gagal Menyiapkan Batch Rapor {$type}",
+                    'content' => 'Paket rapor belum dapat disiapkan. Silakan coba lagi atau hubungi administrator.',
+                    'target' => 'specific',
+                    'specific_users' => [$guru->id],
+                ]);
             }
-            
+
             return response()->json([
                 'success' => false,
-                'message' => $e->getMessage(),
-                'error_detail' => env('APP_DEBUG') ? [
-                    'file' => $e->getFile(),
-                    'line' => $e->getLine(),
-                    'trace' => array_slice($e->getTrace(), 0, 3)
-                ] : null
+                'message' => 'Paket rapor belum dapat disiapkan. Silakan coba lagi.',
             ], 500);
         } finally {
-            ReportPerformanceTracker::finishIfEnabled($performance);
+            if ($performance !== null) {
+                ReportPerformanceTracker::finishIfEnabled($performance);
+            }
+        }
+    }
+
+    private function batchUnavailableStudent(?Siswa $siswa): array
+    {
+        return [
+            'id' => $siswa?->id,
+            'name' => $siswa?->nama,
+            'message' => 'Rapor DOCX belum tersedia atau perlu disiapkan ulang.',
+        ];
+    }
+
+    private function batchNoCachedDocxResponse(int $total, array $unavailable)
+    {
+        return response()->json([
+            'success' => false,
+            'message' => 'Belum ada rapor DOCX terbaru yang siap diunduh. Siapkan rapor siswa terlebih dahulu.',
+            'error_type' => 'docx_cache_unavailable',
+            'stats' => [
+                'total' => $total,
+                'success' => 0,
+                'unavailable' => count($unavailable),
+                'error' => count($unavailable),
+            ],
+            'unavailable_students' => array_values($unavailable),
+        ], 422);
+    }
+
+    private function createBatchNotificationSafely(array $attributes): void
+    {
+        try {
+            Notification::create($attributes);
+        } catch (Throwable $exception) {
+            Log::warning('Unable to persist batch report notification', [
+                'title' => $attributes['title'] ?? null,
+                'exception' => $exception,
+            ]);
         }
     }
 
@@ -3569,7 +3502,7 @@ class ReportController extends Controller
         return response()->download($filePath, $filename);
     }
 
-    public function downloadSecureBatchDownload(Request $request)
+    public function downloadSecureBatchDownload(Request $request, BatchDocxArchiveService $archives)
     {
         abort_unless($request->hasValidSignature(), 403);
 
@@ -3579,11 +3512,9 @@ class ReportController extends Controller
             403
         );
 
-        $relativePath = $this->normalizeProtectedPath((string) $request->query('path'));
-        abort_unless(Str::startsWith($relativePath, 'downloads/rapor_batch_'), 404);
-
-        $filePath = public_path($relativePath);
-        abort_unless(file_exists($filePath), 404);
+        $relativePath = (string) $request->query('path');
+        $filePath = $archives->resolveOwnedArchivePath($relativePath, (int) $currentGuruId);
+        abort_unless($filePath, 404);
 
         $filename = basename((string) $request->query('filename', basename($relativePath)));
 

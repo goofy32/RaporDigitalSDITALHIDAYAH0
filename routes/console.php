@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\Artisan;
 
 Schedule::command('model:prune')->daily();
 Schedule::command('cleanup:soft-deletes')->daily();
+Schedule::command('reports:cleanup-batch-docx')->daily();
 
 
 Artisan::command('inspire', function () {

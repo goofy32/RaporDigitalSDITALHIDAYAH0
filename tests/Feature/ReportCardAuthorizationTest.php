@@ -11,6 +11,7 @@ use App\Models\Setting;
 use App\Models\Siswa;
 use App\Models\User;
 use App\Services\DocumentConversionService;
+use App\Services\BatchDocxArchiveService;
 use App\Services\PdfCacheService;
 use App\Services\SiswaKelasSemesterResolver;
 use Illuminate\Database\Schema\Blueprint;
@@ -23,8 +24,11 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Js;
+use Illuminate\Support\Str;
 use Tests\TestCase;
+use ZipArchive;
 
 class ReportCardAuthorizationTest extends TestCase
 {
@@ -1364,8 +1368,263 @@ class ReportCardAuthorizationTest extends TestCase
                 'type' => 'UTS',
                 'tahun_ajaran_id' => $this->activeYearId,
             ])
+            ->assertForbidden();
+    }
+
+    public function test_batch_report_packages_fresh_cached_docx_in_private_archive_for_signed_owner_download(): void
+    {
+        Storage::fake('public');
+        Storage::fake('local');
+        $this->insertReportTemplate($this->currentClassId);
+        $this->cacheDocxForStudent($this->authorizedStudentId);
+
+        $response = $this->actingAsWali()
+            ->postJson(route('wali_kelas.rapor.batch.generate'), $this->batchPayload([$this->authorizedStudentId]))
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('stats.success', 1)
+            ->assertJsonPath('stats.unavailable', 0);
+
+        $downloadUrl = (string) $response->json('download_url');
+        $archivePath = $this->batchArchivePath($downloadUrl);
+
+        $this->assertStringStartsWith("batch_reports/{$this->wali->id}/", $archivePath);
+        $this->assertStringNotContainsString('/storage/', $downloadUrl);
+        Storage::disk('local')->assertExists($archivePath);
+        Storage::disk('public')->assertMissing($archivePath);
+
+        $this->get($downloadUrl)
+            ->assertOk()
+            ->assertDownload('Rapor_Kelas_A_UTS.zip');
+    }
+
+    public function test_batch_report_cache_miss_does_not_generate_docx_and_returns_422(): void
+    {
+        Storage::fake('public');
+        Storage::fake('local');
+        $this->insertReportTemplate($this->currentClassId);
+
+        $this->actingAsWali()
+            ->postJson(route('wali_kelas.rapor.batch.generate'), $this->batchPayload([$this->authorizedStudentId]))
+            ->assertUnprocessable()
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('error_type', 'docx_cache_unavailable')
+            ->assertJsonPath('stats.success', 0)
+            ->assertJsonPath('stats.unavailable', 1);
+
+        Storage::disk('local')->assertDirectoryEmpty(BatchDocxArchiveService::ROOT_DIRECTORY);
+        Storage::disk('public')->assertDirectoryEmpty('generated');
+        $this->assertDatabaseCount('report_generations', 0);
+    }
+
+    public function test_batch_report_treats_stale_cache_as_unavailable(): void
+    {
+        Storage::fake('public');
+        Storage::fake('local');
+        $this->insertReportTemplate($this->currentClassId);
+        $student = Siswa::findOrFail($this->authorizedStudentId);
+        $this->cacheDocxForStudent($student->id);
+        Cache::forever(
+            PdfCacheService::getFreshnessKey($student, 'UTS', $this->activeYearId, 1),
+            PdfCacheService::currentFreshnessVersion($student, 'UTS', $this->activeYearId, 1) + 1
+        );
+
+        $this->actingAsWali()
+            ->postJson(route('wali_kelas.rapor.batch.generate'), $this->batchPayload([$student->id]))
+            ->assertUnprocessable()
+            ->assertJsonPath('error_type', 'docx_cache_unavailable');
+
+        Storage::disk('local')->assertDirectoryEmpty(BatchDocxArchiveService::ROOT_DIRECTORY);
+    }
+
+    public function test_batch_report_packages_partial_result_without_generating_missing_docx(): void
+    {
+        Storage::fake('public');
+        Storage::fake('local');
+        $this->insertReportTemplate($this->currentClassId);
+        $secondStudentId = $this->insertStudent('1090', 'Second Batch Student', $this->currentClassId);
+        $this->insertEnrollment($secondStudentId, $this->currentClassId, $this->activeYearId, 1);
+        $this->insertReportData($secondStudentId, $this->currentClassId, $this->activeYearId, $this->wali->id);
+        $this->cacheDocxForStudent($this->authorizedStudentId);
+
+        $response = $this->actingAsWali()
+            ->postJson(
+                route('wali_kelas.rapor.batch.generate'),
+                $this->batchPayload([$this->authorizedStudentId, $secondStudentId])
+            )
+            ->assertOk()
+            ->assertJsonPath('stats.total', 2)
+            ->assertJsonPath('stats.success', 1)
+            ->assertJsonPath('stats.unavailable', 1)
+            ->assertJsonPath('unavailable_students.0.id', $secondStudentId);
+
+        $this->assertCount(1, $this->batchArchiveEntries($this->batchArchivePath((string) $response->json('download_url'))));
+        $this->assertDatabaseCount('report_generations', 0);
+    }
+
+    public function test_batch_report_uses_collision_safe_entries_for_duplicate_student_names(): void
+    {
+        Storage::fake('public');
+        Storage::fake('local');
+        $this->insertReportTemplate($this->currentClassId);
+        DB::table('siswas')->where('id', $this->authorizedStudentId)->update(['nama' => 'Nama Sama']);
+        $secondStudentId = $this->insertStudent('1091', 'Nama Sama', $this->currentClassId);
+        $this->insertEnrollment($secondStudentId, $this->currentClassId, $this->activeYearId, 1);
+        $this->insertReportData($secondStudentId, $this->currentClassId, $this->activeYearId, $this->wali->id);
+        $this->cacheDocxForStudent($this->authorizedStudentId);
+        $this->cacheDocxForStudent($secondStudentId);
+
+        $response = $this->actingAsWali()
+            ->postJson(
+                route('wali_kelas.rapor.batch.generate'),
+                $this->batchPayload([$this->authorizedStudentId, $secondStudentId])
+            )
+            ->assertOk()
+            ->assertJsonPath('stats.success', 2);
+
+        $entries = $this->batchArchiveEntries($this->batchArchivePath((string) $response->json('download_url')));
+        $this->assertCount(2, $entries);
+        $this->assertContains("Rapor_UTS_{$this->authorizedStudentId}_Nama_Sama.docx", $entries);
+        $this->assertContains("Rapor_UTS_{$secondStudentId}_Nama_Sama.docx", $entries);
+    }
+
+    public function test_batch_report_same_second_requests_use_different_private_workspaces(): void
+    {
+        Storage::fake('public');
+        Storage::fake('local');
+        $this->insertReportTemplate($this->currentClassId);
+        $this->cacheDocxForStudent($this->authorizedStudentId);
+        $this->freezeTime();
+
+        $first = $this->actingAsWali()
+            ->postJson(route('wali_kelas.rapor.batch.generate'), $this->batchPayload([$this->authorizedStudentId]))
+            ->assertOk();
+        $second = $this->actingAsWali()
+            ->postJson(route('wali_kelas.rapor.batch.generate'), $this->batchPayload([$this->authorizedStudentId]))
+            ->assertOk();
+
+        $this->assertNotSame(
+            $this->batchArchivePath((string) $first->json('download_url')),
+            $this->batchArchivePath((string) $second->json('download_url'))
+        );
+    }
+
+    public function test_batch_report_rejects_wrong_year_and_invalid_student_id_contract(): void
+    {
+        $this->actingAsWali()
+            ->postJson(route('wali_kelas.rapor.batch.generate'), $this->batchPayload(
+                [$this->authorizedStudentId],
+                'UTS',
+                $this->oldYearId
+            ))
+            ->assertNotFound();
+
+        $this->actingAsWali()
+            ->postJson(route('wali_kelas.rapor.batch.generate'), $this->batchPayload([
+                $this->authorizedStudentId,
+                $this->authorizedStudentId,
+            ]))
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('siswa_ids.1');
+    }
+
+    public function test_batch_report_requires_canonical_template_for_current_semester(): void
+    {
+        Storage::fake('public');
+        Storage::fake('local');
+        $this->insertReportTemplate($this->currentClassId, 'UTS', $this->activeYearId, 2);
+        $this->cacheDocxForStudent($this->authorizedStudentId);
+
+        $this->actingAsWali()
+            ->postJson(route('wali_kelas.rapor.batch.generate'), $this->batchPayload([$this->authorizedStudentId]))
+            ->assertNotFound()
+            ->assertJsonPath('error_type', 'template_missing');
+
+        DB::table('report_templates')->delete();
+        $this->insertGlobalReportTemplate('UTS', $this->activeYearId, 1);
+
+        $this->actingAsWali()
+            ->postJson(route('wali_kelas.rapor.batch.generate'), $this->batchPayload([$this->authorizedStudentId]))
+            ->assertOk();
+    }
+
+    public function test_secure_batch_download_rejects_unsigned_other_user_expired_and_traversal_requests(): void
+    {
+        Storage::fake('public');
+        Storage::fake('local');
+        $this->insertReportTemplate($this->currentClassId);
+        $this->cacheDocxForStudent($this->authorizedStudentId);
+        $response = $this->actingAsWali()
+            ->postJson(route('wali_kelas.rapor.batch.generate'), $this->batchPayload([$this->authorizedStudentId]))
+            ->assertOk();
+        $downloadUrl = (string) $response->json('download_url');
+        $archivePath = $this->batchArchivePath($downloadUrl);
+
+        $this->actingAsWali()
+            ->get(route('wali_kelas.rapor.secure-batch-download', [
+                'path' => $archivePath,
+                'filename' => 'reports.zip',
+                'user' => $this->wali->id,
+            ]))
+            ->assertForbidden();
+
+        $otherWali = $this->createOtherWali();
+        $this->actingAs($otherWali, 'guru')
+            ->withSession($this->waliSession())
+            ->get($downloadUrl)
+            ->assertForbidden();
+
+        $this->actingAsWali();
+        $this->travel(31)->minutes();
+        $this->get($downloadUrl)->assertForbidden();
+        $this->travelBack();
+
+        $traversalUrl = URL::temporarySignedRoute(
+            'wali_kelas.rapor.secure-batch-download',
+            now()->addMinutes(30),
+            [
+                'path' => "batch_reports/{$this->wali->id}/".str_repeat('a', 36).'/../../outside.zip',
+                'filename' => 'outside.zip',
+                'user' => $this->wali->id,
+            ]
+        );
+        $this->actingAsWali()->get($traversalUrl)->assertNotFound();
+
+        $unrelatedWorkspace = "batch_reports/{$this->wali->id}/".Str::uuid();
+        Storage::disk('local')->put($unrelatedWorkspace.'/unrelated.zip', 'ZIP');
+        $unrelatedUrl = URL::temporarySignedRoute(
+            'wali_kelas.rapor.secure-batch-download',
+            now()->addMinutes(30),
+            [
+                'path' => $unrelatedWorkspace.'/unrelated.zip',
+                'filename' => 'unrelated.zip',
+                'user' => $this->wali->id,
+            ]
+        );
+        $this->actingAsWali()->get($unrelatedUrl)->assertNotFound();
+    }
+
+    public function test_batch_report_does_not_expose_internal_archive_exception(): void
+    {
+        Storage::fake('public');
+        Storage::fake('local');
+        $this->insertReportTemplate($this->currentClassId);
+        $this->cacheDocxForStudent($this->authorizedStudentId);
+        $this->mock(BatchDocxArchiveService::class, function ($mock) {
+            $mock->shouldReceive('createArchive')
+                ->once()
+                ->andThrow(new \RuntimeException('C:\\private\\school\\secret.zip'));
+        });
+
+        $response = $this->actingAsWali()
+            ->postJson(route('wali_kelas.rapor.batch.generate'), $this->batchPayload([$this->authorizedStudentId]))
             ->assertServerError()
-            ->assertJsonPath('success', false);
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('message', 'Paket rapor belum dapat disiapkan. Silakan coba lagi.');
+
+        $this->assertStringNotContainsString('private', (string) $response->getContent());
+        $this->assertStringNotContainsString('secret.zip', (string) $response->getContent());
+        $this->assertStringNotContainsString('secret.zip', (string) DB::table('notifications')->latest('id')->value('content'));
     }
 
     public function test_wali_can_request_pdf_for_authorized_student(): void
@@ -2337,6 +2596,91 @@ class ReportCardAuthorizationTest extends TestCase
             ),
             'semester' => 1,
         ], now()->addHour());
+    }
+
+    private function batchPayload(array $studentIds, string $type = 'UTS', ?int $yearId = null): array
+    {
+        return [
+            'siswa_ids' => $studentIds,
+            'type' => $type,
+            'tahun_ajaran_id' => $yearId ?? $this->activeYearId,
+        ];
+    }
+
+    private function cacheDocxForStudent(int $studentId, string $type = 'UTS'): array
+    {
+        $student = Siswa::findOrFail($studentId);
+        $sourcePath = "generated/batch-source-{$studentId}-{$type}.docx";
+        Storage::disk('public')->put($sourcePath, "PK cached DOCX for {$studentId}");
+        $freshnessVersion = PdfCacheService::currentFreshnessVersion(
+            $student,
+            $type,
+            $this->activeYearId,
+            1
+        );
+        $cached = PdfCacheService::cacheDocx(
+            $student,
+            $type,
+            $this->activeYearId,
+            Storage::disk('public')->path($sourcePath),
+            "Rapor {$type} {$student->nama}.docx",
+            $freshnessVersion,
+            1
+        );
+
+        $this->assertNotNull($cached);
+
+        return $cached;
+    }
+
+    private function batchArchivePath(string $downloadUrl): string
+    {
+        parse_str((string) parse_url($downloadUrl, PHP_URL_QUERY), $query);
+
+        return (string) ($query['path'] ?? '');
+    }
+
+    private function batchArchiveEntries(string $relativePath): array
+    {
+        $zip = new ZipArchive;
+        $this->assertTrue($zip->open(Storage::disk('local')->path($relativePath)) === true);
+
+        try {
+            $entries = [];
+            for ($index = 0; $index < $zip->numFiles; $index++) {
+                $entries[] = (string) $zip->getNameIndex($index);
+            }
+
+            return $entries;
+        } finally {
+            $zip->close();
+        }
+    }
+
+    private function createOtherWali(): Guru
+    {
+        $guruId = DB::table('gurus')->insertGetId([
+            'nuptk' => 'wali-other',
+            'nama' => 'Wali Lain',
+            'email' => 'wali-other@example.test',
+            'username' => 'wali-other',
+            'password' => Hash::make('password'),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $this->attachWali($guruId, $this->otherClassId);
+
+        return Guru::findOrFail($guruId);
+    }
+
+    private function waliSession(): array
+    {
+        return [
+            'selected_role' => 'wali_kelas',
+            'tahun_ajaran_id' => $this->activeYearId,
+            'selected_semester' => 1,
+            'no_tahun_ajaran' => false,
+        ];
     }
 
     private function fakeLibreOfficeAvailability(bool $available = true): void
