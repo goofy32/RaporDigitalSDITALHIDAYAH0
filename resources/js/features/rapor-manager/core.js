@@ -415,6 +415,21 @@ export const raporManagerCore = {
             return;
         }
 
+        const confirmation = await Swal.fire({
+            icon: 'question',
+            title: 'Unduh semua rapor?',
+            text: 'Sistem akan menyiapkan rapor seluruh siswa di kelas ini. Proses dapat membutuhkan beberapa saat. Pastikan periode rapor yang dipilih sudah benar.',
+            showCancelButton: true,
+            confirmButtonColor: '#16a34a',
+            cancelButtonColor: '#6b7280',
+            confirmButtonText: 'Unduh Semua Rapor',
+            cancelButtonText: 'Batal'
+        });
+
+        if (!confirmation.isConfirmed || this.batchProcessing) {
+            return;
+        }
+
         this.batchProcessing = true;
         this.batchState = 'preparing';
         this.batchCurrent = 0;

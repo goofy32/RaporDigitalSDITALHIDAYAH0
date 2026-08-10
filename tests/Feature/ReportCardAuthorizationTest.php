@@ -941,6 +941,40 @@ class ReportCardAuthorizationTest extends TestCase
         $this->assertStringContainsString('data-tahun-ajaran-id="'.$this->activeYearId.'"', $html);
     }
 
+    public function test_batch_docx_action_uses_success_styling_and_requires_confirmation(): void
+    {
+        $this->fakeLibreOfficeAvailability(false);
+        $this->insertReportTemplate($this->currentClassId);
+
+        $html = $this->actingAsWali()
+            ->get(route('wali_kelas.rapor.index', [
+                'type' => 'UTS',
+                'tahun_ajaran_id' => $this->activeYearId,
+            ]))
+            ->assertOk()
+            ->getContent();
+
+        $this->assertMatchesRegularExpression(
+            '/id="download-all-reports-button"[^>]*class="[^"]*bg-green-700[^"]*hover:bg-green-800[^"]*"/s',
+            $html
+        );
+        $this->assertStringContainsString('@click="handleBatchDownload()"', $html);
+
+        $source = file_get_contents(resource_path('js/features/rapor-manager/core.js'));
+        $confirmationPosition = strpos($source, "title: 'Unduh semua rapor?'");
+        $processingPosition = strpos($source, 'this.batchProcessing = true;');
+
+        $this->assertIsString($source);
+        $this->assertNotFalse($confirmationPosition);
+        $this->assertNotFalse($processingPosition);
+        $this->assertLessThan($processingPosition, $confirmationPosition);
+        $this->assertStringContainsString('Sistem akan menyiapkan rapor seluruh siswa di kelas ini.', $source);
+        $this->assertStringContainsString("confirmButtonColor: '#16a34a'", $source);
+        $this->assertStringContainsString("confirmButtonText: 'Unduh Semua Rapor'", $source);
+        $this->assertStringContainsString("cancelButtonText: 'Batal'", $source);
+        $this->assertStringContainsString('if (!confirmation.isConfirmed || this.batchProcessing)', $source);
+    }
+
     public function test_wali_template_visibility_respects_opened_report_period(): void
     {
         Setting::set('active_wali_report_period', 'UTS');
