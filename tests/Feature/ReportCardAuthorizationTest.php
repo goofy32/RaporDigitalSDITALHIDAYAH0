@@ -107,11 +107,14 @@ class ReportCardAuthorizationTest extends TestCase
     {
         $this->setAuthorizedMidSemesterScore(80, 90, 85);
 
-        $this->mock(\Illuminate\Contracts\View\Factory::class, function ($mock) {
+        $view = \Mockery::mock(\Illuminate\Contracts\View\View::class);
+        $view->shouldReceive('render')->andReturn('mid-semester print ok');
+
+        $this->mock(\Illuminate\Contracts\View\Factory::class, function ($mock) use ($view) {
             $mock->shouldReceive('share')->andReturnNull();
             $mock->shouldReceive('make')
                 ->with('wali_kelas.rapor.print_html', \Mockery::type('array'), [])
-                ->andReturn(response('mid-semester print ok'));
+                ->andReturn($view);
         });
 
         $this->actingAsWali()
@@ -427,11 +430,14 @@ class ReportCardAuthorizationTest extends TestCase
 
     public function test_wali_can_print_html_report_for_authorized_student(): void
     {
-        $this->mock(\Illuminate\Contracts\View\Factory::class, function ($mock) {
+        $view = \Mockery::mock(\Illuminate\Contracts\View\View::class);
+        $view->shouldReceive('render')->andReturn('print ok');
+
+        $this->mock(\Illuminate\Contracts\View\Factory::class, function ($mock) use ($view) {
             $mock->shouldReceive('share')->andReturnNull();
             $mock->shouldReceive('make')
                 ->with('wali_kelas.rapor.print_html', \Mockery::type('array'), [])
-                ->andReturn(response('print ok'));
+                ->andReturn($view);
         });
 
         $this->actingAsWali()
