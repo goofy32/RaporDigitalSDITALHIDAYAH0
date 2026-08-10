@@ -1775,6 +1775,23 @@ class ReportController extends Controller
             return $this->pdfProcessingResponse($request, $existingRequestId, $disposition, true);
         }
 
+        if (! app(DocumentConversionService::class)->isLibreOfficeAvailable()) {
+            ReportPerformanceTracker::setFlowTypeIfEnabled("{$flowPrefix}_libreoffice_unavailable");
+
+            $message = 'Fitur PDF belum tersedia karena LibreOffice tidak terdeteksi. DOCX dan cetak HTML tetap dapat digunakan.';
+
+            if ($this->expectsPdfJson($request)) {
+                return response()->json([
+                    'success' => false,
+                    'status' => 'failed',
+                    'message' => $message,
+                    'error_type' => 'libreoffice_unavailable',
+                ], 503);
+            }
+
+            return redirect()->back()->with('error', $message);
+        }
+
         $requestId = 'pdf_' . (string) Str::uuid();
         $userId = auth()->guard('guru')->id();
 

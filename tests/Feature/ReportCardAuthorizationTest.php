@@ -622,6 +622,7 @@ class ReportCardAuthorizationTest extends TestCase
     public function test_pdf_preview_cache_miss_queues_job_without_running_conversion_in_request(): void
     {
         $this->insertReportTemplate($this->currentClassId);
+        $this->fakeLibreOfficeAvailability();
         Bus::fake([GeneratePdfReportJob::class]);
 
         $response = $this->actingAsWali()
@@ -646,6 +647,7 @@ class ReportCardAuthorizationTest extends TestCase
     public function test_pdf_download_cache_miss_queues_job_with_attachment_poll_url(): void
     {
         $this->insertReportTemplate($this->currentClassId);
+        $this->fakeLibreOfficeAvailability();
         Bus::fake([GeneratePdfReportJob::class]);
 
         $response = $this->actingAsWali()
@@ -665,6 +667,7 @@ class ReportCardAuthorizationTest extends TestCase
     public function test_repeated_pdf_requests_reuse_existing_generation_request(): void
     {
         $this->insertReportTemplate($this->currentClassId);
+        $this->fakeLibreOfficeAvailability();
         Bus::fake([GeneratePdfReportJob::class]);
 
         $first = $this->actingAsWali()
@@ -691,6 +694,7 @@ class ReportCardAuthorizationTest extends TestCase
     public function test_preview_and_download_share_same_generation_request_on_cache_miss(): void
     {
         $this->insertReportTemplate($this->currentClassId);
+        $this->fakeLibreOfficeAvailability();
         Bus::fake([GeneratePdfReportJob::class]);
 
         $preview = $this->actingAsWali()
@@ -1338,6 +1342,7 @@ class ReportCardAuthorizationTest extends TestCase
     public function test_wali_can_request_pdf_for_authorized_student(): void
     {
         $this->insertReportTemplate($this->currentClassId);
+        $this->fakeLibreOfficeAvailability();
         Bus::fake([GeneratePdfReportJob::class]);
 
         $this->actingAsWali()
@@ -1352,10 +1357,35 @@ class ReportCardAuthorizationTest extends TestCase
         Bus::assertDispatched(GeneratePdfReportJob::class);
     }
 
+    public function test_pdf_request_does_not_queue_when_libreoffice_is_unavailable(): void
+    {
+        $this->insertReportTemplate($this->currentClassId);
+        $this->fakeLibreOfficeAvailability(false);
+        Bus::fake([GeneratePdfReportJob::class]);
+
+        $this->actingAsWali()
+            ->postJson(route('wali_kelas.rapor.request-pdf', $this->authorizedStudentId), [
+                'type' => 'UTS',
+                'tahun_ajaran_id' => $this->activeYearId,
+            ])
+            ->assertStatus(503)
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('status', 'failed')
+            ->assertJsonPath('error_type', 'libreoffice_unavailable');
+
+        $this->assertNull(Cache::get(PdfCacheService::getGenerationRequestKey(
+            Siswa::findOrFail($this->authorizedStudentId),
+            'UTS',
+            $this->activeYearId
+        )));
+        Bus::assertNotDispatched(GeneratePdfReportJob::class);
+    }
+
     public function test_uts_pdf_request_queues_tp_lm_only_report(): void
     {
         $this->setAuthorizedMidSemesterScore(80, 90, 85);
         $this->insertReportTemplate($this->currentClassId);
+        $this->fakeLibreOfficeAvailability();
         Bus::fake([GeneratePdfReportJob::class]);
 
         $this->actingAsWali()
