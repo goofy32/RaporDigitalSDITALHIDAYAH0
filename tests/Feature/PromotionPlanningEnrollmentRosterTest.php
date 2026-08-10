@@ -7,7 +7,7 @@ use App\Models\Guru;
 use App\Models\User;
 use App\Services\SiswaKelasSemesterResolver;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
+use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -47,7 +47,7 @@ class PromotionPlanningEnrollmentRosterTest extends TestCase
         parent::setUp();
 
         $this->withoutVite();
-        $this->withoutMiddleware(ValidateCsrfToken::class);
+        $this->withoutMiddleware(PreventRequestForgery::class);
         Event::fake();
 
         config()->set('database.default', 'sqlite');

@@ -11,7 +11,7 @@ use App\Services\DocumentConversionService;
 use App\Services\PdfCacheService;
 use App\Services\RaporTemplateProcessor;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
+use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -53,7 +53,7 @@ class GuruSignatureTest extends TestCase
         parent::setUp();
 
         $this->withoutVite();
-        $this->withoutMiddleware(ValidateCsrfToken::class);
+        $this->withoutMiddleware(PreventRequestForgery::class);
 
         config()->set('database.default', 'sqlite');
         config()->set('database.connections.sqlite.database', ':memory:');

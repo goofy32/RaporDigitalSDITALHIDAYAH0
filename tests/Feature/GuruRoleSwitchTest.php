@@ -6,10 +6,12 @@ use App\Http\Middleware\CheckRole;
 use App\Http\Middleware\SyncGuruSelectedRoleSession;
 use App\Http\Middleware\TahunAjaranMiddleware;
 use App\Models\Guru;
+use App\Models\TahunAjaran;
 use App\Services\GuruSelectedRoleSessionState;
 use App\Services\TahunAjaranContext;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
+use Illuminate\Database\Eloquent\Collection as EloquentCollection;
+use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -34,9 +36,11 @@ class GuruRoleSwitchTest extends TestCase
         config()->set('database.default', 'sqlite');
         config()->set('database.connections.sqlite.database', ':memory:');
         config()->set('cache.default', 'array');
+        config()->set('cache.stores.array.serialize', true);
         config()->set('session.driver', 'array');
         DB::purge('sqlite');
         DB::reconnect('sqlite');
+        app('cache')->forgetDriver('array');
         Cache::flush();
 
         $this->createSchema();
@@ -86,7 +90,7 @@ class GuruRoleSwitchTest extends TestCase
 
     public function test_post_switch_without_csrf_is_rejected(): void
     {
-        $this->withMiddleware(ValidateCsrfToken::class);
+        $this->withMiddleware(PreventRequestForgery::class);
         $this->app->instance('env', 'production');
 
         $this->actingAs($this->multiRoleGuru, 'guru')
@@ -97,6 +101,43 @@ class GuruRoleSwitchTest extends TestCase
                 'no_tahun_ajaran' => false,
             ])
             ->post(route('auth.switch.role', ['role' => 'wali_kelas']))
+            ->assertStatus(419)
+            ->assertSessionHas('selected_role', 'pengajar');
+    }
+
+    public function test_post_switch_with_valid_request_forgery_token_succeeds(): void
+    {
+        $this->withMiddleware(PreventRequestForgery::class);
+        $this->app->instance('env', 'production');
+
+        $this->actingAs($this->multiRoleGuru, 'guru')
+            ->withSession($this->roleSession('pengajar'))
+            ->post(route('auth.switch.role', ['role' => 'wali_kelas']), $this->csrfPayload())
+            ->assertRedirect(route('wali_kelas.dashboard'))
+            ->assertSessionHas('selected_role', 'wali_kelas');
+    }
+
+    public function test_same_origin_post_switch_uses_laravel_13_request_forgery_policy(): void
+    {
+        $this->withMiddleware(PreventRequestForgery::class);
+        $this->app->instance('env', 'production');
+
+        $this->actingAs($this->multiRoleGuru, 'guru')
+            ->withSession($this->roleSession('pengajar'))
+            ->withHeader('Sec-Fetch-Site', 'same-origin')
+            ->post(route('auth.switch.role', ['role' => 'wali_kelas']))
+            ->assertRedirect(route('wali_kelas.dashboard'))
+            ->assertSessionHas('selected_role', 'wali_kelas');
+    }
+
+    public function test_post_switch_with_invalid_request_forgery_token_is_rejected(): void
+    {
+        $this->withMiddleware(PreventRequestForgery::class);
+        $this->app->instance('env', 'production');
+
+        $this->actingAs($this->multiRoleGuru, 'guru')
+            ->withSession($this->roleSession('pengajar'))
+            ->post(route('auth.switch.role', ['role' => 'wali_kelas']), ['_token' => 'invalid-token'])
             ->assertStatus(419)
             ->assertSessionHas('selected_role', 'pengajar');
     }
@@ -437,6 +478,42 @@ class GuruRoleSwitchTest extends TestCase
         });
 
         $this->assertSame('ok', $response->getContent());
+    }
+
+    public function test_tahun_ajaran_model_and_selector_collection_round_trip_through_serialized_cache(): void
+    {
+        $request = Request::create('/_test/serialized-year-cache', 'GET');
+        $request->setLaravelSession(app('session.store'));
+
+        app(TahunAjaranMiddleware::class)->handle($request, fn () => response('ok'));
+
+        $activeYear = Cache::get('active_tahun_ajaran');
+        $allYears = Cache::get('all_tahun_ajaran_selector_archived');
+
+        $this->assertInstanceOf(TahunAjaran::class, $activeYear);
+        $this->assertSame($this->tahunAjaranId, $activeYear->id);
+        $this->assertInstanceOf(EloquentCollection::class, $allYears);
+        $this->assertContainsOnlyInstancesOf(TahunAjaran::class, $allYears);
+        $this->assertTrue($allYears->contains('id', $this->tahunAjaranId));
+    }
+
+    public function test_tahun_ajaran_middleware_reconciles_stale_scalar_session_after_cache_clear(): void
+    {
+        session([
+            'tahun_ajaran_id' => 999999,
+            'selected_semester' => 2,
+            'no_tahun_ajaran' => false,
+        ]);
+        Cache::flush();
+
+        $request = Request::create('/_test/reconcile-year-context', 'GET');
+        $request->setLaravelSession(app('session.store'));
+
+        app(TahunAjaranMiddleware::class)->handle($request, fn () => response('ok'));
+
+        $this->assertSame($this->tahunAjaranId, session('tahun_ajaran_id'));
+        $this->assertSame(1, session('selected_semester'));
+        $this->assertFalse(session('no_tahun_ajaran'));
     }
 
     public function test_tahun_ajaran_context_handles_empty_year_state_without_exception(): void

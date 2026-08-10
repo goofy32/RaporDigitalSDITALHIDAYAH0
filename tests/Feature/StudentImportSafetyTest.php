@@ -8,7 +8,7 @@ use DomainException;
 use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
+use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -46,7 +46,7 @@ class StudentImportSafetyTest extends TestCase
         parent::setUp();
 
         $this->withoutVite();
-        $this->withoutMiddleware(ValidateCsrfToken::class);
+        $this->withoutMiddleware(PreventRequestForgery::class);
 
         config()->set('database.default', 'sqlite');
         config()->set('database.connections.sqlite.database', ':memory:');
@@ -125,6 +125,36 @@ class StudentImportSafetyTest extends TestCase
             'tahun_ajaran_id' => $this->activeYearId,
             'semester' => 1,
         ]);
+    }
+
+    public function test_excel_upload_succeeds_with_valid_laravel_13_request_forgery_token(): void
+    {
+        $this->withMiddleware(PreventRequestForgery::class);
+        $this->app->instance('env', 'production');
+        $path = $this->createWorkbook(
+            $this->headers(),
+            [array_map(fn ($header) => $this->validRow()[$header] ?? null, $this->headers())]
+        );
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession([
+                'tahun_ajaran_id' => $this->activeYearId,
+                'selected_semester' => 1,
+                '_token' => 'excel-import-token',
+            ])
+            ->post(route('student.import'), [
+                '_token' => 'excel-import-token',
+                'file' => new UploadedFile(
+                    $path,
+                    'student-import.xlsx',
+                    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    null,
+                    true
+                ),
+            ])
+            ->assertRedirect(route('student'));
+
+        $this->assertDatabaseHas('siswas', ['nis' => '2601001']);
     }
 
     public function test_import_accepts_one_to_ten_digit_identifiers_and_preserves_text_leading_zero(): void

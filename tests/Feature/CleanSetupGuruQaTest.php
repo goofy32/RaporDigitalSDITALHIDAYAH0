@@ -5,7 +5,7 @@ namespace Tests\Feature;
 use App\Models\Guru;
 use App\Models\User;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
+use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -27,7 +27,7 @@ class CleanSetupGuruQaTest extends TestCase
     {
         parent::setUp();
 
-        $this->withoutMiddleware(ValidateCsrfToken::class);
+        $this->withoutMiddleware(PreventRequestForgery::class);
 
         config()->set('database.default', 'sqlite');
         config()->set('database.connections.sqlite.database', ':memory:');
@@ -379,6 +379,9 @@ class CleanSetupGuruQaTest extends TestCase
 
     public function test_guru_login_still_works_with_username_when_email_is_empty(): void
     {
+        $this->withMiddleware(PreventRequestForgery::class);
+        $this->app->instance('env', 'production');
+
         $guruId = $this->insertGuru('Guru Login Optional Email', 'login_optional_email', '900000006');
         DB::table('gurus')->where('id', $guruId)->update(['email' => null]);
         DB::table('guru_kelas')->insert([
@@ -390,10 +393,12 @@ class CleanSetupGuruQaTest extends TestCase
             'updated_at' => now(),
         ]);
 
-        $this->post(route('login.post'), [
-            'username' => 'login_optional_email',
-            'password' => 'password',
-        ])->assertRedirect(route('pengajar.dashboard'));
+        $this->withSession(['_token' => 'login-request-token'])
+            ->post(route('login.post'), [
+                '_token' => 'login-request-token',
+                'username' => 'login_optional_email',
+                'password' => 'password',
+            ])->assertRedirect(route('pengajar.dashboard'));
 
         $this->assertAuthenticatedAs(Guru::findOrFail($guruId), 'guru');
     }

@@ -15,7 +15,7 @@ use App\Services\ReportScoreEligibilityService;
 use App\Services\ScoreAggregateRecalculationService;
 use App\Services\SpreadsheetImportGuard;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
+use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -63,7 +63,7 @@ class PengajarScoreAuthorizationTest extends TestCase
     {
         parent::setUp();
 
-        $this->withoutMiddleware(ValidateCsrfToken::class);
+        $this->withoutMiddleware(PreventRequestForgery::class);
 
         config()->set('database.default', 'sqlite');
         config()->set('database.connections.sqlite.database', ':memory:');

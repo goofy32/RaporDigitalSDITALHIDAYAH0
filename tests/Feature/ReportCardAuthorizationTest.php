@@ -14,7 +14,7 @@ use App\Services\DocumentConversionService;
 use App\Services\PdfCacheService;
 use App\Services\SiswaKelasSemesterResolver;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
+use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
@@ -53,7 +53,7 @@ class ReportCardAuthorizationTest extends TestCase
         parent::setUp();
 
         $this->withoutVite();
-        $this->withoutMiddleware(ValidateCsrfToken::class);
+        $this->withoutMiddleware(PreventRequestForgery::class);
 
         config()->set('database.default', 'sqlite');
         config()->set('database.connections.sqlite.database', ':memory:');

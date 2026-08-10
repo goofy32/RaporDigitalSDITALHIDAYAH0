@@ -2,9 +2,10 @@
 
 namespace Tests\Feature;
 
+use App\Models\ProfilSekolah;
 use App\Models\User;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Foundation\Http\Middleware\ValidateCsrfToken;
+use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -23,14 +24,16 @@ class SchoolProfileRegressionTest extends TestCase
     {
         parent::setUp();
 
-        $this->withoutMiddleware(ValidateCsrfToken::class);
+        $this->withoutMiddleware(PreventRequestForgery::class);
 
         config()->set('database.default', 'sqlite');
         config()->set('database.connections.sqlite.database', ':memory:');
         config()->set('cache.default', 'array');
+        config()->set('cache.stores.array.serialize', true);
         config()->set('session.driver', 'array');
         DB::purge('sqlite');
         DB::reconnect('sqlite');
+        app('cache')->forgetDriver('array');
         Cache::flush();
 
         $this->createSchema();
@@ -105,6 +108,40 @@ class SchoolProfileRegressionTest extends TestCase
         ]);
         $this->assertSame(true, (bool) DB::table('tahun_ajarans')->where('id', $this->activeYearId)->value('is_active'));
         $this->assertSame(false, (bool) DB::table('tahun_ajarans')->where('id', $this->inactiveYearId)->value('is_active'));
+    }
+
+    public function test_serialized_profile_cache_round_trip_is_invalidated_by_normal_update(): void
+    {
+        $profile = ProfilSekolah::firstOrFail();
+        Cache::put('profil_sekolah', $profile, now()->addHour());
+
+        $cachedProfile = Cache::get('profil_sekolah');
+
+        $this->assertInstanceOf(ProfilSekolah::class, $cachedProfile);
+        $this->assertSame('SDIT Al Hidayah', $cachedProfile->nama_sekolah);
+
+        $this->withMiddleware(PreventRequestForgery::class);
+        $this->app->instance('env', 'production');
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession([
+                'tahun_ajaran_id' => $this->activeYearId,
+                'selected_semester' => 1,
+                '_token' => 'profile-update-token',
+            ])
+            ->post(route('profile.submit'), $this->validProfilePayload([
+                '_token' => 'profile-update-token',
+                'nama_sekolah' => 'SDIT Al Hidayah Terkini',
+            ]))
+            ->assertRedirect(route('profile'));
+
+        $this->assertFalse(Cache::has('profil_sekolah'));
+
+        $this->get(route('profile'))
+            ->assertOk()
+            ->assertSee('SDIT Al Hidayah Terkini');
+
+        $this->assertSame('SDIT Al Hidayah Terkini', Cache::get('profil_sekolah')->nama_sekolah);
     }
 
     public function test_profile_update_does_not_modify_unrelated_academic_years(): void

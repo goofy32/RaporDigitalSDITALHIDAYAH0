@@ -51,7 +51,7 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
 
         // Konfigurasi CSRF
-        $middleware->validateCsrfTokens(
+        $middleware->preventRequestForgery(
             except: [
                 // Tambahkan rute yang ingin dikecualikan dari CSRF protection
             ]

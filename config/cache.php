@@ -1,5 +1,8 @@
 <?php
 
+use App\Models\ProfilSekolah;
+use App\Models\TahunAjaran;
+use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Support\Str;
 
 return [
@@ -16,6 +19,12 @@ return [
     */
 
     'default' => env('CACHE_STORE', 'database'),
+
+    'serializable_classes' => [
+        ProfilSekolah::class,
+        TahunAjaran::class,
+        EloquentCollection::class,
+    ],
 
     /*
     |--------------------------------------------------------------------------
