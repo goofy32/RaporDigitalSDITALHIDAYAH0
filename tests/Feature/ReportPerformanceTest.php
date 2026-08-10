@@ -535,6 +535,7 @@ class ReportPerformanceTest extends TestCase
     public function test_pdf_auto_prepare_schedules_delayed_warm_jobs_when_enabled(): void
     {
         Queue::fake();
+        $this->fakeLibreOfficeAvailability();
         config()->set('report.pdf_auto_prepare.enabled', true);
         config()->set('report.pdf_auto_prepare.delay_seconds', 60);
         config()->set('report.pdf_auto_prepare.queue', 'pdf-warm');
@@ -568,6 +569,7 @@ class ReportPerformanceTest extends TestCase
     public function test_repeated_pdf_auto_prepare_tokens_make_older_jobs_skip(): void
     {
         Queue::fake();
+        $this->fakeLibreOfficeAvailability();
         config()->set('report.pdf_auto_prepare.enabled', true);
         $this->insertAcademicYear(1, 1);
         $this->insertReportTemplate('UTS', 1, 1);
@@ -594,6 +596,26 @@ class ReportPerformanceTest extends TestCase
 
         $this->assertFalse(Cache::has(PdfCacheService::getCacheKey($siswa, 'UTS', 1)));
         Queue::assertPushed(AutoPreparePdfReportJob::class, 2);
+    }
+
+    public function test_pdf_auto_prepare_does_not_create_state_or_dispatch_when_libreoffice_is_unavailable(): void
+    {
+        Queue::fake();
+        $this->fakeLibreOfficeAvailability(false);
+        config()->set('report.pdf_auto_prepare.enabled', true);
+        $this->insertAcademicYear(1, 1);
+        $this->insertReportTemplate('UTS', 1, 1);
+
+        $siswa = $this->createStudent('Unavailable LibreOffice', 'AUTO-NO-LO-001', 'AUTO-NO-LO-NISN-001');
+        $this->insertEligibleMidSemesterScore($siswa, 1, 1);
+
+        $scheduled = app(ReportPdfAutoPrepareService::class)
+            ->scheduleForStudent($siswa, 1, ['UTS'], 'libreoffice_unavailable_test');
+
+        $this->assertSame(0, $scheduled);
+        $this->assertFalse(Cache::has(PdfCacheService::getAutoPrepareTokenKey($siswa, 'UTS', 1, 1)));
+        $this->assertFalse(Cache::has(PdfCacheService::getGenerationRequestKey($siswa, 'UTS', 1, 1)));
+        Queue::assertNotPushed(AutoPreparePdfReportJob::class);
     }
 
     public function test_pdf_auto_prepare_job_skips_when_cache_already_exists(): void
@@ -763,6 +785,13 @@ class ReportPerformanceTest extends TestCase
             'created_at' => now(),
             'updated_at' => now(),
         ]);
+    }
+
+    private function fakeLibreOfficeAvailability(bool $available = true): void
+    {
+        $this->mock(DocumentConversionService::class, function ($mock) use ($available) {
+            $mock->shouldReceive('isLibreOfficeAvailable')->andReturn($available);
+        });
     }
 
     private function createSchema(): void

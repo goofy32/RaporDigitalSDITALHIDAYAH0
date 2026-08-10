@@ -874,7 +874,31 @@ class ReportCardAuthorizationTest extends TestCase
             ]))
             ->assertOk()
             ->assertDontSee('Belum ada template UTS aktif untuk kelas ini.', false)
-            ->assertSee('"UTS":true', false);
+            ->assertSee('"UTS":true', false)
+            ->assertSee('Status PDF')
+            ->assertSee('Preview PDF', false)
+            ->assertSee('Unduh Rapor PDF', false)
+            ->assertSee('data-pdf-status-url=', false);
+    }
+
+    public function test_report_index_hides_pdf_ui_when_libreoffice_is_unavailable(): void
+    {
+        $this->fakeLibreOfficeAvailability(false);
+        $this->insertReportTemplate($this->currentClassId);
+
+        $this->actingAsWali()
+            ->get(route('wali_kelas.rapor.index', [
+                'type' => 'UTS',
+                'tahun_ajaran_id' => $this->activeYearId,
+            ]))
+            ->assertOk()
+            ->assertDontSee('LibreOffice tidak terdeteksi', false)
+            ->assertDontSee('Status PDF')
+            ->assertDontSee('Preview PDF', false)
+            ->assertDontSee('Unduh Rapor PDF', false)
+            ->assertDontSee('data-pdf-status-url=', false)
+            ->assertSee('Unduh Rapor DOCX', false)
+            ->assertSee('handleGenerate(', false);
     }
 
     public function test_wali_template_visibility_respects_opened_report_period(): void
@@ -914,6 +938,7 @@ class ReportCardAuthorizationTest extends TestCase
 
     public function test_wali_report_page_schedules_opened_period_warmup_without_dashboard_visit(): void
     {
+        $this->fakeLibreOfficeAvailability();
         config()->set('report.pdf_auto_prepare.enabled', true);
         config()->set('report.pdf_auto_prepare.delay_seconds', 60);
         config()->set('report.pdf_auto_prepare.queue', 'pdf-warm');
@@ -942,6 +967,7 @@ class ReportCardAuthorizationTest extends TestCase
 
     public function test_wali_report_page_can_warm_uas_in_active_ganjil_when_uas_is_opened(): void
     {
+        $this->fakeLibreOfficeAvailability();
         config()->set('report.pdf_auto_prepare.enabled', true);
         config()->set('report.pdf_auto_prepare.delay_seconds', 60);
         config()->set('report.pdf_auto_prepare.queue', 'pdf-warm');
@@ -969,6 +995,7 @@ class ReportCardAuthorizationTest extends TestCase
 
     public function test_wali_report_page_can_warm_uts_in_active_genap_when_uts_is_opened(): void
     {
+        $this->fakeLibreOfficeAvailability();
         config()->set('report.pdf_auto_prepare.enabled', true);
         config()->set('report.pdf_auto_prepare.delay_seconds', 60);
         config()->set('report.pdf_auto_prepare.queue', 'pdf-warm');
@@ -1051,6 +1078,7 @@ class ReportCardAuthorizationTest extends TestCase
 
     public function test_wali_dashboard_schedules_pdf_warmup_for_owned_class_and_current_semester_only(): void
     {
+        $this->fakeLibreOfficeAvailability();
         config()->set('report.pdf_auto_prepare.enabled', true);
         config()->set('report.pdf_auto_prepare.delay_seconds', 60);
         config()->set('report.pdf_dashboard_warmup.enabled', true);
@@ -1098,6 +1126,7 @@ class ReportCardAuthorizationTest extends TestCase
 
     public function test_wali_dashboard_warmup_cooldown_prevents_duplicate_scheduling(): void
     {
+        $this->fakeLibreOfficeAvailability();
         config()->set('report.pdf_auto_prepare.enabled', true);
         config()->set('report.pdf_dashboard_warmup.enabled', true);
         config()->set('report.pdf_dashboard_warmup.cooldown_seconds', 900);
@@ -1487,7 +1516,41 @@ class ReportCardAuthorizationTest extends TestCase
             ->assertJsonPath('cache_hit', true);
         $this->assertStringContainsString('/wali-kelas/rapor/secure-file', (string) $response->json('file_url'));
         $this->assertStringContainsString('docx_reports%2Fcached-report.docx', (string) $response->json('file_url'));
+
+        $this->get((string) $response->json('file_url'))
+            ->assertOk()
+            ->assertDownload('cached-report.docx');
+
         Bus::assertNotDispatched(GeneratePdfReportJob::class);
+    }
+
+    public function test_unsigned_cached_docx_secure_url_is_rejected(): void
+    {
+        Storage::fake('public');
+        Storage::disk('public')->put('docx_reports/cached-report.docx', 'PK cached docx');
+
+        $this->actingAsWali()
+            ->get(route('wali_kelas.rapor.secure-file', [
+                'path' => 'docx_reports/cached-report.docx',
+                'filename' => 'cached-report.docx',
+                'disposition' => 'inline',
+                'user' => $this->wali->id,
+            ]))
+            ->assertForbidden();
+    }
+
+    public function test_setup_storage_protects_cached_docx_directory(): void
+    {
+        Storage::fake('public');
+
+        $this->artisan('app:setup-storage')->assertSuccessful();
+
+        Storage::disk('public')->assertExists('docx_reports/.htaccess');
+        Storage::disk('public')->assertExists('docx_reports/web.config');
+        $this->assertStringContainsString(
+            'Require all denied',
+            Storage::disk('public')->get('docx_reports/.htaccess')
+        );
     }
 
     public function test_uas_docx_cache_does_not_bypass_final_semester_eligibility(): void

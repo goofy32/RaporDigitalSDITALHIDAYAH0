@@ -2983,6 +2983,7 @@ class ReportController extends Controller
             ];
         }
 
+        $pdfAvailable = app(DocumentConversionService::class)->isLibreOfficeAvailable();
         $pdfTemplateAvailability = [];
         $pdfStatuses = [];
         foreach ($siswa as $student) {
@@ -2990,13 +2991,15 @@ class ReportController extends Controller
                 'UTS' => $openedReportType === 'UTS' && (bool) $this->getTemplateForSiswa($student, 'UTS', $tahunAjaranId),
                 'UAS' => $openedReportType === 'UAS' && (bool) $this->getTemplateForSiswa($student, 'UAS', $tahunAjaranId),
             ];
-            $pdfStatuses[$student->id] = [
-                'UTS' => $openedReportType === 'UTS' ? PdfCacheService::getPdfPreparationStatus($student, 'UTS', $tahunAjaranId, (int) $semester) : 'missing',
-                'UAS' => $openedReportType === 'UAS' ? PdfCacheService::getPdfPreparationStatus($student, 'UAS', $tahunAjaranId, (int) $semester) : 'missing',
-            ];
+            if ($pdfAvailable) {
+                $pdfStatuses[$student->id] = [
+                    'UTS' => $openedReportType === 'UTS' ? PdfCacheService::getPdfPreparationStatus($student, 'UTS', $tahunAjaranId, (int) $semester) : 'missing',
+                    'UAS' => $openedReportType === 'UAS' ? PdfCacheService::getPdfPreparationStatus($student, 'UAS', $tahunAjaranId, (int) $semester) : 'missing',
+                ];
+            }
         }
 
-        if (config('report.pdf_auto_prepare.enabled', false)) {
+        if ($pdfAvailable && config('report.pdf_auto_prepare.enabled', false)) {
             $autoPrepare = app(ReportPdfAutoPrepareService::class);
 
             foreach ($siswa as $student) {
@@ -3025,7 +3028,7 @@ class ReportController extends Controller
             'semester' => $semester, // Kirim ke view
             'tahunAjaran' => $tahunAjaran,
             'kelas' => $kelas,
-            'pdfAvailable' => app(\App\Services\DocumentConversionService::class)->isLibreOfficeAvailable(),
+            'pdfAvailable' => $pdfAvailable,
         ]);
     }
 
@@ -3630,6 +3633,7 @@ class ReportController extends Controller
     {
         $allowedPrefixes = [
             'generated/',
+            'docx_reports/',
             'pdf_reports/',
             'pdf_previews/',
             'templates/',

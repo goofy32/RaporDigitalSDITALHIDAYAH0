@@ -44,10 +44,12 @@
     data-opened-report-type="{{ $openedReportType }}"
     data-tahun-ajaran-id="{{ session('tahun_ajaran_id') }}"
     data-semester="{{ $semester }}"
-    data-pdf-status-url="{{ route('wali_kelas.rapor.pdf-statuses') }}"
-    data-dashboard-warmup-enabled="{{ config('report.pdf_dashboard_warmup.enabled') ? '1' : '0' }}"
-    data-pdf-template-availability='@json($pdfTemplateAvailability)'
-    data-pdf-statuses='@json($pdfStatuses)'
+    @if($pdfAvailable)
+        data-pdf-status-url="{{ route('wali_kelas.rapor.pdf-statuses') }}"
+        data-dashboard-warmup-enabled="{{ config('report.pdf_dashboard_warmup.enabled') ? '1' : '0' }}"
+        data-pdf-template-availability='@json($pdfTemplateAvailability)'
+        data-pdf-statuses='@json($pdfStatuses)'
+    @endif
 >
     
     <!-- Loading State -->
@@ -93,12 +95,7 @@
             <p class="mt-1">UTS dan UAS tetap berada pada semester aktif. Wali Kelas hanya dapat menyiapkan, mencetak, dan mengunduh jenis rapor yang sedang dibuka.</p>
         </div>
 
-        @if(!$pdfAvailable)
-            <div class="mb-6 rounded-lg border border-yellow-300 bg-yellow-50 p-4 text-sm text-yellow-800">
-                <p class="font-semibold">PDF belum tersedia di perangkat ini.</p>
-                <p class="mt-1">LibreOffice tidak terdeteksi, sehingga preview dan unduh PDF dinonaktifkan. Unduh DOCX dan cetak HTML tetap dapat digunakan.</p>
-            </div>
-        @elseif(!$hasPdfTemplateForCurrentType)
+        @if(!$hasPdfTemplateForCurrentType)
             <div class="mb-6 rounded-lg border border-yellow-300 bg-yellow-50 p-4 text-sm text-yellow-800">
                 <p class="font-semibold">Belum ada template {{ $type }} aktif untuk kelas ini.</p>
                 <p class="mt-1">Silakan hubungi admin untuk mengaktifkan template {{ $type }} yang sesuai sebelum menyiapkan, mencetak, atau mengunduh rapor.</p>
@@ -182,7 +179,9 @@
                         <th class="px-6 py-3">Nama Siswa</th>
                         <th class="px-6 py-3">Status Nilai</th>
                         <th class="px-6 py-3">Status Kehadiran</th>
-                        <th class="px-6 py-3">Status PDF</th>
+                        @if($pdfAvailable)
+                            <th class="px-6 py-3">Status PDF</th>
+                        @endif
                         <th class="px-6 py-3">Aksi</th>
                     </tr>
                 </thead>
@@ -219,7 +218,7 @@
                                             <p class="font-medium">
                                                 {{ $completion['missing'] }} dari {{ $completion['total'] }} mata pelajaran belum memiliki nilai lengkap.
                                             </p>
-                                            <p class="mt-2">PDF tetap bisa dibuat, tetapi sebagian mapel akan tampil kosong.</p>
+                                            <p class="mt-2">{{ $pdfAvailable ? 'PDF' : 'Rapor' }} tetap bisa dibuat, tetapi sebagian mapel akan tampil kosong.</p>
                                         </div>
                                     </span>
                                 @else
@@ -278,6 +277,7 @@
                             </div>
                         </td>
 
+                        @if($pdfAvailable)
                         <!-- Status PDF -->
                         <td class="px-6 py-4">
                             @php
@@ -296,6 +296,7 @@
                                 {{ $pdfStatusLabels[$currentPdfStatus] ?? 'Belum siap' }}
                             </span>
                         </td>
+                        @endif
 
                         <!-- Actions -->
                         <td class="px-1 py-4 text-center whitespace-nowrap">
@@ -312,6 +313,7 @@
                                     <img src="{{ asset('images/icons/download.png') }}" alt="Download" class="action-icon">
                                 </button>
                                 
+                                @if($pdfAvailable)
                                 @php
                                     $currentPdfTemplateAvailable = (bool) (($pdfTemplateAvailability[$s->id] ?? [])[$type] ?? false);
                                 @endphp
@@ -348,13 +350,14 @@
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
                                         </svg>
                                     </template>
-                                </button>                                
+                                </button>
+                                @endif
                             </div>
                         </td>
                     </tr>
                     @empty
                     <tr>
-                        <td colspan="7" class="px-6 py-4 text-center text-gray-500">
+                        <td colspan="{{ $pdfAvailable ? 7 : 6 }}" class="px-6 py-4 text-center text-gray-500">
                             Tidak ada data siswa
                         </td>
                     </tr>
@@ -399,4 +402,3 @@
 </div>
 
 @endsection
-

@@ -43,6 +43,7 @@ class ReportPdfAutoPrepareService
         $scheduled = 0;
         $resolvedDelaySeconds = $this->delaySeconds($delaySeconds);
         $semester = $this->semesterForYear($tahunAjaranId);
+        $libreOfficeAvailable = null;
 
         if (! $semester) {
             return 0;
@@ -58,6 +59,16 @@ class ReportPdfAutoPrepareService
             }
 
             if (PdfCacheService::getPdfPreparationStatus($siswa, $type, $tahunAjaranId, $semester) === 'ready') {
+                continue;
+            }
+
+            if ($libreOfficeAvailable === null) {
+                $libreOfficeAvailable = app(DocumentConversionService::class)->isLibreOfficeAvailable();
+            }
+
+            if (! $libreOfficeAvailable) {
+                $this->logSkippedUnavailable($siswa, $type, $tahunAjaranId, 'libreoffice_unavailable', $reason);
+
                 continue;
             }
 

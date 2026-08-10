@@ -19,7 +19,7 @@ class SetupStorage extends Command
         $this->ensureDirectory(storage_path('app/public'), 'storage/app/public');
         $this->ensureStorageLink();
 
-        foreach (['templates', 'generated', 'pdf_reports', 'pdf_previews', 'previews'] as $directory) {
+        foreach (['templates', 'generated', 'docx_reports', 'pdf_reports', 'pdf_previews', 'previews'] as $directory) {
             $this->protectDirectory(
                 Storage::disk('public')->path($directory),
                 "storage/app/public/{$directory}"
