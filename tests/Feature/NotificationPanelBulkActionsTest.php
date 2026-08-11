@@ -208,34 +208,20 @@ class NotificationPanelBulkActionsTest extends TestCase
         $this->assertSame(2, DB::table('notification_user_states')->count());
     }
 
-    public function test_notification_user_state_isolated_by_user_and_user_type(): void
+    public function test_notification_user_state_isolated_by_user_type(): void
     {
         $notificationId = $this->insertNotification('Info Isolasi', 'Pesan bersama', 'all');
-        $secondAdmin = User::create([
-            'name' => 'Admin Dua',
-            'username' => 'admin-dua',
-            'email' => 'admin-dua@example.test',
-            'password' => Hash::make('password'),
-        ]);
 
-        DB::table('notification_user_states')->insert([
-            'notification_id' => $notificationId,
-            'user_type' => 'guru',
-            'user_id' => $this->admin->id,
-            'read_at' => now()->subDay(),
-            'deleted_at' => null,
-            'created_at' => now()->subDay(),
-            'updated_at' => now()->subDay(),
-        ]);
+        $this->assertSame($this->admin->id, $this->pengajar->id);
 
         $this->actingAs($this->admin, 'web')
             ->withSession($this->adminSession())
             ->postJson("/admin/information/{$notificationId}/read")
             ->assertOk();
 
-        $this->actingAs($secondAdmin, 'web')
-            ->withSession($this->adminSession())
-            ->postJson("/admin/information/{$notificationId}/read")
+        $this->actingAs($this->pengajar, 'guru')
+            ->withSession($this->pengajarSession())
+            ->postJson("/pengajar/notifications/{$notificationId}/read")
             ->assertOk();
 
         $this->assertDatabaseHas('notification_user_states', [
@@ -245,15 +231,10 @@ class NotificationPanelBulkActionsTest extends TestCase
         ]);
         $this->assertDatabaseHas('notification_user_states', [
             'notification_id' => $notificationId,
-            'user_type' => 'admin',
-            'user_id' => $secondAdmin->id,
-        ]);
-        $this->assertDatabaseHas('notification_user_states', [
-            'notification_id' => $notificationId,
             'user_type' => 'guru',
-            'user_id' => $this->admin->id,
+            'user_id' => $this->pengajar->id,
         ]);
-        $this->assertSame(3, DB::table('notification_user_states')->where('notification_id', $notificationId)->count());
+        $this->assertSame(2, DB::table('notification_user_states')->where('notification_id', $notificationId)->count());
     }
 
     public function test_unread_count_decreases_after_marking_notifications_read(): void

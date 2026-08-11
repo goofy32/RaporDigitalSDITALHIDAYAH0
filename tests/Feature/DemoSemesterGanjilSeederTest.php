@@ -9,6 +9,7 @@ use App\Models\Siswa;
 use App\Models\SiswaKelasSemester;
 use App\Models\TahunAjaran;
 use Database\Seeders\DemoSemesterGanjilSeeder;
+use Illuminate\Database\QueryException;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -272,7 +273,7 @@ class DemoSemesterGanjilSeederTest extends TestCase
         $this->assertDatabaseHas('siswas', ['nis' => '2504001', 'nama' => 'Existing Student']);
     }
 
-    public function test_existing_non_demo_admin_is_not_overwritten(): void
+    public function test_demo_seeder_is_rejected_when_admin_already_exists_without_overwriting_it(): void
     {
         $passwordHash = Hash::make('keep-this-password');
 
@@ -285,7 +286,12 @@ class DemoSemesterGanjilSeederTest extends TestCase
             'updated_at' => now(),
         ]);
 
-        $this->seedDemo();
+        try {
+            $this->seedDemo();
+            $this->fail('Demo seeder membuat Admin kedua.');
+        } catch (QueryException) {
+            $this->assertDatabaseCount('users', 1);
+        }
 
         $admin = DB::table('users')->where('username', 'admin_real')->first();
         $this->assertSame('Real Admin', $admin->name);
@@ -580,6 +586,8 @@ class DemoSemesterGanjilSeederTest extends TestCase
             $table->string('email')->nullable()->unique();
             $table->string('password');
             $table->timestamps();
+            $table->tinyInteger('admin_singleton')->virtualAs('1');
+            $table->unique('admin_singleton', 'users_admin_singleton_unique');
         });
 
         Schema::create('audit_logs', function (Blueprint $table) {

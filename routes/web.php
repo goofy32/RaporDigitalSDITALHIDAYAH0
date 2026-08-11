@@ -6,6 +6,7 @@ use App\Http\Controllers\SchoolProfileController;
 use App\Http\Controllers\ClassController;
 use App\Http\Controllers\StudentController;
 use App\Http\Controllers\Auth\LoginController;
+use App\Http\Controllers\Auth\InitialAdminSetupController;
 use App\Http\Controllers\TeacherController;
 use App\Http\Controllers\SubjectController;
 use App\Http\Controllers\AchievementController;
@@ -98,6 +99,12 @@ Route::get('/notifications/unread-count', function () {
     return app(NotificationController::class)->getUnreadCount();
 })->middleware(['web']);
 
+
+Route::get('/initial-admin-setup', [InitialAdminSetupController::class, 'create'])
+    ->name('initial-admin-setup.create');
+Route::post('/initial-admin-setup', [InitialAdminSetupController::class, 'store'])
+    ->middleware('throttle:5,1')
+    ->name('initial-admin-setup.store');
 
 // Login Routes
 Route::middleware(['web', 'guest'])->group(function () {
