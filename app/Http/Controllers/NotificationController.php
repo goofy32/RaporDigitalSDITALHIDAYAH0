@@ -2,7 +2,6 @@
 
 namespace App\Http\Controllers;
 
-use App\Events\NotificationCreated;
 use App\Models\Guru;
 use App\Models\Notification;
 use Illuminate\Database\Eloquent\Builder;
@@ -35,8 +34,6 @@ class NotificationController extends Controller
             }
 
             $notification->save();
-
-            event(new NotificationCreated($notification));
 
             return response()->json([
                 'success' => true,

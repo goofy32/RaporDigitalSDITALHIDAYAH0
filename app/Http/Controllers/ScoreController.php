@@ -2,7 +2,6 @@
 
 namespace App\Http\Controllers;
 
-use App\Events\NotificationCreated;
 use App\Traits\RequiresTahunAjaran;
 use App\Models\Kelas;
 use App\Models\MataPelajaran;
@@ -598,8 +597,6 @@ class ScoreController extends Controller
         }
 
         $notification->save();
-
-        event(new NotificationCreated($notification));
     }
 
     private function currentSemesterForTahunAjaran(int $tahunAjaranId): ?int

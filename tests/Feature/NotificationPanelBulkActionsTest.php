@@ -42,6 +42,10 @@ class NotificationPanelBulkActionsTest extends TestCase
         config()->set('database.default', 'sqlite');
         config()->set('database.connections.sqlite.database', ':memory:');
         config()->set('cache.default', 'array');
+        config()->set('queue.default', 'database');
+        config()->set('queue.connections.database.connection', 'sqlite');
+        config()->set('queue.connections.database.table', 'jobs');
+        config()->set('queue.connections.database.queue', 'default');
         config()->set('session.driver', 'array');
         DB::purge('sqlite');
         DB::reconnect('sqlite');
@@ -269,6 +273,44 @@ class NotificationPanelBulkActionsTest extends TestCase
             ->getJson('/admin/information/unread-count')
             ->assertOk()
             ->assertJson(['count' => 0]);
+    }
+
+    public function test_admin_notification_persists_and_remains_pollable_without_queueing_a_broadcast_job(): void
+    {
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->postJson('/admin/information', [
+                'title' => 'Informasi Kegiatan Sekolah',
+                'content' => 'Kegiatan sekolah berlangsung sesuai jadwal.',
+                'target' => 'all',
+            ])
+            ->assertOk()
+            ->assertJson([
+                'success' => true,
+                'message' => 'Notifikasi berhasil ditambahkan',
+            ]);
+
+        $this->assertDatabaseHas('notifications', [
+            'title' => 'Informasi Kegiatan Sekolah',
+            'content' => 'Kegiatan sekolah berlangsung sesuai jadwal.',
+            'target' => 'all',
+        ]);
+        $this->assertSame(0, DB::table('jobs')->count());
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->getJson('/admin/information/list')
+            ->assertOk()
+            ->assertJsonFragment([
+                'title' => 'Informasi Kegiatan Sekolah',
+                'content' => 'Kegiatan sekolah berlangsung sesuai jadwal.',
+            ]);
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->getJson('/admin/information/unread-count')
+            ->assertOk()
+            ->assertJson(['count' => 1]);
     }
 
     public function test_unknown_or_unauthorized_notification_cannot_be_marked_read(): void
@@ -808,6 +850,7 @@ class NotificationPanelBulkActionsTest extends TestCase
         $this->assertSame([$this->wali->id], $notification->specific_users);
         $this->assertStringContainsString('2 siswa', $notification->content);
         $this->assertStringNotContainsString('Ahmad', $notification->content);
+        $this->assertSame(0, DB::table('jobs')->count());
     }
 
     public function test_unauthorized_user_cannot_bulk_update_notifications(): void
@@ -819,6 +862,7 @@ class NotificationPanelBulkActionsTest extends TestCase
     private function createSchema(): void
     {
         foreach ([
+            'jobs',
             'notification_user_states',
             'notification_reads',
             'notifications',
@@ -841,6 +885,16 @@ class NotificationPanelBulkActionsTest extends TestCase
             $table->string('email')->nullable()->unique();
             $table->string('password');
             $table->timestamps();
+        });
+
+        Schema::create('jobs', function (Blueprint $table) {
+            $table->id();
+            $table->string('queue')->index();
+            $table->longText('payload');
+            $table->unsignedTinyInteger('attempts');
+            $table->unsignedInteger('reserved_at')->nullable();
+            $table->unsignedInteger('available_at');
+            $table->unsignedInteger('created_at');
         });
 
         Schema::create('audit_logs', function (Blueprint $table) {

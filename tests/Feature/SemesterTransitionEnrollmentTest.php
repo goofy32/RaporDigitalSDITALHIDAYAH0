@@ -49,6 +49,10 @@ class SemesterTransitionEnrollmentTest extends TestCase
         config()->set('database.default', 'sqlite');
         config()->set('database.connections.sqlite.database', ':memory:');
         config()->set('cache.default', 'array');
+        config()->set('queue.default', 'database');
+        config()->set('queue.connections.database.connection', 'sqlite');
+        config()->set('queue.connections.database.table', 'jobs');
+        config()->set('queue.connections.database.queue', 'default');
         config()->set('session.driver', 'array');
         config()->set('filesystems.default', 'local');
         DB::purge('sqlite');
@@ -102,6 +106,26 @@ class SemesterTransitionEnrollmentTest extends TestCase
             [$this->ahmadId, $this->sitiId, $this->rinaId],
             $students->pluck('id')->all()
         );
+    }
+
+    public function test_transition_notification_persists_without_queueing_a_broadcast_job(): void
+    {
+        $eventFake = Event::getFacadeRoot();
+        Event::swap($eventFake->dispatcher);
+
+        try {
+            $this->runTransition()
+                ->assertRedirect(route('tahun.ajaran.index'))
+                ->assertSessionHas('success');
+        } finally {
+            Event::swap($eventFake);
+        }
+
+        $this->assertDatabaseHas('notifications', [
+            'title' => 'Semester Genap 2026/2027 Dimulai',
+            'target' => 'guru',
+        ]);
+        $this->assertSame(0, DB::table('jobs')->count());
     }
 
     public function test_manually_created_student_receives_ganjil_enrollment_and_continues_to_genap(): void
@@ -852,6 +876,7 @@ class SemesterTransitionEnrollmentTest extends TestCase
     private function createSchema(): void
     {
         foreach ([
+            'jobs',
             'notification_reads',
             'notifications',
             'report_generations',
@@ -889,6 +914,16 @@ class SemesterTransitionEnrollmentTest extends TestCase
             $table->string('email')->unique();
             $table->string('password');
             $table->timestamps();
+        });
+
+        Schema::create('jobs', function (Blueprint $table) {
+            $table->id();
+            $table->string('queue')->index();
+            $table->longText('payload');
+            $table->unsignedTinyInteger('attempts');
+            $table->unsignedInteger('reserved_at')->nullable();
+            $table->unsignedInteger('available_at');
+            $table->unsignedInteger('created_at');
         });
 
         Schema::create('gurus', function (Blueprint $table) {

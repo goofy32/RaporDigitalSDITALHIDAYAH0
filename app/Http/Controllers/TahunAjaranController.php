@@ -770,8 +770,6 @@ class TahunAjaranController extends Controller
                     . 'opsional sesuai kebutuhan mengajar.';
                 $notification->target = 'guru';
                 $notification->save();
-
-                event(new \App\Events\NotificationCreated($notification));
             } catch (\Exception $notificationException) {
                 Log::warning('[TahunAjaranController] Failed to send semester notification', [
                     'error' => $notificationException->getMessage(),
