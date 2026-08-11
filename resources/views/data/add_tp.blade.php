@@ -9,7 +9,7 @@
     data-mata-pelajaran-id="{{ $mataPelajaran->id }}"
     data-list-url="{{ route('tujuan_pembelajaran.list', $mataPelajaran->id) }}"
     data-store-url="{{ route('tujuan_pembelajaran.store') }}"
-    data-destroy-base-url="{{ route('tujuan_pembelajaran.destroy', '') }}"
+    data-destroy-base-url="{{ url('/admin/tujuan-pembelajaran') }}"
     data-dependency-check-base-url="{{ url('/admin/tujuan-pembelajaran') }}"
     data-delete-icon-url="{{ asset('images/icons/delete.png') }}"
 >

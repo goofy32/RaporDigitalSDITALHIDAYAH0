@@ -9,6 +9,7 @@ use App\Models\Guru;
 use App\Models\LingkupMateri;
 use App\Models\Nilai;
 use App\Models\TujuanPembelajaran;
+use App\Models\User;
 use App\Services\PdfCacheService;
 use App\Services\PengajarScoreExcelTemplateService;
 use App\Services\ReportScoreEligibilityService;
@@ -37,6 +38,8 @@ class PengajarScoreAuthorizationTest extends TestCase
     private Guru $budi;
 
     private Guru $ani;
+
+    private User $admin;
 
     private int $activeYearId;
 
@@ -107,6 +110,68 @@ class PengajarScoreAuthorizationTest extends TestCase
         $this->assertSame(1, DB::table('nilais')->whereNotNull('tujuan_pembelajaran_id')->whereNotNull('nilai_tp')->count());
         $this->assertSame(1, DB::table('nilais')->whereNotNull('lingkup_materi_id')->whereNull('tujuan_pembelajaran_id')->whereNotNull('nilai_lm')->count());
         $this->assertSame(1, DB::table('nilais')->whereNull('lingkup_materi_id')->whereNull('tujuan_pembelajaran_id')->whereNotNull('nilai_akhir_rapor')->count());
+    }
+
+    public function test_admin_tp_page_renders_valid_destroy_and_dependency_urls(): void
+    {
+        $baseUrl = url('/admin/tujuan-pembelajaran');
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->sessionForActiveYear('admin'))
+            ->get(route('tujuan_pembelajaran.create', $this->subjectId))
+            ->assertOk()
+            ->assertSee('data-destroy-base-url="'.$baseUrl.'"', false)
+            ->assertSee('data-dependency-check-base-url="'.$baseUrl.'"', false);
+    }
+
+    public function test_admin_tp_dependency_check_and_delete_routes_still_work(): void
+    {
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->sessionForActiveYear('admin'))
+            ->getJson(route('tujuan_pembelajaran.check_dependencies', $this->tujuanPembelajaranId))
+            ->assertOk()
+            ->assertJson([
+                'success' => true,
+                'hasDependents' => false,
+            ]);
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->sessionForActiveYear('admin'))
+            ->deleteJson(route('tujuan_pembelajaran.destroy', $this->tujuanPembelajaranId))
+            ->assertOk()
+            ->assertJson([
+                'success' => true,
+                'message' => 'Tujuan pembelajaran berhasil dihapus!',
+            ]);
+
+        $this->assertTrue(TujuanPembelajaran::onlyTrashed()->whereKey($this->tujuanPembelajaranId)->exists());
+    }
+
+    public function test_pengajar_and_wali_tp_pages_render_without_missing_route_parameters(): void
+    {
+        $destroyBaseUrl = url('/pengajar/tujuan-pembelajaran');
+
+        $this->actingAsPengajar($this->budi)
+            ->get(route('pengajar.tujuan_pembelajaran.create', $this->subjectId))
+            ->assertOk()
+            ->assertSee('data-destroy-base-url="'.$destroyBaseUrl.'"', false);
+
+        $this->actingAs($this->budi, 'guru')
+            ->withSession($this->sessionForActiveYear('wali_kelas'))
+            ->get(route('wali_kelas.tujuan_pembelajaran.view', $this->subjectId))
+            ->assertOk()
+            ->assertSee('data-destroy-base-url="'.$destroyBaseUrl.'"', false);
+    }
+
+    public function test_tp_route_authorization_remains_unchanged(): void
+    {
+        $this->get(route('tujuan_pembelajaran.create', $this->subjectId))
+            ->assertRedirect(route('login'));
+
+        $this->actingAsPengajar($this->ani)
+            ->deleteJson(route('pengajar.tujuan_pembelajaran.destroy', $this->tujuanPembelajaranId))
+            ->assertForbidden()
+            ->assertJsonPath('success', false);
     }
 
     public function test_input_score_uses_default_bobot_without_creating_row(): void
@@ -2666,9 +2731,19 @@ class PengajarScoreAuthorizationTest extends TestCase
             'profil_sekolah',
             'tahun_ajarans',
             'gurus',
+            'users',
         ] as $table) {
             Schema::dropIfExists($table);
         }
+
+        Schema::create('users', function (Blueprint $table) {
+            $table->id();
+            $table->string('name');
+            $table->string('username')->nullable()->unique();
+            $table->string('email')->unique();
+            $table->string('password');
+            $table->timestamps();
+        });
 
         Schema::create('gurus', function (Blueprint $table) {
             $table->id();
@@ -2846,6 +2921,24 @@ class PengajarScoreAuthorizationTest extends TestCase
 
     private function seedFixture(): void
     {
+        $adminId = DB::table('users')->insertGetId([
+            'name' => 'Admin',
+            'username' => 'admin',
+            'email' => 'admin@example.test',
+            'password' => Hash::make('password'),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $this->admin = User::findOrFail($adminId);
+
+        DB::table('profil_sekolah')->insert([
+            'nama_sekolah' => 'SDIT Al-Hidayah',
+            'tahun_pelajaran' => '2026/2027',
+            'semester' => 1,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
         $this->activeYearId = DB::table('tahun_ajarans')->insertGetId([
             'tahun_ajaran' => '2026/2027',
             'is_active' => true,
