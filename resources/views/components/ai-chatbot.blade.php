@@ -2,18 +2,18 @@
     <button
         type="button"
         @click="togglePanel()"
-        class="inline-flex items-center gap-2 bg-green-700 hover:bg-green-800 text-white px-4 py-3 rounded-full shadow-xl transition-all duration-200 hover:scale-105 focus:outline-none focus:ring-4 focus:ring-green-300"
+        class="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-green-700 text-white shadow-xl transition-all duration-200 hover:scale-105 hover:bg-green-800 focus:outline-none focus:ring-4 focus:ring-green-300 focus:ring-offset-2"
         title="Pusat Bantuan Rapor Digital"
         aria-label="Buka Pusat Bantuan Rapor Digital"
+        data-testid="help-center-launcher"
     >
-        <svg x-show="!isOpen" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg x-show="!isOpen" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                 d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093M12 17h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
         </svg>
-        <svg x-show="isOpen" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg x-show="isOpen" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
         </svg>
-        <span class="hidden sm:inline text-sm font-semibold">Pusat Bantuan</span>
     </button>
 
     <div

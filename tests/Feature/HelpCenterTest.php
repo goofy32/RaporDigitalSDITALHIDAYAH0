@@ -45,6 +45,11 @@ class HelpCenterTest extends TestCase
         $this->assertStringContainsString('Buka Pusat Bantuan Lengkap', $html);
         $this->assertStringContainsString('displayedTopics()', $html);
         $this->assertStringContainsString('x-data="helpCenter"', $html);
+        $this->assertStringContainsString('data-testid="help-center-launcher"', $html);
+        $this->assertStringContainsString('@click="togglePanel()"', $html);
+        $this->assertStringContainsString('aria-label="Buka Pusat Bantuan Rapor Digital"', $html);
+        $this->assertStringContainsString('class="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-full', $html);
+        $this->assertStringNotContainsString('hidden sm:inline text-sm font-semibold', $html);
         $this->assertStringContainsString('fullHelpUrl', $js);
         $this->assertStringNotContainsString('activeCategory', $html);
         $this->assertStringNotContainsString('AI Nilai Assistant', $html);
