@@ -89,6 +89,76 @@ class InitialAdminSetupTest extends TestCase
         $this->assertDatabaseCount('users', 0);
     }
 
+    public function test_missing_fields_show_clear_indonesian_field_errors(): void
+    {
+        $response = $this->from(route('initial-admin-setup.create'))
+            ->followingRedirects()
+            ->post(route('initial-admin-setup.store'), []);
+
+        $response->assertOk()
+            ->assertSee('Nama wajib diisi.')
+            ->assertSee('Username wajib diisi.')
+            ->assertSee('Email wajib diisi.')
+            ->assertSee('Password wajib diisi.')
+            ->assertSee('Konfirmasi password wajib diisi.')
+            ->assertSee('Token setup wajib diisi.')
+            ->assertSee('id="name-error"', false)
+            ->assertSee('id="username-error"', false)
+            ->assertSee('id="email-error"', false)
+            ->assertSee('id="password-error"', false)
+            ->assertSee('id="password-confirmation-error"', false)
+            ->assertSee('id="setup-token-error"', false)
+            ->assertDontSee('validation.');
+
+        $this->assertDatabaseCount('users', 0);
+    }
+
+    public function test_invalid_email_short_password_and_confirmation_show_clear_messages_without_echoing_secrets(): void
+    {
+        $shortPassword = Str::random(7);
+        $confirmation = Str::random(12);
+        $token = Str::random(64);
+
+        $response = $this->from(route('initial-admin-setup.create'))
+            ->followingRedirects()
+            ->post(route('initial-admin-setup.store'), $this->validPayload([
+                'email' => 'email-tidak-valid',
+                'password' => $shortPassword,
+                'password_confirmation' => $confirmation,
+                'setup_token' => $token,
+            ]));
+
+        $response->assertOk()
+            ->assertSee('Format email tidak valid.')
+            ->assertSee('Password minimal 8 karakter.')
+            ->assertSee('Konfirmasi password tidak cocok.')
+            ->assertDontSee('validation.')
+            ->assertDontSee($shortPassword)
+            ->assertDontSee($confirmation)
+            ->assertDontSee($token);
+
+        $this->assertDatabaseCount('users', 0);
+    }
+
+    public function test_invalid_setup_token_shows_clear_message_without_echoing_token(): void
+    {
+        $wrongToken = Str::random(64);
+
+        $response = $this->from(route('initial-admin-setup.create'))
+            ->followingRedirects()
+            ->post(route('initial-admin-setup.store'), $this->validPayload([
+                'setup_token' => $wrongToken,
+            ]));
+
+        $response->assertOk()
+            ->assertSee('Token setup tidak valid.')
+            ->assertSee('id="setup-token-error"', false)
+            ->assertDontSee('validation.')
+            ->assertDontSee($wrongToken);
+
+        $this->assertDatabaseCount('users', 0);
+    }
+
     public function test_valid_setup_creates_exactly_one_hashed_user_without_auto_login(): void
     {
         $this->post(route('initial-admin-setup.store'), $this->validPayload())

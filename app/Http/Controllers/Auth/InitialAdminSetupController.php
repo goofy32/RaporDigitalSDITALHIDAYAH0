@@ -45,8 +45,27 @@ class InitialAdminSetupController extends Controller
             'password_confirmation' => ['required', 'string'],
             'setup_token' => ['required', 'string', 'max:512'],
         ], [
+            'name.required' => 'Nama wajib diisi.',
+            'name.string' => 'Nama harus berupa teks.',
+            'name.max' => 'Nama maksimal 255 karakter.',
+            'username.required' => 'Username wajib diisi.',
+            'username.string' => 'Username harus berupa teks.',
+            'username.max' => 'Username maksimal 255 karakter.',
+            'username.unique' => 'Username tersebut sudah digunakan.',
+            'email.required' => 'Email wajib diisi.',
+            'email.string' => 'Email harus berupa teks.',
+            'email.email' => 'Format email tidak valid.',
+            'email.max' => 'Email maksimal 255 karakter.',
+            'email.unique' => 'Email tersebut sudah digunakan.',
+            'password.required' => 'Password wajib diisi.',
+            'password.string' => 'Password harus berupa teks.',
+            'password.min' => 'Password minimal 8 karakter.',
             'password.confirmed' => 'Konfirmasi password tidak cocok.',
+            'password_confirmation.required' => 'Konfirmasi password wajib diisi.',
+            'password_confirmation.string' => 'Konfirmasi password harus berupa teks.',
             'setup_token.required' => 'Token setup wajib diisi.',
+            'setup_token.string' => 'Token setup harus berupa teks.',
+            'setup_token.max' => 'Token setup maksimal 512 karakter.',
         ]);
 
         if ($validator->fails()) {
