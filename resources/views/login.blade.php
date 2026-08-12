@@ -59,13 +59,15 @@
                 class="w-36 h-36 object-contain mb-2">
         </div>
 
-        <h2 class="mb-5 text-center text-xl font-semibold text-gray-800">
-            Masuk ke Rapor Digital
-        </h2>
-
         @if (session('success'))
         <div class="mb-4 rounded-lg bg-green-50 p-4 text-sm text-green-800" role="status">
             {{ session('success') }}
+        </div>
+        @endif
+
+        @if (session('error'))
+        <div class="mb-4 rounded-lg bg-amber-50 p-4 text-sm text-amber-900" role="alert">
+            {{ session('error') }}
         </div>
         @endif
 

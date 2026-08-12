@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Guru;
 use App\Models\User;
 use App\Notifications\GuruVerifyEmailNotification;
+use App\Services\GuruEmailVerificationService;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
 use Illuminate\Http\UploadedFile;
@@ -12,6 +13,7 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
 
@@ -357,7 +359,7 @@ class CleanSetupGuruQaTest extends TestCase
         $this->assertDatabaseMissing('gurus', ['username' => 'admin_email_collision']);
     }
 
-    public function test_admin_created_guru_email_starts_unverified_and_receives_verification_link(): void
+    public function test_admin_created_guru_email_starts_unverified_without_sending_verification_link(): void
     {
         Notification::fake();
 
@@ -371,7 +373,7 @@ class CleanSetupGuruQaTest extends TestCase
 
         $guru = Guru::where('username', 'verification_create')->firstOrFail();
         $this->assertNull($guru->email_verified_at);
-        Notification::assertSentTo($guru, GuruVerifyEmailNotification::class);
+        Notification::assertNotSentTo($guru, GuruVerifyEmailNotification::class);
     }
 
     public function test_admin_cannot_mark_guru_email_verified_through_create_payload(): void
@@ -390,7 +392,7 @@ class CleanSetupGuruQaTest extends TestCase
         $guru = Guru::query()->where('username', 'guru-verifikasi-paksa')->firstOrFail();
 
         $this->assertNull($guru->email_verified_at);
-        Notification::assertSentTo($guru, GuruVerifyEmailNotification::class);
+        Notification::assertNotSentTo($guru, GuruVerifyEmailNotification::class);
     }
 
     public function test_guru_email_verification_timestamp_is_not_mass_assignable(): void
@@ -403,7 +405,7 @@ class CleanSetupGuruQaTest extends TestCase
         $this->assertNull($guru->fresh()->email_verified_at);
     }
 
-    public function test_changing_guru_email_clears_verification_and_old_reset_token(): void
+    public function test_changing_guru_email_clears_verification_and_old_reset_token_without_sending_email(): void
     {
         Notification::fake();
         $guruId = $this->insertGuru('Guru Email Berubah', 'verification_update', '900000008');
@@ -432,7 +434,102 @@ class CleanSetupGuruQaTest extends TestCase
         $this->assertDatabaseMissing('guru_password_reset_tokens', [
             'email' => 'verification_update@example.test',
         ]);
+        Notification::assertNotSentTo($guru, GuruVerifyEmailNotification::class);
+    }
+
+    public function test_unchanged_verified_guru_email_retains_verification(): void
+    {
+        Notification::fake();
+        $guruId = $this->insertGuru('Guru Email Tetap', 'verification_unchanged', '900000010');
+        DB::table('gurus')->where('id', $guruId)->update(['email_verified_at' => now()]);
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->put(route('teacher.update', $guruId), $this->teacherPayload([
+                'nama' => 'Guru Email Tetap Diperbarui',
+                'username' => 'verification_unchanged',
+                'email' => 'verification_unchanged@example.test',
+                'jabatan' => 'guru',
+                'kelas_ids' => [$this->kelas5BId],
+                'password' => null,
+                'password_confirmation' => null,
+            ]))
+            ->assertRedirect(route('teacher'));
+
+        $this->assertNotNull(Guru::findOrFail($guruId)->email_verified_at);
+        Notification::assertNothingSent();
+    }
+
+    public function test_admin_can_manually_send_guru_verification_email(): void
+    {
+        Notification::fake();
+        $guruId = $this->insertGuru('Guru Kirim Manual', 'verification_manual', '900000011');
+        $guru = Guru::findOrFail($guruId);
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->post(route('teacher.verification.send', $guru))
+            ->assertRedirect()
+            ->assertSessionHas('success', 'Email verifikasi berhasil dikirim ke '.$guru->email.'.');
+
         Notification::assertSentTo($guru, GuruVerifyEmailNotification::class);
+        $this->assertNull($guru->fresh()->email_verified_at);
+    }
+
+    public function test_admin_manual_verification_send_requires_admin_csrf_and_throttle(): void
+    {
+        $guru = Guru::findOrFail($this->insertGuru('Guru Route Aman', 'verification_secure', '900000015'));
+        $route = Route::getRoutes()->getByName('teacher.verification.send');
+
+        $this->assertNotNull($route);
+        $this->assertContains('auth:web', $route->gatherMiddleware());
+        $this->assertContains('role:admin', $route->gatherMiddleware());
+        $this->assertContains('throttle:6,1', $route->gatherMiddleware());
+
+        $this->withMiddleware(PreventRequestForgery::class);
+        $this->app->instance('env', 'production');
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->post(route('teacher.verification.send', $guru))
+            ->assertStatus(419);
+    }
+
+    public function test_admin_manual_verification_send_fails_with_friendly_message(): void
+    {
+        $guru = Guru::findOrFail($this->insertGuru('Guru Mail Gagal', 'verification_failure', '900000012'));
+        $this->mock(GuruEmailVerificationService::class, function ($mock): void {
+            $mock->shouldReceive('sendIfRequired')->once()->andReturnFalse();
+        });
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->post(route('teacher.verification.send', $guru))
+            ->assertRedirect()
+            ->assertSessionHas('error', 'Email verifikasi belum dapat dikirim. Silakan coba lagi nanti.');
+
+        $this->assertNull($guru->fresh()->email_verified_at);
+    }
+
+    public function test_teacher_list_shows_actionable_unverified_and_verified_email_statuses(): void
+    {
+        $unverifiedId = $this->insertGuru('Guru Belum Verifikasi', 'verification_badge_pending', '900000013');
+        $verifiedId = $this->insertGuru('Guru Sudah Verifikasi', 'verification_badge_done', '900000014');
+        DB::table('gurus')->where('id', $verifiedId)->update(['email_verified_at' => now()]);
+
+        $response = $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->get(route('teacher'));
+
+        $response->assertOk()
+            ->assertSee('Belum diverifikasi')
+            ->assertSee('Terverifikasi')
+            ->assertSee('Kirim email verifikasi ke')
+            ->assertSee('Kirim Verifikasi')
+            ->assertSee('Batal')
+            ->assertSee('data-email-verification-status="unverified"', false)
+            ->assertSee('data-email-verification-status="verified"', false)
+            ->assertSee(route('teacher.verification.send', $unverifiedId), false);
     }
 
     public function test_guru_update_email_unique_rule_ignores_current_guru_but_rejects_other_guru_email(): void

@@ -8,7 +8,6 @@ use App\Models\MataPelajaran;
 use App\Traits\RespondsWithLiveList;
 use App\Services\PdfCacheService;
 use App\Services\AccountIdentifierService;
-use App\Services\GuruEmailVerificationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -231,13 +230,9 @@ class TeacherController extends Controller
         return view('data.create_teacher', compact('kelasForMengajar', 'kelasForWali', 'hasKelas'));
     }
 
-    public function store(
-        Request $request,
-        AccountIdentifierService $identifiers,
-        GuruEmailVerificationService $verification
-    )
+    public function store(Request $request, AccountIdentifierService $identifiers)
     {
-        return DB::transaction(function () use ($request, $identifiers, $verification) {
+        return DB::transaction(function () use ($request, $identifiers) {
             $tahunAjaranId = session('tahun_ajaran_id');
 
             // Validasi dasar tetap sama
@@ -320,7 +315,6 @@ class TeacherController extends Controller
 
             // Buat guru baru
             $guru = Guru::create($validated);
-            DB::afterCommit(fn () => $verification->sendIfRequired($guru));
 
             // Tentukan kelas yang akan diajar
             $kelas_ids = [];
@@ -464,12 +458,7 @@ class TeacherController extends Controller
         ));
     }
 
-    public function update(
-        Request $request,
-        $id,
-        AccountIdentifierService $identifiers,
-        GuruEmailVerificationService $verification
-    )
+    public function update(Request $request, $id, AccountIdentifierService $identifiers)
     {
         try {
             $tahunAjaranId = session('tahun_ajaran_id');
@@ -660,10 +649,6 @@ class TeacherController extends Controller
             ]);
 
             DB::commit();
-
-            if ($emailChanged) {
-                $verification->sendIfRequired($teacher);
-            }
 
             return redirect()->route('teacher')
                 ->with('success', 'Data guru berhasil diperbarui'.

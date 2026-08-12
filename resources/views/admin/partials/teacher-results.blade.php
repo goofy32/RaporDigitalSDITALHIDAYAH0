@@ -23,7 +23,35 @@
                 <td class="px-6 py-4 font-medium @if(request('search') && stripos($teacher->nama, request('search')) !== false) text-green-700 @endif">{{ $teacher->nama }}</td>
                 <td class="px-6 py-4">{{ $teacher->username }}</td>
                 <td class="px-6 py-4">{{ $teacher->jenis_kelamin }}</td>
-                <td class="px-6 py-4">{{ $teacher->email }}</td>
+                <td class="px-6 py-4">
+                    @if($teacher->email)
+                        <div class="min-w-48 space-y-1.5">
+                            <div class="break-all text-gray-700">{{ $teacher->email }}</div>
+                            @if($teacher->email_verified_at)
+                                <span class="inline-flex items-center rounded-full bg-green-100 px-2.5 py-1 text-xs font-medium text-green-800"
+                                      data-email-verification-status="verified">
+                                    Terverifikasi
+                                </span>
+                            @else
+                                <form method="POST"
+                                      action="{{ route('teacher.verification.send', $teacher) }}"
+                                      class="inline-block"
+                                      data-email-verification-form
+                                      data-email="{{ $teacher->email }}"
+                                      onsubmit="return window.confirmGuruVerification(event, this);">
+                                    @csrf
+                                    <button type="submit"
+                                            class="inline-flex items-center rounded-full bg-yellow-100 px-2.5 py-1 text-xs font-medium text-yellow-800 hover:bg-yellow-200 focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:ring-offset-1"
+                                            data-email-verification-status="unverified">
+                                        Belum diverifikasi
+                                    </button>
+                                </form>
+                            @endif
+                        </div>
+                    @else
+                        <span class="text-gray-400">-</span>
+                    @endif
+                </td>
                 <td class="px-6 py-4">{{ $teacher->no_handphone }}</td>
                 <td class="px-6 py-4">{{ $teacher->alamat }}</td>
                 <td class="px-6 py-4">

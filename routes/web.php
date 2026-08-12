@@ -160,10 +160,11 @@ Route::middleware('auth:guru')->prefix('guru')->name('guru.')->group(function ()
     Route::post('/email/verification-notification', [GuruEmailVerificationController::class, 'send'])
         ->middleware('throttle:6,1')
         ->name('verification.send');
-    Route::get('/email/verify/{id}/{hash}', [GuruEmailVerificationController::class, 'verify'])
-        ->middleware(['signed', 'throttle:6,1'])
-        ->name('verification.verify');
 });
+
+Route::get('/guru/email/verify/{id}/{hash}', [GuruEmailVerificationController::class, 'verify'])
+    ->middleware(['signed', 'throttle:6,1'])
+    ->name('guru.verification.verify');
 
 Route::middleware(['auth:guru', 'force.guru.password'])->group(function () {
     Route::get('/switch-role/{role}', fn () => abort(405));
@@ -361,6 +362,9 @@ Route::middleware(['auth:web', 'role:admin', 'check.basic.setup'])->prefix('admi
         Route::get('/', [TeacherController::class, 'index'])->name('teacher');
         Route::get('/create', [TeacherController::class, 'create'])->name('teacher.create');
         Route::post('/store', [TeacherController::class, 'store'])->name('teacher.store');
+        Route::post('/{guru}/email/verification-notification', [GuruEmailVerificationController::class, 'sendAsAdmin'])
+            ->middleware('throttle:6,1')
+            ->name('teacher.verification.send');
         Route::get('/{guru}/signature', [GuruSignatureController::class, 'show'])->name('teacher.signature.show');
         Route::post('/{guru}/signature', [GuruSignatureController::class, 'store'])->name('teacher.signature.store');
         Route::delete('/{guru}/signature', [GuruSignatureController::class, 'destroy'])->name('teacher.signature.destroy');

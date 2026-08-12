@@ -15,6 +15,7 @@ use App\Services\GuruSelectedRoleSessionState;
 use App\Services\TahunAjaranContext;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\URL;
 
 class LoginController extends Controller
 {
@@ -47,6 +48,13 @@ class LoginController extends Controller
             $request->session()->put('last_activity', time());
             AuditService::logLogin('success', $identifier);
 
+            if ($this->forgetGuruVerificationIntendedUrl($request)) {
+                return redirect()->route('admin.dashboard')->with(
+                    'error',
+                    'Tautan ini digunakan untuk verifikasi email Guru. Anda sedang masuk sebagai Admin. Silakan keluar dan masuk menggunakan akun Guru yang terkait.'
+                );
+            }
+
             return redirect()->route('admin.dashboard');
         }
 
@@ -66,6 +74,10 @@ class LoginController extends Controller
 
             if ((bool) $guru->must_change_password) {
                 return redirect()->route('guru.force-password.edit');
+            }
+
+            if ($verificationUrl = $this->intendedGuruVerificationUrl($request, $guru)) {
+                return redirect()->to($verificationUrl);
             }
 
             return redirect()->route($this->dashboardRouteForRole($selectedRole));
@@ -152,6 +164,53 @@ class LoginController extends Controller
         return $role === 'wali_kelas'
             ? 'wali_kelas.dashboard'
             : 'pengajar.dashboard';
+    }
+
+    private function intendedGuruVerificationUrl(Request $request, Guru $guru): ?string
+    {
+        $intendedUrl = $request->session()->pull('url.intended');
+
+        if (! is_string($intendedUrl) || $intendedUrl === '') {
+            return null;
+        }
+
+        $path = parse_url($intendedUrl, PHP_URL_PATH);
+
+        if (! is_string($path) || preg_match('#^/guru/email/verify/(\d+)/[^/]+$#', $path, $matches) !== 1) {
+            return null;
+        }
+
+        if ((int) $matches[1] !== (int) $guru->getKey()) {
+            $request->session()->flash(
+                'error',
+                'Tautan verifikasi ini bukan untuk akun Guru yang sedang digunakan.'
+            );
+
+            return null;
+        }
+
+        $verificationRequest = Request::create($intendedUrl, 'GET');
+
+        return URL::hasValidSignature($verificationRequest) ? $intendedUrl : null;
+    }
+
+    private function forgetGuruVerificationIntendedUrl(Request $request): bool
+    {
+        $intendedUrl = $request->session()->get('url.intended');
+
+        if (! is_string($intendedUrl)) {
+            return false;
+        }
+
+        $path = parse_url($intendedUrl, PHP_URL_PATH);
+
+        if (! is_string($path) || preg_match('#^/guru/email/verify/\d+/[^/]+$#', $path) !== 1) {
+            return false;
+        }
+
+        $request->session()->forget('url.intended');
+
+        return true;
     }
 
     public function logout(Request $request)

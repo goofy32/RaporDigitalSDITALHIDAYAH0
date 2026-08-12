@@ -105,3 +105,39 @@
     </div>
 </div>
 @endsection
+
+@push('scripts')
+<script>
+    window.confirmGuruVerification = async function(event, form) {
+        event.preventDefault();
+
+        const email = form.dataset.email || '';
+        let confirmed = false;
+
+        if (window.Swal) {
+            const result = await window.Swal.fire({
+                icon: 'warning',
+                title: `Kirim email verifikasi ke ${email}?`,
+                text: 'Guru harus membuka tautan verifikasi dan masuk menggunakan akun Guru yang terkait.',
+                showCancelButton: true,
+                confirmButtonText: 'Kirim Verifikasi',
+                cancelButtonText: 'Batal',
+                confirmButtonColor: '#15803d',
+            });
+            confirmed = result.isConfirmed;
+        } else {
+            confirmed = window.confirm(`Kirim email verifikasi ke ${email}?`);
+        }
+
+        if (confirmed) {
+            const button = form.querySelector('button[type="submit"]');
+            if (button) {
+                button.disabled = true;
+            }
+            form.submit();
+        }
+
+        return false;
+    };
+</script>
+@endpush

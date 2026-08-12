@@ -79,6 +79,8 @@
                     <x-alert type="error" :message="session('error')" />
                 @endif
 
+                <x-guru-email-verification-banner />
+
                 @yield('content')
             </div>
         </div>

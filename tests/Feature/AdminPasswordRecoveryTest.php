@@ -11,6 +11,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -60,7 +61,8 @@ class AdminPasswordRecoveryTest extends TestCase
     {
         $this->get(route('login'))
             ->assertOk()
-            ->assertSee('Masuk ke Rapor Digital')
+            ->assertDontSee('Masuk ke Rapor Digital')
+            ->assertSee('RAPOR DIGITAL')
             ->assertSee('Lupa password?')
             ->assertDontSee('name="role"', false)
             ->assertDontSee('Login Admin')
@@ -292,6 +294,96 @@ class AdminPasswordRecoveryTest extends TestCase
         $this->assertNotNull($this->guru->fresh()->email_verified_at);
     }
 
+    public function test_logged_out_verification_link_guides_login_and_continues_for_correct_guru(): void
+    {
+        $url = $this->verificationUrl($this->guru);
+
+        $this->get($url)
+            ->assertRedirect(route('login'))
+            ->assertSessionHas(
+                'error',
+                'Untuk memverifikasi email, silakan masuk menggunakan akun Guru yang terkait.'
+            )
+            ->assertSessionHas('url.intended', $url);
+
+        $this->post(route('login.post'), [
+            'username' => $this->guru->username,
+            'password' => self::GURU_PASSWORD,
+        ])->assertRedirect($url);
+
+        $this->get($url)
+            ->assertRedirect(route('pengajar.dashboard'))
+            ->assertSessionHas('success', 'Email berhasil diverifikasi.');
+
+        $this->assertNotNull($this->guru->fresh()->email_verified_at);
+    }
+
+    public function test_admin_opening_guru_verification_link_gets_explicit_guidance(): void
+    {
+        $this->actingAs($this->admin, 'web')
+            ->get($this->verificationUrl($this->guru))
+            ->assertRedirect(route('admin.dashboard'))
+            ->assertSessionHas(
+                'error',
+                'Tautan ini digunakan untuk verifikasi email Guru. Anda sedang masuk sebagai Admin. Silakan keluar dan masuk menggunakan akun Guru yang terkait.'
+            );
+
+        $this->assertNull($this->guru->fresh()->email_verified_at);
+    }
+
+    public function test_logged_out_verification_link_explains_admin_or_wrong_guru_login(): void
+    {
+        $url = $this->verificationUrl($this->guru);
+        $this->get($url)->assertRedirect(route('login'));
+
+        $this->post(route('login.post'), [
+            'username' => $this->admin->username,
+            'password' => self::ADMIN_PASSWORD,
+        ])->assertRedirect(route('admin.dashboard'))
+            ->assertSessionHas(
+                'error',
+                'Tautan ini digunakan untuk verifikasi email Guru. Anda sedang masuk sebagai Admin. Silakan keluar dan masuk menggunakan akun Guru yang terkait.'
+            );
+
+        $this->post(route('logout'));
+        $this->get($url)->assertRedirect(route('login'));
+        $otherGuru = $this->createGuru('guru-intended-lain', 'guru-intended-lain@example.test', false);
+
+        $this->post(route('login.post'), [
+            'username' => $otherGuru->username,
+            'password' => self::GURU_PASSWORD,
+        ])->assertRedirect(route('pengajar.dashboard'))
+            ->assertSessionHas('error', 'Tautan verifikasi ini bukan untuk akun Guru yang sedang digunakan.');
+
+        $this->assertNull($this->guru->fresh()->email_verified_at);
+    }
+
+    public function test_wrong_guru_cannot_verify_another_guru_email(): void
+    {
+        $otherGuru = $this->createGuru('guru-lain', 'guru-lain@example.test', false);
+
+        $this->actingAs($otherGuru, 'guru')
+            ->get($this->verificationUrl($this->guru))
+            ->assertRedirect(route('pengajar.dashboard'))
+            ->assertSessionHas('error', 'Tautan verifikasi ini bukan untuk akun Guru yang sedang digunakan.');
+
+        $this->assertNull($this->guru->fresh()->email_verified_at);
+        $this->assertNull($otherGuru->fresh()->email_verified_at);
+    }
+
+    public function test_already_verified_email_link_is_clear_and_idempotent(): void
+    {
+        $this->guru->forceFill(['email_verified_at' => now()])->save();
+        $verifiedAt = $this->guru->fresh()->email_verified_at;
+
+        $this->actingAs($this->guru, 'guru')
+            ->get($this->verificationUrl($this->guru))
+            ->assertRedirect(route('pengajar.dashboard'))
+            ->assertSessionHas('success', 'Email sudah diverifikasi.');
+
+        $this->assertTrue($verifiedAt->equalTo($this->guru->fresh()->email_verified_at));
+    }
+
     public function test_invalid_expired_and_old_email_verification_links_are_rejected(): void
     {
         $validUrl = $this->verificationUrl($this->guru);
@@ -310,7 +402,10 @@ class AdminPasswordRecoveryTest extends TestCase
         $oldUrl = $this->verificationUrl($this->guru);
         $this->guru->update(['email' => 'guru-baru@example.test']);
         $this->assertNull($this->guru->fresh()->email_verified_at);
-        $this->actingAs($this->guru->fresh(), 'guru')->get($oldUrl)->assertForbidden();
+        $this->actingAs($this->guru->fresh(), 'guru')
+            ->get($oldUrl)
+            ->assertRedirect(route('pengajar.dashboard'))
+            ->assertSessionHas('error', 'Tautan verifikasi tidak lagi berlaku untuk alamat email saat ini.');
     }
 
     public function test_guru_without_email_remains_valid_and_receives_no_verification_email(): void
@@ -325,6 +420,24 @@ class AdminPasswordRecoveryTest extends TestCase
 
         $this->post(route('guru.verification.send'))->assertRedirect();
         Notification::assertNothingSent();
+    }
+
+    public function test_unverified_guru_sees_verification_status_banner(): void
+    {
+        $this->actingAs($this->guru, 'guru');
+
+        $html = Blade::render('<x-guru-email-verification-banner />');
+
+        $this->assertStringContainsString('Email belum diverifikasi', $html);
+        $this->assertStringContainsString($this->guru->email, $html);
+        $this->assertStringContainsString(route('guru.verification.notice'), $html);
+
+        $this->guru->forceFill(['email_verified_at' => now()])->save();
+
+        $this->assertStringNotContainsString(
+            'Email belum diverifikasi',
+            Blade::render('<x-guru-email-verification-banner />')
+        );
     }
 
     public function test_admin_token_resets_existing_admin_once_without_reopening_setup(): void
