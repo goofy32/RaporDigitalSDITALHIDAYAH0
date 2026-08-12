@@ -123,13 +123,12 @@ class AdminPasswordController extends Controller
         $status = Password::broker($broker)->reset(
             $validated,
             function (User|Guru $account, string $password) use (&$resetAccount): void {
-                $attributes = [
-                    'password' => $password,
-                    'remember_token' => Str::random(60),
-                ];
+                $attributes = ['password' => $password];
 
                 if ($account instanceof Guru) {
                     $attributes['must_change_password'] = false;
+                } else {
+                    $attributes['remember_token'] = Str::random(60);
                 }
 
                 $account->forceFill($attributes)->save();

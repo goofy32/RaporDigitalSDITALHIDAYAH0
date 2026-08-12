@@ -443,6 +443,7 @@ class AdminPasswordRecoveryTest extends TestCase
     public function test_admin_token_resets_existing_admin_once_without_reopening_setup(): void
     {
         $newPassword = 'NewAdminPassword456!';
+        $this->admin->forceFill(['remember_token' => 'admin-remember-token-before-reset'])->save();
         $token = Password::broker('users')->createToken($this->admin);
 
         $this->post(route('password.update'), $this->resetPayload($this->admin->email, $token, $newPassword))
@@ -453,6 +454,8 @@ class AdminPasswordRecoveryTest extends TestCase
         $this->assertDatabaseCount('users', 1);
         $this->assertFalse(Hash::check(self::ADMIN_PASSWORD, $freshAdmin->password));
         $this->assertTrue(Hash::check($newPassword, $freshAdmin->password));
+        $this->assertNotSame('admin-remember-token-before-reset', $freshAdmin->remember_token);
+        $this->assertNotNull($freshAdmin->remember_token);
         $this->assertDatabaseMissing('password_reset_tokens', ['email' => $this->admin->email]);
         $this->assertGuest('web');
 
@@ -588,18 +591,49 @@ class AdminPasswordRecoveryTest extends TestCase
         $this->assertDatabaseHas('sessions', ['id' => 'guru-session-tetap']);
     }
 
-    public function test_guru_reset_revokes_only_guru_sessions_when_ids_overlap(): void
+    public function test_verified_guru_reset_without_remember_token_column_is_single_use_and_guard_isolated(): void
     {
+        Notification::fake();
         $this->guru->forceFill(['email_verified_at' => now()])->save();
+        $this->assertFalse(Schema::hasColumn('gurus', 'remember_token'));
+
+        $this->post(route('password.email'), ['email' => $this->guru->email])
+            ->assertRedirect()
+            ->assertSessionHas('status', $this->genericRecoveryMessage());
+
+        $token = null;
+        Notification::assertSentTo(
+            $this->guru,
+            GuruResetPasswordNotification::class,
+            function ($notification) use (&$token): bool {
+                $token = $this->tokenFromNotification($notification, $this->guru);
+
+                return true;
+            }
+        );
+        $this->assertIsString($token);
+
         $this->insertGuardSessionsWithOverlappingIds();
-        $token = Password::broker('gurus')->createToken($this->guru);
         $this->useDatabaseSessions();
 
         $this->post(route('password.update'), $this->resetPayload($this->guru->email, $token, 'NewGuruPassword456!'))
-            ->assertRedirect(route('login'));
+            ->assertRedirect(route('login'))
+            ->assertSessionHas('success');
 
+        $this->assertTrue(Hash::check('NewGuruPassword456!', $this->guru->fresh()->password));
+        $this->assertDatabaseMissing('guru_password_reset_tokens', ['email' => $this->guru->email]);
         $this->assertDatabaseHas('sessions', ['id' => 'admin-session-lama']);
         $this->assertDatabaseMissing('sessions', ['id' => 'guru-session-tetap']);
+        $this->assertTrue(Hash::check(self::ADMIN_PASSWORD, $this->admin->fresh()->password));
+        $this->assertGuest('web');
+        $this->assertGuest('guru');
+
+        $this->post(route('password.update'), $this->resetPayload(
+            $this->guru->email,
+            $token,
+            'AnotherGuruPassword789!'
+        ))->assertSessionHasErrors('email');
+        $this->assertTrue(Hash::check('NewGuruPassword456!', $this->guru->fresh()->password));
     }
 
     public function test_authenticated_admin_can_change_password_without_flashing_sensitive_input(): void
@@ -757,7 +791,6 @@ class AdminPasswordRecoveryTest extends TestCase
             $table->timestamp('email_verified_at')->nullable();
             $table->string('password');
             $table->boolean('must_change_password')->default(false);
-            $table->rememberToken();
             $table->timestamps();
             $table->softDeletes();
         });
