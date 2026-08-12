@@ -105,6 +105,16 @@ return [
             'expire' => 60,
             'throttle' => 60,
         ],
+        'gurus' => [
+            'provider' => 'gurus',
+            'table' => 'guru_password_reset_tokens',
+            'expire' => 60,
+            'throttle' => 60,
+        ],
+    ],
+
+    'verification' => [
+        'expire' => 60,
     ],
 
     /*

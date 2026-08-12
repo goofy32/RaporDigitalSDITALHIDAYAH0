@@ -2,15 +2,21 @@
 
 namespace App\Models;
 
+use App\Notifications\GuruResetPasswordNotification;
+use App\Notifications\GuruVerifyEmailNotification;
+use App\Services\AccountIdentifierService;
+use Illuminate\Contracts\Auth\MustVerifyEmail as MustVerifyEmailContract;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\ValidationException;
 use App\Services\GuruRoleAvailability;
 
-class Guru extends Authenticatable
+class Guru extends Authenticatable implements MustVerifyEmailContract
 {
     use HasFactory, HasApiTokens, Notifiable, SoftDeletes;
 
@@ -143,6 +149,45 @@ class Guru extends Authenticatable
         'tanggal_lahir' => 'date',
         'id' => 'integer'
     ];
+
+    protected static function booted(): void
+    {
+        static::saving(function (Guru $guru): void {
+            $identifiers = app(AccountIdentifierService::class);
+
+            if (
+                $identifiers->conflictsWithUser($guru->username, $guru->email)
+                || $identifiers->conflictsWithOtherGuru(
+                    $guru->exists ? (int) $guru->getKey() : null,
+                    $guru->username,
+                    $guru->email
+                )
+            ) {
+                throw ValidationException::withMessages([
+                    'email' => 'Username atau email tersebut sudah digunakan.',
+                ]);
+            }
+
+            if ($guru->isDirty('email') && Schema::hasColumn('gurus', 'email_verified_at')) {
+                $guru->email_verified_at = null;
+            }
+        });
+    }
+
+    public function setEmailAttribute(?string $email): void
+    {
+        $this->attributes['email'] = app(AccountIdentifierService::class)->normalizeEmail($email);
+    }
+
+    public function sendEmailVerificationNotification(): void
+    {
+        $this->notify(new GuruVerifyEmailNotification);
+    }
+
+    public function sendPasswordResetNotification(#[\SensitiveParameter] $token): void
+    {
+        $this->notify(new GuruResetPasswordNotification($token));
+    }
 
     /**
      * Format tanggal lahir

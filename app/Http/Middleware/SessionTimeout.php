@@ -27,7 +27,7 @@ class SessionTimeout
             return $next($request);
         }
 
-        if (!Auth::check()) {
+        if (! Auth::guard('web')->check() && ! Auth::guard('guru')->check()) {
             return $next($request);
         }
 
@@ -68,6 +68,10 @@ class SessionTimeout
     {
         $skipRoutes = [
             'login',
+            'password.request',
+            'password.email',
+            'password.reset',
+            'password.update',
             'logout',
             'login.post'
         ];

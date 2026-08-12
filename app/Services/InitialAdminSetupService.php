@@ -35,6 +35,13 @@ class InitialAdminSetupService
                     return null;
                 }
 
+                if (app(AccountIdentifierService::class)->conflictsWithGuru(
+                    $attributes['username'],
+                    $attributes['email']
+                )) {
+                    return null;
+                }
+
                 return User::query()->create($attributes);
             });
         });

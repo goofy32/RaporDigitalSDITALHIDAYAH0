@@ -96,6 +96,28 @@ class SimplifyGuruUsernamesTest extends TestCase
         $this->assertDatabaseHas('gurus', ['id' => 3, 'username' => 'siti_martiyani_3']);
     }
 
+    public function test_command_reserves_admin_username_and_email_identifiers(): void
+    {
+        DB::table('users')->insert([
+            'name' => 'Admin',
+            'username' => 'eneng_syarah',
+            'email' => 'budi_santoso@example.test',
+            'password' => 'hashed-password',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $this->insertGuru('Eneng Syarah Fatimah, S.Pd.', 'eneng_syarah_lama');
+        $this->insertGuru('Budi Santoso, S.Pd.', 'budi_santoso_lama');
+
+        $this->artisan('initial-data:simplify-guru-usernames', ['--apply' => true])
+            ->expectsOutput('#1: eneng_syarah_lama -> eneng_syarah_2')
+            ->expectsOutput('#2: budi_santoso_lama -> budi_santoso')
+            ->assertExitCode(0);
+
+        $this->assertDatabaseHas('gurus', ['id' => 1, 'username' => 'eneng_syarah_2']);
+        $this->assertDatabaseHas('gurus', ['id' => 2, 'username' => 'budi_santoso']);
+    }
+
     public function test_apply_handles_target_username_that_is_currently_used_by_another_guru(): void
     {
         $this->insertGuru('Ahmad Hasan, S.Pd.', 'ahmad_hasan_full');
@@ -132,6 +154,15 @@ class SimplifyGuruUsernamesTest extends TestCase
 
     private function createSchema(): void
     {
+        Schema::create('users', function (Blueprint $table) {
+            $table->id();
+            $table->string('name');
+            $table->string('username')->unique();
+            $table->string('email')->unique();
+            $table->string('password');
+            $table->timestamps();
+        });
+
         Schema::create('gurus', function (Blueprint $table) {
             $table->id();
             $table->string('nuptk')->nullable()->unique();

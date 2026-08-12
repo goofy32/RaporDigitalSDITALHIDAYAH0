@@ -4,12 +4,14 @@ namespace Tests\Feature;
 
 use App\Models\Guru;
 use App\Models\User;
+use App\Notifications\GuruVerifyEmailNotification;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
 
@@ -338,6 +340,99 @@ class CleanSetupGuruQaTest extends TestCase
             ->assertSessionHasErrors(['email' => 'Email sudah digunakan']);
 
         $this->assertDatabaseMissing('gurus', ['username' => 'duplicate_email_teacher']);
+    }
+
+    public function test_guru_cannot_use_admin_email_as_login_or_recovery_identifier(): void
+    {
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->from(route('teacher.create'))
+            ->post(route('teacher.store'), $this->teacherPayload([
+                'username' => 'admin_email_collision',
+                'email' => $this->admin->email,
+            ]))
+            ->assertRedirect(route('teacher.create'))
+            ->assertSessionHasErrors('email');
+
+        $this->assertDatabaseMissing('gurus', ['username' => 'admin_email_collision']);
+    }
+
+    public function test_admin_created_guru_email_starts_unverified_and_receives_verification_link(): void
+    {
+        Notification::fake();
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->post(route('teacher.store'), $this->teacherPayload([
+                'username' => 'verification_create',
+                'email' => 'verification.create@example.test',
+            ]))
+            ->assertRedirect(route('teacher'));
+
+        $guru = Guru::where('username', 'verification_create')->firstOrFail();
+        $this->assertNull($guru->email_verified_at);
+        Notification::assertSentTo($guru, GuruVerifyEmailNotification::class);
+    }
+
+    public function test_admin_cannot_mark_guru_email_verified_through_create_payload(): void
+    {
+        Notification::fake();
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->post(route('teacher.store'), $this->teacherPayload([
+                'username' => 'guru-verifikasi-paksa',
+                'email' => 'guru-verifikasi-paksa@example.test',
+                'email_verified_at' => now()->toDateTimeString(),
+            ]))
+            ->assertRedirect(route('teacher'));
+
+        $guru = Guru::query()->where('username', 'guru-verifikasi-paksa')->firstOrFail();
+
+        $this->assertNull($guru->email_verified_at);
+        Notification::assertSentTo($guru, GuruVerifyEmailNotification::class);
+    }
+
+    public function test_guru_email_verification_timestamp_is_not_mass_assignable(): void
+    {
+        $guruId = $this->insertGuru('Guru Mass Assignment', 'guru_mass_assignment', '900000009');
+        $guru = Guru::query()->findOrFail($guruId);
+
+        $guru->fill(['email_verified_at' => now()])->save();
+
+        $this->assertNull($guru->fresh()->email_verified_at);
+    }
+
+    public function test_changing_guru_email_clears_verification_and_old_reset_token(): void
+    {
+        Notification::fake();
+        $guruId = $this->insertGuru('Guru Email Berubah', 'verification_update', '900000008');
+        DB::table('gurus')->where('id', $guruId)->update(['email_verified_at' => now()]);
+        DB::table('guru_password_reset_tokens')->insert([
+            'email' => 'verification_update@example.test',
+            'token' => Hash::make('old-token'),
+            'created_at' => now(),
+        ]);
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->put(route('teacher.update', $guruId), $this->teacherPayload([
+                'nama' => 'Guru Email Berubah',
+                'username' => 'verification_update',
+                'email' => 'verification.updated@example.test',
+                'jabatan' => 'guru',
+                'kelas_ids' => [$this->kelas5BId],
+                'password' => null,
+                'password_confirmation' => null,
+            ]))
+            ->assertRedirect(route('teacher'));
+
+        $guru = Guru::findOrFail($guruId);
+        $this->assertNull($guru->email_verified_at);
+        $this->assertDatabaseMissing('guru_password_reset_tokens', [
+            'email' => 'verification_update@example.test',
+        ]);
+        Notification::assertSentTo($guru, GuruVerifyEmailNotification::class);
     }
 
     public function test_guru_update_email_unique_rule_ignores_current_guru_but_rejects_other_guru_email(): void
@@ -864,6 +959,7 @@ class CleanSetupGuruQaTest extends TestCase
     private function createSchema(): void
     {
         foreach ([
+            'guru_password_reset_tokens',
             'audit_logs',
             'siswas',
             'mata_pelajarans',
@@ -882,6 +978,7 @@ class CleanSetupGuruQaTest extends TestCase
             $table->string('name')->nullable();
             $table->string('username')->nullable()->unique();
             $table->string('email')->nullable()->unique();
+            $table->timestamp('email_verified_at')->nullable();
             $table->string('password');
             $table->timestamps();
         });
@@ -909,6 +1006,7 @@ class CleanSetupGuruQaTest extends TestCase
             $table->date('tanggal_lahir')->nullable();
             $table->string('no_handphone')->nullable();
             $table->string('email')->nullable()->unique();
+            $table->timestamp('email_verified_at')->nullable();
             $table->text('alamat')->nullable();
             $table->string('jabatan')->nullable();
             $table->string('username')->nullable()->unique();
@@ -917,6 +1015,12 @@ class CleanSetupGuruQaTest extends TestCase
             $table->string('photo')->nullable();
             $table->timestamps();
             $table->softDeletes();
+        });
+
+        Schema::create('guru_password_reset_tokens', function (Blueprint $table) {
+            $table->string('email')->primary();
+            $table->string('token');
+            $table->timestamp('created_at')->nullable();
         });
 
         Schema::create('tahun_ajarans', function (Blueprint $table) {

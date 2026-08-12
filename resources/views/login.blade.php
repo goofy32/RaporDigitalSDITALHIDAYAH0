@@ -59,6 +59,16 @@
                 class="w-36 h-36 object-contain mb-2">
         </div>
 
+        <h2 class="mb-5 text-center text-xl font-semibold text-gray-800">
+            Masuk ke Rapor Digital
+        </h2>
+
+        @if (session('success'))
+        <div class="mb-4 rounded-lg bg-green-50 p-4 text-sm text-green-800" role="status">
+            {{ session('success') }}
+        </div>
+        @endif
+
         @if ($errors->any())
         <div class="mb-4 p-4 text-sm text-red-800 rounded-lg bg-red-50">
             <ul class="list-disc list-inside">
@@ -117,6 +127,11 @@
                         </svg>
                     </button>
                 </div>
+            </div>
+            <div class="-mt-2 mb-4 text-right">
+                <a href="{{ route('password.request') }}" class="text-sm font-medium text-green-700 hover:text-green-800 hover:underline">
+                    Lupa password?
+                </a>
             </div>
             <!-- Button -->
             <div class="flex justify-center mt-6">

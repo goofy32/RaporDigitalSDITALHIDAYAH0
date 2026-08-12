@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Hash;
 use App\Models\User;
 use App\Models\TahunAjaran;
 use App\Services\AuditService;
+use App\Services\AccountIdentifierService;
 use App\Services\GuruSelectedRoleSessionState;
 use App\Services\TahunAjaranContext;
 use Illuminate\Support\Facades\Log;
@@ -17,32 +18,44 @@ use Illuminate\Support\Str;
 
 class LoginController extends Controller
 {
-    public function login(Request $request, GuruSelectedRoleSessionState $roleSessionState)
+    public function login(
+        Request $request,
+        GuruSelectedRoleSessionState $roleSessionState,
+        AccountIdentifierService $identifiers
+    )
     {
         $credentials = $request->validate([
             'username' => 'required|string',
             'password' => 'required|string',
         ]);
 
-        $identifier = $credentials['username'];
+        $identifier = trim($credentials['username']);
         $password = $credentials['password'];
+        $users = $identifiers->matchingUsers($identifier);
+        $gurus = $identifiers->matchingGurus($identifier);
 
-        if (
-            Auth::guard('web')->attempt(['username' => $identifier, 'password' => $password]) ||
-            Auth::guard('web')->attempt(['email' => $identifier, 'password' => $password])
-        ) {
-            session(['last_activity' => time()]);
+        if ($users->count() + $gurus->count() !== 1) {
+            return $this->failedLogin($request, $identifier);
+        }
+
+        /** @var User|null $admin */
+        $admin = $users->first();
+
+        if ($admin && Hash::check($password, $admin->password)) {
+            Auth::guard('web')->login($admin);
+            $request->session()->regenerate();
+            $request->session()->put('last_activity', time());
             AuditService::logLogin('success', $identifier);
 
             return redirect()->route('admin.dashboard');
         }
 
-        $guru = Guru::where('username', $identifier)
-            ->orWhere('email', $identifier)
-            ->first();
+        /** @var Guru|null $guru */
+        $guru = $gurus->first();
 
         if ($guru && Hash::check($password, $guru->password)) {
             Auth::guard('guru')->login($guru);
+            $request->session()->regenerate();
 
             $selectedRole = $this->defaultGuruRole($guru);
 
@@ -58,12 +71,7 @@ class LoginController extends Controller
             return redirect()->route($this->dashboardRouteForRole($selectedRole));
         }
     
-        // Log failed login attempt
-        AuditService::logLogin('failed', $identifier);
-        
-        return back()->withErrors([
-            'username' => 'Username atau password salah.',
-        ])->withInput($request->except('password'));
+        return $this->failedLogin($request, $identifier);
     }
 
     public function switchRole(Request $request, string $role, GuruSelectedRoleSessionState $roleSessionState)
@@ -177,11 +185,20 @@ class LoginController extends Controller
             ]);
         }
     
-        return redirect('/login')
+        return redirect()->route('login')
             ->with('success', $message)
             ->header('Cache-Control', 'no-cache, no-store, must-revalidate')
             ->header('Pragma', 'no-cache')
             ->header('Expires', '0');
+    }
+
+    private function failedLogin(Request $request, string $identifier)
+    {
+        AuditService::logLogin('failed', $identifier);
+
+        return back()->withErrors([
+            'username' => 'Username, email, atau password salah.',
+        ])->withInput($request->except('password'));
     }
 
     protected function authenticated(Request $request, $user)

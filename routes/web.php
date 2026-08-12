@@ -6,6 +6,8 @@ use App\Http\Controllers\SchoolProfileController;
 use App\Http\Controllers\ClassController;
 use App\Http\Controllers\StudentController;
 use App\Http\Controllers\Auth\LoginController;
+use App\Http\Controllers\Auth\AdminPasswordController;
+use App\Http\Controllers\Auth\GuruEmailVerificationController;
 use App\Http\Controllers\Auth\InitialAdminSetupController;
 use App\Http\Controllers\TeacherController;
 use App\Http\Controllers\SubjectController;
@@ -131,6 +133,17 @@ Route::middleware(['web', 'guest'])->group(function () {
     Route::post('/login', [LoginController::class, 'login'])
         ->middleware('throttle:5,1')
         ->name('login.post');
+
+    Route::get('/forgot-password', [AdminPasswordController::class, 'createForgot'])
+        ->name('password.request');
+    Route::post('/forgot-password', [AdminPasswordController::class, 'sendResetLink'])
+        ->middleware('throttle:5,1')
+        ->name('password.email');
+    Route::get('/reset-password/{token}', [AdminPasswordController::class, 'createReset'])
+        ->name('password.reset');
+    Route::post('/reset-password', [AdminPasswordController::class, 'reset'])
+        ->middleware('throttle:5,1')
+        ->name('password.update');
 });
 
 
@@ -141,6 +154,15 @@ Route::middleware('auth:guru')->prefix('guru')->name('guru.')->group(function ()
         ->name('force-password.edit');
     Route::put('/password/change', [GuruPasswordController::class, 'updateForceChange'])
         ->name('force-password.update');
+
+    Route::get('/email/verify', [GuruEmailVerificationController::class, 'notice'])
+        ->name('verification.notice');
+    Route::post('/email/verification-notification', [GuruEmailVerificationController::class, 'send'])
+        ->middleware('throttle:6,1')
+        ->name('verification.send');
+    Route::get('/email/verify/{id}/{hash}', [GuruEmailVerificationController::class, 'verify'])
+        ->middleware(['signed', 'throttle:6,1'])
+        ->name('verification.verify');
 });
 
 Route::middleware(['auth:guru', 'force.guru.password'])->group(function () {
@@ -148,6 +170,13 @@ Route::middleware(['auth:guru', 'force.guru.password'])->group(function () {
 
     Route::post('/switch-role/{role}', [LoginController::class, 'switchRole'])
         ->name('auth.switch.role');
+});
+
+Route::middleware(['auth:web', 'role:admin'])->prefix('admin')->group(function () {
+    Route::get('/password/change', [AdminPasswordController::class, 'edit'])
+        ->name('admin.password.change.edit');
+    Route::put('/password/change', [AdminPasswordController::class, 'update'])
+        ->name('admin.password.change.update');
 });
 
 // Admin Routes - Guard: web, Role: admin only

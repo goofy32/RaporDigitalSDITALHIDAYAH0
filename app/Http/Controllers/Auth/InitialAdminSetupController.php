@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
+use App\Services\AccountIdentifierService;
 use App\Services\InitialAdminSetupService;
 use Illuminate\Cache\LockTimeoutException;
 use Illuminate\Database\QueryException;
@@ -13,6 +14,7 @@ use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rules\Password;
+use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 
 class InitialAdminSetupController extends Controller
@@ -24,7 +26,11 @@ class InitialAdminSetupController extends Controller
         return view('auth.initial-admin-setup');
     }
 
-    public function store(Request $request, InitialAdminSetupService $setup): RedirectResponse
+    public function store(
+        Request $request,
+        InitialAdminSetupService $setup,
+        AccountIdentifierService $identifiers
+    ): RedirectResponse
     {
         $this->ensureAvailable($setup);
 
@@ -77,6 +83,12 @@ class InitialAdminSetupController extends Controller
         $validated = $validator->validated();
         $providedToken = (string) $validated['setup_token'];
 
+        if ($identifiers->conflictsWithGuru($validated['username'], $validated['email'])) {
+            return back()
+                ->withErrors(['email' => 'Username atau email tersebut sudah digunakan.'])
+                ->withInput($this->safeOldInput($input));
+        }
+
         if (! $setup->tokenMatches($providedToken)) {
             return back()
                 ->withErrors(['setup_token' => 'Token setup tidak valid.'])
@@ -100,6 +112,10 @@ class InitialAdminSetupController extends Controller
             }
 
             throw $exception;
+        } catch (ValidationException $exception) {
+            return back()
+                ->withErrors($exception->errors())
+                ->withInput($this->safeOldInput($input));
         }
 
         abort_if($user === null, 404);

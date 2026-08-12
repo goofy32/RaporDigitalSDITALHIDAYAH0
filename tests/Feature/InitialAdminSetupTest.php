@@ -214,6 +214,31 @@ class InitialAdminSetupTest extends TestCase
         $this->assertDatabaseCount('users', 1);
     }
 
+    public function test_setup_rejects_identifier_already_used_by_guru_without_flashing_secrets(): void
+    {
+        DB::table('gurus')->insert([
+            'nama' => 'Guru Konflik',
+            'username' => 'guru-konflik',
+            'email' => 'guru-konflik@example.test',
+            'password' => Hash::make('GuruPassword123!'),
+            'must_change_password' => false,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->from(route('initial-admin-setup.create'))
+            ->post(route('initial-admin-setup.store'), $this->validPayload([
+                'email' => 'guru-konflik@example.test',
+            ]))
+            ->assertRedirect(route('initial-admin-setup.create'))
+            ->assertSessionHasErrors('email')
+            ->assertSessionMissing('_old_input.password')
+            ->assertSessionMissing('_old_input.password_confirmation')
+            ->assertSessionMissing('_old_input.setup_token');
+
+        $this->assertDatabaseCount('users', 0);
+    }
+
     public function test_database_invariant_rejects_direct_second_user_insertion(): void
     {
         $this->createInitialAdmin();

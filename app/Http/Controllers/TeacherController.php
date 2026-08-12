@@ -7,11 +7,14 @@ use App\Models\Kelas;
 use App\Models\MataPelajaran;
 use App\Traits\RespondsWithLiveList;
 use App\Services\PdfCacheService;
+use App\Services\AccountIdentifierService;
+use App\Services\GuruEmailVerificationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
@@ -43,6 +46,28 @@ class TeacherController extends Controller
             'page' => $request->page,
         ]);
 
+        $groupColumns = [
+            'gurus.id',
+            'gurus.nuptk',
+            'gurus.nama',
+            'gurus.jenis_kelamin',
+            'gurus.tanggal_lahir',
+            'gurus.no_handphone',
+            'gurus.email',
+            'gurus.alamat',
+            'gurus.jabatan',
+            'gurus.username',
+            'gurus.password',
+            'gurus.password_plain',
+            'gurus.photo',
+            'gurus.created_at',
+            'gurus.updated_at',
+        ];
+
+        if (Schema::hasColumn('gurus', 'email_verified_at')) {
+            $groupColumns[] = 'gurus.email_verified_at';
+        }
+
         $query = Guru::select([
             'gurus.*',
             DB::raw('MIN(kelas.nomor_kelas) as nomor_kelas'),
@@ -64,23 +89,7 @@ class TeacherController extends Controller
                         ->orderBy('nama_pelajaran');
                 },
             ])
-            ->groupBy([
-                'gurus.id',
-                'gurus.nuptk',
-                'gurus.nama',
-                'gurus.jenis_kelamin',
-                'gurus.tanggal_lahir',
-                'gurus.no_handphone',
-                'gurus.email',
-                'gurus.alamat',
-                'gurus.jabatan',
-                'gurus.username',
-                'gurus.password',
-                'gurus.password_plain',
-                'gurus.photo',
-                'gurus.created_at',
-                'gurus.updated_at',
-            ]);
+            ->groupBy($groupColumns);
 
         // Filter berdasarkan tahun ajaran aktif
         if ($tahunAjaranId) {
@@ -222,9 +231,13 @@ class TeacherController extends Controller
         return view('data.create_teacher', compact('kelasForMengajar', 'kelasForWali', 'hasKelas'));
     }
 
-    public function store(Request $request)
+    public function store(
+        Request $request,
+        AccountIdentifierService $identifiers,
+        GuruEmailVerificationService $verification
+    )
     {
-        return DB::transaction(function () use ($request) {
+        return DB::transaction(function () use ($request, $identifiers, $verification) {
             $tahunAjaranId = session('tahun_ajaran_id');
 
             // Validasi dasar tetap sama
@@ -280,6 +293,15 @@ class TeacherController extends Controller
             $validated = $this->normalizeOptionalGuruProfileFields($request, $validated);
 
             if (
+                $identifiers->conflictsWithUser($validated['username'], $validated['email'] ?? null)
+                || $identifiers->conflictsWithOtherGuru(null, $validated['username'], $validated['email'] ?? null)
+            ) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'email' => 'Username atau email tersebut sudah digunakan.',
+                ]);
+            }
+
+            if (
                 $request->jabatan === 'guru_wali'
                 && $request->filled('wali_kelas_id')
                 && $this->waliClassHasOtherTeacher((int) $request->wali_kelas_id)
@@ -298,6 +320,7 @@ class TeacherController extends Controller
 
             // Buat guru baru
             $guru = Guru::create($validated);
+            DB::afterCommit(fn () => $verification->sendIfRequired($guru));
 
             // Tentukan kelas yang akan diajar
             $kelas_ids = [];
@@ -441,7 +464,12 @@ class TeacherController extends Controller
         ));
     }
 
-    public function update(Request $request, $id)
+    public function update(
+        Request $request,
+        $id,
+        AccountIdentifierService $identifiers,
+        GuruEmailVerificationService $verification
+    )
     {
         try {
             $tahunAjaranId = session('tahun_ajaran_id');
@@ -516,6 +544,19 @@ class TeacherController extends Controller
             ]);
 
             if (
+                $identifiers->conflictsWithUser($validated['username'], $validated['email'] ?? null)
+                || $identifiers->conflictsWithOtherGuru(
+                    (int) $teacher->getKey(),
+                    $validated['username'],
+                    $validated['email'] ?? null
+                )
+            ) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'email' => 'Username atau email tersebut sudah digunakan.',
+                ]);
+            }
+
+            if (
                 $request->jabatan === 'guru_wali'
                 && $request->filled('wali_kelas_id')
                 && $this->waliClassHasOtherTeacher((int) $request->wali_kelas_id, $teacher->id)
@@ -526,6 +567,7 @@ class TeacherController extends Controller
             }
 
             DB::beginTransaction();
+            $oldEmail = $teacher->email;
 
             // Update data guru
             $dataToUpdate = collect($validated)
@@ -549,6 +591,11 @@ class TeacherController extends Controller
             }
 
             $teacher->update($dataToUpdate);
+            $emailChanged = $teacher->wasChanged('email');
+
+            if ($emailChanged && is_string($oldEmail) && Schema::hasTable('guru_password_reset_tokens')) {
+                DB::table('guru_password_reset_tokens')->where('email', $oldEmail)->delete();
+            }
 
             // Hapus semua relasi kelas yang ada untuk tahun ajaran saat ini
             if ($tahunAjaranId) {
@@ -613,6 +660,10 @@ class TeacherController extends Controller
             ]);
 
             DB::commit();
+
+            if ($emailChanged) {
+                $verification->sendIfRequired($teacher);
+            }
 
             return redirect()->route('teacher')
                 ->with('success', 'Data guru berhasil diperbarui'.

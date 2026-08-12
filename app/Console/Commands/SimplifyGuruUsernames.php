@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use Illuminate\Console\Command;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 
 class SimplifyGuruUsernames extends Command
@@ -69,7 +70,7 @@ class SimplifyGuruUsernames extends Command
                     ->pluck('username')
                     ->filter()
                     ->mapWithKeys(fn (string $username) => [$username => true])
-                    ->all();
+                    ->all() + $this->reservedAdminIdentifiers();
 
                 foreach ($changes as $guru) {
                     $temporaryUsername = $this->temporaryUsername((int) $guru->id, $reservedUsernames);
@@ -105,7 +106,7 @@ class SimplifyGuruUsernames extends Command
     private function targetUsernames(Collection $gurus): array
     {
         $targets = [];
-        $used = [];
+        $used = $this->reservedAdminIdentifiers();
 
         foreach ($gurus as $guru) {
             $base = $this->baseUsername((string) $guru->nama);
@@ -163,5 +164,21 @@ class SimplifyGuruUsernames extends Command
         }
 
         return $username;
+    }
+
+    /** @return array<string, bool> */
+    private function reservedAdminIdentifiers(): array
+    {
+        if (! Schema::hasTable('users')) {
+            return [];
+        }
+
+        return DB::table('users')
+            ->get(['username', 'email'])
+            ->flatMap(fn ($user) => [$user->username, $user->email])
+            ->filter(fn ($identifier) => is_string($identifier) && trim($identifier) !== '')
+            ->map(fn (string $identifier) => Str::lower(trim($identifier)))
+            ->mapWithKeys(fn (string $identifier) => [$identifier => true])
+            ->all();
     }
 }
