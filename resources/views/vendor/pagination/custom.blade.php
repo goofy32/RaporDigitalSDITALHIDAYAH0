@@ -1,12 +1,12 @@
 @if ($paginator->hasPages())
-    <nav class="flex justify-between items-center p-4" aria-label="Table navigation" data-live-list-pagination>
+    <nav class="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between" aria-label="Table navigation" data-live-list-pagination>
         <span class="text-sm font-normal text-gray-500 dark:text-gray-400">
             Showing
             <span class="font-semibold text-gray-900 dark:text-white">{{ $paginator->firstItem() }}-{{ $paginator->lastItem() }}</span>
             of
             <span class="font-semibold text-gray-900 dark:text-white">{{ $paginator->total() }}</span>
         </span>
-        <ul class="inline-flex items-center -space-x-px">
+        <ul class="inline-flex max-w-full items-center self-start overflow-x-auto -space-x-px sm:self-auto">
             {{-- Previous Page Link --}}
             @if ($paginator->onFirstPage())
                 <li>

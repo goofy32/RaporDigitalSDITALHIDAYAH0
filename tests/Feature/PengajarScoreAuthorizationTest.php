@@ -941,7 +941,7 @@ class PengajarScoreAuthorizationTest extends TestCase
             ->assertSee(route('pengajar.score.import_templates.preview'), false)
             ->assertSee('data-row-action="input"', false)
             ->assertSee('data-row-action="delete"', false)
-            ->assertSee('flex items-center justify-center gap-1', false)
+            ->assertSee('table-action-group', false)
             ->assertSee('aria-label="Masukkan nilai Matematika"', false);
     }
 
@@ -1022,7 +1022,7 @@ class PengajarScoreAuthorizationTest extends TestCase
             ->assertDontSee('Lengkapi TP')
             ->assertSee('data-readiness-warning="true"', false)
             ->assertSee('data-row-action="warning"', false)
-            ->assertSee('inline-flex h-8 w-8 items-center justify-center', false)
+            ->assertSee('table-action-control', false)
             ->assertSee('@click.prevent="showLmTpWarning(mapelName, readinessMessages)"', false)
             ->assertDontSee(route('pengajar.tujuan_pembelajaran.create', $this->subjectId), false)
             ->assertDontSee(route('pengajar.score.import_template', $this->subjectId), false);

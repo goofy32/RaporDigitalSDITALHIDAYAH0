@@ -140,8 +140,8 @@
             @open-confirm-modal.window="open = true"
             x-show="open"
             x-cloak
-            class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div class="bg-white rounded-lg p-6 max-w-md w-full">
+            class="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black bg-opacity-50 p-4">
+            <div class="max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-y-auto rounded-lg bg-white p-6">
                 <h3 class="text-lg font-bold mb-4">Konfirmasi Kenaikan Kelas Massal</h3>
                 <p class="mb-4">Anda akan memproses kenaikan kelas untuk seluruh siswa. Proses ini akan:</p>
                 <ul class="list-disc pl-5 mb-4 text-sm">

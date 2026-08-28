@@ -212,14 +212,6 @@ export function initPengajarEditSubjectPage() {
         return true;
     });
 
-    var sidebar = document.getElementById('logo-sidebar');
-    if (sidebar) {
-        sidebar.style.transform = 'translateX(0)';
-        sidebar.style.display = 'block';
-        sidebar.classList.remove('-translate-x-full');
-        sidebar.classList.add('sm:translate-x-0');
-    }
-    document.querySelector('.p-4.sm\\:ml-64')?.style.setProperty('margin-left', '16rem');
     updateKelasSelection();
     validateMataPelajaran();
     refreshLearningCopyOption(form);

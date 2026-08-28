@@ -52,16 +52,18 @@ export function registerHelpCenter() {
         faqLoadedAt: null,
         pagePath: window.location.pathname,
         preferredQuestions: [
-            'Apa bedanya UTS dan UAS di aplikasi?',
-            'Kenapa PDF lama disiapkan?',
-            'Kenapa nilai tidak muncul di rapor?',
-            'Kenapa template rapor tidak bisa digunakan?',
-            'Kenapa tombol download template nilai tidak aktif?',
-            'Error umum saat upload nilai Excel',
-            'Upload Nilai Excel dan preview',
-            'Data Siswa dan import Excel',
-            'Notifikasi untuk Admin',
-            'Notifikasi untuk Wali Kelas',
+            'Mulai cepat untuk Admin',
+            'Masuk dengan Username atau Email',
+            'Menggunakan Lupa password?',
+            'Memverifikasi email Guru',
+            'Input Nilai manual dan cara menyimpan',
+            'Siswa yang terlihat pada kelas Wali',
+            'Perbedaan UTS, UAS, Ganjil, dan Genap',
+            'Nilai yang dipakai pada Rapor UTS',
+            'Unduh Semua Rapor dalam ZIP',
+            'Kapan pilihan PDF aplikasi tersedia?',
+            'Melanjutkan Semester Ganjil ke Genap',
+            'Import Siswa dari Excel',
         ],
 
         init() {
@@ -311,7 +313,7 @@ export function registerHelpCenter() {
                 keywords,
             ].join(' '));
 
-            return haystack.includes(query);
+            return query.split(' ').every(keyword => haystack.includes(keyword));
         },
 
         hasSearch() {

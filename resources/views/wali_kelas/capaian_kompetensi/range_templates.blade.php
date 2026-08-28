@@ -4,14 +4,14 @@
 @section('content')
 <div class="p-4 bg-white mt-14" x-data="rangeTemplateManager()">
     <!-- Header -->
-    <div class="flex justify-between items-center mb-6">
+    <div class="mb-6 flex flex-col items-start gap-4 md:flex-row md:items-center md:justify-between">
         <div>
             <h2 class="text-2xl font-bold text-green-700">Kelola Template Range Capaian Kompetensi</h2>
             <p class="text-sm text-gray-600 mt-1">
                 Tahun Ajaran: {{ $tahunAjaran->tahun_ajaran }} - Semester {{ $tahunAjaran->semester }}
             </p>
         </div>
-        <div class="flex space-x-3">
+        <div class="flex flex-wrap gap-3 md:justify-end">
             <button @click="resetToDefault" 
                     class="px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600">
                 Reset ke Default

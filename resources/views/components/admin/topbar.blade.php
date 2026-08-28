@@ -33,12 +33,12 @@
     <div class="px-3 py-3 lg:px-5 lg:pl-3">
         <div class="flex items-center justify-between">
             <!-- Logo dan Toggle Sidebar -->
-            <div class="flex items-center justify-start">
+            <div class="flex min-w-0 flex-1 items-center justify-start">
                 <button data-drawer-target="logo-sidebar" 
                         data-drawer-toggle="logo-sidebar" 
                         aria-controls="logo-sidebar" 
                         type="button" 
-                        class="inline-flex items-center p-2 text-sm text-gray-500 rounded-lg md:hidden hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-gray-200">
+                        class="inline-flex shrink-0 items-center p-2 text-sm text-gray-500 rounded-lg xl:hidden hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-gray-200">
                     <span class="sr-only">Open sidebar</span>
                     <svg class="w-6 h-6" aria-hidden="true" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
                         <path clip-rule="evenodd" fill-rule="evenodd" d="M2 4.75A.75.75 0 012.75 4h14.5a.75.75 0 010 1.5H2.75A.75.75 0 012 4.75zm0 10.5a.75.75 0 01.75-.75h7.5a.75.75 0 010 1.5h-7.5a.75.75 0 01-.75-.75zM2 10a.75.75 0 01.75-.75h14.5a.75.75 0 010 1.5H2.75A.75.75 0 012 10z"></path>
@@ -46,8 +46,8 @@
                 </button>
                 
                 <!-- Logo section with large logo but standard topbar height -->
-                <div class="relative flex min-w-0 items-center ms-2 md:me-24">
-                    <div class="mr-2 flex h-10 w-10 items-center justify-center sm:hidden">
+                <div class="relative flex min-w-0 items-center ms-2 xl:me-24">
+                    <div class="mr-2 flex h-10 w-10 items-center justify-center xl:hidden">
                         <img src="{{ asset('images/logo.png') }}"
                              id="school-logo-mobile"
                              data-persist-visibility="true"
@@ -56,7 +56,7 @@
                              alt="Logo Sekolah">
                     </div>
                     <!-- Large logo that extends below the topbar -->
-                    <div class="relative hidden h-12 w-32 mr-3 sm:block"> <!-- Wider container for the large logo -->
+                    <div class="relative hidden h-12 w-32 mr-3 xl:block"> <!-- Wider container for the large logo -->
                         <img src="{{ asset('images/logo.png') }}"
                              id="school-logo"
                              data-persist-visibility="true"
@@ -75,10 +75,10 @@
 
 
             <!-- User Menu dan Tahun Ajaran Selector -->
-            <div class="flex items-center relative space-x-4">
+            <div class="relative flex shrink-0 items-center space-x-4">
                 <!-- Tahun Ajaran Selector - Komponen Baru -->
                 @if(isset($tahunAjarans) && $tahunAjarans->count() > 0)
-                <div x-data="tahunAjaranSelector" class="relative hidden md:block group">
+                <div x-data="tahunAjaranSelector" class="relative hidden xl:block group">
                     <div class="flex items-center justify-between px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md">
                         <span class="flex items-center">
                             <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-gray-500" viewBox="0 0 20 20" fill="currentColor">
@@ -151,7 +151,7 @@
 
                 <!-- Info Pengguna -->
                 <div class="flex items-center space-x-4">
-                    <span class="text-sm font-medium text-gray-900 hidden md:block">
+                    <span class="text-sm font-medium text-gray-900 hidden xl:block">
                         @if(Auth::guard('guru')->check())
                             {{ Auth::guard('guru')->user()->nama }}
                         @else
@@ -289,7 +289,7 @@
                                 
                                 <!-- Tahun Ajaran (untuk mobile) -->
                                 @if(isset($tahunAjarans) && $tahunAjarans->count() > 0)
-                                    <div class="md:hidden border-t border-gray-100">
+                                    <div class="xl:hidden border-t border-gray-100">
                                         <p class="px-4 py-2 text-xs font-semibold text-gray-500">TAHUN AJARAN</p>
                                         @foreach($tahunAjarans as $ta)
                                             <a href="{{ route('tahun.ajaran.set-session', ['id' => $ta->id]) }}" 

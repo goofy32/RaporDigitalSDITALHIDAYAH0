@@ -17,8 +17,8 @@
     <x-admin.topbar></x-admin.topbar>
     <x-admin.sidebar></x-admin.sidebar>
 
-    <div class="p-4 sm:ml-64">
-        <div class="p-6 bg-white mt-14">
+    <div class="p-4 xl:ml-64">
+        <div class="bg-white p-4 mt-14 sm:p-6">
             <!-- Pesan Sukses atau Peringatan -->
             @if(session('success'))
                 <div class="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded mb-4">
@@ -33,7 +33,7 @@
             @endif
 
             <!-- Bagian Header Data Sekolah -->
-            <div class="flex justify-between items-center mb-4">
+            <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <h2 class="text-2xl font-bold text-green-700">Data Sekolah</h2>
                 <div class="space-x-2">
                     <a href="{{ route('profile.edit') }}" class="px-4 py-2 bg-green-600 text-white rounded-lg">Edit</a>
@@ -41,16 +41,16 @@
             </div>
 
             <!-- Bagian Konten Data Sekolah -->
-            <div class="grid grid-cols-3 gap-4">
+            <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
                 <!-- Gambar Profil Kiri -->
                 <div class="p-4 bg-gray-100 rounded-lg flex items-center justify-center">
                     <img src="{{ asset('images/logo.png') }}" 
                          alt="Logo Sekolah"
-                        class="w-64 h-64 object-cover object-center rounded-lg">
+                        class="aspect-square h-auto w-full max-w-64 object-cover object-center rounded-lg">
                 </div>
 
                 <!-- Tabel Data Sekolah -->
-                <div class="col-span-2">
+                <div class="overflow-x-auto lg:col-span-2">
                     <table class="w-full border-collapse border border-gray-300">
                         <tr>
                             <td class="border border-gray-300 p-2 font-semibold">Nama Instansi</td>

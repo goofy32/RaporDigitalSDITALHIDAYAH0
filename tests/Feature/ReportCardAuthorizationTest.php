@@ -1067,6 +1067,27 @@ class ReportCardAuthorizationTest extends TestCase
         Queue::assertNotPushed(AutoPreparePdfReportJob::class, fn (AutoPreparePdfReportJob $job) => $job->type === 'UTS');
     }
 
+    public function test_wali_report_attendance_guidance_does_not_equate_uas_with_genap(): void
+    {
+        $this->fakeLibreOfficeAvailability(false);
+        Setting::set('active_wali_report_period', 'UAS');
+
+        DB::table('absensis')
+            ->where('siswa_id', $this->authorizedStudentId)
+            ->where('tahun_ajaran_id', $this->activeYearId)
+            ->delete();
+        $this->insertReportTemplate($this->currentClassId, 'UAS', $this->activeYearId, 1);
+
+        $this->actingAsWali()
+            ->get(route('wali_kelas.rapor.index', [
+                'type' => 'UAS',
+                'tahun_ajaran_id' => $this->activeYearId,
+            ]))
+            ->assertOk()
+            ->assertSee('Input data absensi sesuai semester aktif melalui menu Absensi. UTS/UAS adalah jenis rapor, bukan semester.')
+            ->assertDontSee('Input data absensi dengan memilih semester 2 (Genap)');
+    }
+
     public function test_wali_report_page_can_warm_uts_in_active_genap_when_uts_is_opened(): void
     {
         $this->fakeLibreOfficeAvailability();

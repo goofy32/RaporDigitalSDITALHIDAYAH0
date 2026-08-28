@@ -19,12 +19,12 @@
     <x-admin.topbar></x-admin.topbar>
     <x-admin.sidebar></x-admin.sidebar>
 
-    <div class="p-4 sm:ml-64">
+    <div class="p-4 xl:ml-64">
         <div class="p-4 bg-white mt-14">
-            <div class="flex justify-between items-center mb-6">
+            <div class="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <h2 class="text-2xl font-bold text-green-700">Detail Data Pengajar</h2>
-                <div class="flex space-x-2">
-                    <button class="px-4 py-2 mr-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600" onclick="window.history.back()">Kembali</button>
+                <div class="flex flex-wrap gap-2">
+                    <button class="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600" onclick="window.history.back()">Kembali</button>
                     <button onclick="window.location.href='{{ route('teacher.edit', $teacher->id) }}'"
                         class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">
                         Edit
@@ -32,8 +32,8 @@
                 </div>
             </div>
 
-            <div class="flex space-x-8">
-                <div class="flex items-start justify-center w-64 h-80 bg-gray-200 rounded-lg shadow-md overflow-hidden">
+            <div class="flex flex-col gap-8 lg:flex-row">
+                <div class="mx-auto flex h-80 w-full max-w-64 shrink-0 items-start justify-center overflow-hidden rounded-lg bg-gray-200 shadow-md lg:mx-0">
                 @if($teacher->photo)
                     <img src="{{ asset('storage/' . $teacher->photo) }}"
                         alt="Foto Pengajar"
@@ -47,7 +47,7 @@
                 @endif
                 </div>
 
-                <div class="w-full">
+                <div class="w-full overflow-x-auto">
                     <table class="w-full text-sm text-left text-gray-500">
                         <tbody>
                             <tr class="border-b">

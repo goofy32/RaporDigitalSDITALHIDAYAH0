@@ -25,7 +25,7 @@
         $readyPembelajaranCount = $readyPembelajarans->count();
         $incompletePembelajaranCount = max(0, $totalPembelajarans - $readyPembelajaranCount);
         $bulkTemplateReady = $totalPembelajarans > 0 && $incompletePembelajaranCount === 0;
-        $rowActionBaseClass = 'inline-flex h-8 w-8 items-center justify-center rounded-md transition focus:outline-none focus:ring-2 focus:ring-offset-2';
+        $rowActionBaseClass = 'table-action-control';
         $inputActionClass = $rowActionBaseClass.' hover:bg-green-50 focus:ring-green-300';
         $previewActionClass = $rowActionBaseClass.' hover:bg-blue-50 focus:ring-blue-300';
         $warningActionClass = $rowActionBaseClass.' cursor-pointer opacity-90 hover:bg-yellow-50 focus:ring-yellow-300';
@@ -109,9 +109,9 @@
         @if($readyPembelajarans->isNotEmpty())
             <div x-show="openTemplateModal"
                  x-cloak
-                 class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+                 class="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/40 px-4 py-4"
                  @keydown.escape.window="openTemplateModal = false">
-                <div class="w-full max-w-lg rounded-lg bg-white p-6 shadow-lg" @click.outside="openTemplateModal = false">
+                <div class="max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto rounded-lg bg-white p-6 shadow-lg" @click.outside="openTemplateModal = false">
                     <div class="mb-4">
                         <h3 class="text-lg font-semibold text-green-700">Download Template Nilai</h3>
                         <p class="mt-1 text-sm text-gray-600">Pilih kelas dan mata pelajaran untuk template nilai Excel.</p>
@@ -145,9 +145,9 @@
         @if($bulkTemplateReady)
             <div x-show="openBulkUploadModal"
                  x-cloak
-                 class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+                 class="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/40 px-4 py-4"
                  @keydown.escape.window="openBulkUploadModal = false">
-                <div class="w-full max-w-lg rounded-lg bg-white p-6 shadow-lg" @click.outside="openBulkUploadModal = false">
+                <div class="max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto rounded-lg bg-white p-6 shadow-lg" @click.outside="openBulkUploadModal = false">
                     <form action="{{ route('pengajar.score.import_templates.preview') }}"
                           method="POST"
                           enctype="multipart/form-data">
@@ -386,14 +386,14 @@
     </div>
 
     <!-- Tabel Data Pembelajaran -->
-    <div class="overflow-x-auto">
-        <table id="pembelajaranTable" class="w-full text-sm text-left text-gray-500">
+    <div class="table-responsive" role="region" aria-label="Daftar pembelajaran" tabindex="0">
+        <table id="pembelajaranTable" class="min-w-[40rem] text-sm text-left text-gray-500">
             <thead class="text-xs text-gray-700 uppercase bg-gray-50">
                 <tr>
                     <th scope="col" class="px-6 py-3">No</th>
                     <th scope="col" class="px-6 py-3">Kelas</th>
                     <th scope="col" class="px-6 py-3">Mata Pelajaran</th>
-                    <th scope="col" class="px-6 py-3 text-center">Aksi</th>
+                    <th scope="col" class="table-action-heading px-6 py-3">Aksi</th>
                 </tr>
             </thead>
             <tbody>
@@ -416,8 +416,8 @@
                                 <td class="px-6 py-4">{{ $nomor++ }}</td> <!-- Increment counter di sini -->
                                 <td class="px-6 py-4">Kelas {{ $kelas->nomor_kelas }} {{ $kelas->nama_kelas }}</td>
                                 <td class="px-6 py-4">{{ $mapel->nama_pelajaran }}</td>
-                                <td class="px-6 py-4">
-                                    <div class="flex items-center justify-center gap-1">
+                            <td class="table-action-cell px-6 py-4">
+                                    <div class="table-action-group">
                                     @if(!$mapel->requires_lm_tp_setup)
                                         @if(!$mapel->has_saved_scores)
                                         <a href="{{ route('pengajar.score.input_score', $mapel->id) }}"
@@ -451,7 +451,7 @@
 
                                             <form action="{{ route('pengajar.subject.destroy', $mapel->id) }}" 
                                                 method="POST" 
-                                                class="inline-flex"
+                                                class="inline-flex shrink-0"
                                                 onsubmit="return confirm('Apakah Anda yakin ingin menghapus mata pelajaran ini?');">
                                                 @csrf
                                                 @method('DELETE')

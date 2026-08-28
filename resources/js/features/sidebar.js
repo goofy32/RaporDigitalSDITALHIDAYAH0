@@ -4,8 +4,23 @@ export const cleanupHandlers = new Set();
 export const sidebarImageCache = new Map();
 
 const sidebarAccessibilityObservers = new WeakMap();
+const sidebarDesktopMediaQuery = '(min-width: 1280px)';
 let sidebarAccessibilitySyncFrame = null;
 let sidebarResizeListenerBound = false;
+
+function closeSidebarDrawer(sidebar) {
+    const instances = window.FlowbiteInstances;
+    const drawer = instances?.instanceExists?.('Drawer', 'logo-sidebar')
+        ? instances.getInstance('Drawer', 'logo-sidebar')
+        : null;
+
+    if (drawer?.isVisible?.()) {
+        drawer.hide();
+    }
+
+    sidebar.classList.remove('transform-none', 'translate-x-0');
+    sidebar.classList.add('-translate-x-full');
+}
 
 export function preloadAndCacheSidebarIcons() {
     const sidebar = document.getElementById('logo-sidebar');
@@ -37,11 +52,19 @@ export function preloadAndCacheSidebarIcons() {
 export function ensureSidebarVisible() {
     const sidebar = document.getElementById('logo-sidebar');
     if (sidebar) {
+        const isDesktop = window.matchMedia(sidebarDesktopMediaQuery).matches;
+
         sidebar.style.display = '';
         sidebar.style.visibility = 'visible';
-        sidebar.classList.remove('-translate-x-full');
         sidebar.classList.remove('hidden');
-        sidebar.classList.add('sm:translate-x-0');
+        sidebar.classList.add('xl:translate-x-0');
+
+        closeSidebarDrawer(sidebar);
+
+        if (isDesktop) {
+            sidebar.classList.remove('-translate-x-full');
+        }
+
         bindSidebarAccessibilityObserver();
         scheduleSidebarAccessibilitySync();
     }
@@ -72,9 +95,10 @@ export function syncSidebarAccessibility() {
     const sidebar = document.getElementById('logo-sidebar');
     if (!sidebar) return;
 
-    const isDesktop = window.matchMedia('(min-width: 640px)').matches;
-    const isHiddenByTransform = sidebar.classList.contains('-translate-x-full');
-    const isHidden = !isDesktop && (isHiddenByTransform || sidebar.classList.contains('hidden'));
+    const isDesktop = window.matchMedia(sidebarDesktopMediaQuery).matches;
+    const isMobileDrawerOpen = sidebar.classList.contains('transform-none')
+        || sidebar.classList.contains('translate-x-0');
+    const isHidden = !isDesktop && (!isMobileDrawerOpen || sidebar.classList.contains('hidden'));
 
     if (isHidden) {
         moveFocusOutOfSidebar(sidebar);
@@ -123,7 +147,18 @@ function bindSidebarAccessibilityObserver() {
     sidebarAccessibilityObservers.set(sidebar, observer);
 
     if (!sidebarResizeListenerBound) {
-        window.addEventListener('resize', scheduleSidebarAccessibilitySync, { passive: true });
+        const desktopMediaQuery = window.matchMedia(sidebarDesktopMediaQuery);
+        const handleBreakpointChange = () => {
+            ensureSidebarVisible();
+            scheduleSidebarAccessibilitySync();
+        };
+
+        if (typeof desktopMediaQuery.addEventListener === 'function') {
+            desktopMediaQuery.addEventListener('change', handleBreakpointChange);
+        } else {
+            desktopMediaQuery.addListener(handleBreakpointChange);
+        }
+
         sidebarResizeListenerBound = true;
     }
 }

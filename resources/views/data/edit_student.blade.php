@@ -5,10 +5,10 @@
 @section('content')
 <div data-page="edit-student">
     <div class="p-4 bg-white mt-14">
-        <div class="flex justify-between items-center mb-6">
+        <div class="mb-6 flex flex-col items-start gap-4 md:flex-row md:items-center md:justify-between">
             <h2 class="text-2xl font-bold text-green-700">Form Edit Data Siswa</h2>
             <!-- Tombol aksi -->
-            <div class="flex space-x-2">
+            <div class="flex flex-wrap gap-2 md:justify-end">
                 <a href="{{ route('student') }}" class="px-6 py-2.5 bg-gray-500 text-white font-medium rounded-lg hover:bg-gray-600 focus:ring-4 focus:ring-gray-300">
                     Batal
                 </a>

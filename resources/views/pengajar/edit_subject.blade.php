@@ -19,10 +19,10 @@
     data-session-error="{{ e(session('error', '')) }}"
 >
     <div class="p-4 bg-white mt-14">
-        <div class="flex justify-between items-center mb-6">
+        <div class="mb-6 flex flex-col items-start gap-4 md:flex-row md:items-center md:justify-between">
             <h2 class="text-2xl font-bold text-green-700">Form Edit Data Mata Pelajaran</h2>
-            <div class="flex space-x-2">
-                <button onclick="window.history.back()" class="px-4 py-2 mr-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600">
+            <div class="flex flex-wrap gap-2 md:justify-end">
+                <button onclick="window.history.back()" class="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600">
                     Kembali
                 </button>
                 <button type="submit" form="editSubjectForm" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">

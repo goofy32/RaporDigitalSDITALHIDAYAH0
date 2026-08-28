@@ -128,11 +128,11 @@
         </div>
 
         <div id="uploadModal" 
-            class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50"
+            class="hidden fixed inset-0 z-50 h-full w-full overflow-y-auto bg-gray-600 bg-opacity-50 p-4"
             aria-labelledby="modal-title" 
             role="dialog" 
             aria-modal="true">
-            <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+            <div class="relative mx-auto my-4 max-h-[calc(100dvh-2rem)] w-full max-w-sm overflow-y-auto rounded-md border bg-white p-5 shadow-lg sm:my-16">
                 <div class="mt-3">
                     <div class="flex justify-between items-center pb-3">
                         <h3 class="text-lg font-medium text-gray-900" id="modal-title">

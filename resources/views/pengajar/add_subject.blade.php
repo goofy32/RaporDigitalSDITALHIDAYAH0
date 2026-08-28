@@ -14,8 +14,8 @@
 >
     <div class="p-6 bg-white mt-14">
         <!-- Header -->
-        <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
-            <h2 class="text-2xl font-bold text-green-700 break-words max-w-full sm:max-w-lg">Form Tambah Data Mata Pelajaran</h2>
+        <div class="mb-6 flex flex-col items-start gap-4 md:flex-row md:items-center md:justify-between">
+            <h2 class="max-w-full break-words text-2xl font-bold text-green-700 md:max-w-lg">Form Tambah Data Mata Pelajaran</h2>
             <div class="flex flex-wrap gap-2">
                 <button onclick="window.history.back()" class="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600">
                     Kembali

@@ -19,7 +19,7 @@
     <x-admin.topbar></x-admin.topbar>
     <x-admin.sidebar></x-admin.sidebar>
 
-    <div class="p-4 sm:ml-64">
+    <div class="p-4 xl:ml-64">
         <div class="p-4 bg-white mt-14">
             <!-- Header -->
             <div class="flex justify-between items-center mb-6">

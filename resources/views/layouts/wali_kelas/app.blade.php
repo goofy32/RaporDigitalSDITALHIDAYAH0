@@ -36,7 +36,7 @@
 @endpush
 
 @section('layout-content')
-    <div class="p-4 sm:ml-64 min-h-screen bg-white relative">
+    <div class="p-4 xl:ml-64 min-h-screen bg-white relative">
         <div id="global-loader">
             <div class="flex flex-col items-center">
                 <svg class="animate-spin h-12 w-12 text-green-600 mb-3" viewBox="0 0 24 24" fill="none">

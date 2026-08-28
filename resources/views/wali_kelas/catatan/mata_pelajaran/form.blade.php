@@ -4,7 +4,7 @@
 
 @section('content')
 <div class="p-4 bg-white rounded-lg shadow-sm mt-14">
-    <div class="flex justify-between items-center mb-6">
+    <div class="mb-6 flex flex-col items-start gap-4 md:flex-row md:items-center md:justify-between">
         <div>
             <h2 class="text-2xl font-bold text-green-700">Catatan Mata Pelajaran</h2>
             <p class="text-gray-600 mt-1">

@@ -1,5 +1,5 @@
-<div class="relative overflow-x-auto shadow-md sm:rounded-lg">
-    <table class="w-full text-sm text-left text-gray-500">
+<div class="table-responsive relative shadow-md sm:rounded-lg" role="region" aria-label="Daftar mata pelajaran" tabindex="0">
+    <table class="min-w-[64rem] text-sm text-left text-gray-500">
         <thead class="text-xs text-gray-700 uppercase bg-gray-50">
             <tr>
                 <th scope="col" class="px-6 py-3">No</th>
@@ -8,7 +8,7 @@
                 <th scope="col" class="px-6 py-3">Semester</th>
                 <th scope="col" class="px-6 py-3">Guru Pengampu</th>
                 <th scope="col" class="px-6 py-3">Lingkup Materi</th>
-                <th scope="col" class="px-6 py-3 text-center min-w-[100px] w-28">Aksi</th>
+                <th scope="col" class="table-action-heading min-w-[100px] w-28 px-6 py-3">Aksi</th>
             </tr>
         </thead>
         <tbody>
@@ -50,28 +50,31 @@
                     @endif
                 </td>
 
-                <td class="px-1 py-4 text-center whitespace-nowrap">
-                    <div class="flex items-center justify-center gap-2" data-live-list-ignore>
+                <td class="table-action-cell px-1 py-4">
+                    <div class="table-action-group" data-live-list-ignore>
                         <a href="{{ route('tujuan_pembelajaran.create', $subject->id) }}"
-                           class="inline-flex items-center justify-center text-green-600 hover:text-green-800"
-                           title="Ubah atau Lihat Tujuan Pembelajaran">
+                           class="table-action-control text-green-600 hover:bg-green-50 hover:text-green-800"
+                           title="Ubah atau Lihat Tujuan Pembelajaran"
+                           aria-label="Ubah atau lihat tujuan pembelajaran">
                             <img src="{{ asset('images/icons/edittp.png') }}" alt="TP Icon" class="w-5 h-5 object-contain">
                         </a>
 
                         <a href="{{ route('subject.edit', $subject->id) }}"
                            data-turbo-action="replace"
-                           class="inline-flex items-center justify-center text-green-600 hover:text-green-800"
-                           title="Ubah Data">
+                           class="table-action-control text-green-600 hover:bg-green-50 hover:text-green-800"
+                           title="Ubah Data"
+                           aria-label="Ubah data mata pelajaran">
                             <img src="{{ asset('images/icons/edit.png') }}" alt="Edit Icon" class="w-5 h-5 object-contain">
                         </a>
 
-                        <form action="{{ route('subject.destroy', $subject->id) }}" method="POST" class="inline-flex items-center">
+                        <form action="{{ route('subject.destroy', $subject->id) }}" method="POST" class="inline-flex shrink-0 items-center">
                             @csrf
                             @method('DELETE')
                             <button type="submit"
-                                    class="inline-flex items-center justify-center text-red-600 hover:text-red-800"
+                                    class="table-action-control text-red-600 hover:bg-red-50 hover:text-red-800"
                                     onclick="return confirm('Apakah Anda yakin ingin menghapus data ini?')"
-                                    title="Hapus Data">
+                                    title="Hapus Data"
+                                    aria-label="Hapus data mata pelajaran">
                                 <img src="{{ asset('images/icons/delete.png') }}" alt="Delete Icon" class="w-5 h-5 object-contain">
                             </button>
                         </form>

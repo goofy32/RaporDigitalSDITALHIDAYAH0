@@ -142,8 +142,8 @@
 
         <div x-data="{ showReadyOnly: false, readyCount: {{ $readyCount }}, toggleReadyFilter() { this.showReadyOnly = !this.showReadyOnly; } }">
             <!-- Search Box -->
-            <div class="flex flex-col md:flex-row justify-between items-center gap-4 mb-6">
-                <div class="relative">
+            <div class="mb-6 flex flex-col items-stretch justify-between gap-4 md:flex-row md:items-center">
+                <div class="relative w-full md:w-auto">
                     <div class="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
                         <svg class="w-4 h-4 text-gray-500" aria-hidden="true" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
@@ -156,15 +156,15 @@
                         placeholder="Cari siswa...">
                 </div>
 
-                <div class="w-full md:w-auto flex flex-col items-end gap-2">
-                    <div class="flex flex-wrap justify-end gap-2">
+                <div class="flex w-full flex-col items-stretch gap-2 md:w-auto md:items-end">
+                    <div class="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
                         <button
                             type="button"
                             @click="toggleReadyFilter()"
                             :class="showReadyOnly
                                 ? 'bg-green-700 ring-2 ring-green-200'
                                 : 'bg-green-600 hover:bg-green-700'"
-                            class="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors">
+                            class="toolbar-action w-full gap-2 rounded-lg px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors sm:w-auto">
                             <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 01.8 1.6L14 13.5V19a1 1 0 01-1.447.894l-2-1A1 1 0 0110 18v-4.5L3.2 4.6A1 1 0 013 4z" />
                             </svg>
@@ -178,7 +178,7 @@
                             @click="handleBatchDownload()"
                             :disabled="batchProcessing || batchStudentIds.length === 0"
                             :aria-busy="batchProcessing ? 'true' : 'false'"
-                            class="inline-flex min-w-48 items-center justify-center gap-2 rounded-lg bg-green-700 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-green-800 focus:outline-none focus:ring-2 focus:ring-green-300 disabled:cursor-not-allowed disabled:opacity-50">
+                            class="toolbar-action w-full gap-2 rounded-lg bg-green-700 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-green-800 focus:outline-none focus:ring-2 focus:ring-green-300 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto sm:min-w-48">
                             <svg x-show="batchProcessing" class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
@@ -202,8 +202,8 @@
             </div>
 
             <!-- Data Table -->
-            <div class="overflow-x-auto shadow-md rounded-lg">
-            <table class="w-full text-sm text-left text-gray-500">
+            <div class="table-responsive shadow-md rounded-lg" role="region" aria-label="Daftar rapor siswa" tabindex="0">
+            <table class="min-w-[64rem] text-sm text-left text-gray-500">
                 <thead class="text-xs text-gray-700 uppercase bg-gray-50">
                     <tr>
                         <th class="px-6 py-3">No</th>
@@ -214,7 +214,7 @@
                         @if($pdfAvailable)
                             <th class="px-6 py-3">Status PDF</th>
                         @endif
-                        <th class="px-6 py-3">Aksi</th>
+                        <th class="table-action-heading px-6 py-3">Aksi</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -243,10 +243,11 @@
                                         Lengkap
                                     </span>
                                 @elseif($completion['status'] === 'partial')
-                                    <span class="bg-yellow-100 text-yellow-800 text-xs font-medium px-2.5 py-0.5 rounded-full relative group">
+                                    <span class="relative rounded-full bg-yellow-100 px-2.5 py-0.5 text-xs font-medium text-yellow-800 focus:outline-none focus:ring-2 focus:ring-yellow-500 group"
+                                          tabindex="0"
+                                          aria-describedby="nilai-partial-help-{{ $s->id }}">
                                         Sebagian
-                                        <div class="absolute left-0 top-full mt-2 w-64 p-2 bg-gray-800 text-white text-xs rounded shadow-lg 
-                                                opacity-0 invisible group-hover:opacity-100 group-hover:visible transition z-10">
+                                        <div id="nilai-partial-help-{{ $s->id }}" class="absolute left-0 top-full z-10 mt-2 invisible w-64 rounded bg-gray-800 p-2 text-xs text-white opacity-0 shadow-lg transition group-hover:visible group-hover:opacity-100 group-focus:visible group-focus:opacity-100">
                                             <p class="font-medium">
                                                 {{ $completion['missing'] }} dari {{ $completion['total'] }} mata pelajaran belum memiliki nilai lengkap.
                                             </p>
@@ -254,10 +255,11 @@
                                         </div>
                                     </span>
                                 @else
-                                    <span class="bg-red-100 text-red-800 text-xs font-medium px-2.5 py-0.5 rounded-full relative group">
+                                    <span class="relative rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-medium text-red-800 focus:outline-none focus:ring-2 focus:ring-red-500 group"
+                                          tabindex="0"
+                                          aria-describedby="nilai-empty-help-{{ $s->id }}">
                                         Belum Ada Nilai
-                                        <div class="absolute left-0 top-full mt-2 w-64 p-2 bg-gray-800 text-white text-xs rounded shadow-lg 
-                                                opacity-0 invisible group-hover:opacity-100 group-hover:visible transition z-10">
+                                        <div id="nilai-empty-help-{{ $s->id }}" class="absolute left-0 top-full z-10 mt-2 invisible w-64 rounded bg-gray-800 p-2 text-xs text-white opacity-0 shadow-lg transition group-hover:visible group-hover:opacity-100 group-focus:visible group-focus:opacity-100">
                                             <p>Masalah terdeteksi:</p>
                                             <p class="font-medium mt-1">{{ $diagnosisResults[$s->id]['nilai_message'] }}</p>
                                             <p class="mt-2">Solusi:</p>
@@ -295,14 +297,15 @@
                                         Sudah Diinput
                                     </span>
                                 @else
-                                    <span class="bg-red-100 text-red-800 text-xs font-medium px-2.5 py-0.5 rounded-full relative group">
+                                    <span class="relative rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-medium text-red-800 focus:outline-none focus:ring-2 focus:ring-red-500 group"
+                                          tabindex="0"
+                                          aria-describedby="absensi-help-{{ $s->id }}">
                                         Belum Lengkap
-                                        <div class="absolute left-0 top-full mt-2 w-64 p-2 bg-gray-800 text-white text-xs rounded shadow-lg 
-                                                opacity-0 invisible group-hover:opacity-100 group-hover:visible transition z-10">
+                                        <div id="absensi-help-{{ $s->id }}" class="absolute left-0 top-full z-10 mt-2 invisible w-64 rounded bg-gray-800 p-2 text-xs text-white opacity-0 shadow-lg transition group-hover:visible group-hover:opacity-100 group-focus:visible group-focus:opacity-100">
                                             <p>Masalah terdeteksi:</p>
                                             <p class="font-medium mt-1">{{ $diagnosisResults[$s->id]['absensi_message'] }}</p>
                                             <p class="mt-2">Solusi:</p>
-                                            <p>Input data absensi dengan memilih semester {{ request('type', 'UTS') === 'UTS' ? '1 (Ganjil)' : '2 (Genap)' }}</p>
+                                            <p>Input data absensi sesuai semester aktif melalui menu Absensi. UTS/UAS adalah jenis rapor, bukan semester.</p>
                                         </div>
                                     </span>
                                 @endif
@@ -331,8 +334,8 @@
                         @endif
 
                         <!-- Actions -->
-                        <td class="px-1 py-4 text-center whitespace-nowrap">
-                            <div class="flex items-center justify-center space-x-2">                                
+                        <td class="table-action-cell px-1 py-4">
+                            <div class="table-action-group">
                                 <!-- Download DOCX Button -->
                                 <button @click="handleGenerate({{ $s->id }}, {{ $nilaiCounts[$s->id] ?? 0 }}, {{ $s->absensi ? 'true' : 'false' }}, @js($s->nama))"
                                     :disabled="!{{ $nilaiCounts[$s->id] ?? 0 }} || !{{ $s->absensi ? 'true' : 'false' }}"
@@ -340,8 +343,9 @@
                                         'opacity-50 cursor-not-allowed': !{{ $nilaiCounts[$s->id] ?? 0 }} || !{{ $s->absensi ? 'true' : 'false' }}, 
                                         'text-green-600 hover:text-green-900': {{ $nilaiCounts[$s->id] ?? 0 }} && {{ $s->absensi ? 'true' : 'false' }} 
                                     }"
-                                    class="transition-colors"
-                                    title="Unduh Rapor DOCX">
+                                    class="table-action-control"
+                                    title="Unduh Rapor DOCX"
+                                    aria-label="Unduh rapor DOCX">
                                     <img src="{{ asset('images/icons/download.png') }}" alt="Download" class="action-icon">
                                 </button>
                                 
@@ -358,8 +362,9 @@
                                             'opacity-50 cursor-not-allowed': !{{ $pdfAvailable ? 'true' : 'false' }} || !hasPdfTemplate({{ $s->id }}) || !{{ $nilaiCounts[$s->id] ?? 0 }} || !{{ $s->absensi ? 'true' : 'false' }} || loading,
                                             'text-purple-600 hover:text-purple-900': {{ $pdfAvailable ? 'true' : 'false' }} && hasPdfTemplate({{ $s->id }}) && {{ $nilaiCounts[$s->id] ?? 0 }} && {{ $s->absensi ? 'true' : 'false' }} && !loading
                                         }"
-                                        class="transition-colors"
-                                        :title="pdfActionTitle({{ $s->id }}, 'Preview PDF')">
+                                        class="table-action-control"
+                                        :title="pdfActionTitle({{ $s->id }}, 'Preview PDF')"
+                                        aria-label="Preview rapor PDF">
                                     <img src="{{ asset('images/icons/detail.png') }}" alt="Preview" class="action-icon">
                                 </button>
 
@@ -370,8 +375,9 @@
                                             'opacity-50 cursor-not-allowed': !{{ $pdfAvailable ? 'true' : 'false' }} || !hasPdfTemplate({{ $s->id }}) || !{{ $nilaiCounts[$s->id] ?? 0 }} || !{{ $s->absensi ? 'true' : 'false' }} || loading,
                                             'text-red-600 hover:text-red-900': {{ $pdfAvailable ? 'true' : 'false' }} && hasPdfTemplate({{ $s->id }}) && {{ $nilaiCounts[$s->id] ?? 0 }} && {{ $s->absensi ? 'true' : 'false' }} && !loading
                                         }"
-                                        class="transition-colors"
-                                        :title="pdfActionTitle({{ $s->id }}, 'Unduh Rapor PDF')">
+                                        class="table-action-control"
+                                        :title="pdfActionTitle({{ $s->id }}, 'Unduh Rapor PDF')"
+                                        aria-label="Unduh rapor PDF">
                                     <template x-if="loadingPdf === {{ $s->id }}">
                                         <svg class="action-icon animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>

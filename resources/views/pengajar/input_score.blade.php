@@ -129,9 +129,9 @@
 
     <div x-show="openExcelImportModal"
          x-cloak
-         class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+         class="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/40 px-4 py-4"
          @keydown.escape.window="openExcelImportModal = false">
-        <div class="w-full max-w-lg rounded-lg bg-white p-6 shadow-lg" @click.outside="openExcelImportModal = false">
+        <div class="max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto rounded-lg bg-white p-6 shadow-lg" @click.outside="openExcelImportModal = false">
             <div class="mb-4">
                 <h3 class="text-lg font-semibold text-green-700">Import Nilai Excel</h3>
                 <p class="mt-1 text-sm text-gray-600">Unggah template nilai Excel untuk memuat nilai ke form. Nilai belum disimpan sampai tombol Simpan diklik.</p>
@@ -171,7 +171,7 @@
             Geser tabel ke kanan untuk melihat semua kolom nilai
         </p>
 
-        <div class="overflow-x-auto">
+        <div class="table-responsive" role="region" aria-label="Input nilai siswa" tabindex="0">
             <table id="students-table" class="min-w-full text-sm text-left text-gray-500 border-collapse">
             <thead class="text-xs text-gray-700 uppercase bg-gray-50">
                     <tr>
@@ -190,7 +190,7 @@
                         <th rowspan="2" class="px-4 py-2 border">NA Sumatif Akhir Semester</th>
                         <th rowspan="2" class="px-4 py-2 border">Nilai Akhir (Rapor)</th>
                         <th rowspan="2" class="px-4 py-2 border text-center">Status</th>
-                        <th rowspan="2" class="px-4 py-2 border">Aksi</th>
+                        <th rowspan="2" class="table-action-heading px-4 py-2 border">Aksi</th>
                     </tr>
                     <tr>
                         @foreach($mataPelajaran->lingkupMateris as $lm)
@@ -349,10 +349,12 @@
                             </td>
                             
                             <!-- Aksi -->
-                            <td class="px-4 py-2 border">
+                            <td class="table-action-cell px-4 py-2 border">
                                 <button type="button" 
-                                        class="text-red-600 hover:text-red-800"
-                                        onclick="deleteNilai({{ $student['id'] }}, {{ $subject['id'] }})">
+                                        class="table-action-control text-red-600 hover:bg-red-50 hover:text-red-800"
+                                        onclick="deleteNilai({{ $student['id'] }}, {{ $subject['id'] }})"
+                                        title="Hapus nilai"
+                                        aria-label="Hapus nilai {{ $student['name'] }}">
                                     <img src="{{ asset('images/icons/delete.png') }}" alt="Delete Icon" class="w-5 h-5">
                                 </button>
                             </td>

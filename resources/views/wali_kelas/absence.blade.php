@@ -18,11 +18,11 @@
             <p class="text-sm text-gray-500 mt-1">Semester {{ $currentSemester }} - kelola rekap absensi semua siswa sekaligus.</p>
         </div>
 
-        <div class="flex items-center gap-2">
+        <div class="flex flex-wrap items-center gap-2">
             <button
                 type="button"
                 @click="toggleEditMode()"
-                class="inline-flex items-center justify-center rounded-lg border border-green-700 px-4 py-2 text-sm font-medium text-green-700 transition hover:bg-green-50"
+                class="toolbar-action rounded-lg border border-green-700 px-4 py-2 text-sm font-medium text-green-700 transition hover:bg-green-50"
                 x-text="editMode ? 'Batal' : 'Edit'"
             ></button>
             <button
@@ -31,7 +31,7 @@
                 x-cloak
                 @click="saveAll()"
                 :disabled="saving"
-                class="inline-flex items-center justify-center rounded-lg bg-green-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-green-800 disabled:cursor-not-allowed disabled:opacity-60"
+                class="toolbar-action rounded-lg bg-green-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-green-800 disabled:cursor-not-allowed disabled:opacity-60"
             >
                 <span x-show="!saving">Simpan</span>
                 <span x-show="saving">Menyimpan...</span>
@@ -39,8 +39,8 @@
         </div>
     </div>
 
-    <div class="relative overflow-x-auto shadow-md sm:rounded-lg">
-        <table class="w-full text-sm text-left text-gray-600">
+    <div class="table-responsive relative shadow-md sm:rounded-lg" role="region" aria-label="Data absensi siswa" tabindex="0">
+        <table class="min-w-[48rem] text-sm text-left text-gray-600">
             <thead class="bg-gray-50 text-xs uppercase text-gray-700">
                 <tr>
                     <th class="px-6 py-3">No</th>

@@ -15,10 +15,10 @@
 >
     <div class="p-4 bg-white mt-14 shadow-lg rounded-lg">
         <!-- Header -->
-        <div class="flex justify-between items-center mb-6">
-            <h2 class="text-2xl font-bold text-green-700">Tujuan Pembelajaran untuk {{ $mataPelajaran->nama_pelajaran }}</h2>
-            <div class="flex flex-wrap justify-end gap-2">
-                <button onclick="window.history.back()" class="px-4 py-2 mr-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600">
+        <div class="mb-6 flex flex-col items-start gap-4 md:flex-row md:items-center md:justify-between">
+            <h2 class="max-w-full break-words text-2xl font-bold text-green-700 md:max-w-lg">Tujuan Pembelajaran untuk {{ $mataPelajaran->nama_pelajaran }}</h2>
+            <div class="flex flex-wrap gap-2 md:justify-end">
+                <button onclick="window.history.back()" class="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600">
                     Kembali
                 </button>
                 <button @click="handleAjaxSubmit" onclick="saveData()" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">

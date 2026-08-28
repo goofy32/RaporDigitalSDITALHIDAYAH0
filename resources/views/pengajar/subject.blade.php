@@ -15,8 +15,8 @@
         </div>
 
         <!-- Table -->
-        <div class="relative overflow-x-auto shadow-md sm:rounded-lg">
-            <table class="w-full text-sm text-left text-gray-500">
+        <div class="table-responsive relative shadow-md sm:rounded-lg" role="region" aria-label="Daftar mata pelajaran" tabindex="0">
+            <table class="min-w-[64rem] text-sm text-left text-gray-500">
                 <thead class="text-xs text-gray-700 uppercase bg-gray-50">
                     <tr>
                         <th scope="col" class="px-6 py-3">No</th>
@@ -25,7 +25,7 @@
                         <th scope="col" class="px-6 py-3">Semester</th>
                         <th scope="col" class="px-6 py-3">Guru Pengampu</th>
                         <th scope="col" class="px-6 py-3">Lingkup Materi</th>
-                        <th scope="col" class="w-24 px-1 py-3 text-center">Aksi</th>
+                        <th scope="col" class="table-action-heading min-w-36 px-1 py-3">Aksi</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -47,11 +47,11 @@
                                 Tidak ada Lingkup Materi
                             @endif
                         </td>
-                        <td class="w-24 px-1 py-3 text-center whitespace-nowrap">
-                            <div class="mx-auto inline-flex w-fit items-center justify-center gap-0">
+                        <td class="table-action-cell min-w-36 px-1 py-3">
+                            <div class="table-action-group">
                                 <!-- Edit TP Button -->
                                 <a href="{{ route('pengajar.tujuan_pembelajaran.create', $subject->id) }}"
-                                    class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-emerald-700 transition hover:bg-emerald-50 hover:text-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                                    class="table-action-control text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800 focus:ring-emerald-300"
                                     title="Kelola TP"
                                     aria-label="Kelola TP">
                                     <img src="{{ asset('images/icons/edittp.png') }}" alt="" class="h-6 w-6 object-contain">
@@ -59,18 +59,18 @@
 
                                 <!-- Edit Subject Button -->
                                 <a href="{{ route('pengajar.subject.edit', $subject->id) }}"
-                                    class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-green-700 transition hover:bg-green-50 hover:text-green-800 focus:outline-none focus:ring-2 focus:ring-green-300"
+                                    class="table-action-control text-green-700 hover:bg-green-50 hover:text-green-800 focus:ring-green-300"
                                     title="Edit"
                                     aria-label="Edit">
                                     <img src="{{ asset('images/icons/edit.png') }}" alt="" class="h-5 w-5 object-contain">
                                 </a>
 
                                 <!-- Delete Button -->
-                                <form action="{{ route('pengajar.subject.destroy', $subject->id) }}" method="POST" class="inline-flex items-center">
+                                <form action="{{ route('pengajar.subject.destroy', $subject->id) }}" method="POST" class="inline-flex shrink-0 items-center">
                                     @csrf
                                     @method('DELETE')
                                     <button type="submit"
-                                        class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-red-700 transition hover:bg-red-50 hover:text-red-800 focus:outline-none focus:ring-2 focus:ring-red-300"
+                                        class="table-action-control text-red-700 hover:bg-red-50 hover:text-red-800 focus:ring-red-300"
                                         onclick="return confirm('Apakah Anda yakin ingin menghapus data ini?')"
                                         title="Hapus"
                                         aria-label="Hapus">

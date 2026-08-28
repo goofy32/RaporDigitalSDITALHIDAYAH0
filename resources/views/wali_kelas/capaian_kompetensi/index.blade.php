@@ -6,7 +6,7 @@
 @section('content')
 <div class="p-4 bg-white mt-14">
     <!-- Header -->
-    <div class="flex justify-between items-center mb-6">
+    <div class="mb-6 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
         <h2 class="text-2xl font-bold text-green-700">Capaian Kompetensi</h2>
         <div class="text-sm text-gray-600">
             Kelas: {{ $kelas->nomor_kelas }} {{ $kelas->nama_kelas }}
@@ -31,8 +31,8 @@
     </div>
 
     <!-- Table -->
-    <div class="relative overflow-x-auto shadow-md sm:rounded-lg">
-        <table class="w-full text-sm text-left text-gray-500">
+    <div class="table-responsive relative shadow-md sm:rounded-lg" role="region" aria-label="Daftar capaian kompetensi" tabindex="0">
+        <table class="min-w-[60rem] text-sm text-left text-gray-500">
             <thead class="text-xs text-gray-700 uppercase bg-gray-50">
                 <tr>
                     <th class="px-6 py-3">No</th>
@@ -40,7 +40,7 @@
                     <th class="px-6 py-3">Guru Pengampu</th>
                     <th class="px-6 py-3">Semester</th>
                     <th class="px-6 py-3 text-center">Status Deskripsi</th>
-                    <th class="px-6 py-3 text-center">Aksi</th>
+                    <th class="table-action-heading px-6 py-3">Aksi</th>
                 </tr>
             </thead>
             <tbody>
@@ -86,11 +86,12 @@
                                 </div>
                             @endif
                         </td>
-                        <td class="px-6 py-4">
-                            <div class="flex justify-center">
+                        <td class="table-action-cell px-6 py-4">
+                            <div class="table-action-group">
                                 <a href="{{ route('wali_kelas.capaian_kompetensi.edit', $mataPelajaran->id) }}" 
-                                   class="text-yellow-600 hover:text-yellow-800"
-                                   title="Kelola Capaian">
+                                   class="table-action-control text-yellow-600 hover:bg-yellow-50 hover:text-yellow-800"
+                                   title="Kelola Capaian"
+                                   aria-label="Kelola capaian kompetensi">
                                     <img src="{{ asset('images/icons/edit.png') }}" alt="Edit Icon" class="w-5 h-5">
                                 </a>
                             </div>

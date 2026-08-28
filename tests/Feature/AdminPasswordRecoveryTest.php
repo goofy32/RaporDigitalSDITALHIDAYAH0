@@ -422,6 +422,45 @@ class AdminPasswordRecoveryTest extends TestCase
         Notification::assertNothingSent();
     }
 
+    public function test_account_pages_keep_admin_pengajar_and_wali_navigation_isolated(): void
+    {
+        $this->actingAs($this->admin, 'web')
+            ->get(route('admin.password.change.edit'))
+            ->assertOk()
+            ->assertSee('Simulasi Staging')
+            ->assertSee('Ubah Password Admin');
+
+        Auth::guard('web')->logout();
+
+        $this->actingAs($this->guru, 'guru')
+            ->withSession(['selected_role' => 'pengajar'])
+            ->get(route('guru.verification.notice'))
+            ->assertOk()
+            ->assertSee('Data Nilai Pelajaran')
+            ->assertDontSee('Simulasi Staging')
+            ->assertDontSee('Kenaikan Kelas');
+
+        $this->withSession(['selected_role' => 'wali_kelas'])
+            ->get(route('guru.verification.notice'))
+            ->assertOk()
+            ->assertSee('Cetak Rapor HTML')
+            ->assertDontSee('Simulasi Staging')
+            ->assertDontSee('Format Rapor');
+    }
+
+    public function test_account_route_guards_reject_the_other_authentication_domain(): void
+    {
+        $this->actingAs($this->admin, 'web')
+            ->get(route('guru.verification.notice'))
+            ->assertRedirect(route('login'));
+
+        Auth::guard('web')->logout();
+
+        $this->actingAs($this->guru, 'guru')
+            ->get(route('admin.password.change.edit'))
+            ->assertRedirect(route('login'));
+    }
+
     public function test_unverified_guru_sees_verification_status_banner(): void
     {
         $this->actingAs($this->guru, 'guru');
@@ -765,7 +804,7 @@ class AdminPasswordRecoveryTest extends TestCase
     {
         foreach ([
             'sessions', 'guru_password_reset_tokens', 'password_reset_tokens', 'audit_logs',
-            'guru_kelas', 'mata_pelajarans', 'kelas', 'profil_sekolah', 'tahun_ajarans', 'gurus', 'users',
+            'guru_kelas', 'nilais', 'kkms', 'mata_pelajarans', 'kelas', 'profil_sekolah', 'tahun_ajarans', 'gurus', 'users',
         ] as $table) {
             Schema::dropIfExists($table);
         }
@@ -837,6 +876,23 @@ class AdminPasswordRecoveryTest extends TestCase
             $table->foreignId('guru_id')->nullable();
             $table->foreignId('tahun_ajaran_id');
             $table->unsignedTinyInteger('semester');
+            $table->timestamps();
+            $table->softDeletes();
+        });
+
+        Schema::create('kkms', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('mata_pelajaran_id');
+            $table->foreignId('tahun_ajaran_id');
+            $table->decimal('nilai', 5, 2);
+            $table->timestamps();
+        });
+
+        Schema::create('nilais', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('mata_pelajaran_id');
+            $table->foreignId('tahun_ajaran_id');
+            $table->decimal('nilai_akhir_rapor', 5, 2)->nullable();
             $table->timestamps();
             $table->softDeletes();
         });

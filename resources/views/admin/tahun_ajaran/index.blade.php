@@ -3,16 +3,16 @@
 @section('title', 'Manajemen Tahun Ajaran')
 
 @section('content')
-<div class="p-4 bg-white"
+<div class="min-w-0 bg-white p-3 sm:p-4"
      data-page="tahun-ajaran-index"
      data-set-active-base-url="{{ url('admin/tahun-ajaran') }}">
-    <div class="flex justify-between items-center mb-6">
-        <h2 class="text-2xl font-bold text-green-700">Manajemen Tahun Ajaran</h2>
-        <div class="flex gap-2">
+    <div class="mb-6 flex flex-col items-stretch gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <h2 class="break-words text-2xl font-bold text-green-700">Manajemen Tahun Ajaran</h2>
+        <div class="grid w-full grid-cols-1 gap-2 sm:flex sm:flex-wrap lg:w-auto lg:justify-end">
             <!-- Modified toggle button with direct link instead of JavaScript -->
             @if($tampilkanArsip || $archivedCount > 0)
                 <a href="{{ route('tahun.ajaran.index', ['showArchived' => $tampilkanArsip ? null : 'true']) }}" 
-                class="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition duration-150 ease-in-out"
+                class="toolbar-action w-full rounded-lg bg-gray-600 px-4 py-2 text-white transition duration-150 ease-in-out hover:bg-gray-700 sm:w-auto"
                 id="toggleArchiveBtn">
                     <i class="fas fa-archive mr-2"></i> 
                     {{ $tampilkanArsip ? 'Sembunyikan Arsip' : 'Tampilkan Arsip' }}
@@ -20,14 +20,14 @@
             @else
                 <!-- When there are no archives, show disabled button with info popup -->
                 <button type="button" 
-                class="px-4 py-2 bg-gray-400 text-white rounded-lg cursor-not-allowed transition duration-150 ease-in-out"
+                class="toolbar-action w-full cursor-not-allowed rounded-lg bg-gray-400 px-4 py-2 text-white transition duration-150 ease-in-out sm:w-auto"
                 id="disabledArchiveBtn">
                     <i class="fas fa-archive mr-2"></i> Tampilkan Arsip
                 </button>
             @endif
             
             <a href="{{ route('tahun.ajaran.create') }}" 
-            class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition duration-150 ease-in-out">
+            class="toolbar-action w-full rounded-lg bg-green-600 px-4 py-2 text-white transition duration-150 ease-in-out hover:bg-green-700 sm:w-auto">
                 <i class="fas fa-plus mr-2"></i> Tambah Tahun Ajaran
             </a>
         </div>
@@ -99,16 +99,16 @@
     <div>
         <h3 class="text-lg font-semibold text-gray-800 mb-3">Daftar Semua Tahun Ajaran</h3>
         
-        <div class="overflow-x-auto">
-            <table class="min-w-full bg-white border border-gray-200">
+        <div class="table-responsive" role="region" aria-label="Daftar semua tahun ajaran" tabindex="0">
+            <table class="min-w-[56rem] bg-white border border-gray-200">
                 <thead class="bg-gray-100">
                     <tr>
                         <th class="py-3 px-4 border-b text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Tahun Ajaran</th>
                         <th class="py-3 px-4 border-b text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Semester</th>
-                        <th class="py-3 px-4 border-b text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Tanggal Mulai</th>
-                        <th class="py-3 px-4 border-b text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Tanggal Selesai</th>
+                        <th class="whitespace-nowrap py-3 px-4 border-b text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Tanggal Mulai</th>
+                        <th class="whitespace-nowrap py-3 px-4 border-b text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Tanggal Selesai</th>
                         <th class="py-3 px-4 border-b text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Status</th>
-                        <th class="py-3 px-4 border-b text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Aksi</th>
+                        <th class="table-action-heading min-w-44 py-3 px-4 border-b text-xs font-semibold text-gray-600 uppercase tracking-wider md:min-w-40">Aksi</th>
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-gray-200">
@@ -117,7 +117,7 @@
                         $permanentDeleteProtectionMessage = $permanentDeleteProtectionMessages[$tahunAjaran->id] ?? null;
                     @endphp
                     <tr class="hover:bg-gray-50 {{ $tahunAjaran->trashed() ? 'bg-gray-100' : '' }}">
-                        <td class="py-4 px-4 border-b">
+                        <td class="whitespace-nowrap py-4 px-4 border-b">
                             <div class="font-medium text-gray-900">
                                 {{ $tahunAjaran->tahun_ajaran }}
                             </div>
@@ -125,7 +125,7 @@
                             <div class="text-sm text-gray-500">{{ Str::limit($tahunAjaran->deskripsi, 50) }}</div>
                             @endif
                         </td>
-                        <td class="py-4 px-4 border-b">
+                        <td class="whitespace-nowrap py-4 px-4 border-b">
                             {{ $tahunAjaran->semester }} ({{ $tahunAjaran->semester == 1 ? 'Ganjil' : 'Genap' }})
                         </td>
                         <td class="py-4 px-4 border-b">
@@ -148,28 +148,29 @@
                             </span>
                             </div>
                         </td>
-                        <td class="py-4 px-4 border-b text-sm">
-                            <div class="flex items-center space-x-4">
+                        <td class="table-action-cell py-4 px-4 border-b text-sm">
+                            <div class="table-action-group">
                                 <!-- Tombol Detail -->
-                                <a href="{{ route('tahun.ajaran.show', $tahunAjaran->id) }}" title="Detail">
+                                <a href="{{ route('tahun.ajaran.show', $tahunAjaran->id) }}" class="table-action-control text-blue-600 hover:bg-blue-50" title="Detail" aria-label="Detail tahun ajaran">
                                     <img src="{{ asset('images/icons/detail.png') }}" alt="Detail" class="w-5 h-5">
                                 </a>
                                 
                                 @if(!$tahunAjaran->trashed())
                                     <!-- Tombol Edit (hanya untuk yang tidak diarsipkan) -->
-                                    <a href="{{ route('tahun.ajaran.edit', $tahunAjaran->id) }}" title="Edit">
+                                    <a href="{{ route('tahun.ajaran.edit', $tahunAjaran->id) }}" class="table-action-control text-green-700 hover:bg-green-50" title="Edit" aria-label="Edit tahun ajaran">
                                         <img src="{{ asset('images/icons/edit.png') }}" alt="Edit" class="w-5 h-5">
                                     </a>
                                 @endif
                                 
                                 <!-- Simple checkbox for active status (in action column) -->
                                 @if(!$tahunAjaran->trashed())
-                                    <div class="flex items-center">
-                                        <div class="relative">
+                                    <div class="flex shrink-0 items-center">
+                                        <label class="table-action-control relative" for="active-{{ $tahunAjaran->id }}" title="{{ $tahunAjaran->is_active ? 'Tahun ajaran aktif' : 'Aktifkan tahun ajaran' }}">
                                             <input 
                                                 type="checkbox" 
                                                 class="h-5 w-5 rounded border-gray-300 text-green-600 focus:ring-green-500"
                                                 id="active-{{ $tahunAjaran->id }}"
+                                                aria-label="{{ $tahunAjaran->is_active ? 'Tahun ajaran aktif' : 'Aktifkan tahun ajaran' }}"
                                                 {{ $tahunAjaran->is_active ? 'checked' : '' }}
                                                 {{ $tahunAjaran->is_active ? 'disabled' : '' }}
                                                 @if(!$tahunAjaran->is_active)
@@ -177,18 +178,19 @@
                                                     data-tahun-ajaran-name="{{ $tahunAjaran->tahun_ajaran }}"
                                                 @endif
                                             >
-                                        </div>
+                                        </label>
                                     </div>
                                 @endif
                             
 
                                 @if($tahunAjaran->trashed())
                                     <!-- Tombol Restore untuk tahun ajaran yang diarsipkan -->
-                                    <form action="{{ route('tahun.ajaran.restore', $tahunAjaran->id) }}" method="POST" class="inline">
+                                    <form action="{{ route('tahun.ajaran.restore', $tahunAjaran->id) }}" method="POST" class="inline-flex shrink-0">
                                         @csrf
                                         <button type="submit"
-                                                class="border-0 bg-transparent p-0"
+                                                class="table-action-control border-0 bg-transparent text-green-700 hover:bg-green-50"
                                                 title="Pulihkan"
+                                                aria-label="Pulihkan tahun ajaran"
                                                 onclick="return confirm('Apakah Anda yakin ingin memulihkan tahun ajaran ini?')">
 
                                             <svg xmlns="http://www.w3.org/2000/svg"
@@ -212,16 +214,16 @@
                                             <span>Tidak dapat dihapus permanen karena terhubung alur akademik.</span>
                                         </div>
                                     @else
-                                        <a href="{{ route('tahun.ajaran.show', $tahunAjaran->id) }}" title="Hapus Permanen">
+                                        <a href="{{ route('tahun.ajaran.show', $tahunAjaran->id) }}" class="table-action-control text-red-700 hover:bg-red-50" title="Hapus Permanen" aria-label="Hapus permanen tahun ajaran">
                                             <img src="{{ asset('images/icons/delete.png') }}" alt="Hapus Permanen" class="w-5 h-5">
                                         </a>
                                     @endif
                                 @elseif(!$tahunAjaran->is_active)
                                     <!-- Tombol Arsip untuk tahun ajaran yang tidak diarsipkan -->
-                                    <form action="{{ route('tahun.ajaran.destroy', $tahunAjaran->id) }}" method="POST" class="inline">
+                                    <form action="{{ route('tahun.ajaran.destroy', $tahunAjaran->id) }}" method="POST" class="inline-flex shrink-0">
                                         @csrf
                                         @method('DELETE')
-                                        <button type="submit" class="border-0 bg-transparent p-0" title="Arsipkan"
+                                        <button type="submit" class="table-action-control border-0 bg-transparent text-red-700 hover:bg-red-50" title="Arsipkan" aria-label="Arsipkan tahun ajaran"
                                                 onclick="return confirm('Apakah Anda yakin ingin mengarsipkan tahun ajaran {{ $tahunAjaran->tahun_ajaran }}?\n\nData terkait masih dapat diakses setelah diarsipkan dengan menampilkan tahun ajaran terarsip.')">
                                             <img src="{{ asset('images/icons/delete.png') }}" alt="Arsipkan" class="w-5 h-5">
                                         </button>

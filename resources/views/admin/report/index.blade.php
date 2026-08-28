@@ -109,8 +109,8 @@
         </div>
 
         <!-- Templates List Table -->
-        <div class="overflow-x-auto bg-white shadow-md rounded-lg">
-            <table class="w-full text-sm text-left text-gray-500">
+        <div class="table-responsive bg-white shadow-md rounded-lg" role="region" aria-label="Daftar template rapor" tabindex="0">
+            <table class="min-w-[72rem] text-sm text-left text-gray-500">
                 <thead class="text-xs text-gray-700 uppercase bg-gray-50">
                     <tr>
                         <th class="px-6 py-3">No</th>
@@ -121,7 +121,7 @@
                         <th class="px-6 py-3">Semester</th>
                         <th class="px-6 py-3">Tanggal Upload</th>
                         <th class="px-6 py-3 text-center" style="width: 100px;">Status</th>
-                        <th class="px-6 py-3 text-center" style="width: 120px;">Aksi</th>
+                        <th class="table-action-heading px-6 py-3" style="width: 120px;">Aksi</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -195,15 +195,17 @@
                                 </span>
                             @endif
                         </td>
-                        <td class="px-6 py-4 text-center whitespace-nowrap">
+                        <td class="table-action-cell px-6 py-4">
+                            <div class="table-action-group">
                             <!-- Preview Button -->
                             <!-- <a href="#" onclick="previewDocument('{{ route('report.template.preview', $template->id) }}', '{{ $template->filename }}'); return false;" class="inline-block align-middle mr-2" title="Ubah Data">
                                 <img src="{{ asset('images/icons/detail.png') }}" alt="Detail" class="w-5 h-5">
                             </a> -->
 
                             <a href="{{ route('report.template.download', $template->id) }}" 
-                                class="inline-block align-middle mr-2" 
+                                class="table-action-control text-blue-600 hover:bg-blue-50"
                                 title="Download Template DOCX"
+                                aria-label="Download template DOCX"
                                 download>
                                     <img src="{{ asset('images/icons/detail.png') }}" alt="Download" class="w-5 h-5">
                             </a>                            
@@ -211,31 +213,35 @@
                             <!-- Aktivasi Checkbox dengan margin kanan kecil -->
                             <form action="{{ route('report.template.activate', $template->id) }}" 
                                 method="POST" 
-                                class="inline-block align-middle mr-2"
+                                class="inline-flex shrink-0 items-center"
                                 onsubmit="return handleActivateToggle(event)"
                                 title="Akftifkan atau Matikan Rapor">
                                 @csrf
-                                <input 
-                                    type="checkbox" 
-                                    class="w-5 h-5 align-middle rounded border-gray-300 text-green-600 focus:ring-green-500"
-                                    id="active-{{ $template->id }}"
-                                    {{ $template->is_active ? 'checked' : '' }}
-                                    onclick="handleActivateToggle(event)"
-                                >
+                                <label class="table-action-control" for="active-{{ $template->id }}" title="Aktifkan atau matikan template rapor">
+                                    <input
+                                        type="checkbox"
+                                        class="w-5 h-5 align-middle rounded border-gray-300 text-green-600 focus:ring-green-500"
+                                        id="active-{{ $template->id }}"
+                                        aria-label="Aktifkan atau matikan template rapor"
+                                        {{ $template->is_active ? 'checked' : '' }}
+                                        onclick="handleActivateToggle(event)"
+                                    >
+                                </label>
                             </form>
                             
                             <!-- Delete Button tanpa margin kanan karena elemen terakhir -->
                             <form action="{{ route('report.template.destroy', $template->id) }}" 
                                 method="POST" 
-                                class="inline-block align-middle"
+                                class="inline-flex shrink-0 items-center"
                                 onsubmit="return handleDelete(event)"
                                 title="Hapus Data">
                                 @csrf
                                 @method('DELETE')
-                                <button type="submit" class="inline-block">
+                                <button type="submit" class="table-action-control text-red-600 hover:bg-red-50" aria-label="Hapus template rapor">
                                     <img src="{{ asset('images/icons/delete.png') }}" alt="Delete" class="w-5 h-5">
                                 </button>
                             </form>
+                            </div>
                         </td>
                     </tr>
                     @empty

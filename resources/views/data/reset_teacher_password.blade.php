@@ -24,7 +24,7 @@
     <x-admin.topbar></x-admin.topbar>
     <x-admin.sidebar></x-admin.sidebar>
 
-    <div class="p-4 sm:ml-64">
+    <div class="p-4 xl:ml-64">
         <div class="p-4 mt-14">
             <div class="max-w-2xl">
                 <div class="mb-4">

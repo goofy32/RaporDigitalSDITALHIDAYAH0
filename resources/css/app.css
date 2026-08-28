@@ -14,20 +14,9 @@
 }
 
 /* Mobile First Responsive Design */
-@media (max-width: 639px) {
-    /* Sidebar tersembunyi secara default di mobile */
-    #logo-sidebar {
-        transform: translateX(-100%) !important;
-        transition: transform 0.3s ease;
-    }
-    
-    /* Ketika sidebar dibuka di mobile */
-    #logo-sidebar.translate-x-0 {
-        transform: translateX(0) !important;
-    }
-    
+@media (max-width: 1279px) {
     /* Main content full width di mobile */
-    .sm\:ml-64 {
+    .xl\:ml-64 {
         margin-left: 0 !important;
     }
     
@@ -50,24 +39,13 @@
     }
 }
 
-/* Tablet */
-@media (min-width: 640px) and (max-width: 1023px) {
-    #logo-sidebar {
-        transform: translateX(0) !important;
-    }
-    
-    .sm\:ml-64 {
-        margin-left: 16rem !important;
-    }
-}
-
 /* Desktop */
-@media (min-width: 1024px) {
+@media (min-width: 1280px) {
     #logo-sidebar {
         transform: translateX(0) !important;
     }
     
-    .sm\:ml-64 {
+    .xl\:ml-64 {
         margin-left: 16rem !important;
     }
 }
@@ -102,20 +80,31 @@
 
 /* Table Responsive */
 .table-responsive {
-    @apply overflow-x-auto;
+    @apply w-full max-w-full overflow-x-auto overscroll-x-contain;
 }
 
-.table-responsive table {
-    @apply min-w-full;
+.table-responsive > table {
+    @apply w-full;
 }
 
-@media (max-width: 639px) {
-    .table-responsive table {
-        @apply text-xs;
-    }
-    
-    .table-responsive th,
-    .table-responsive td {
-        @apply px-2 py-1;
-    }
+.toolbar-action {
+    @apply inline-flex min-h-10 shrink-0 items-center justify-center whitespace-nowrap;
+}
+
+.table-action-group {
+    @apply mx-auto flex w-max items-center justify-center gap-0.5 md:gap-0;
+}
+
+.table-action-heading,
+.table-action-cell {
+    @apply whitespace-nowrap text-center;
+}
+
+.table-action-control {
+    @apply inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-offset-1 md:h-9 md:w-9;
+}
+
+.table-action-control > img,
+.table-action-control > svg {
+    @apply h-5 w-5 shrink-0 object-contain;
 }

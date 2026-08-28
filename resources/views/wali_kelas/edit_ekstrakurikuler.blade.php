@@ -5,10 +5,10 @@
 @section('content')
 <div class="p-6 bg-white mt-14">
     <!-- Header -->
-    <div class="flex justify-between items-center mb-6">
+    <div class="mb-6 flex flex-col items-start gap-4 md:flex-row md:items-center md:justify-between">
         <h2 class="text-2xl font-bold text-green-700">Form Edit Data Ekstrakurikuler</h2>
-        <div>
-            <a href="{{ route('wali_kelas.ekstrakurikuler.index') }}" class="px-4 py-2 mr-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600">
+        <div class="flex flex-wrap gap-2 md:justify-end">
+            <a href="{{ route('wali_kelas.ekstrakurikuler.index') }}" class="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600">
                 Kembali
             </a>
             <button type="submit" form="editEkskulForm" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">

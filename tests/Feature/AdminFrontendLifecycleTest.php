@@ -96,6 +96,14 @@ class AdminFrontendLifecycleTest extends TestCase
     {
         $source = file_get_contents(resource_path('js/features/sidebar.js'));
         $sidebar = file_get_contents(resource_path('views/components/admin/sidebar.blade.php'));
+        $pengajarSidebar = file_get_contents(resource_path('views/components/pengajar/sidebar.blade.php'));
+        $waliSidebar = file_get_contents(resource_path('views/components/wali-kelas/sidebar.blade.php'));
+        $topbar = file_get_contents(resource_path('views/components/admin/topbar.blade.php'));
+        $adminLayout = file_get_contents(resource_path('views/layouts/app.blade.php'));
+        $pengajarLayout = file_get_contents(resource_path('views/layouts/pengajar/app.blade.php'));
+        $waliLayout = file_get_contents(resource_path('views/layouts/wali_kelas/app.blade.php'));
+        $pengajarEditSubject = file_get_contents(resource_path('js/pages/pengajar-edit-subject.js'));
+        $appCss = file_get_contents(resource_path('css/app.css'));
 
         $this->assertStringContainsString('export function syncSidebarAccessibility()', $source);
         $this->assertStringContainsString('moveFocusOutOfSidebar(sidebar);', $source);
@@ -111,6 +119,40 @@ class AdminFrontendLifecycleTest extends TestCase
         $this->assertStringContainsString('sidebarResizeListenerBound', $source);
         $this->assertStringNotContainsString("attributeFilter: ['class', 'aria-hidden', 'style']", $source);
         $this->assertStringNotContainsString('aria-hidden="true"', $sidebar);
+        $this->assertStringContainsString("sidebar.classList.contains('transform-none')", $source);
+        $this->assertStringContainsString("sidebar.classList.add('-translate-x-full')", $source);
+        $this->assertStringContainsString('rounded-lg xl:hidden', $topbar);
+        $this->assertStringNotContainsString('rounded-lg lg:hidden', $topbar);
+        $this->assertStringContainsString("const sidebarDesktopMediaQuery = '(min-width: 1280px)'", $source);
+        preg_match("/sidebarDesktopMediaQuery = '\(min-width: (\d+)px\)'/", $source, $breakpointMatch);
+        $desktopBreakpoint = (int) ($breakpointMatch[1] ?? 0);
+        $this->assertFalse(1279 >= $desktopBreakpoint);
+        $this->assertTrue(1280 >= $desktopBreakpoint);
+        $this->assertTrue(1281 >= $desktopBreakpoint);
+        $this->assertStringContainsString('const handleBreakpointChange = () => {', $source);
+        $this->assertStringContainsString('ensureSidebarVisible();', $source);
+        $this->assertSame(1, substr_count($source, "desktopMediaQuery.addEventListener('change', handleBreakpointChange)"));
+        $this->assertStringContainsString("sidebar.classList.add('xl:translate-x-0')", $source);
+        $this->assertStringContainsString('closeSidebarDrawer(sidebar);', $source);
+        $this->assertStringContainsString('drawer.hide();', $source);
+        $this->assertStringContainsString("sidebar.classList.remove('-translate-x-full')", $source);
+        $this->assertStringContainsString("sidebar.classList.add('-translate-x-full')", $source);
+        $this->assertStringNotContainsString('(min-width: 1024px)', $source);
+        foreach ([$sidebar, $pengajarSidebar, $waliSidebar] as $roleSidebar) {
+            $this->assertStringContainsString('xl:translate-x-0', $roleSidebar);
+            $this->assertStringNotContainsString('lg:translate-x-0', $roleSidebar);
+        }
+        foreach ([$adminLayout, $pengajarLayout, $waliLayout] as $roleLayout) {
+            $this->assertStringContainsString('xl:ml-64', $roleLayout);
+            $this->assertStringNotContainsString('lg:ml-64', $roleLayout);
+        }
+        $this->assertStringContainsString('@media (max-width: 1279px)', $appCss);
+        $this->assertStringContainsString('@media (min-width: 1280px)', $appCss);
+        $this->assertMatchesRegularExpression('/@media \(min-width: 1024px\)\s*\{\s*\.form-container/s', $appCss);
+        $this->assertStringNotContainsString("sidebar.style.transform = 'translateX(0)'", $pengajarEditSubject);
+        $this->assertStringNotContainsString("style.setProperty('margin-left', '16rem')", $pengajarEditSubject);
+        $this->assertStringNotContainsString('transform: translateX(-100%) !important', $appCss);
+        $this->assertStringNotContainsString('transform: none !important', $adminLayout);
     }
 
     public function test_admin_dashboard_content_uses_normal_grid_flow_below_topbar(): void
@@ -124,7 +166,7 @@ class AdminFrontendLifecycleTest extends TestCase
         $waliDashboard = file_get_contents(resource_path('views/wali_kelas/dashboard.blade.php'));
 
         $this->assertStringContainsString('class="fixed top-0 z-50 w-full bg-white border-b border-gray-200"', $adminTopbar);
-        $this->assertStringContainsString('class="p-4 sm:ml-64 min-h-screen bg-white relative"', $adminLayout);
+        $this->assertStringContainsString('class="p-4 xl:ml-64 min-h-screen bg-white relative"', $adminLayout);
         $this->assertStringContainsString('class="mt-14"', $adminLayout);
         $this->assertStringContainsString('class="mt-16"', $pengajarLayout);
         $this->assertStringContainsString('class="mt-16"', $waliLayout);
@@ -142,6 +184,106 @@ class AdminFrontendLifecycleTest extends TestCase
 
         $this->assertStringContainsString('grid grid-cols-1 lg:grid-cols-3 gap-4', $pengajarDashboard);
         $this->assertStringContainsString('grid grid-cols-1 lg:grid-cols-3 gap-4', $waliDashboard);
+    }
+
+    public function test_active_role_tables_keep_mobile_toolbars_and_row_actions_usable(): void
+    {
+        $appCss = file_get_contents(resource_path('css/app.css'));
+        $tahunAjaran = file_get_contents(resource_path('views/admin/tahun_ajaran/index.blade.php'));
+
+        $this->assertStringContainsString('.table-responsive {', $appCss);
+        $this->assertStringContainsString('w-full max-w-full overflow-x-auto overscroll-x-contain', $appCss);
+        $this->assertStringContainsString('.table-responsive > table {', $appCss);
+        $this->assertStringContainsString('@apply w-full;', $appCss);
+        $this->assertStringContainsString('.toolbar-action {', $appCss);
+        $this->assertStringContainsString('min-h-10 shrink-0', $appCss);
+        $this->assertStringContainsString('.table-action-group {', $appCss);
+        $this->assertStringContainsString('mx-auto flex w-max', $appCss);
+        $this->assertStringContainsString('gap-0.5 md:gap-0', $appCss);
+        $this->assertStringContainsString('.table-action-heading,', $appCss);
+        $this->assertStringContainsString('.table-action-cell {', $appCss);
+        $this->assertStringContainsString('whitespace-nowrap text-center', $appCss);
+        $this->assertStringContainsString('.table-action-control {', $appCss);
+        $this->assertStringContainsString('h-10 w-10 shrink-0', $appCss);
+        $this->assertStringContainsString('md:h-9 md:w-9', $appCss);
+        $this->assertStringNotContainsString('.table-responsive th,', $appCss);
+
+        $this->assertStringContainsString('grid w-full grid-cols-1 gap-2 sm:flex sm:flex-wrap', $tahunAjaran);
+        $this->assertStringContainsString('toolbar-action w-full', $tahunAjaran);
+        $this->assertStringContainsString('class="min-w-[56rem] bg-white border border-gray-200"', $tahunAjaran);
+        $this->assertStringContainsString('class="table-action-group"', $tahunAjaran);
+        $this->assertStringNotContainsString('table-action-group justify-start', $tahunAjaran);
+        $this->assertStringContainsString('Tampilkan Arsip', $tahunAjaran);
+        $this->assertStringContainsString('Tambah Tahun Ajaran', $tahunAjaran);
+
+        $adminTables = [
+            'views/admin/partials/student-results.blade.php',
+            'views/admin/partials/teacher-results.blade.php',
+            'views/admin/partials/class-results.blade.php',
+            'views/admin/partials/subject-results.blade.php',
+            'views/admin/partials/achievement-results.blade.php',
+            'views/admin/partials/ekstrakurikuler-results.blade.php',
+            'views/admin/report/index.blade.php',
+            'views/admin/report/history.blade.php',
+        ];
+
+        foreach ($adminTables as $file) {
+            $source = file_get_contents(resource_path($file));
+
+            $this->assertStringContainsString('table-responsive', $source, "{$file} does not contain local table overflow");
+            $this->assertStringContainsString('table-action-control', $source, "{$file} still has icon-sized controls");
+            $this->assertStringContainsString('table-action-heading', $source, "{$file} does not align the action heading");
+            $this->assertStringContainsString('table-action-cell', $source, "{$file} does not align the action controls");
+        }
+
+        $pengajarTables = [
+            'views/pengajar/subject.blade.php',
+            'views/pengajar/input_score.blade.php',
+            'views/pengajar/score.blade.php',
+        ];
+
+        foreach ($pengajarTables as $file) {
+            $source = file_get_contents(resource_path($file));
+
+            $this->assertStringContainsString('table-responsive', $source, "{$file} does not contain local table overflow");
+            $this->assertStringContainsString('table-action-control', $source, "{$file} still has icon-sized controls");
+            $this->assertStringContainsString('table-action-heading', $source, "{$file} does not align the action heading");
+            $this->assertStringContainsString('table-action-cell', $source, "{$file} does not align the action controls");
+        }
+
+        $waliTables = [
+            'views/wali_kelas/partials/student-results.blade.php',
+            'views/wali_kelas/capaian_kompetensi/index.blade.php',
+            'views/wali_kelas/absence.blade.php',
+            'views/wali_kelas/ekstrakurikuler.blade.php',
+            'views/wali_kelas/rapor/index.blade.php',
+        ];
+
+        foreach ($waliTables as $file) {
+            $source = file_get_contents(resource_path($file));
+
+            $this->assertStringContainsString('table-responsive', $source, "{$file} does not contain local table overflow");
+        }
+
+        $pengajarSubject = file_get_contents(resource_path('views/pengajar/subject.blade.php'));
+        $waliReport = file_get_contents(resource_path('views/wali_kelas/rapor/index.blade.php'));
+        $guruVerification = file_get_contents(resource_path('views/auth/verify-email.blade.php'));
+        $adminPassword = file_get_contents(resource_path('views/auth/admin-change-password.blade.php'));
+        $sidebar = file_get_contents(resource_path('js/features/sidebar.js'));
+
+        $this->assertStringNotContainsString('h-7 w-7', $pengajarSubject);
+        $this->assertStringContainsString('table-action-group', $waliReport);
+        $this->assertStringContainsString('Unduh Semua Rapor', $waliReport);
+        $this->assertStringContainsString('mt-6 w-full rounded-lg', $guruVerification);
+        $this->assertStringContainsString("layouts.wali_kelas.app' : 'layouts.pengajar.app", $guruVerification);
+        $this->assertStringNotContainsString("@extends('layouts.app')", $guruVerification);
+        $this->assertStringNotContainsString('max-w-xl', $guruVerification);
+        $this->assertStringContainsString('mt-6 w-full rounded-lg', $adminPassword);
+        $this->assertStringContainsString('id="admin-change-password-form"', $adminPassword);
+        $this->assertStringContainsString('mt-6 space-y-5', $adminPassword);
+        $this->assertStringNotContainsString('grid-cols-', $adminPassword);
+        $this->assertSame(1, substr_count($adminPassword, 'type="submit"'));
+        $this->assertStringContainsString("const sidebarDesktopMediaQuery = '(min-width: 1280px)'", $sidebar);
     }
 
     public function test_global_navigation_blades_do_not_run_direct_model_queries(): void

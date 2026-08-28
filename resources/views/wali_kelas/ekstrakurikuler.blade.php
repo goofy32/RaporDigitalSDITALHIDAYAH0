@@ -336,23 +336,23 @@
             <p class="mt-1 text-sm text-gray-500">Kelola nilai ekstrakurikuler seluruh siswa dalam satu tabel.</p>
         </div>
 
-        <div class="flex items-center gap-2">
+        <div class="flex flex-wrap items-center gap-2">
             <button
                 type="button"
                 x-show="!editMode"
                 @click="toggleEditMode()"
-                class="inline-flex items-center justify-center rounded-lg border border-green-700 px-4 py-2 text-sm font-medium text-green-700 transition hover:bg-green-50"
+                class="toolbar-action rounded-lg border border-green-700 px-4 py-2 text-sm font-medium text-green-700 transition hover:bg-green-50"
             >
                 Edit
             </button>
 
             <template x-if="editMode">
-                <div class="flex items-center gap-2">
+                <div class="flex flex-wrap items-center gap-2">
                     <button
                         type="button"
                         @click="cancelEdit()"
                         :disabled="saving"
-                        class="inline-flex items-center justify-center rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+                        class="toolbar-action rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                         Batal
                     </button>
@@ -360,7 +360,7 @@
                         type="button"
                         @click="saveAll()"
                         :disabled="saving"
-                        class="inline-flex items-center justify-center rounded-lg bg-green-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-green-800 disabled:cursor-not-allowed disabled:opacity-60"
+                        class="toolbar-action rounded-lg bg-green-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-green-800 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                         <span x-show="!saving">Simpan</span>
                         <span x-show="saving">Menyimpan...</span>
@@ -370,8 +370,8 @@
         </div>
     </div>
 
-    <div class="overflow-x-auto rounded-lg shadow-md">
-        <table class="w-full text-left text-sm text-gray-600">
+    <div class="table-responsive rounded-lg shadow-md" role="region" aria-label="Data ekstrakurikuler siswa" tabindex="0">
+        <table class="min-w-[64rem] text-left text-sm text-gray-600">
             <thead class="bg-gray-50 text-xs uppercase text-gray-700">
                 <tr>
                     <th class="px-6 py-3">No</th>
@@ -379,7 +379,7 @@
                     <th class="px-6 py-3">Nama</th>
                     <th class="px-6 py-3">Ekstrakurikuler</th>
                     <th class="px-6 py-3">Deskripsi</th>
-                    <th class="px-6 py-3 text-center" x-show="editMode" x-cloak>Aksi</th>
+                    <th class="table-action-heading px-6 py-3" x-show="editMode" x-cloak>Aksi</th>
                 </tr>
             </thead>
 
@@ -463,12 +463,13 @@
                                 </template>
                             </td>
 
-                            <td class="px-6 py-4 text-center align-top" x-show="editMode" x-cloak>
+                            <td class="table-action-cell px-6 py-4 align-top" x-show="editMode" x-cloak>
                                 <button
                                     type="button"
                                     @click="removeRow(studentIndex, rowIndex)"
-                                    class="inline-flex h-8 w-8 items-center justify-center rounded-full bg-red-50 text-lg font-semibold text-red-600 transition hover:bg-red-100"
+                                    class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-50 text-lg font-semibold text-red-600 transition hover:bg-red-100 focus:outline-none focus:ring-2 focus:ring-red-300 focus:ring-offset-1"
                                     title="Hapus baris"
+                                    aria-label="Hapus baris ekstrakurikuler"
                                 >
                                     &times;
                                 </button>

@@ -19,11 +19,11 @@
     <x-admin.topbar></x-admin.topbar>
     <x-admin.sidebar></x-admin.sidebar>
 
-    <div class="p-4 sm:ml-64">
+    <div class="p-4 xl:ml-64">
         <div class="p-4 bg-white mt-14">
-            <div class="flex justify-between items-center mb-6">
+            <div class="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <h2 class="text-2xl font-bold text-green-700">Detail Data Siswa</h2>
-                <div class="flex space-x-2">
+                <div class="flex flex-wrap gap-2">
                     <button class="bg-gray-600 text-white font-medium py-2 px-4 rounded hover:bg-gray-700" onclick="window.history.back()">Kembali</button>
                     <a href="{{ route('student.edit', $student->id) }}" 
                     class="bg-green-600 text-white font-medium py-2 px-4 rounded hover:bg-green-700">
@@ -32,8 +32,8 @@
                 </div>
             </div>
 
-            <div class="flex space-x-8">
-                <div class="w-full md:w-1/4">
+            <div class="flex flex-col gap-8 lg:flex-row">
+                <div class="mx-auto w-full max-w-xs shrink-0 lg:mx-0 lg:w-1/4">
                     <div class="bg-gray-200 rounded-lg shadow-md p-4">
                         @if($student->photo)
                             <img src="{{ asset('storage/' . $student->photo) }}" alt="{{ $student->nama }}" class="w-full h-auto rounded-lg">
@@ -47,7 +47,7 @@
                     </div>
                 </div>
 
-                <div class="w-full">
+                <div class="w-full overflow-x-auto">
                     <table class="w-full text-sm text-left text-gray-500">
                         <tbody>
                             <tr class="border-b">

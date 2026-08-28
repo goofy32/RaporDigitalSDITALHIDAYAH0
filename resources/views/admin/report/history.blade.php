@@ -116,8 +116,8 @@
 </div>
 
     <!-- Data Table -->
-    <div class="overflow-x-auto shadow-md rounded-lg">
-        <table class="w-full text-sm text-left text-gray-500">
+    <div class="table-responsive shadow-md rounded-lg" role="region" aria-label="Riwayat cetak rapor" tabindex="0">
+        <table class="min-w-[72rem] text-sm text-left text-gray-500">
         <thead class="text-xs text-gray-700 uppercase bg-gray-50">
     <tr>
         <th class="px-6 py-3">No</th>
@@ -128,7 +128,7 @@
         <th class="px-6 py-3">Tahun Ajaran</th>
         <th class="px-6 py-3">Dicetak Oleh</th>
         <th class="px-6 py-3">Waktu Cetak</th>
-        <th class="px-6 py-3 text-center min-w-[120px] w-32">Aksi</th>
+        <th class="table-action-heading min-w-[120px] w-32 px-6 py-3">Aksi</th>
     </tr>
         </thead>
         <tbody>
@@ -158,33 +158,37 @@
                 <td class="px-6 py-4">{{ $report->tahun_ajaran }}</td>
                 <td class="px-6 py-4">{{ $report->generator?->nama ?? 'Guru tidak tersedia' }}</td>
                 <td class="px-6 py-4">{{ $report->created_at->format('d M Y H:i') }}</td>
-                <td class="px-1 py-4 text-center whitespace-nowrap">
-                    <div class="flex items-center justify-center space-x-2">
+                <td class="table-action-cell px-1 py-4">
+                    <div class="table-action-group">
                         <!-- Tombol Preview yang diperbarui -->
                         <button onclick="previewRapor({{ $report->id }})" 
-                                class="text-blue-600 hover:text-blue-800"
-                                title="Preview Rapor">
+                                class="table-action-control text-blue-600 hover:bg-blue-50 hover:text-blue-800"
+                                title="Preview Rapor"
+                                aria-label="Preview rapor">
                             <img src="{{ asset('images/icons/detail.png') }}" alt="Preview" class="w-5 h-5 object-contain">
                         </button>
                         
                         <!-- Tombol Download - tampilkan dengan kondisi jika file ada -->
                         @if($report->generated_file && Storage::disk('public')->exists($report->generated_file))
                             <a href="{{ route('admin.report.history.download', $report->id) }}" 
-                                class="text-green-600 hover:text-green-800"
-                                title="Unduh Rapor">
+                                class="table-action-control text-green-600 hover:bg-green-50 hover:text-green-800"
+                                title="Unduh Rapor"
+                                aria-label="Unduh rapor">
                                 <img src="{{ asset('images/icons/download.png') }}" alt="Preview" class="w-5 h-5 object-contain">
                             </a>
                         @else
                             <button onclick="showFileNotAvailableAlert()"
-                                    class="text-gray-400 cursor-not-allowed"
-                                    title="File Tidak Tersedia">
+                                    class="table-action-control cursor-not-allowed text-gray-400"
+                                    title="File Tidak Tersedia"
+                                    aria-label="File rapor tidak tersedia">
                                 <img src="{{ asset('images/icons/download.png') }}" alt="Preview" class="w-5 h-5 object-contain">
                             </button>
                         @endif
 
                         <button @click="confirmDelete({{ $report->id }}, @js($report->generated_file))"
                                 title="Hapus Riwayat"
-                                class="text-red-600 hover:text-red-800">
+                                aria-label="Hapus riwayat rapor"
+                                class="table-action-control text-red-600 hover:bg-red-50 hover:text-red-800">
                             <img src="{{ asset('images/icons/delete.png') }}"
                                  alt="Hapus" class="w-5 h-5 object-contain">
                         </button>

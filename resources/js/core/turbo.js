@@ -1,5 +1,5 @@
 import Alpine from 'alpinejs';
-import { safeInitFlowbite, sidebarImageCache } from '../features/sidebar';
+import { ensureSidebarVisible, safeInitFlowbite, sidebarImageCache } from '../features/sidebar';
 
 export function registerTurboCore() {
     document.addEventListener('turbo:load', () => {
@@ -69,10 +69,7 @@ export function registerTurboCore() {
             sidebarImageCache.set(img.src, true);
         });
 
-        sidebar.style.display = '';
-        sidebar.style.visibility = 'visible';
-        sidebar.classList.remove('hidden', '-translate-x-full');
-        sidebar.classList.add('sm:translate-x-0');
+        ensureSidebarVisible();
     });
 
     document.addEventListener('turbo:before-render', () => {
@@ -176,10 +173,7 @@ export function registerTurboCore() {
         const sidebar = document.getElementById('logo-sidebar');
         if (!sidebar) return;
 
-        sidebar.style.display = '';
-        sidebar.style.visibility = 'visible';
-        sidebar.classList.remove('hidden', '-translate-x-full');
-        sidebar.classList.add('sm:translate-x-0');
+        ensureSidebarVisible();
 
         sidebar.querySelectorAll('img').forEach(img => {
             img.style.display = '';

@@ -6,9 +6,9 @@
 <div class="p-4 bg-white"
      data-page="tahun-ajaran-create"
      data-check-semester-url="{{ url('admin/tahun-ajaran/tahun-ajaran/check-semester-genap') }}">
-    <div class="flex justify-between items-center mb-6">
+    <div class="mb-6 flex flex-col items-start gap-4 md:flex-row md:items-center md:justify-between">
         <h2 class="text-2xl font-bold text-green-700">Tambah Tahun Ajaran Baru</h2>
-        <div class="flex space-x-3">
+        <div class="flex flex-wrap gap-3 md:justify-end">
             <a href="{{ route('tahun.ajaran.index') }}"
                 class="inline-flex justify-center py-2 px-4 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-white bg-gray-600">
                 Batal

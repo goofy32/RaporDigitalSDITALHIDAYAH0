@@ -14,7 +14,11 @@ class HelpFaqService
     {
         $items = $this->itemsForRole($role);
         $suggestedQuestions = $items->pluck('question')->take(6)->values()->all();
-        $categories = $items->pluck('category')->unique()->values()->all();
+        $availableCategories = $items->pluck('category')->unique();
+        $categories = collect(config("help_center.roles.{$role}", []))
+            ->filter(fn (string $category) => $availableCategories->contains($category))
+            ->values()
+            ->all();
 
         if ($question) {
             $selected = $items->first(fn (array $item) => $this->normalize($item['question']) === $this->normalize($question));
@@ -56,7 +60,15 @@ class HelpFaqService
             $allowedCategories = config("help_center.roles.{$role}", []);
 
             return collect($topics)
-                ->filter(fn (array $item) => in_array((string) ($item['category'] ?? ''), $allowedCategories, true))
+                ->filter(function (array $item) use ($allowedCategories, $role): bool {
+                    if (! in_array((string) ($item['category'] ?? ''), $allowedCategories, true)) {
+                        return false;
+                    }
+
+                    $roles = $item['roles'] ?? [];
+
+                    return $roles === [] || (is_array($roles) && in_array($role, $roles, true));
+                })
                 ->map(fn (array $item) => $this->normalizeItem($item))
                 ->filter(fn (array $item) => $item['question'] !== '' && $item['answer'] !== '')
                 ->values();

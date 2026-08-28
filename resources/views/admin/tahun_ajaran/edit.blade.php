@@ -4,9 +4,9 @@
 
 @section('content')
 <div class="p-4" data-page="tahun-ajaran-edit">
-    <div class="flex justify-between items-center mb-6">
+    <div class="mb-6 flex flex-col items-start gap-4 md:flex-row md:items-center md:justify-between">
         <h2 class="text-2xl font-bold text-green-700">Edit Tahun Ajaran</h2>
-        <div class="flex space-x-3">
+        <div class="flex flex-wrap gap-3 md:justify-end">
             <a href="{{ route('tahun.ajaran.index') }}" 
             class="px-4 py-2 bg-gray-600 text-white rounded-md focus:outline-none focus:ring-2 focus:ring-gray-300">
                 Batal

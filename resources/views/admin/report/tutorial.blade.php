@@ -5,7 +5,7 @@
 @section('content')
 <div class="p-4 bg-white mt-14">
     <!-- Header -->
-    <div class="flex justify-between items-center mb-6">
+    <div class="mb-6 flex flex-col items-start gap-4 md:flex-row md:items-center md:justify-between">
         <h2 class="text-2xl font-bold text-green-700">Tutorial Template Rapor</h2>
         <a href="{{ route('report.template.index') }}" class="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition">
             Kembali ke Daftar Template

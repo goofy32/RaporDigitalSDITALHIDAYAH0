@@ -104,17 +104,16 @@
     #logo-sidebar {
         will-change: transform;
         transition: transform 0.3s ease;
-        transform: none !important;
     }
 
-    @media (min-width: 640px) {
+    @media (min-width: 1280px) {
         #logo-sidebar {
             transform: translateX(0) !important;
         }
     }
 
-    @media (min-width: 640px) {
-        .sm\:ml-64 {
+    @media (min-width: 1280px) {
+        .xl\:ml-64 {
             margin-left: 16rem !important;
         }
     }
@@ -153,18 +152,11 @@
         background-color: #22c55e !important;
     }
 
-    body.edit-subject-page #logo-sidebar {
-        transform: translateX(0) !important;
-    }
-
-    body.edit-subject-page .sm\:ml-64 {
-        margin-left: 16rem !important;
-    }
 </style>
 @endpush
 
 @section('layout-content')
-    <div class="p-4 sm:ml-64 min-h-screen bg-white relative">
+    <div class="p-4 xl:ml-64 min-h-screen bg-white relative">
         <div id="content-loading-overlay"
              x-data="{
                  active: false,
@@ -311,8 +303,7 @@
 
             const sidebar = document.getElementById('logo-sidebar');
             if (sidebar) {
-                sidebar.classList.remove('-translate-x-full');
-                sidebar.classList.add('sm:translate-x-0');
+                sidebar.classList.add('xl:translate-x-0');
             }
 
             if (typeof window.preloadAndCacheSidebarIcons === 'function') {

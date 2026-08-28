@@ -3,20 +3,47 @@
 @section('title', 'Pusat Bantuan')
 
 @section('content')
+@php
+    $topicSearchIndex = collect($topics)->map(fn (array $topic) => [
+        'category' => $topic['category'],
+        'text' => implode(' ', [
+            $topic['category'],
+            $topic['question'],
+            $topic['answer'],
+            implode(' ', $topic['keywords'] ?? []),
+        ]),
+    ])->values();
+@endphp
+
 <div
     class="max-w-7xl mx-auto"
     x-data="{
         search: '',
         category: @js($categories[0] ?? ''),
         open: null,
+        topics: @js($topicSearchIndex),
         normalize(value) {
             return (value || '').toString().toLowerCase().replace(/\s+/g, ' ').trim();
         },
-        visible(topicCategory, text) {
-            const matchesCategory = !this.category || topicCategory === this.category;
+        matchesSearch(text) {
             const query = this.normalize(this.search);
 
-            return matchesCategory && (!query || this.normalize(text).includes(query));
+            if (!query) {
+                return true;
+            }
+
+            const searchableText = this.normalize(text);
+
+            return query.split(' ').every(keyword => searchableText.includes(keyword));
+        },
+        visible(topicCategory, text) {
+            const query = this.normalize(this.search);
+            const matchesCategory = query || !this.category || topicCategory === this.category;
+
+            return matchesCategory && this.matchesSearch(text);
+        },
+        visibleCount() {
+            return this.topics.filter(topic => this.visible(topic.category, topic.text)).length;
         }
     }"
 >
@@ -38,17 +65,46 @@
                     id="help-page-search"
                     type="search"
                     x-model.debounce.250ms="search"
+                    @input="open = null"
                     class="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent text-sm"
-                    placeholder="Cari topik bantuan..."
+                    placeholder="Cari login, nilai, rapor, email..."
                 >
             </div>
+            <p x-show="search" x-cloak class="mt-1 text-xs text-gray-500" aria-live="polite">
+                <span x-text="visibleCount()"></span> topik ditemukan di semua kategori
+            </p>
         </div>
     </div>
 
+    <div class="mb-4 lg:hidden">
+        <label for="help-mobile-category" class="mb-1 block text-sm font-medium text-gray-700">Kategori</label>
+        <select
+            id="help-mobile-category"
+            x-model="category"
+            @change="open = null"
+            :disabled="Boolean(search)"
+            class="w-full rounded-lg border-gray-300 text-sm focus:border-green-500 focus:ring-green-500 disabled:bg-gray-100 disabled:text-gray-500"
+        >
+            <option value="">Semua topik</option>
+            @foreach($categories as $category)
+                <option value="{{ $category }}">{{ $category }}</option>
+            @endforeach
+        </select>
+        <p x-show="search" x-cloak class="mt-1 text-xs text-gray-500">Pencarian mencakup semua kategori.</p>
+    </div>
+
     <div class="grid grid-cols-1 lg:grid-cols-[16rem_1fr] gap-6">
-        <aside class="bg-white border border-gray-200 rounded-lg p-3 h-fit">
+        <aside class="hidden lg:block bg-white border border-gray-200 rounded-lg p-3 h-fit lg:sticky lg:top-20">
             <p class="px-2 pb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Kategori</p>
             <div class="space-y-1">
+                <button
+                    type="button"
+                    @click="category = ''; open = null"
+                    class="w-full text-left px-3 py-2 rounded-lg text-sm font-medium transition-colors"
+                    :class="category === '' ? 'bg-green-100 text-green-800' : 'text-gray-600 hover:bg-gray-50 hover:text-green-700'"
+                >
+                    Semua topik
+                </button>
                 @foreach($categories as $category)
                     <button
                         type="button"
@@ -63,6 +119,11 @@
         </aside>
 
         <section class="space-y-3">
+            <div class="flex items-center justify-between gap-3 px-1">
+                <h2 class="text-sm font-semibold text-gray-700" x-text="search ? 'Hasil pencarian' : (category || 'Semua topik')"></h2>
+                <span class="text-xs text-gray-500"><span x-text="visibleCount()"></span> topik</span>
+            </div>
+
             @foreach($topics as $index => $topic)
                 @php
                     $searchText = implode(' ', [
@@ -74,6 +135,7 @@
                 @endphp
 
                 <article
+                    id="help-{{ \Illuminate\Support\Str::slug($topic['question']) }}-{{ $index }}"
                     class="bg-white border border-gray-200 rounded-lg overflow-hidden"
                     x-show="visible(@js($topic['category']), @js($searchText))"
                     data-help-topic
@@ -98,6 +160,23 @@
                     </div>
                 </article>
             @endforeach
+
+            <div
+                x-show="visibleCount() === 0"
+                x-cloak
+                class="rounded-lg border border-dashed border-gray-300 bg-white px-6 py-10 text-center"
+                role="status"
+            >
+                <p class="font-medium text-gray-800">Topik bantuan tidak ditemukan</p>
+                <p class="mt-1 text-sm text-gray-500">Coba kata yang lebih singkat, misalnya password, nilai, rapor, DOCX, atau email.</p>
+                <button
+                    type="button"
+                    @click="search = ''; category = ''; open = null"
+                    class="mt-4 text-sm font-medium text-green-700 hover:text-green-800 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 rounded"
+                >
+                    Tampilkan semua topik
+                </button>
+            </div>
         </section>
     </div>
 </div>
