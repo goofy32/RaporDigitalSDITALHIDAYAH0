@@ -84,10 +84,22 @@
         <!-- Form -->
         <form action="{{ route('login.post') }}" method="POST">
             @csrf
+
+            @if (($loginThrottleRetryAfter ?? 0) > 0)
+            <div id="login-throttle-notice"
+                data-retry-after="{{ $loginThrottleRetryAfter }}"
+                class="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"
+                role="alert">
+                Terlalu banyak percobaan masuk. Silakan tunggu
+                <span id="login-throttle-countdown" class="font-semibold" aria-live="polite">{{ $loginThrottleRetryAfter }}</span>
+                detik sebelum mencoba kembali.
+            </div>
+            @endif
+
             <!-- Username -->
             <div class="mb-4">
                 <label for="username" class="block mb-2 text-sm font-medium text-gray-700">Username atau Email</label>
-                <input type="text" name="username" id="username" required value="{{ old('username') }}"
+                <input type="text" name="username" id="username" required value="{{ $loginUsername ?? old('username') }}"
                     class="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500">
             </div>
 
@@ -137,7 +149,7 @@
             </div>
             <!-- Button -->
             <div class="flex justify-center mt-6">
-                <button type="submit"
+                <button type="submit" id="login-submit-button" data-default-label="Masuk"
                     class="w-full px-4 py-2 text-white bg-green-700 rounded-lg hover:bg-green-800 focus:outline-none focus:ring-2 focus:ring-green-500">
                     Masuk
                 </button>
@@ -160,6 +172,44 @@ function togglePasswordVisibility() {
         hidePasswordIcon.classList.add('hidden');
     }
 }
+
+(function initializeLoginThrottleCountdown() {
+    const notice = document.getElementById('login-throttle-notice');
+    const countdown = document.getElementById('login-throttle-countdown');
+    const submitButton = document.getElementById('login-submit-button');
+
+    if (!notice || !countdown || !submitButton) {
+        return;
+    }
+
+    let remainingSeconds = Number.parseInt(notice.dataset.retryAfter, 10);
+
+    if (!Number.isFinite(remainingSeconds) || remainingSeconds <= 0) {
+        return;
+    }
+
+    const updateState = () => {
+        countdown.textContent = String(remainingSeconds);
+        submitButton.disabled = remainingSeconds > 0;
+        submitButton.textContent = remainingSeconds > 0
+            ? `Tunggu ${remainingSeconds} detik`
+            : submitButton.dataset.defaultLabel;
+        submitButton.classList.toggle('cursor-not-allowed', remainingSeconds > 0);
+        submitButton.classList.toggle('opacity-60', remainingSeconds > 0);
+    };
+
+    updateState();
+
+    const timer = window.setInterval(() => {
+        remainingSeconds = Math.max(0, remainingSeconds - 1);
+        updateState();
+
+        if (remainingSeconds === 0) {
+            window.clearInterval(timer);
+            notice.hidden = true;
+        }
+    }, 1000);
+})();
 </script>
 </body>
 

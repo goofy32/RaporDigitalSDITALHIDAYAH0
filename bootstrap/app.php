@@ -8,6 +8,8 @@ use App\Http\Middleware\SyncGuruSelectedRoleSession;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Http\Exceptions\ThrottleRequestsException;
+use Illuminate\Http\Request;
 use Illuminate\Session\Middleware\StartSession;
 use App\Http\Middleware\TahunAjaranMiddleware;
 
@@ -63,5 +65,25 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {
-        //
+        $exceptions->render(function (ThrottleRequestsException $exception, Request $request) {
+            if (! $request->isMethod('post') || ! $request->routeIs('login.post')) {
+                return null;
+            }
+
+            $headers = $exception->getHeaders();
+            $retryAfter = $headers['Retry-After'] ?? null;
+
+            if (! is_numeric($retryAfter)) {
+                return null;
+            }
+
+            $submittedUsername = $request->input('username');
+
+            return response()->view('login', [
+                'loginThrottleRetryAfter' => max(0, (int) $retryAfter),
+                'loginUsername' => is_string($submittedUsername)
+                    ? mb_substr($submittedUsername, 0, 255)
+                    : '',
+            ], $exception->getStatusCode(), $headers);
+        });
     })->create();

@@ -148,17 +148,39 @@ class AdminPasswordRecoveryTest extends TestCase
 
     public function test_shared_login_is_rate_limited_and_csrf_protected(): void
     {
+        $submittedUsername = $this->admin->username;
+        $submittedPassword = 'WrongPassword123!';
+
         for ($attempt = 0; $attempt < 5; $attempt++) {
             $this->post(route('login.post'), [
-                'username' => $this->admin->username,
-                'password' => 'WrongPassword123!',
-            ])->assertSessionHasErrors('username');
+                'username' => $submittedUsername,
+                'password' => $submittedPassword,
+            ])->assertRedirect()
+                ->assertSessionHasErrors([
+                    'username' => 'Username, email, atau password salah.',
+                ]);
         }
 
-        $this->post(route('login.post'), [
-            'username' => $this->admin->username,
-            'password' => 'WrongPassword123!',
-        ])->assertTooManyRequests();
+        $throttledResponse = $this->post(route('login.post'), [
+            'username' => $submittedUsername,
+            'password' => $submittedPassword,
+        ]);
+
+        $retryAfter = (int) $throttledResponse->headers->get('Retry-After');
+
+        $throttledResponse
+            ->assertTooManyRequests()
+            ->assertHeader('Retry-After', (string) $retryAfter)
+            ->assertHeader('X-RateLimit-Remaining', '0')
+            ->assertSee('Terlalu banyak percobaan masuk. Silakan tunggu')
+            ->assertSee('data-retry-after="'.$retryAfter.'"', false)
+            ->assertSee('id="login-throttle-countdown"', false)
+            ->assertSee('id="login-submit-button"', false)
+            ->assertSee('submitButton.disabled = remainingSeconds > 0', false)
+            ->assertSee('value="'.$submittedUsername.'"', false)
+            ->assertDontSee($submittedPassword)
+            ->assertDontSee('Too Many Requests');
+        $this->assertGreaterThan(0, $retryAfter);
 
         Cache::flush();
         $this->withMiddleware(PreventRequestForgery::class);
@@ -168,6 +190,20 @@ class AdminPasswordRecoveryTest extends TestCase
             'username' => $this->admin->username,
             'password' => self::ADMIN_PASSWORD,
         ])->assertStatus(419);
+    }
+
+    public function test_unrelated_throttled_route_keeps_the_default_429_response(): void
+    {
+        Route::middleware(['web', 'throttle:1,1'])
+            ->post('/test/unrelated-throttle', fn () => response('ok'))
+            ->name('test.unrelated-throttle');
+
+        $this->post('/test/unrelated-throttle')->assertOk();
+
+        $this->post('/test/unrelated-throttle')
+            ->assertTooManyRequests()
+            ->assertDontSee('Terlalu banyak percobaan masuk')
+            ->assertDontSee('RAPOR DIGITAL');
     }
 
     public function test_expired_admin_and_guru_sessions_both_redirect_to_shared_login(): void
