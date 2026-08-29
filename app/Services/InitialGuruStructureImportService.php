@@ -289,6 +289,7 @@ class InitialGuruStructureImportService
             'alamat' => null,
             'username' => $this->uniqueUsernameFor($name),
             'password' => Hash::make($temporaryPassword),
+            'must_change_password' => true,
         ];
 
         $stats['gurus_created']++;

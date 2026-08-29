@@ -7,8 +7,11 @@ use App\Models\Kelas;
 use App\Services\SubjectTeacherAssignmentValidator;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
@@ -59,6 +62,8 @@ class InitialGuruStructureImportTest extends TestCase
 
     public function test_import_creates_guru_classes_subjects_and_assignments_from_specific_and_range_rows(): void
     {
+        Log::spy();
+
         $workbook = $this->createWorkbook([
             ['', 'Wali Ubay', 'Laki-laki', 'Wali Kelas + Guru', 'Pendidikan Pancasila, Mtk', 'Kelas 1- Ubay'],
             ['9000000000001', 'Wali Zaid', 'Perempuan', 'Wali Kelas + Guru', 'Pendidikan Pancasila', 'Kelas 2-Zaid'],
@@ -70,8 +75,8 @@ class InitialGuruStructureImportTest extends TestCase
             ['', 'Guru Penjas', 'Laki-laki', 'Guru Saja', 'Penjas', 'Kelas 1A, 2A, 2B'],
         ]);
 
-        $this->artisan('initial-data:import-guru-structure', ['--file' => $workbook])
-            ->assertExitCode(0);
+        $this->assertSame(0, Artisan::call('initial-data:import-guru-structure', ['--file' => $workbook]));
+        $this->assertStringNotContainsString('secret-password', Artisan::output());
 
         $kelasUbay = Kelas::where('nomor_kelas', 1)->where('nama_kelas', 'Ubay')->firstOrFail();
         $kelasZaid = Kelas::where('nomor_kelas', 2)->where('nama_kelas', 'Zaid')->firstOrFail();
@@ -91,6 +96,10 @@ class InitialGuruStructureImportTest extends TestCase
 
         $waliUbay = Guru::where('nama', 'Wali Ubay')->firstOrFail();
         $this->assertNull($waliUbay->nuptk);
+        $this->assertTrue(Hash::check('secret-password', $waliUbay->password));
+        $this->assertNotSame('secret-password', $waliUbay->password);
+        $this->assertTrue($waliUbay->must_change_password);
+        $this->assertNull($waliUbay->password_plain);
         $this->assertDatabaseHas('guru_kelas', [
             'guru_id' => $waliUbay->id,
             'kelas_id' => $kelasUbay->id,
@@ -139,12 +148,46 @@ class InitialGuruStructureImportTest extends TestCase
 
         $this->assertSame(0, DB::table('siswas')->count());
         $this->assertSame(0, DB::table('siswa_kelas_semester')->count());
+
+        foreach (['emergency', 'alert', 'critical', 'error', 'warning', 'notice', 'info', 'debug', 'log'] as $level) {
+            Log::shouldNotHaveReceived($level);
+        }
+
+        $this->post(route('login.post'), [
+            'username' => $waliUbay->username,
+            'password' => 'secret-password',
+        ])->assertRedirect(route('guru.force-password.edit'));
+
+        $this->assertAuthenticatedAs($waliUbay, 'guru');
     }
 
     public function test_import_is_idempotent_and_empty_nuptk_does_not_duplicate_guru(): void
     {
+        $unchangedHash = Hash::make('existing-password');
+        $existing = Guru::create([
+            'nuptk' => null,
+            'nama' => 'Wali Ubay',
+            'jenis_kelamin' => 'Laki-laki',
+            'jabatan' => 'guru_wali',
+            'username' => 'wali_existing',
+            'password' => $unchangedHash,
+            'must_change_password' => false,
+        ]);
+
+        $forcedHash = Hash::make('existing-forced-password');
+        $existingForced = Guru::create([
+            'nuptk' => '9000000000001',
+            'nama' => 'Wali Zaid',
+            'jenis_kelamin' => 'Perempuan',
+            'jabatan' => 'guru_wali',
+            'username' => 'wali_forced',
+            'password' => $forcedHash,
+            'must_change_password' => true,
+        ]);
+
         $workbook = $this->createWorkbook([
             ['', 'Wali Ubay', 'Laki-laki', 'Wali Kelas + Guru', 'Pendidikan Pancasila', 'Kelas 1- Ubay'],
+            ['9000000000001', 'Wali Zaid', 'Perempuan', 'Wali Kelas + Guru', 'Pendidikan Pancasila', 'Kelas 2-Zaid'],
         ]);
 
         $this->artisan('initial-data:import-guru-structure', ['--file' => $workbook])
@@ -152,10 +195,17 @@ class InitialGuruStructureImportTest extends TestCase
         $this->artisan('initial-data:import-guru-structure', ['--file' => $workbook])
             ->assertExitCode(0);
 
+        $this->assertSame($unchangedHash, $existing->fresh()->password);
+        $this->assertFalse($existing->fresh()->must_change_password);
+        $this->assertSame($forcedHash, $existingForced->fresh()->password);
+        $this->assertTrue($existingForced->fresh()->must_change_password);
         $this->assertSame(1, Guru::where('nama', 'Wali Ubay')->whereNull('nuptk')->count());
+        $this->assertSame(1, Guru::where('nuptk', '9000000000001')->count());
         $this->assertSame(1, Kelas::where('nomor_kelas', 1)->where('nama_kelas', 'Ubay')->count());
-        $this->assertSame(1, DB::table('guru_kelas')->count());
-        $this->assertSame(1, DB::table('mata_pelajarans')->count());
+        $this->assertSame(1, Kelas::where('nomor_kelas', 2)->where('nama_kelas', 'Zaid')->count());
+        $this->assertSame(2, Guru::count());
+        $this->assertSame(2, DB::table('guru_kelas')->count());
+        $this->assertSame(2, DB::table('mata_pelajarans')->count());
     }
 
     public function test_import_skips_example_rows_marked_contoh(): void
@@ -279,6 +329,7 @@ class InitialGuruStructureImportTest extends TestCase
             'tahun_ajarans',
             'audit_logs',
             'gurus',
+            'users',
         ] as $table) {
             Schema::dropIfExists($table);
         }
@@ -310,9 +361,21 @@ class InitialGuruStructureImportTest extends TestCase
             $table->string('jabatan')->nullable();
             $table->string('username')->nullable()->unique();
             $table->string('password');
+            $table->boolean('must_change_password')->default(false);
+            $table->string('password_plain')->nullable();
             $table->string('photo')->nullable();
             $table->timestamps();
             $table->softDeletes();
+        });
+
+        Schema::create('users', function (Blueprint $table) {
+            $table->id();
+            $table->string('name');
+            $table->string('username')->unique();
+            $table->string('email')->unique();
+            $table->string('password');
+            $table->rememberToken();
+            $table->timestamps();
         });
 
         Schema::create('tahun_ajarans', function (Blueprint $table) {
