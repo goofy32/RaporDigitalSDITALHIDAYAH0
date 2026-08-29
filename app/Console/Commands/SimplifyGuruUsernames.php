@@ -120,7 +120,8 @@ class SimplifyGuruUsernames extends Command
 
     private function baseUsername(string $name): string
     {
-        $withoutDegrees = preg_replace(self::DEGREE_PATTERNS, ' ', Str::ascii($name)) ?? $name;
+        $joinedName = str_replace(["'", "\u{2019}", "\u{2018}", '`'], '', $name);
+        $withoutDegrees = preg_replace(self::DEGREE_PATTERNS, ' ', Str::ascii($joinedName)) ?? $joinedName;
         $withoutPeriods = str_replace('.', '', $withoutDegrees);
         $normalized = preg_replace('/[^A-Za-z0-9]+/', ' ', $withoutPeriods) ?? '';
 

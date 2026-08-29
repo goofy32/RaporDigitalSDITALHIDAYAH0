@@ -48,6 +48,20 @@ class SimplifyGuruUsernamesTest extends TestCase
         $this->assertDatabaseHas('gurus', ['username' => 'rr_ria_pujiasih_stp']);
     }
 
+    public function test_apostrophes_inside_name_words_do_not_split_username_tokens(): void
+    {
+        $this->insertGuru("Silvia Ma'rifatunnisa, S.Pd.", 'silvia_lama');
+        $this->insertGuru("Nadia Ma\u{2019}rifatunnisa, S.Pd.", 'nadia_lama');
+
+        $this->artisan('initial-data:simplify-guru-usernames')
+            ->expectsOutput('#1: silvia_lama -> silvia_marifatunnisa')
+            ->expectsOutput('#2: nadia_lama -> nadia_marifatunnisa')
+            ->assertExitCode(0);
+
+        $this->assertDatabaseHas('gurus', ['id' => 1, 'username' => 'silvia_lama']);
+        $this->assertDatabaseHas('gurus', ['id' => 2, 'username' => 'nadia_lama']);
+    }
+
     public function test_apply_updates_only_usernames_and_preserves_other_guru_data(): void
     {
         $guruId = $this->insertGuru(
