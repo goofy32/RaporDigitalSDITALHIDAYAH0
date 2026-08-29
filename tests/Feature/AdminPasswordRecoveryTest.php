@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\AuditLog;
 use App\Models\Guru;
 use App\Models\User;
 use App\Notifications\AdminResetPasswordNotification;
@@ -461,10 +462,13 @@ class AdminPasswordRecoveryTest extends TestCase
     public function test_account_pages_keep_admin_pengajar_and_wali_navigation_isolated(): void
     {
         $this->actingAs($this->admin, 'web')
-            ->get(route('admin.password.change.edit'))
+            ->get(route('admin.account.edit'))
             ->assertOk()
             ->assertSee('Simulasi Staging')
-            ->assertSee('Ubah Password Admin');
+            ->assertSee('Pengaturan Akun Admin')
+            ->assertSee('Ubah Username')
+            ->assertSee('Ubah Email')
+            ->assertSee('Ubah Password');
 
         Auth::guard('web')->logout();
 
@@ -493,8 +497,253 @@ class AdminPasswordRecoveryTest extends TestCase
         Auth::guard('web')->logout();
 
         $this->actingAs($this->guru, 'guru')
-            ->get(route('admin.password.change.edit'))
+            ->get(route('admin.account.edit'))
             ->assertRedirect(route('login'));
+    }
+
+    public function test_admin_account_page_and_dropdown_have_expected_navigation(): void
+    {
+        $response = $this->actingAs($this->admin, 'web')
+            ->get(route('admin.account.edit'));
+
+        $response->assertOk()
+            ->assertSee('Pengaturan Akun Admin')
+            ->assertSee($this->admin->name)
+            ->assertSee($this->admin->username)
+            ->assertSee($this->admin->email)
+            ->assertSee('Pengaturan Akun')
+            ->assertSee('Catatan Aktivitas')
+            ->assertSee('href="'.route('admin.account.edit').'"', false)
+            ->assertDontSee('href="'.route('admin.password.change.edit').'"', false);
+
+        $this->get(route('admin.password.change.edit'))
+            ->assertRedirect(route('admin.account.edit').'#password');
+    }
+
+    public function test_admin_account_routes_require_web_admin_authentication(): void
+    {
+        Auth::guard('web')->logout();
+        $this->get(route('admin.account.edit'))->assertRedirect(route('login'));
+
+        $this->actingAs($this->guru, 'guru')
+            ->get(route('admin.account.edit'))
+            ->assertRedirect(route('login'));
+
+        foreach ([
+            'admin.account.edit',
+            'admin.account.username.update',
+            'admin.account.email.update',
+        ] as $routeName) {
+            $middleware = Route::getRoutes()->getByName($routeName)?->gatherMiddleware() ?? [];
+            $this->assertContains('auth:web', $middleware);
+            $this->assertContains('role:admin', $middleware);
+        }
+    }
+
+    public function test_admin_can_change_username_without_changing_other_credentials(): void
+    {
+        $oldUsername = $this->admin->username;
+        $oldEmail = $this->admin->email;
+        $oldPasswordHash = $this->admin->password;
+        $verifiedAt = now()->subDay()->startOfSecond();
+        $this->admin->forceFill([
+            'email_verified_at' => $verifiedAt,
+            'remember_token' => 'username-remember-token',
+        ])->save();
+
+        $response = $this->actingAs($this->admin, 'web')
+            ->put(route('admin.account.username.update'), [
+                'username' => '  admin-baru  ',
+                'current_password' => self::ADMIN_PASSWORD,
+            ]);
+
+        $response->assertRedirect(route('admin.account.edit'))
+            ->assertSessionHas('success', 'Username Admin berhasil diubah.')
+            ->assertSessionMissing('_old_input.current_password');
+
+        $freshAdmin = $this->admin->fresh();
+        $this->assertSame('admin-baru', $freshAdmin->username);
+        $this->assertSame($oldEmail, $freshAdmin->email);
+        $this->assertSame($oldPasswordHash, $freshAdmin->password);
+        $this->assertTrue($freshAdmin->email_verified_at->equalTo($verifiedAt));
+        $this->assertNotSame('username-remember-token', $freshAdmin->remember_token);
+        $this->assertAuthenticatedAs($freshAdmin, 'web');
+
+        $audit = AuditLog::query()->where('action', 'admin_username_changed')->sole();
+        $this->assertSame('Admin mengubah username akun.', $audit->description);
+        $this->assertSame(['username' => $oldUsername], $audit->old_values);
+        $this->assertSame(['username' => 'admin-baru'], $audit->new_values);
+        $this->assertSame(User::class, $audit->model_type);
+        $this->assertSame($freshAdmin->id, $audit->model_id);
+
+        $this->post(route('logout'));
+        $this->post(route('login.post'), [
+            'username' => $oldUsername,
+            'password' => self::ADMIN_PASSWORD,
+        ])->assertSessionHasErrors('username');
+        $this->post(route('login.post'), [
+            'username' => 'admin-baru',
+            'password' => self::ADMIN_PASSWORD,
+        ])->assertRedirect(route('admin.dashboard'));
+    }
+
+    public function test_wrong_password_or_guru_collision_cannot_change_admin_username(): void
+    {
+        $originalUsername = $this->admin->username;
+
+        $this->actingAs($this->admin, 'web')
+            ->put(route('admin.account.username.update'), [
+                'username' => 'admin-ditolak',
+                'current_password' => 'WrongPassword123!',
+            ])
+            ->assertSessionHasErrors('current_password', null, 'usernameUpdate')
+            ->assertSessionMissing('_old_input.current_password');
+        $this->assertSame($originalUsername, $this->admin->fresh()->username);
+
+        $this->put(route('admin.account.username.update'), [
+            'username' => strtoupper($this->guru->username),
+            'current_password' => self::ADMIN_PASSWORD,
+        ])->assertSessionHasErrors('username', null, 'usernameUpdate');
+
+        $this->put(route('admin.account.username.update'), [
+            'username' => strtoupper($this->guru->email),
+            'current_password' => self::ADMIN_PASSWORD,
+        ])->assertSessionHasErrors('username', null, 'usernameUpdate');
+
+        $this->guru->delete();
+        $this->put(route('admin.account.username.update'), [
+            'username' => $this->guru->email,
+            'current_password' => self::ADMIN_PASSWORD,
+        ])->assertSessionHasErrors('username', null, 'usernameUpdate');
+
+        $this->assertSame($originalUsername, $this->admin->fresh()->username);
+    }
+
+    public function test_current_admin_identifiers_do_not_trigger_false_username_collision(): void
+    {
+        $this->actingAs($this->admin, 'web')
+            ->put(route('admin.account.username.update'), [
+                'username' => $this->admin->username,
+                'current_password' => self::ADMIN_PASSWORD,
+            ])
+            ->assertRedirect(route('admin.account.edit'));
+
+        $this->put(route('admin.account.username.update'), [
+            'username' => $this->admin->email,
+            'current_password' => self::ADMIN_PASSWORD,
+        ])->assertRedirect(route('admin.account.edit'));
+
+        $this->assertSame($this->admin->email, $this->admin->fresh()->username);
+    }
+
+    public function test_admin_can_change_email_and_old_reset_token_is_invalidated(): void
+    {
+        Notification::fake();
+        $oldEmail = $this->admin->email;
+        $oldUsername = $this->admin->username;
+        $oldPasswordHash = $this->admin->password;
+        $verifiedAt = now()->subDay()->startOfSecond();
+        $this->admin->forceFill([
+            'email_verified_at' => $verifiedAt,
+            'remember_token' => 'email-remember-token',
+        ])->save();
+        Password::broker('users')->createToken($this->admin);
+        Password::broker('gurus')->createToken($this->guru);
+
+        $response = $this->actingAs($this->admin, 'web')
+            ->put(route('admin.account.email.update'), [
+                'email' => '  ADMIN-BARU@EXAMPLE.TEST  ',
+                'current_password' => self::ADMIN_PASSWORD,
+            ]);
+
+        $response->assertRedirect(route('admin.account.edit'))
+            ->assertSessionHas('success', 'Email Admin berhasil diubah.')
+            ->assertSessionMissing('_old_input.current_password');
+
+        $freshAdmin = $this->admin->fresh();
+        $this->assertSame('admin-baru@example.test', $freshAdmin->email);
+        $this->assertSame($oldUsername, $freshAdmin->username);
+        $this->assertSame($oldPasswordHash, $freshAdmin->password);
+        $this->assertTrue($freshAdmin->email_verified_at->equalTo($verifiedAt));
+        $this->assertNotSame('email-remember-token', $freshAdmin->remember_token);
+        $this->assertDatabaseMissing('password_reset_tokens', ['email' => $oldEmail]);
+        $this->assertDatabaseHas('guru_password_reset_tokens', ['email' => $this->guru->email]);
+        $this->assertAuthenticatedAs($freshAdmin, 'web');
+
+        $audit = AuditLog::query()->where('action', 'admin_email_changed')->sole();
+        $this->assertSame('Admin mengubah email akun.', $audit->description);
+        $this->assertSame(['email' => $oldEmail], $audit->old_values);
+        $this->assertSame(['email' => 'admin-baru@example.test'], $audit->new_values);
+
+        $this->post(route('logout'));
+        $this->post(route('login.post'), [
+            'username' => $oldEmail,
+            'password' => self::ADMIN_PASSWORD,
+        ])->assertSessionHasErrors('username');
+        $this->post(route('login.post'), [
+            'username' => 'admin-baru@example.test',
+            'password' => self::ADMIN_PASSWORD,
+        ])->assertRedirect(route('admin.dashboard'));
+        $this->post(route('logout'));
+
+        $this->post(route('password.email'), ['email' => 'admin-baru@example.test'])
+            ->assertSessionHas('status', $this->genericRecoveryMessage());
+        Notification::assertSentTo($freshAdmin, AdminResetPasswordNotification::class);
+    }
+
+    public function test_wrong_password_or_guru_collision_cannot_change_admin_email(): void
+    {
+        $originalEmail = $this->admin->email;
+        $guruWithEmailUsername = $this->createGuru(
+            'guru-reserved@example.test',
+            'guru-reserved-contact@example.test',
+            false
+        );
+
+        $this->actingAs($this->admin, 'web')
+            ->put(route('admin.account.email.update'), [
+                'email' => 'ditolak@example.test',
+                'current_password' => 'WrongPassword123!',
+            ])
+            ->assertSessionHasErrors('current_password', null, 'emailUpdate')
+            ->assertSessionMissing('_old_input.current_password');
+        $this->assertSame($originalEmail, $this->admin->fresh()->email);
+
+        $this->put(route('admin.account.email.update'), [
+            'email' => strtoupper($guruWithEmailUsername->username),
+            'current_password' => self::ADMIN_PASSWORD,
+        ])->assertSessionHasErrors('email', null, 'emailUpdate');
+
+        $this->put(route('admin.account.email.update'), [
+            'email' => strtoupper($this->guru->email),
+            'current_password' => self::ADMIN_PASSWORD,
+        ])->assertSessionHasErrors('email', null, 'emailUpdate');
+
+        $this->assertSame($originalEmail, $this->admin->fresh()->email);
+    }
+
+    public function test_username_and_email_changes_revoke_only_old_web_sessions(): void
+    {
+        foreach ([
+            ['route' => 'admin.account.username.update', 'payload' => ['username' => 'admin-sesi-baru']],
+            ['route' => 'admin.account.email.update', 'payload' => ['email' => 'admin-sesi-baru@example.test']],
+        ] as $index => $change) {
+            if ($index > 0) {
+                DB::table('sessions')->delete();
+            }
+
+            $this->insertGuardSessionsWithOverlappingIds();
+            $this->useDatabaseSessions();
+            $this->actingAs($this->admin->fresh(), 'web')
+                ->put(route($change['route']), array_merge($change['payload'], [
+                    'current_password' => self::ADMIN_PASSWORD,
+                ]))
+                ->assertRedirect(route('admin.account.edit'));
+
+            $this->assertDatabaseMissing('sessions', ['id' => 'admin-session-lama']);
+            $this->assertDatabaseHas('sessions', ['id' => 'guru-session-tetap']);
+            $this->assertAuthenticatedAs($this->admin->fresh(), 'web');
+        }
     }
 
     public function test_unverified_guru_sees_verification_status_banner(): void
@@ -714,29 +963,48 @@ class AdminPasswordRecoveryTest extends TestCase
     public function test_authenticated_admin_can_change_password_without_flashing_sensitive_input(): void
     {
         $newPassword = 'ChangedAdminPassword456!';
+        $this->admin->forceFill(['remember_token' => 'password-remember-token'])->save();
 
         $response = $this->actingAs($this->admin, 'web')
-            ->from(route('admin.password.change.edit'))
+            ->from(route('admin.account.edit').'#password')
             ->put(route('admin.password.change.update'), [
                 'current_password' => self::ADMIN_PASSWORD,
                 'password' => $newPassword,
                 'password_confirmation' => $newPassword,
             ]);
 
-        $response->assertRedirect(route('admin.password.change.edit'))
+        $response->assertRedirect(route('admin.account.edit').'#password')
             ->assertSessionHas('success')
             ->assertSessionMissing('_old_input.current_password')
             ->assertSessionMissing('_old_input.password')
             ->assertSessionMissing('_old_input.password_confirmation');
 
-        $this->assertTrue(Hash::check($newPassword, $this->admin->fresh()->password));
-        $this->assertAuthenticatedAs($this->admin, 'web');
+        $freshAdmin = $this->admin->fresh();
+        $this->assertTrue(Hash::check($newPassword, $freshAdmin->password));
+        $this->assertNotSame('password-remember-token', $freshAdmin->remember_token);
+        $this->assertAuthenticatedAs($freshAdmin, 'web');
+
+        $audit = AuditLog::query()->where('action', 'admin_password_changed')->sole();
+        $this->assertSame('Admin mengubah password akun.', $audit->description);
+        $this->assertNull($audit->old_values);
+        $this->assertNull($audit->new_values);
+        $this->assertStringNotContainsString($newPassword, (string) $audit->description);
+
+        $this->post(route('logout'));
+        $this->post(route('login.post'), [
+            'username' => $freshAdmin->username,
+            'password' => self::ADMIN_PASSWORD,
+        ])->assertSessionHasErrors('username');
+        $this->post(route('login.post'), [
+            'username' => $freshAdmin->username,
+            'password' => $newPassword,
+        ])->assertRedirect(route('admin.dashboard'));
     }
 
     public function test_admin_change_password_rejects_wrong_current_password_and_confirmation(): void
     {
         $this->actingAs($this->admin, 'web')
-            ->from(route('admin.password.change.edit'))
+            ->from(route('admin.account.edit').'#password')
             ->put(route('admin.password.change.update'), [
                 'current_password' => 'WrongPassword123!',
                 'password' => 'ChangedAdminPassword456!',
@@ -747,6 +1015,30 @@ class AdminPasswordRecoveryTest extends TestCase
             ->assertSessionMissing('_old_input.password');
 
         $this->assertTrue(Hash::check(self::ADMIN_PASSWORD, $this->admin->fresh()->password));
+
+        $this->put(route('admin.password.change.update'), [
+            'current_password' => '',
+            'password' => 'ChangedAdminPassword456!',
+            'password_confirmation' => 'ChangedAdminPassword456!',
+        ])->assertSessionHasErrors('current_password');
+    }
+
+    public function test_admin_password_change_revokes_only_old_web_sessions(): void
+    {
+        $this->insertGuardSessionsWithOverlappingIds();
+        $this->useDatabaseSessions();
+
+        $this->actingAs($this->admin, 'web')
+            ->put(route('admin.password.change.update'), [
+                'current_password' => self::ADMIN_PASSWORD,
+                'password' => 'ChangedAdminPassword456!',
+                'password_confirmation' => 'ChangedAdminPassword456!',
+            ])
+            ->assertRedirect(route('admin.account.edit').'#password');
+
+        $this->assertDatabaseMissing('sessions', ['id' => 'admin-session-lama']);
+        $this->assertDatabaseHas('sessions', ['id' => 'guru-session-tetap']);
+        $this->assertAuthenticatedAs($this->admin->fresh(), 'web');
     }
 
     private function createGuru(string $username, ?string $email, bool $verified): Guru

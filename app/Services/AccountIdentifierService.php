@@ -75,6 +75,29 @@ class AccountIdentifierService
         })->exists();
     }
 
+    public function conflictsWithOtherUser(?int $userId, ?string $username, ?string $email): bool
+    {
+        $identifiers = $this->normalizedIdentifiers($username, $email);
+
+        if (
+            $identifiers === []
+            || ! Schema::hasTable('users')
+            || ! Schema::hasColumns('users', ['username', 'email'])
+        ) {
+            return false;
+        }
+
+        return User::query()
+            ->when($userId !== null, fn ($query) => $query->whereKeyNot($userId))
+            ->where(function ($query) use ($identifiers): void {
+                foreach ($identifiers as $identifier) {
+                    $query->orWhereRaw('LOWER(username) = ?', [$identifier])
+                        ->orWhereRaw('LOWER(email) = ?', [$identifier]);
+                }
+            })
+            ->exists();
+    }
+
     public function conflictsWithOtherGuru(?int $guruId, ?string $username, ?string $email): bool
     {
         $identifiers = $this->normalizedIdentifiers($username, $email);

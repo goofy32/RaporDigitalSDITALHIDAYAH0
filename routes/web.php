@@ -5,10 +5,11 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\SchoolProfileController;
 use App\Http\Controllers\ClassController;
 use App\Http\Controllers\StudentController;
-use App\Http\Controllers\Auth\LoginController;
+use App\Http\Controllers\Auth\AdminAccountController;
 use App\Http\Controllers\Auth\AdminPasswordController;
 use App\Http\Controllers\Auth\GuruEmailVerificationController;
 use App\Http\Controllers\Auth\InitialAdminSetupController;
+use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\TeacherController;
 use App\Http\Controllers\SubjectController;
 use App\Http\Controllers\AchievementController;
@@ -174,6 +175,12 @@ Route::middleware(['auth:guru', 'force.guru.password'])->group(function () {
 });
 
 Route::middleware(['auth:web', 'role:admin'])->prefix('admin')->group(function () {
+    Route::get('/account', [AdminAccountController::class, 'edit'])
+        ->name('admin.account.edit');
+    Route::put('/account/username', [AdminAccountController::class, 'updateUsername'])
+        ->name('admin.account.username.update');
+    Route::put('/account/email', [AdminAccountController::class, 'updateEmail'])
+        ->name('admin.account.email.update');
     Route::get('/password/change', [AdminPasswordController::class, 'edit'])
         ->name('admin.password.change.edit');
     Route::put('/password/change', [AdminPasswordController::class, 'update'])

@@ -268,8 +268,18 @@ class AdminFrontendLifecycleTest extends TestCase
         $pengajarSubject = file_get_contents(resource_path('views/pengajar/subject.blade.php'));
         $waliReport = file_get_contents(resource_path('views/wali_kelas/rapor/index.blade.php'));
         $guruVerification = file_get_contents(resource_path('views/auth/verify-email.blade.php'));
-        $adminPassword = file_get_contents(resource_path('views/auth/admin-change-password.blade.php'));
+        $adminAccount = file_get_contents(resource_path('views/auth/admin-account-settings.blade.php'));
         $sidebar = file_get_contents(resource_path('js/features/sidebar.js'));
+
+        $adminPasswordFormStart = strpos($adminAccount, '<form id="admin-change-password-form"');
+        $this->assertNotFalse($adminPasswordFormStart);
+        $adminPasswordFormEnd = strpos($adminAccount, '</form>', $adminPasswordFormStart);
+        $this->assertNotFalse($adminPasswordFormEnd);
+        $adminPasswordForm = substr(
+            $adminAccount,
+            $adminPasswordFormStart,
+            $adminPasswordFormEnd + strlen('</form>') - $adminPasswordFormStart
+        );
 
         $this->assertStringNotContainsString('h-7 w-7', $pengajarSubject);
         $this->assertStringContainsString('table-action-group', $waliReport);
@@ -278,11 +288,11 @@ class AdminFrontendLifecycleTest extends TestCase
         $this->assertStringContainsString("layouts.wali_kelas.app' : 'layouts.pengajar.app", $guruVerification);
         $this->assertStringNotContainsString("@extends('layouts.app')", $guruVerification);
         $this->assertStringNotContainsString('max-w-xl', $guruVerification);
-        $this->assertStringContainsString('mt-6 w-full rounded-lg', $adminPassword);
-        $this->assertStringContainsString('id="admin-change-password-form"', $adminPassword);
-        $this->assertStringContainsString('mt-6 space-y-5', $adminPassword);
-        $this->assertStringNotContainsString('grid-cols-', $adminPassword);
-        $this->assertSame(1, substr_count($adminPassword, 'type="submit"'));
+        $this->assertStringContainsString('mt-6 w-full space-y-6', $adminAccount);
+        $this->assertStringContainsString('id="admin-change-password-form"', $adminPasswordForm);
+        $this->assertStringContainsString('mt-5 space-y-4', $adminPasswordForm);
+        $this->assertStringNotContainsString('grid-cols-', $adminPasswordForm);
+        $this->assertSame(1, substr_count($adminPasswordForm, 'type="submit"'));
         $this->assertStringContainsString("const sidebarDesktopMediaQuery = '(min-width: 1280px)'", $sidebar);
     }
 

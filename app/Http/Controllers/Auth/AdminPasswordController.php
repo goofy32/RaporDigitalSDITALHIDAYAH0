@@ -6,11 +6,13 @@ use App\Http\Controllers\Controller;
 use App\Models\Guru;
 use App\Models\User;
 use App\Services\AccountIdentifierService;
+use App\Services\AuditService;
 use App\Services\DatabaseSessionRevocationService;
 use Illuminate\Auth\Events\PasswordReset;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Password;
@@ -149,9 +151,9 @@ class AdminPasswordController extends Controller
             ->with('success', 'Password berhasil diatur ulang. Silakan masuk menggunakan password baru.');
     }
 
-    public function edit(): View
+    public function edit(): RedirectResponse
     {
-        return view('auth.admin-change-password');
+        return redirect()->to(route('admin.account.edit').'#password');
     }
 
     public function update(Request $request, DatabaseSessionRevocationService $sessions): RedirectResponse
@@ -185,16 +187,25 @@ class AdminPasswordController extends Controller
             ]);
         }
 
-        $admin->forceFill([
-            'password' => $validator->validated()['password'],
-            'remember_token' => Str::random(60),
-        ])->save();
+        DB::transaction(function () use ($admin, $validator): void {
+            $admin->forceFill([
+                'password' => $validator->validated()['password'],
+                'remember_token' => Str::random(60),
+            ])->save();
+
+            AuditService::log(
+                'admin_password_changed',
+                User::class,
+                (int) $admin->getKey(),
+                'Admin mengubah password akun.'
+            );
+        });
 
         $sessions->revoke('web', $admin->getKey());
         $request->session()->regenerate(true);
         $request->session()->regenerateToken();
 
-        return redirect()->route('admin.password.change.edit')
+        return redirect()->to(route('admin.account.edit').'#password')
             ->with('success', 'Password Admin berhasil diubah.');
     }
 

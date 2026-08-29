@@ -273,10 +273,10 @@
                                 @endif
 
                                 @if(Auth::guard('web')->check())
-                                    <a href="{{ route('admin.password.change.edit') }}"
+                                    <a href="{{ route('admin.account.edit') }}"
                                     class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
                                     role="menuitem">
-                                        Ubah Password
+                                        Pengaturan Akun
                                     </a>
                                     <a href="{{ route('admin.audit.index') }}" 
                                     class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100" 
