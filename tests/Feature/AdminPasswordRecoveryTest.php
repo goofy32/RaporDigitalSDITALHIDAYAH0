@@ -228,7 +228,7 @@ class AdminPasswordRecoveryTest extends TestCase
     {
         Notification::fake();
 
-        $this->post(route('password.email'), ['email' => $this->admin->email])
+        $this->post(route('password.email'), ['identifier' => $this->admin->email])
             ->assertRedirect()
             ->assertSessionHas('status', $this->genericRecoveryMessage());
 
@@ -242,6 +242,114 @@ class AdminPasswordRecoveryTest extends TestCase
 
             return true;
         });
+        $this->assertDatabaseCount('guru_password_reset_tokens', 0);
+    }
+
+    public function test_forgot_password_form_uses_one_username_or_email_identifier_field(): void
+    {
+        $this->get(route('password.request'))
+            ->assertOk()
+            ->assertSee('Masukkan username atau email yang terdaftar pada akun Anda.')
+            ->assertSee('Username atau Email')
+            ->assertSee('name="identifier"', false)
+            ->assertSee('type="text"', false)
+            ->assertDontSee('name="email"', false);
+
+        $this->post(route('password.email'), ['identifier' => '   '])
+            ->assertSessionHasErrors('identifier');
+        $this->post(route('password.email'), ['identifier' => str_repeat('a', 256)])
+            ->assertSessionHasErrors('identifier');
+    }
+
+    public function test_admin_username_recovery_uses_stored_email_with_case_and_whitespace_normalization(): void
+    {
+        Notification::fake();
+        $this->assertNotSame($this->admin->username, $this->admin->email);
+
+        $response = $this->from(route('password.request'))->post(route('password.email'), [
+            'identifier' => '  '.strtoupper($this->admin->username).'  ',
+        ]);
+
+        $response->assertRedirect(route('password.request'))
+            ->assertSessionHas('status', $this->genericRecoveryMessage());
+        $this->assertNull(session('_old_input.identifier'));
+
+        $this->get(route('password.request'))
+            ->assertOk()
+            ->assertSee($this->genericRecoveryMessage())
+            ->assertDontSee($this->admin->email);
+
+        Notification::assertSentTo($this->admin, AdminResetPasswordNotification::class);
+        $this->assertDatabaseHas('password_reset_tokens', ['email' => $this->admin->email]);
+        $this->assertDatabaseMissing('password_reset_tokens', ['email' => $this->admin->username]);
+        $this->assertDatabaseCount('guru_password_reset_tokens', 0);
+    }
+
+    public function test_unknown_username_and_email_share_generic_response_without_notification_or_token(): void
+    {
+        Notification::fake();
+
+        foreach (['username-tidak-ada', 'email-tidak-ada@example.test'] as $identifier) {
+            $response = $this->from(route('password.request'))->post(route('password.email'), [
+                'identifier' => $identifier,
+            ]);
+
+            $response->assertRedirect(route('password.request'))
+                ->assertSessionHas('status', $this->genericRecoveryMessage());
+
+            $this->get(route('password.request'))
+                ->assertOk()
+                ->assertSee($this->genericRecoveryMessage())
+                ->assertDontSee($this->admin->email)
+                ->assertDontSee('tidak ditemukan');
+        }
+
+        Notification::assertNothingSent();
+        $this->assertDatabaseCount('password_reset_tokens', 0);
+        $this->assertDatabaseCount('guru_password_reset_tokens', 0);
+    }
+
+    public function test_verified_guru_username_recovery_uses_stored_email(): void
+    {
+        Notification::fake();
+        $this->guru->forceFill(['email_verified_at' => now()])->save();
+        $this->assertNotSame($this->guru->username, $this->guru->email);
+
+        $this->post(route('password.email'), [
+            'identifier' => '  '.strtoupper($this->guru->username).'  ',
+        ])->assertRedirect()->assertSessionHas('status', $this->genericRecoveryMessage());
+
+        Notification::assertSentTo($this->guru, GuruResetPasswordNotification::class);
+        $this->assertDatabaseHas('guru_password_reset_tokens', ['email' => $this->guru->email]);
+        $this->assertDatabaseMissing('guru_password_reset_tokens', ['email' => $this->guru->username]);
+        $this->assertDatabaseCount('password_reset_tokens', 0);
+    }
+
+    public function test_unverified_guru_username_returns_generic_response_without_recovery(): void
+    {
+        Notification::fake();
+
+        $this->post(route('password.email'), ['identifier' => $this->guru->username])
+            ->assertRedirect()
+            ->assertSessionHas('status', $this->genericRecoveryMessage());
+
+        Notification::assertNothingSent();
+        $this->assertDatabaseCount('password_reset_tokens', 0);
+        $this->assertDatabaseCount('guru_password_reset_tokens', 0);
+    }
+
+    public function test_guru_without_email_username_returns_generic_response_without_recovery(): void
+    {
+        Notification::fake();
+        $guru = $this->createGuru('guru-tanpa-email-recovery', null, false);
+
+        $this->post(route('password.email'), ['identifier' => $guru->username])
+            ->assertRedirect()
+            ->assertSessionHas('status', $this->genericRecoveryMessage());
+
+        Notification::assertNothingSent();
+        $this->assertDatabaseCount('password_reset_tokens', 0);
+        $this->assertDatabaseCount('guru_password_reset_tokens', 0);
     }
 
     public function test_verified_guru_recovery_uses_separate_broker_and_hashed_token(): void
@@ -249,7 +357,7 @@ class AdminPasswordRecoveryTest extends TestCase
         Notification::fake();
         $this->guru->forceFill(['email_verified_at' => now()])->save();
 
-        $this->post(route('password.email'), ['email' => $this->guru->email])
+        $this->post(route('password.email'), ['identifier' => $this->guru->email])
             ->assertRedirect()
             ->assertSessionHas('status', $this->genericRecoveryMessage());
 
@@ -266,26 +374,89 @@ class AdminPasswordRecoveryTest extends TestCase
         $this->assertDatabaseCount('password_reset_tokens', 0);
     }
 
+    public function test_cross_domain_identifier_ambiguity_fails_closed(): void
+    {
+        Notification::fake();
+        $now = now();
+
+        DB::table('gurus')->insert([
+            [
+                'nama' => 'Guru Collision Username',
+                'username' => $this->admin->email,
+                'email' => 'collision-username@example.test',
+                'email_verified_at' => $now,
+                'password' => Hash::make(self::GURU_PASSWORD),
+                'must_change_password' => false,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ],
+            [
+                'nama' => 'Guru Collision Email',
+                'username' => 'guru-collision-email',
+                'email' => $this->admin->username,
+                'email_verified_at' => $now,
+                'password' => Hash::make(self::GURU_PASSWORD),
+                'must_change_password' => false,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ],
+        ]);
+
+        foreach ([$this->admin->email, $this->admin->username] as $identifier) {
+            $this->post(route('password.email'), ['identifier' => $identifier])
+                ->assertRedirect()
+                ->assertSessionHas('status', $this->genericRecoveryMessage());
+        }
+
+        Notification::assertNothingSent();
+        $this->assertDatabaseCount('password_reset_tokens', 0);
+        $this->assertDatabaseCount('guru_password_reset_tokens', 0);
+    }
+
     public function test_forgot_password_response_is_identical_for_all_eligibility_states(): void
     {
         Notification::fake();
         $verifiedGuru = $this->createGuru('guru-terverifikasi', 'verified@example.test', true);
+        $now = now();
+        $ambiguousGuruId = DB::table('gurus')->insertGetId([
+            'nama' => 'Guru Ambigu Recovery',
+            'username' => $this->admin->email,
+            'email' => 'guru-ambigu-recovery@example.test',
+            'email_verified_at' => $now,
+            'password' => Hash::make(self::GURU_PASSWORD),
+            'must_change_password' => false,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        $ambiguousGuru = Guru::query()->findOrFail($ambiguousGuruId);
 
         foreach ([
-            $this->admin->email,
-            $verifiedGuru->email,
-            $this->guru->email,
+            $this->admin->username,
+            $verifiedGuru->username,
+            $this->guru->username,
             'tidak-ada@example.test',
-        ] as $email) {
-            $response = $this->post(route('password.email'), ['email' => $email]);
-            $response->assertRedirect()->assertSessionHas('status', $this->genericRecoveryMessage());
-            $this->assertSame($this->genericRecoveryMessage(), session('status'));
+            $this->admin->email,
+        ] as $identifier) {
+            $this->from(route('password.request'))
+                ->post(route('password.email'), ['identifier' => $identifier])
+                ->assertRedirect(route('password.request'))
+                ->assertSessionHas('status', $this->genericRecoveryMessage());
+
+            $this->get(route('password.request'))
+                ->assertOk()
+                ->assertSee($this->genericRecoveryMessage())
+                ->assertDontSee($this->admin->email)
+                ->assertDontSee($verifiedGuru->email)
+                ->assertDontSee($ambiguousGuru->email);
         }
 
         Notification::assertSentTo($this->admin, AdminResetPasswordNotification::class);
         Notification::assertSentTo($verifiedGuru, GuruResetPasswordNotification::class);
         Notification::assertNotSentTo($this->guru, GuruResetPasswordNotification::class);
+        Notification::assertNotSentTo($ambiguousGuru, GuruResetPasswordNotification::class);
+        Notification::assertCount(2);
         $this->assertDatabaseMissing('guru_password_reset_tokens', ['email' => $this->guru->email]);
+        $this->assertDatabaseMissing('guru_password_reset_tokens', ['email' => $ambiguousGuru->email]);
     }
 
     public function test_forgot_password_is_rate_limited_and_csrf_protected(): void
@@ -294,17 +465,17 @@ class AdminPasswordRecoveryTest extends TestCase
 
         for ($attempt = 1; $attempt <= 5; $attempt++) {
             $this->post(route('password.email'), [
-                'email' => 'tidak-ada-'.$attempt.'@example.test',
+                'identifier' => 'tidak-ada-'.$attempt.'@example.test',
             ])->assertRedirect();
         }
 
-        $this->post(route('password.email'), ['email' => 'dibatasi@example.test'])
+        $this->post(route('password.email'), ['identifier' => 'dibatasi@example.test'])
             ->assertTooManyRequests();
 
         Cache::flush();
         $this->withMiddleware(PreventRequestForgery::class);
         $this->app->instance('env', 'production');
-        $this->post(route('password.email'), ['email' => $this->admin->email])
+        $this->post(route('password.email'), ['identifier' => $this->admin->email])
             ->assertStatus(419);
     }
 
@@ -759,7 +930,7 @@ class AdminPasswordRecoveryTest extends TestCase
         ])->assertRedirect(route('admin.dashboard'));
         $this->post(route('logout'));
 
-        $this->post(route('password.email'), ['email' => 'admin-baru@example.test'])
+        $this->post(route('password.email'), ['identifier' => 'admin-baru@example.test'])
             ->assertSessionHas('status', $this->genericRecoveryMessage());
         Notification::assertSentTo($freshAdmin, AdminResetPasswordNotification::class);
     }
@@ -994,7 +1165,7 @@ class AdminPasswordRecoveryTest extends TestCase
         $this->guru->forceFill(['email_verified_at' => now()])->save();
         $this->assertFalse(Schema::hasColumn('gurus', 'remember_token'));
 
-        $this->post(route('password.email'), ['email' => $this->guru->email])
+        $this->post(route('password.email'), ['identifier' => $this->guru->email])
             ->assertRedirect()
             ->assertSessionHas('status', $this->genericRecoveryMessage());
 
@@ -1160,7 +1331,7 @@ class AdminPasswordRecoveryTest extends TestCase
 
     private function genericRecoveryMessage(): string
     {
-        return 'Jika akun dan email Anda memenuhi syarat untuk pemulihan, petunjuk pengaturan ulang password akan dikirim. Jika Anda tidak menerima email, silakan hubungi Admin sekolah.';
+        return 'Jika akun ditemukan, petunjuk pemulihan akan dikirim ke email yang terdaftar. Silakan periksa kotak masuk dan folder spam.';
     }
 
     private function insertGuardSessionsWithOverlappingIds(): void

@@ -25,7 +25,7 @@ use Throwable;
 
 class AdminPasswordController extends Controller
 {
-    private const GENERIC_RECOVERY_MESSAGE = 'Jika akun dan email Anda memenuhi syarat untuk pemulihan, petunjuk pengaturan ulang password akan dikirim. Jika Anda tidak menerima email, silakan hubungi Admin sekolah.';
+    private const GENERIC_RECOVERY_MESSAGE = 'Jika akun ditemukan, petunjuk pemulihan akan dikirim ke email yang terdaftar. Silakan periksa kotak masuk dan folder spam.';
 
     public function createForgot(): View
     {
@@ -34,28 +34,34 @@ class AdminPasswordController extends Controller
 
     public function sendResetLink(Request $request, AccountIdentifierService $identifiers): RedirectResponse
     {
+        if (is_string($request->input('identifier'))) {
+            $request->merge(['identifier' => trim($request->input('identifier'))]);
+        }
+
         $validated = $request->validate([
-            'email' => ['required', 'string', 'email:rfc', 'max:255'],
+            'identifier' => ['required', 'string', 'max:255'],
         ], [
-            'email.required' => 'Email wajib diisi.',
-            'email.string' => 'Email harus berupa teks.',
-            'email.email' => 'Format email tidak valid.',
-            'email.max' => 'Email maksimal 255 karakter.',
+            'identifier.required' => 'Username atau email wajib diisi.',
+            'identifier.string' => 'Username atau email harus berupa teks.',
+            'identifier.max' => 'Username atau email maksimal 255 karakter.',
         ]);
 
-        $email = $identifiers->normalizeEmail($validated['email']);
-        $admin = User::query()->whereRaw('LOWER(email) = ?', [$email])->first();
-        $guru = Guru::query()->whereRaw('LOWER(email) = ?', [$email])->first();
+        $identifier = $validated['identifier'];
+        $adminMatches = $identifiers->matchingUsers($identifier);
+        $guruMatches = $identifiers->matchingGurus($identifier);
+        $admin = $adminMatches->count() === 1 ? $adminMatches->first() : null;
+        $guru = $guruMatches->count() === 1 ? $guruMatches->first() : null;
+        $matchCount = $adminMatches->count() + $guruMatches->count();
 
         try {
-            if (($admin ? 1 : 0) + ($guru ? 1 : 0) !== 1) {
+            if ($matchCount !== 1) {
                 $this->consumeRecoveryTimebox();
             } elseif ($admin) {
                 Password::broker('users')->sendResetLink(['email' => $admin->email]);
-            } elseif ($guru?->hasVerifiedEmail()) {
+            } elseif ($guru?->hasVerifiedEmail() && is_string($guru->email) && $guru->email !== '') {
                 Password::broker('gurus')->sendResetLink(['email' => $guru->email]);
             } else {
-                Password::broker('users')->sendResetLink(['email' => $email]);
+                $this->consumeRecoveryTimebox();
             }
         } catch (Throwable $exception) {
             Log::error('Password recovery notification could not be sent.', [

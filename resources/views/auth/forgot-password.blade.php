@@ -12,7 +12,7 @@
         <div class="mb-6 text-center">
             <img src="{{ asset('images/icons/sdit-logo.png') }}" alt="Logo Sekolah" class="mx-auto mb-4 h-24 w-24 object-contain">
             <h1 class="text-2xl font-bold text-green-700">Lupa Password</h1>
-            <p class="mt-2 text-sm text-gray-600">Masukkan email yang terdaftar pada akun Anda.</p>
+            <p class="mt-2 text-sm text-gray-600">Masukkan username atau email yang terdaftar pada akun Anda.</p>
         </div>
 
         @if (session('status'))
@@ -24,12 +24,12 @@
         <form method="POST" action="{{ route('password.email') }}" class="space-y-5">
             @csrf
             <div>
-                <label for="email" class="mb-1 block text-sm font-medium text-gray-700">Email</label>
-                <input id="email" name="email" type="email" value="{{ old('email') }}" required autofocus autocomplete="email"
-                    class="w-full rounded-md border px-3 py-2 focus:border-green-500 focus:ring-green-500 @error('email') border-red-500 @else border-gray-300 @enderror"
-                    @error('email') aria-invalid="true" aria-describedby="email-error" @enderror>
-                @error('email')
-                    <p id="email-error" class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                <label for="identifier" class="mb-1 block text-sm font-medium text-gray-700">Username atau Email</label>
+                <input id="identifier" name="identifier" type="text" value="{{ old('identifier') }}" required autofocus autocomplete="username" maxlength="255"
+                    class="w-full rounded-md border px-3 py-2 focus:border-green-500 focus:ring-green-500 @error('identifier') border-red-500 @else border-gray-300 @enderror"
+                    @error('identifier') aria-invalid="true" aria-describedby="identifier-error" @enderror>
+                @error('identifier')
+                    <p id="identifier-error" class="mt-1 text-sm text-red-600">{{ $message }}</p>
                 @enderror
             </div>
 
