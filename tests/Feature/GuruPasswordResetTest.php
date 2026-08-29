@@ -4,13 +4,18 @@ namespace Tests\Feature;
 
 use App\Models\Guru;
 use App\Models\User;
+use App\Services\DatabaseSessionRevocationService;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
+use LogicException;
+use RuntimeException;
 use Tests\TestCase;
+use Throwable;
 
 class GuruPasswordResetTest extends TestCase
 {
@@ -31,12 +36,12 @@ class GuruPasswordResetTest extends TestCase
         config()->set('database.default', 'sqlite');
         config()->set('database.connections.sqlite.database', ':memory:');
         config()->set('cache.default', 'array');
-        config()->set('session.driver', 'array');
         DB::purge('sqlite');
         DB::reconnect('sqlite');
         Cache::flush();
 
         $this->createSchema();
+        $this->useDatabaseSessions();
         $this->seedFixture();
     }
 
@@ -57,6 +62,160 @@ class GuruPasswordResetTest extends TestCase
         $this->assertTrue((bool) $freshGuru->must_change_password);
         $this->assertSame('legacy-secret', $freshGuru->password_plain);
         $this->assertFalse(Hash::check('old-password', $freshGuru->password));
+    }
+
+    public function test_best_effort_revocation_remains_a_no_op_for_non_database_sessions(): void
+    {
+        $sessionId = str_repeat('f', 40);
+        $this->insertDatabaseSession($sessionId, 'guru', $this->guru->id);
+        $this->useArraySessions();
+
+        app(DatabaseSessionRevocationService::class)->revoke('guru', $this->guru->id);
+
+        $this->assertDatabaseHas('sessions', ['id' => $sessionId]);
+    }
+
+    public function test_required_revocation_fails_closed_for_non_database_sessions(): void
+    {
+        $this->useArraySessions();
+        $this->expectException(RuntimeException::class);
+
+        app(DatabaseSessionRevocationService::class)->revokeOrFail('guru', $this->guru->id);
+    }
+
+    public function test_required_revocation_rejects_malformed_session_configuration(): void
+    {
+        $this->useDatabaseSessions();
+
+        foreach ([
+            ['session.table', '', RuntimeException::class],
+            ['session.connection', '', RuntimeException::class],
+            ['session.serialization', 'unsupported', LogicException::class],
+            ['session.encrypt', 'invalid', LogicException::class],
+        ] as [$key, $value, $exceptionClass]) {
+            $original = config($key);
+            config()->set($key, $value);
+
+            try {
+                app(DatabaseSessionRevocationService::class)->revokeOrFail('guru', $this->guru->id);
+                $this->fail("Required revocation accepted malformed configuration: {$key}");
+            } catch (Throwable $exception) {
+                $this->assertInstanceOf($exceptionClass, $exception);
+            } finally {
+                config()->set($key, $original);
+            }
+        }
+    }
+
+    public function test_admin_assisted_reset_fails_closed_for_non_database_sessions(): void
+    {
+        $this->useArraySessions();
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->from(route('teacher.show', $this->guru->id))
+            ->put(route('teacher.reset-password.update', $this->guru->id), [
+                'password' => 'Temporary123!',
+                'password_confirmation' => 'Temporary123!',
+            ])
+            ->assertRedirect(route('teacher.show', $this->guru->id))
+            ->assertSessionHasErrors('password')
+            ->assertSessionMissing('success');
+
+        $freshGuru = $this->guru->fresh();
+
+        $this->assertTrue(Hash::check('old-password', $freshGuru->password));
+        $this->assertFalse((bool) $freshGuru->must_change_password);
+        $this->assertDatabaseMissing('audit_logs', [
+            'action' => 'guru_password_reset',
+            'model_id' => $this->guru->id,
+        ]);
+    }
+
+    public function test_admin_reset_revokes_only_target_guru_database_sessions(): void
+    {
+        $this->assertSame($this->admin->id, $this->guru->id);
+        $this->guru->forceFill(['password_plain' => null])->save();
+
+        $otherGuru = Guru::query()->create([
+            'nama' => 'Guru Lain',
+            'email' => 'guru-lain@example.test',
+            'username' => 'guru-lain',
+            'password' => Hash::make('other-password'),
+            'jabatan' => 'guru',
+        ]);
+
+        $targetSessionOne = str_repeat('a', 40);
+        $targetSessionTwo = str_repeat('b', 40);
+        $otherGuruSession = str_repeat('c', 40);
+        $overlappingAdminSession = str_repeat('d', 40);
+
+        $this->insertDatabaseSession($targetSessionOne, 'guru', $this->guru->id);
+        $this->insertDatabaseSession($targetSessionTwo, 'guru', $this->guru->id);
+        $this->insertDatabaseSession($otherGuruSession, 'guru', $otherGuru->id);
+        $this->insertDatabaseSession($overlappingAdminSession, 'web', $this->admin->id);
+        $this->useDatabaseSessions();
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->put(route('teacher.reset-password.update', $this->guru->id), [
+                'password' => 'Temporary123!',
+                'password_confirmation' => 'Temporary123!',
+            ])
+            ->assertRedirect(route('teacher.show', $this->guru->id))
+            ->assertSessionHas('success');
+
+        $freshGuru = $this->guru->fresh();
+
+        $this->assertTrue(Hash::check('Temporary123!', $freshGuru->password));
+        $this->assertTrue((bool) $freshGuru->must_change_password);
+        $this->assertNull($freshGuru->password_plain);
+        $this->assertDatabaseMissing('sessions', ['id' => $targetSessionOne]);
+        $this->assertDatabaseMissing('sessions', ['id' => $targetSessionTwo]);
+        $this->assertDatabaseHas('sessions', ['id' => $otherGuruSession]);
+        $this->assertDatabaseHas('sessions', ['id' => $overlappingAdminSession]);
+        $this->assertAuthenticatedAs($this->admin, 'web');
+
+        $this->withCookie(config('session.cookie'), $targetSessionOne)
+            ->get(route('guru.force-password.edit'))
+            ->assertRedirect(route('login'));
+        $this->assertGuest('guru');
+    }
+
+    public function test_failed_required_session_revocation_rolls_back_admin_assisted_reset(): void
+    {
+        $targetSession = str_repeat('e', 40);
+        $this->insertDatabaseSession($targetSession, 'guru', $this->guru->id);
+        $this->useDatabaseSessions();
+
+        DB::statement(<<<'SQL'
+            CREATE TRIGGER prevent_session_delete
+            BEFORE DELETE ON sessions
+            BEGIN
+                SELECT RAISE(ABORT, 'session delete blocked');
+            END
+            SQL);
+
+        $this->actingAs($this->admin, 'web')
+            ->withSession($this->adminSession())
+            ->from(route('teacher.show', $this->guru->id))
+            ->put(route('teacher.reset-password.update', $this->guru->id), [
+                'password' => 'Temporary123!',
+                'password_confirmation' => 'Temporary123!',
+            ])
+            ->assertRedirect(route('teacher.show', $this->guru->id))
+            ->assertSessionHasErrors('password')
+            ->assertSessionMissing('success');
+
+        $freshGuru = $this->guru->fresh();
+
+        $this->assertTrue(Hash::check('old-password', $freshGuru->password));
+        $this->assertFalse((bool) $freshGuru->must_change_password);
+        $this->assertDatabaseHas('sessions', ['id' => $targetSession]);
+        $this->assertDatabaseMissing('audit_logs', [
+            'action' => 'guru_password_reset',
+            'model_id' => $this->guru->id,
+        ]);
     }
 
     public function test_reset_password_modal_trigger_is_only_shown_in_password_security_sections(): void
@@ -267,6 +426,7 @@ class GuruPasswordResetTest extends TestCase
     private function createSchema(): void
     {
         foreach ([
+            'sessions',
             'audit_logs',
             'nilais',
             'kkms',
@@ -290,6 +450,15 @@ class GuruPasswordResetTest extends TestCase
             $table->string('email')->nullable()->unique();
             $table->string('password');
             $table->timestamps();
+        });
+
+        Schema::create('sessions', function (Blueprint $table) {
+            $table->string('id')->primary();
+            $table->foreignId('user_id')->nullable()->index();
+            $table->string('ip_address', 45)->nullable();
+            $table->text('user_agent')->nullable();
+            $table->longText('payload');
+            $table->integer('last_activity')->index();
         });
 
         Schema::create('gurus', function (Blueprint $table) {
@@ -508,5 +677,37 @@ class GuruPasswordResetTest extends TestCase
             'no_tahun_ajaran' => false,
             'last_activity' => time(),
         ];
+    }
+
+    private function insertDatabaseSession(string $id, string $guard, int $accountId): void
+    {
+        DB::table('sessions')->insert([
+            'id' => $id,
+            'user_id' => $accountId,
+            'ip_address' => '127.0.0.1',
+            'user_agent' => 'test',
+            'payload' => base64_encode(serialize([
+                Auth::guard($guard)->getName() => $accountId,
+            ])),
+            'last_activity' => time(),
+        ]);
+    }
+
+    private function useDatabaseSessions(): void
+    {
+        config()->set('session.driver', 'database');
+        config()->set('session.connection', 'sqlite');
+        config()->set('session.encrypt', false);
+        config()->set('session.serialization', 'php');
+        app('session')->forgetDrivers();
+        app()->forgetInstance('session.store');
+    }
+
+    private function useArraySessions(): void
+    {
+        config()->set('session.driver', 'array');
+        config()->set('session.connection', null);
+        app('session')->forgetDrivers();
+        app()->forgetInstance('session.store');
     }
 }

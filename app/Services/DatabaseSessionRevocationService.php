@@ -5,17 +5,37 @@ namespace App\Services;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use LogicException;
+use RuntimeException;
 use Throwable;
 
 class DatabaseSessionRevocationService
 {
     public function revoke(string $guard, int|string $accountId): void
     {
+        $this->revokeSessions($guard, $accountId, false);
+    }
+
+    public function revokeOrFail(string $guard, int|string $accountId): void
+    {
+        $this->revokeSessions($guard, $accountId, true);
+    }
+
+    private function revokeSessions(string $guard, int|string $accountId, bool $failClosed): void
+    {
         if (config('session.driver') !== 'database') {
+            if ($failClosed) {
+                throw new RuntimeException('Required database session revocation is unavailable.');
+            }
+
             return;
         }
 
         try {
+            if ($failClosed) {
+                $this->assertRequiredConfiguration();
+            }
+
             $loginKey = Auth::guard($guard)->getName();
             $connection = DB::connection(config('session.connection') ?: null);
             $table = (string) config('session.table', 'sessions');
@@ -43,6 +63,34 @@ class DatabaseSessionRevocationService
                 'guard' => $guard,
                 'exception' => $exception::class,
             ]);
+
+            if ($failClosed) {
+                throw $exception;
+            }
+        }
+    }
+
+    private function assertRequiredConfiguration(): void
+    {
+        $connection = config('session.connection');
+        $table = config('session.table', 'sessions');
+        $serialization = config('session.serialization', 'php');
+        $encrypt = config('session.encrypt', false);
+
+        if ($connection !== null && (! is_string($connection) || trim($connection) === '')) {
+            throw new RuntimeException('Database session connection configuration is invalid.');
+        }
+
+        if (! is_string($table) || trim($table) === '') {
+            throw new RuntimeException('Database session table configuration is invalid.');
+        }
+
+        if (! is_string($serialization) || ! in_array($serialization, ['php', 'json'], true)) {
+            throw new LogicException('Database session serialization configuration is unsupported.');
+        }
+
+        if (! is_bool($encrypt)) {
+            throw new LogicException('Database session encryption configuration is invalid.');
         }
     }
 

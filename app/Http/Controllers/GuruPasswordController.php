@@ -4,10 +4,14 @@ namespace App\Http\Controllers;
 
 use App\Models\Guru;
 use App\Services\AuditService;
+use App\Services\DatabaseSessionRevocationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
+use Throwable;
 
 class GuruPasswordController extends Controller
 {
@@ -18,7 +22,11 @@ class GuruPasswordController extends Controller
         ]);
     }
 
-    public function updateReset(Request $request, Guru $guru)
+    public function updateReset(
+        Request $request,
+        Guru $guru,
+        DatabaseSessionRevocationService $sessions
+    )
     {
         $validated = $request->validate([
             'password' => ['required', 'string', 'min:8', 'confirmed'],
@@ -28,19 +36,34 @@ class GuruPasswordController extends Controller
             'password.confirmed' => 'Konfirmasi password sementara tidak cocok.',
         ]);
 
-        $guru->forceFill([
-            'password' => Hash::make($validated['password']),
-            'must_change_password' => true,
-        ])->save();
+        try {
+            DB::transaction(function () use ($guru, $sessions, $validated): void {
+                $guru->forceFill([
+                    'password' => Hash::make($validated['password']),
+                    'must_change_password' => true,
+                ])->save();
 
-        AuditService::log(
-            'guru_password_reset',
-            Guru::class,
-            $guru->id,
-            'Admin mereset password guru.',
-            null,
-            ['must_change_password' => true]
-        );
+                $sessions->revokeOrFail('guru', $guru->getKey());
+
+                AuditService::log(
+                    'guru_password_reset',
+                    Guru::class,
+                    $guru->id,
+                    'Admin mereset password guru.',
+                    null,
+                    ['must_change_password' => true]
+                );
+            });
+        } catch (Throwable $exception) {
+            Log::warning('Admin-assisted Guru password reset failed.', [
+                'guru_id' => $guru->getKey(),
+                'exception' => $exception::class,
+            ]);
+
+            return back()->withErrors([
+                'password' => 'Password guru belum berhasil direset. Silakan coba kembali.',
+            ]);
+        }
 
         return redirect()->route('teacher.show', $guru->id)
             ->with('success', 'Password guru berhasil direset. Guru wajib mengganti password saat login berikutnya.');
