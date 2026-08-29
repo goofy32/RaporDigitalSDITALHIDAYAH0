@@ -520,6 +520,79 @@ class AdminPasswordRecoveryTest extends TestCase
             ->assertRedirect(route('admin.account.edit').'#password');
     }
 
+    public function test_admin_account_password_borders_follow_isolated_server_error_bags(): void
+    {
+        $this->actingAs($this->admin, 'web');
+
+        $initialHtml = $this->get(route('admin.account.edit'))
+            ->assertOk()
+            ->getContent();
+
+        $this->assertSame(5, substr_count($initialHtml, 'class="admin-account-sensitive-input'));
+        $this->assertSame(5, substr_count($initialHtml, 'aria-invalid="false"'));
+        $this->assertStringContainsString(
+            '.admin-account-sensitive-input[aria-invalid="true"]',
+            $initialHtml
+        );
+
+        $this->put(route('admin.account.username.update'), [
+            'username' => 'admin-baru',
+            'current_password' => 'PasswordUsernameSalah!',
+        ])->assertSessionHasErrors('current_password', null, 'usernameUpdate');
+
+        $usernameErrorHtml = $this->get(route('admin.account.edit'))->getContent();
+        $this->assertMatchesRegularExpression(
+            '/id="username_current_password"[^>]+aria-invalid="true"/s',
+            $usernameErrorHtml
+        );
+        $this->assertMatchesRegularExpression(
+            '/id="email_current_password"[^>]+aria-invalid="false"/s',
+            $usernameErrorHtml
+        );
+        $this->assertMatchesRegularExpression(
+            '/id="current_password"[^>]+aria-invalid="false"/s',
+            $usernameErrorHtml
+        );
+        $this->assertStringNotContainsString('PasswordUsernameSalah!', $usernameErrorHtml);
+
+        $this->put(route('admin.account.email.update'), [
+            'email' => 'admin-baru@example.test',
+            'current_password' => 'PasswordEmailSalah!',
+        ])->assertSessionHasErrors('current_password', null, 'emailUpdate');
+
+        $emailErrorHtml = $this->get(route('admin.account.edit'))->getContent();
+        $this->assertMatchesRegularExpression(
+            '/id="username_current_password"[^>]+aria-invalid="false"/s',
+            $emailErrorHtml
+        );
+        $this->assertMatchesRegularExpression(
+            '/id="email_current_password"[^>]+aria-invalid="true"/s',
+            $emailErrorHtml
+        );
+        $this->assertStringNotContainsString('PasswordEmailSalah!', $emailErrorHtml);
+
+        $this->put(route('admin.password.change.update'), [
+            'current_password' => '',
+            'password' => 'PasswordBaruRahasia!',
+            'password_confirmation' => 'PasswordBaruRahasia!',
+        ])->assertSessionHasErrors('current_password');
+
+        $passwordErrorHtml = $this->get(route('admin.account.edit'))->getContent();
+        $this->assertMatchesRegularExpression(
+            '/id="current_password"[^>]+aria-invalid="true"/s',
+            $passwordErrorHtml
+        );
+        $this->assertMatchesRegularExpression(
+            '/id="username_current_password"[^>]+aria-invalid="false"/s',
+            $passwordErrorHtml
+        );
+        $this->assertMatchesRegularExpression(
+            '/id="email_current_password"[^>]+aria-invalid="false"/s',
+            $passwordErrorHtml
+        );
+        $this->assertStringNotContainsString('PasswordBaruRahasia!', $passwordErrorHtml);
+    }
+
     public function test_admin_account_routes_require_web_admin_authentication(): void
     {
         Auth::guard('web')->logout();

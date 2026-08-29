@@ -2,6 +2,22 @@
 
 @section('title', 'Pengaturan Akun Admin')
 
+@push('styles')
+<style>
+    .admin-account-sensitive-input {
+        border-color: #D1D5DB !important;
+    }
+
+    .admin-account-sensitive-input[aria-invalid="true"] {
+        border-color: #EF4444 !important;
+    }
+
+    .admin-account-sensitive-input:focus {
+        border-color: #22C55E !important;
+    }
+</style>
+@endpush
+
 @section('content')
 <div class="mt-6 w-full space-y-6">
     <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
@@ -54,7 +70,8 @@
                 <div>
                     <label for="username_current_password" class="mb-1 block text-sm font-medium text-gray-700">Password Saat Ini</label>
                     <input id="username_current_password" name="current_password" type="password" required autocomplete="current-password"
-                        class="w-full rounded-md border px-3 py-2 focus:border-green-500 focus:ring-green-500 {{ $errors->usernameUpdate->has('current_password') ? 'border-red-500' : 'border-gray-300' }}">
+                        aria-invalid="{{ $errors->usernameUpdate->has('current_password') ? 'true' : 'false' }}"
+                        class="admin-account-sensitive-input w-full rounded-md border px-3 py-2 focus:border-green-500 focus:ring-green-500 {{ $errors->usernameUpdate->has('current_password') ? 'border-red-500' : 'border-gray-300' }}">
                     @if ($errors->usernameUpdate->has('current_password'))
                         <p class="mt-1 text-sm text-red-600">{{ $errors->usernameUpdate->first('current_password') }}</p>
                     @endif
@@ -87,7 +104,8 @@
                 <div>
                     <label for="email_current_password" class="mb-1 block text-sm font-medium text-gray-700">Password Saat Ini</label>
                     <input id="email_current_password" name="current_password" type="password" required autocomplete="current-password"
-                        class="w-full rounded-md border px-3 py-2 focus:border-green-500 focus:ring-green-500 {{ $errors->emailUpdate->has('current_password') ? 'border-red-500' : 'border-gray-300' }}">
+                        aria-invalid="{{ $errors->emailUpdate->has('current_password') ? 'true' : 'false' }}"
+                        class="admin-account-sensitive-input w-full rounded-md border px-3 py-2 focus:border-green-500 focus:ring-green-500 {{ $errors->emailUpdate->has('current_password') ? 'border-red-500' : 'border-gray-300' }}">
                     @if ($errors->emailUpdate->has('current_password'))
                         <p class="mt-1 text-sm text-red-600">{{ $errors->emailUpdate->first('current_password') }}</p>
                     @endif
@@ -110,7 +128,8 @@
                 <div>
                     <label for="current_password" class="mb-1 block text-sm font-medium text-gray-700">Password Saat Ini</label>
                     <input id="current_password" name="current_password" type="password" required autocomplete="current-password"
-                        class="w-full rounded-md border px-3 py-2 focus:border-green-500 focus:ring-green-500 @error('current_password') border-red-500 @else border-gray-300 @enderror">
+                        aria-invalid="{{ $errors->has('current_password') ? 'true' : 'false' }}"
+                        class="admin-account-sensitive-input w-full rounded-md border px-3 py-2 focus:border-green-500 focus:ring-green-500 @error('current_password') border-red-500 @else border-gray-300 @enderror">
                     @error('current_password')
                         <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
                     @enderror
@@ -119,7 +138,8 @@
                 <div>
                     <label for="password" class="mb-1 block text-sm font-medium text-gray-700">Password Baru</label>
                     <input id="password" name="password" type="password" required autocomplete="new-password"
-                        class="w-full rounded-md border px-3 py-2 focus:border-green-500 focus:ring-green-500 @error('password') border-red-500 @else border-gray-300 @enderror">
+                        aria-invalid="{{ $errors->has('password') ? 'true' : 'false' }}"
+                        class="admin-account-sensitive-input w-full rounded-md border px-3 py-2 focus:border-green-500 focus:ring-green-500 @error('password') border-red-500 @else border-gray-300 @enderror">
                     @error('password')
                         <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
                     @enderror
@@ -128,7 +148,8 @@
                 <div>
                     <label for="password_confirmation" class="mb-1 block text-sm font-medium text-gray-700">Konfirmasi Password Baru</label>
                     <input id="password_confirmation" name="password_confirmation" type="password" required autocomplete="new-password"
-                        class="w-full rounded-md border px-3 py-2 focus:border-green-500 focus:ring-green-500 @error('password_confirmation') border-red-500 @else border-gray-300 @enderror">
+                        aria-invalid="{{ $errors->has('password_confirmation') ? 'true' : 'false' }}"
+                        class="admin-account-sensitive-input w-full rounded-md border px-3 py-2 focus:border-green-500 focus:ring-green-500 @error('password_confirmation') border-red-500 @else border-gray-300 @enderror">
                     @error('password_confirmation')
                         <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
                     @enderror
