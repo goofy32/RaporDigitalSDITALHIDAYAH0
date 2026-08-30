@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use Illuminate\Database\Migrations\Migrator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Schema;
@@ -61,6 +62,10 @@ class BaselineSchemaInspector
         'users',
     ];
 
+    public function __construct(private readonly Migrator $migrator)
+    {
+    }
+
     public function assertCurrentSchema(): void
     {
         $actual = collect(Schema::getTableListing())
@@ -92,13 +97,24 @@ class BaselineSchemaInspector
     }
 
     /**
+     * @param  iterable<int, \SplFileInfo>|null  $files
      * @return array<int, string>
      */
-    public function expectedMigrations(): array
+    public function expectedMigrations(?iterable $files = null): array
     {
-        return collect(File::files(database_path('migrations')))
+        $migrationNames = collect($files ?? File::files(database_path('migrations')))
             ->filter(fn (\SplFileInfo $file): bool => $file->getExtension() === 'php')
-            ->map(fn (\SplFileInfo $file): string => $file->getBasename('.php'))
+            ->map(fn (\SplFileInfo $file): string => $this->migrator->getMigrationName($file->getPathname()));
+        $collisions = $migrationNames->duplicatesStrict()->unique()->values();
+
+        if ($collisions->isNotEmpty()) {
+            throw new RuntimeException(sprintf(
+                'Nama migration source bertabrakan setelah normalisasi Laravel (collisions=%d).',
+                $collisions->count()
+            ));
+        }
+
+        return $migrationNames
             ->sort()
             ->values()
             ->all();

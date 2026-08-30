@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Services\BaselineDatabaseIdentity;
 use App\Services\BaselinePreparationService;
 use App\Services\BaselineSchemaInspector;
+use Illuminate\Database\Migrations\Migrator;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Artisan;
@@ -12,6 +13,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
+use RuntimeException;
 use Tests\TestCase;
 
 class PrepareBaselineTest extends TestCase
@@ -185,6 +187,73 @@ class PrepareBaselineTest extends TestCase
         $expected = BaselineSchemaInspector::EXPECTED_TABLES;
         sort($expected);
         $this->assertSame($expected, $classified);
+    }
+
+    public function test_migration_names_use_laravel_semantics_for_normal_and_double_extensions(): void
+    {
+        $inspector = app(BaselineSchemaInspector::class);
+
+        $this->assertSame(
+            ['example_name'],
+            $inspector->expectedMigrations([new \SplFileInfo('example_name.php')])
+        );
+        $this->assertSame(
+            ['example_name'],
+            $inspector->expectedMigrations([new \SplFileInfo('example_name.php.php')])
+        );
+    }
+
+    public function test_real_legacy_double_extension_matches_laravel_migration_row(): void
+    {
+        $canonical = '2025_02_09_142601_create_guru_kelas_table';
+        $expected = app(BaselineSchemaInspector::class)->expectedMigrations();
+
+        $this->assertContains($canonical, $expected);
+        $this->assertNotContains($canonical.'.php', $expected);
+        $this->assertDatabaseHas('migrations', ['migration' => $canonical]);
+    }
+
+    public function test_genuinely_missing_migration_still_blocks(): void
+    {
+        $migration = DB::table('migrations')->orderBy('migration')->value('migration');
+        DB::table('migrations')->where('migration', $migration)->delete();
+
+        $this->assertSame(1, Artisan::call('initial-data:prepare-baseline', ['mode' => 'minimal']));
+        $this->assertStringContainsString('Migration set tidak lengkap atau tidak cocok', Artisan::output());
+    }
+
+    public function test_genuinely_extra_database_migration_still_blocks(): void
+    {
+        DB::table('migrations')->insert([
+            'migration' => '2099_01_01_000000_unexpected_extra_migration',
+            'batch' => 999,
+        ]);
+
+        $this->assertSame(1, Artisan::call('initial-data:prepare-baseline', ['mode' => 'minimal']));
+        $this->assertStringContainsString('Migration set tidak lengkap atau tidak cocok', Artisan::output());
+    }
+
+    public function test_same_migration_count_with_different_names_still_blocks(): void
+    {
+        $migration = DB::table('migrations')->orderBy('migration')->value('migration');
+        DB::table('migrations')->where('migration', $migration)->update([
+            'migration' => '2099_01_01_000000_replaced_migration_name',
+        ]);
+
+        $this->assertSame(1, Artisan::call('initial-data:prepare-baseline', ['mode' => 'minimal']));
+        $this->assertStringContainsString('Migration set tidak lengkap atau tidak cocok', Artisan::output());
+        $this->assertSame(count(File::files(database_path('migrations'))), DB::table('migrations')->count());
+    }
+
+    public function test_canonical_migration_name_collision_fails_closed(): void
+    {
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('Nama migration source bertabrakan');
+
+        app(BaselineSchemaInspector::class)->expectedMigrations([
+            new \SplFileInfo('duplicate_name.php'),
+            new \SplFileInfo('duplicate_name.php.php'),
+        ]);
     }
 
     public function test_unexpected_schema_table_blocks_before_mutation(): void
@@ -641,12 +710,12 @@ class PrepareBaselineTest extends TestCase
 
     private function seedValidCandidate(): void
     {
-        $migrationRows = collect(File::files(database_path('migrations')))
-            ->filter(fn (\SplFileInfo $file): bool => $file->getExtension() === 'php')
-            ->sortBy(fn (\SplFileInfo $file): string => $file->getFilename())
+        $migrationRows = collect(app(Migrator::class)->getMigrationFiles(database_path('migrations')))
+            ->keys()
+            ->sort()
             ->values()
-            ->map(fn (\SplFileInfo $file, int $index): array => [
-                'migration' => $file->getBasename('.php'),
+            ->map(fn (string $migration, int $index): array => [
+                'migration' => $migration,
                 'batch' => $index + 1,
             ])
             ->all();
