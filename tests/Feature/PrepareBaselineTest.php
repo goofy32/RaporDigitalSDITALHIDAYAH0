@@ -16,9 +16,9 @@ use Tests\TestCase;
 
 class PrepareBaselineTest extends TestCase
 {
-    private const BASELINE_A_DATABASE = 'u975086294_rapor_baseline_a';
+    private const BASELINE_A_DATABASE = 'u975086294_raporbaselineA';
 
-    private const BASELINE_B_DATABASE = 'u975086294_rapor_baseline_b';
+    private const BASELINE_B_DATABASE = 'u975086294_raporbaselineB';
 
     private const RELATIONS = [
         'siswas' => ['kelas_id' => 'kelas', 'tahun_ajaran_id' => 'tahun_ajarans'],

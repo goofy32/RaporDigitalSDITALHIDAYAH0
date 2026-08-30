@@ -10,8 +10,8 @@ use RuntimeException;
 class BaselinePreparationService
 {
     public const MODE_DATABASES = [
-        'minimal' => 'u975086294_rapor_baseline_a',
-        'school-structure' => 'u975086294_rapor_baseline_b',
+        'minimal' => 'u975086294_raporbaselineA',
+        'school-structure' => 'u975086294_raporbaselineB',
     ];
 
     public const PRODUCTION_DATABASE = 'u975086294_rapor_digital';
