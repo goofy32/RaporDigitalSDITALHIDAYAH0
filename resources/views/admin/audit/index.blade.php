@@ -18,7 +18,7 @@
                         <path d="M10 11v6" />
                         <path d="M14 11v6" />
                     </svg>
-                    Recycle Bin
+                    Data Terhapus
                 </a>
                 <button type="button" data-modal-toggle="filter-modal" class="w-full sm:w-auto flex items-center justify-center px-4 py-2 text-sm font-medium text-white rounded-lg bg-gray-600 hover:bg-gray-700 focus:ring-4 focus:ring-gray-300">
                     <svg class="w-4 h-4 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -30,7 +30,7 @@
                     <svg class="w-4 h-4 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                     </svg>
-                    Export CSV
+                    Ekspor CSV
                 </a>
                 <button type="button" data-modal-target="clear-logs-modal" data-modal-toggle="clear-logs-modal" class="w-full sm:w-auto flex items-center justify-center px-4 py-2 text-sm font-medium text-white rounded-lg bg-red-600 hover:bg-red-700 focus:ring-4 focus:ring-red-300">
                     <svg class="w-4 h-4 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -43,39 +43,39 @@
     </div>
 </div>
 
-<!-- Search and filter form -->
+<!-- Form pencarian dan filter -->
 <form method="GET" action="{{ route('admin.audit.index') }}" class="bg-white p-4 mb-4 border-b border-gray-200">
     <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div>
-            <label for="search" class="block mb-2 text-sm font-medium text-gray-900">Search</label>
-            <input type="text" name="search" id="search" value="{{ request('search') }}" class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5" placeholder="Search description, IP...">
+            <label for="search" class="block mb-2 text-sm font-medium text-gray-900">Pencarian</label>
+            <input type="text" name="search" id="search" value="{{ request('search') }}" class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5" placeholder="Cari deskripsi, alamat IP, atau aksi...">
         </div>
         <div>
-            <label for="action" class="block mb-2 text-sm font-medium text-gray-900">Action</label>
+            <label for="action" class="block mb-2 text-sm font-medium text-gray-900">Aksi</label>
             <select id="action" name="action" class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5">
-                <option value="">All Actions</option>
+                <option value="">Semua Aksi</option>
                 @foreach($actions as $action)
                     <option value="{{ $action }}" {{ request('action') == $action ? 'selected' : '' }}>
-                        {{ ucfirst(str_replace('_', ' ', $action)) }}
+                        {{ \App\Services\AuditService::actionLabel($action) }}
                     </option>
                 @endforeach
             </select>
         </div>
         <div>
-            <label for="date_from" class="block mb-2 text-sm font-medium text-gray-900">From Date</label>
+            <label for="date_from" class="block mb-2 text-sm font-medium text-gray-900">Dari Tanggal</label>
             <input type="date" name="date_from" id="date_from" value="{{ request('date_from') }}" class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5">
         </div>
         <div>
-            <label for="date_to" class="block mb-2 text-sm font-medium text-gray-900">To Date</label>
+            <label for="date_to" class="block mb-2 text-sm font-medium text-gray-900">Sampai Tanggal</label>
             <input type="date" name="date_to" id="date_to" value="{{ request('date_to') }}" class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5">
         </div>
     </div>
         <div class="mt-4 flex justify-end">
         <a href="{{ route('admin.audit.index') }}" class="px-4 py-2 mr-2 text-sm font-medium text-gray-700 bg-gray-200 rounded-lg hover:bg-gray-300 focus:ring-4 focus:ring-gray-200">
-            Reset
+            Atur Ulang
         </a>
         <button type="submit" class="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 focus:ring-4 focus:ring-green-300">
-            Terapkan Filters
+            Terapkan Filter
         </button>
     </div>
 </form>
@@ -92,7 +92,7 @@
                                 Waktu
                             </th>
                             <th scope="col" class="p-4 text-left text-xs font-medium text-gray-500 uppercase">
-                                User
+                                Pengguna
                             </th>
                             <th scope="col" class="p-4 text-left text-xs font-medium text-gray-500 uppercase">
                                 Aksi
@@ -104,7 +104,7 @@
                                 Alamat IP
                             </th>
                             <th scope="col" class="p-4 text-left text-xs font-medium text-gray-500 uppercase">
-                                Detil
+                                Detail
                             </th>
                         </tr>
                     </thead>
@@ -112,19 +112,19 @@
                         @foreach($logs as $log)
                             <tr class="hover:bg-gray-100">
                                 <td class="p-4 text-sm font-normal text-gray-500 whitespace-nowrap">
-                                    {{ $log->created_at->format('M d, Y H:i:s') }}
+                                    {{ $log->created_at->format('d-m-Y H:i:s') }}
                                 </td>
                                 <td class="p-4 text-sm font-normal text-gray-500">
                                     @if($log->user_type && $log->user_id)
                                         @if($log->user_type === 'App\\Models\\User')
-                                            Admin: {{ optional(\App\Models\User::find($log->user_id))->name ?? 'Unknown' }}
+                                            Admin: {{ optional(\App\Models\User::find($log->user_id))->name ?? 'Tidak diketahui' }}
                                         @elseif($log->user_type === 'App\\Models\\Guru')
-                                            Guru: {{ optional(\App\Models\Guru::find($log->user_id))->nama ?? 'Unknown' }}
+                                            Guru: {{ optional(\App\Models\Guru::find($log->user_id))->nama ?? 'Tidak diketahui' }}
                                         @else
                                             {{ class_basename($log->user_type) }} #{{ $log->user_id }}
                                         @endif
                                     @else
-                                        System
+                                        Sistem
                                     @endif
                                 </td>
                                 <td class="p-4 text-sm font-semibold text-gray-900">
@@ -139,14 +139,14 @@
                                         bg-gray-100 text-gray-800
                                     @endif
                                 ">
-                                    {{ ucfirst(str_replace('_', ' ', $log->action)) }}
+                                    {{ \App\Services\AuditService::actionLabel($log->action) }}
                                 </span>
                                 </td>
                                 <td class="p-4 text-sm text-gray-900 max-w-xs truncate">
-                                    {{ $log->description ?? 'No description' }}
+                                    {{ \App\Services\AuditService::localizedDescription($log->description) }}
                                 </td>
                                 <td class="p-4 text-sm text-gray-500 whitespace-nowrap">
-                                    {{ $log->ip_address ?? 'N/A' }}
+                                    {{ $log->ip_address ?? '-' }}
                                 </td>
                                 <td class="p-4 whitespace-nowrap">
                                 <a href="{{ route('admin.audit.show', $log->id) }}" class="text-green-600 hover:underline font-medium">
@@ -172,7 +172,7 @@
 
 <!-- Pagination -->
 <div class="mt-4">
-    {{ $logs->withQueryString()->links() }}
+    {{ $logs->withQueryString()->links('vendor.pagination.custom') }}
 </div>
 
 <!-- Clear Logs Modal -->
@@ -180,11 +180,11 @@
     <div class="relative p-4 w-full max-w-md max-h-full">
         <div class="relative bg-white rounded-lg shadow">
             <div class="p-4 md:p-5 text-center">
-                <h3 class="mb-5 text-lg font-normal text-gray-500">Apakah anda yakin ingin menghapus catatan aktivitas?</h3>
+                <h3 class="mb-5 text-lg font-normal text-gray-500">Apakah Anda yakin ingin menghapus catatan aktivitas?</h3>
                 <form action="{{ route('admin.audit.clear') }}" method="POST">
                     @csrf
                     <div class="mb-4">
-                        <label for="period" class="block mb-2 text-sm font-medium text-gray-900">Pilih periode untuk di hapus:</label>
+                        <label for="period" class="block mb-2 text-sm font-medium text-gray-900">Pilih periode yang akan dihapus:</label>
                         <select id="period" name="period" class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5" required>
                             <option value="1month">Lebih lama dari 1 bulan</option>
                             <option value="3months">Lebih lama dari 3 bulan</option>
@@ -200,12 +200,12 @@
                             id="confirmation"
                             name="confirmation"
                             class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-red-500 focus:border-red-500 block w-full p-2.5"
-                            placeholder="HAPUS AUDIT LOG"
+                            placeholder="HAPUS CATATAN AKTIVITAS"
                         >
                         <p class="mt-1 text-xs text-gray-500">Wajib diisi hanya jika memilih semua catatan.</p>
                     </div>
                     <button type="submit" class="text-white bg-red-600 hover:bg-red-800 focus:ring-4 focus:outline-none focus:ring-red-300 font-medium rounded-lg text-sm inline-flex items-center px-5 py-2.5 text-center mr-2">
-                        Ya, Saya yakin
+                        Ya, saya yakin
                     </button>
                     <button data-modal-hide="clear-logs-modal" type="button" class="text-gray-500 bg-white hover:bg-gray-100 focus:ring-4 focus:outline-none focus:ring-gray-200 rounded-lg border border-gray-200 text-sm font-medium px-5 py-2.5 hover:text-gray-900 focus:z-10">
                         Tidak, batalkan

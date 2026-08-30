@@ -8,6 +8,70 @@ use Illuminate\Support\Facades\Request;
 
 class AuditService
 {
+    private const ACTION_LABELS = [
+        'login_success' => 'Login berhasil',
+        'login_failed' => 'Login gagal',
+        'logout' => 'Keluar',
+        'create' => 'Dibuat',
+        'created' => 'Dibuat',
+        'update' => 'Diperbarui',
+        'updated' => 'Diperbarui',
+        'delete' => 'Dihapus',
+        'deleted' => 'Dihapus',
+        'restored' => 'Dipulihkan',
+        'force_deleted' => 'Dihapus permanen',
+        'permanent_purge' => 'Dihapus permanen',
+        'guru_password_reset' => 'Reset password Guru',
+        'guru_password_changed' => 'Password Guru diubah',
+        'admin_password_changed' => 'Password Admin diubah',
+        'admin_username_changed' => 'Username Admin diubah',
+        'admin_email_change_requested' => 'Verifikasi email Admin diminta',
+        'admin_email_change_cancelled' => 'Perubahan email Admin dibatalkan',
+        'admin_email_changed' => 'Email Admin diubah',
+        'cascade_delete_snapshot' => 'Pencatatan penghapusan terkait',
+    ];
+
+    public static function actionLabel(?string $action): string
+    {
+        if (! is_string($action) || trim($action) === '') {
+            return 'Tidak diketahui';
+        }
+
+        $action = trim($action);
+
+        return self::ACTION_LABELS[$action]
+            ?? mb_convert_case(str_replace('_', ' ', $action), MB_CASE_TITLE, 'UTF-8');
+    }
+
+    public static function localizedDescription(?string $description): string
+    {
+        if (! is_string($description) || trim($description) === '') {
+            return 'Tidak ada deskripsi';
+        }
+
+        $description = trim($description);
+
+        if (preg_match('/\ALogin attempt with username:\s*(.+)\z/ui', $description, $matches) === 1) {
+            return 'Percobaan login dengan username/email: '.$matches[1];
+        }
+
+        $legacySuffixes = [
+            'force deleted' => 'dihapus permanen',
+            'created' => 'dibuat',
+            'updated' => 'diperbarui',
+            'deleted' => 'dihapus',
+            'restored' => 'dipulihkan',
+        ];
+
+        foreach ($legacySuffixes as $english => $indonesian) {
+            if (preg_match('/\A(.+?)\s+'.preg_quote($english, '/').'\.?\z/ui', $description, $matches) === 1) {
+                return $matches[1].' '.$indonesian;
+            }
+        }
+
+        return $description;
+    }
+
     /**
      * Log an action in the audit trail
      *
@@ -68,7 +132,7 @@ class AuditService
             $action,
             null,
             null,
-            "Login attempt with username: {$username}"
+            "Percobaan login dengan username/email: {$username}"
         );
     }
     
@@ -79,7 +143,7 @@ class AuditService
      */
     public static function logLogout(): AuditLog
     {
-        return self::log('logout');
+        return self::log('logout', description: 'Pengguna keluar dari aplikasi.');
     }
     
     /**
@@ -95,7 +159,7 @@ class AuditService
         $modelName = class_basename($modelType);
         
         if (!$description) {
-            $description = "{$modelName} created";
+            $description = "{$modelName} dibuat";
         }
         
         return self::log(
@@ -122,7 +186,7 @@ class AuditService
         $modelName = class_basename($modelType);
         
         if (!$description) {
-            $description = "{$modelName} updated";
+            $description = "{$modelName} diperbarui";
         }
         
         return self::log(
@@ -148,7 +212,7 @@ class AuditService
         $modelName = class_basename($modelType);
         
         if (!$description) {
-            $description = "{$modelName} deleted";
+            $description = "{$modelName} dihapus";
         }
         
         return self::log(

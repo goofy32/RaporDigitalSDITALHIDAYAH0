@@ -1,12 +1,12 @@
 @extends('layouts.app')
 
-@section('title', 'Audit Log Details')
+@section('title', 'Rincian Catatan Aktivitas')
 
 @section('content')
 <div class="p-4 bg-white block sm:flex items-center justify-between border-b border-gray-200">
     <div class="mb-1 w-full">
         <div class="mb-4">
-            <h1 class="text-xl font-semibold text-gray-900 sm:text-2xl">Catatan Aktivitas Lengkap</h1>
+            <h1 class="text-xl font-semibold text-gray-900 sm:text-2xl">Rincian Catatan Aktivitas</h1>
         </div>
         <div class="sm:flex">
             <div class="flex items-center space-x-2 sm:space-x-3 ml-auto">
@@ -22,8 +22,17 @@
 </div>
 
 <div class="p-4">
+    @php
+        $isSensitiveAuditField = static function (string $key): bool {
+            $normalizedKey = strtolower($key);
+
+            return in_array($normalizedKey, ['current_password', 'password_confirmation', 'setup_token'], true)
+                || str_contains($normalizedKey, 'password')
+                || str_contains($normalizedKey, 'token');
+        };
+    @endphp
     <div class="bg-white shadow rounded-lg p-4 md:p-6 mb-6">
-        <h2 class="text-lg font-semibold mb-4">Information Catatan Aktivitas</h2>
+        <h2 class="text-lg font-semibold mb-4">Informasi Catatan Aktivitas</h2>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
                 <p class="text-sm font-medium text-gray-500">ID Aktivitas</p>
@@ -31,7 +40,7 @@
             </div>
             <div>
                 <p class="text-sm font-medium text-gray-500">Tanggal & Waktu</p>
-                <p class="text-base font-medium text-gray-900">{{ $auditLog->created_at->format('F d, Y H:i:s') }}</p>
+                <p class="text-base font-medium text-gray-900">{{ $auditLog->created_at->format('d-m-Y H:i:s') }}</p>
             </div>
             <div>
                 <p class="text-sm font-medium text-gray-500">Aksi</p>
@@ -47,41 +56,41 @@
                             bg-gray-100 text-gray-800
                         @endif
                     ">
-                        {{ ucfirst(str_replace('_', ' ', $auditLog->action)) }}
+                        {{ \App\Services\AuditService::actionLabel($auditLog->action) }}
                     </span>
                 </p>
             </div>
             <div>
                 <p class="text-sm font-medium text-gray-500">Alamat IP</p>
-                <p class="text-base font-medium text-gray-900">{{ $auditLog->ip_address ?? 'N/A' }}</p>
+                <p class="text-base font-medium text-gray-900">{{ $auditLog->ip_address ?? '-' }}</p>
             </div>
             <div>
-                <p class="text-sm font-medium text-gray-500">Jenis User</p>
-                <p class="text-base font-medium text-gray-900 break-words">{{ $auditLog->user_agent ?? 'N/A' }}</p>
+                <p class="text-sm font-medium text-gray-500">Perangkat/Browser</p>
+                <p class="text-base font-medium text-gray-900 break-words">{{ $auditLog->user_agent ?? '-' }}</p>
             </div>
             <div>
-                <p class="text-sm font-medium text-gray-500">User</p>
+                <p class="text-sm font-medium text-gray-500">Pengguna</p>
                 <p class="text-base font-medium text-gray-900">
                     @if($auditLog->user_type && $auditLog->user_id)
                         @if($auditLog->user_type === 'App\\Models\\User')
-                            Admin: {{ optional(\App\Models\User::find($auditLog->user_id))->name ?? 'Unknown' }}
+                            Admin: {{ optional(\App\Models\User::find($auditLog->user_id))->name ?? 'Tidak diketahui' }}
                         @elseif($auditLog->user_type === 'App\\Models\\Guru')
-                            Guru: {{ optional(\App\Models\Guru::find($auditLog->user_id))->nama ?? 'Unknown' }}
+                            Guru: {{ optional(\App\Models\Guru::find($auditLog->user_id))->nama ?? 'Tidak diketahui' }}
                         @else
                             {{ class_basename($auditLog->user_type) }} #{{ $auditLog->user_id }}
                         @endif
                     @else
-                        System
+                        Sistem
                     @endif
                 </p>
             </div>
             <div>
-                <p class="text-sm font-medium text-gray-500">Model</p>
+                <p class="text-sm font-medium text-gray-500">Data Terkait</p>
                 <p class="text-base font-medium text-gray-900">
                     @if($auditLog->model_type && $auditLog->model_id)
                         {{ class_basename($auditLog->model_type) }} #{{ $auditLog->model_id }}
                     @else
-                        N/A
+                        -
                     @endif
                 </p>
             </div>
@@ -91,7 +100,9 @@
                     <p class="text-sm font-medium text-gray-500">Lokasi</p>
                     <p class="text-base font-medium text-gray-900">
                         @php
-                            $location = app(App\Services\GeoLocationService::class)->getLocation($auditLog->ip_address);
+                            $location = $auditLog->ip_address
+                                ? app(App\Services\GeoLocationService::class)->getLocation($auditLog->ip_address)
+                                : '-';
                         @endphp
                         {{ $location }}
                     </p>
@@ -103,13 +114,13 @@
     <div class="bg-white shadow rounded-lg p-4 md:p-6 mb-6">
         <h2 class="text-lg font-semibold mb-4">Deskripsi</h2>
         <div class="bg-gray-50 p-4 rounded-lg">
-            <p class="text-base text-gray-900">{{ $auditLog->description ?? 'No description provided' }}</p>
+            <p class="text-base text-gray-900">{{ \App\Services\AuditService::localizedDescription($auditLog->description) }}</p>
         </div>
     </div>
 
     @if($auditLog->old_values || $auditLog->new_values)
         <div class="bg-white shadow rounded-lg p-4 md:p-6">
-            <h2 class="text-lg font-semibold mb-4">Changes</h2>
+            <h2 class="text-lg font-semibold mb-4">Perubahan</h2>
             
             @if($auditLog->action === 'updated' && $auditLog->old_values && $auditLog->new_values)
                 <div class="relative overflow-x-auto">
@@ -123,7 +134,7 @@
                         </thead>
                         <tbody>
                             @foreach($auditLog->new_values as $key => $newValue)
-                                @if(!in_array($key, ['id', 'created_at', 'updated_at', 'password', 'password_plain', 'remember_token']) && 
+                                @if(!in_array($key, ['id', 'created_at', 'updated_at'], true) && !$isSensitiveAuditField($key) &&
                                     (isset($auditLog->old_values[$key]) || $newValue !== null))
                                     <tr class="bg-white border-b">
                                         <th scope="row" class="px-6 py-4 font-medium text-gray-900 whitespace-nowrap">
@@ -134,10 +145,10 @@
                                                 @if(is_array($auditLog->old_values[$key]))
                                                     <pre>{{ json_encode($auditLog->old_values[$key], JSON_PRETTY_PRINT) }}</pre>
                                                 @else
-                                                    {{ $auditLog->old_values[$key] ?? 'null' }}
+                                                    {{ $auditLog->old_values[$key] ?? '-' }}
                                                 @endif
                                             @else
-                                                <span class="text-gray-400">null</span>
+                                                <span class="text-gray-400">-</span>
                                             @endif
                                         </td>
                                         <td class="px-6 py-4">
@@ -148,7 +159,7 @@
                                                     {{ $newValue }}
                                                 @endif
                                             @else
-                                                <span class="text-gray-400">null</span>
+                                                <span class="text-gray-400">-</span>
                                             @endif
                                         </td>
                                     </tr>
@@ -168,7 +179,7 @@
                         </thead>
                         <tbody>
                             @foreach($auditLog->new_values as $key => $value)
-                                @if(!in_array($key, ['id', 'created_at', 'updated_at', 'password', 'password_plain', 'remember_token']) && $value !== null)
+                                @if(!in_array($key, ['id', 'created_at', 'updated_at'], true) && !$isSensitiveAuditField($key) && $value !== null)
                                     <tr class="bg-white border-b">
                                         <th scope="row" class="px-6 py-4 font-medium text-gray-900 whitespace-nowrap">
                                             {{ ucfirst(str_replace('_', ' ', $key)) }}
@@ -192,12 +203,12 @@
                         <thead class="text-xs text-gray-700 uppercase bg-gray-50">
                             <tr>
                                 <th scope="col" class="px-6 py-3">Bidang</th>
-                                <th scope="col" class="px-6 py-3">Nilai yang telah di delete</th>
+                                <th scope="col" class="px-6 py-3">Nilai yang dihapus</th>
                             </tr>
                         </thead>
                         <tbody>
                             @foreach($auditLog->old_values as $key => $value)
-                                @if(!in_array($key, ['id', 'created_at', 'updated_at', 'password', 'password_plain', 'remember_token']) && $value !== null)
+                                @if(!in_array($key, ['id', 'created_at', 'updated_at'], true) && !$isSensitiveAuditField($key) && $value !== null)
                                     <tr class="bg-white border-b">
                                         <th scope="row" class="px-6 py-4 font-medium text-gray-900 whitespace-nowrap">
                                             {{ ucfirst(str_replace('_', ' ', $key)) }}
@@ -217,7 +228,7 @@
                 </div>
             @else
                 <div class="bg-gray-50 p-4 rounded-lg">
-                    <p class="text-base text-gray-900">Tidak ada detail informasi yang ada</p>
+                    <p class="text-base text-gray-900">Tidak ada rincian perubahan.</p>
                 </div>
             @endif
         </div>

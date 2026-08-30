@@ -11,7 +11,7 @@ class GeoLocationService
     {
         // Skip untuk localhost
         if ($ip == '127.0.0.1' || $ip == '::1') {
-            return 'Localhost (Local Network)';
+            return 'Localhost (Jaringan Lokal)';
         }
         
         // Cache hasil untuk menghemat request API

@@ -8,6 +8,8 @@ use App\Models\ReportTemplate;
 use App\Models\Setting;
 use App\Models\Siswa;
 use App\Models\User;
+use App\Observers\AuditObserver;
+use App\Services\AuditService;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
 use Illuminate\Http\UploadedFile;
@@ -84,7 +86,7 @@ class AdminHardeningPhase2Test extends TestCase
         $this->actingAsAdmin()
             ->post(route('admin.audit.clear'), [
                 'period' => 'all',
-                'confirmation' => 'HAPUS AUDIT LOG',
+                'confirmation' => 'HAPUS CATATAN AKTIVITAS',
             ])
             ->assertRedirect(route('admin.audit.index'))
             ->assertSessionHas('success');
@@ -99,11 +101,209 @@ class AdminHardeningPhase2Test extends TestCase
         $this->actingAs($this->guru, 'guru')
             ->postJson(route('admin.audit.clear'), [
                 'period' => 'all',
-                'confirmation' => 'HAPUS AUDIT LOG',
+                'confirmation' => 'HAPUS CATATAN AKTIVITAS',
             ])
             ->assertUnauthorized();
 
         $this->assertDatabaseCount('audit_logs', 1);
+    }
+
+    public function test_audit_index_renders_indonesian_labels_legacy_descriptions_and_custom_pagination(): void
+    {
+        $timestamp = Carbon::create(2026, 8, 30, 17, 13, 39);
+        $actions = [
+            'login_success',
+            'login_failed',
+            'logout',
+            'created',
+            'updated',
+            'deleted',
+            'restored',
+            'force_deleted',
+            'guru_password_reset',
+        ];
+
+        for ($index = 0; $index < 21; $index++) {
+            $this->insertAuditRecord([
+                'user_type' => $index === 2 ? null : User::class,
+                'user_id' => $index === 2 ? null : $this->admin->id,
+                'action' => $actions[$index % count($actions)],
+                'description' => match ($index) {
+                    0 => 'Login attempt with username: admin',
+                    1 => 'Guru updated',
+                    default => null,
+                },
+                'created_at' => $timestamp->copy()->subSeconds($index),
+                'updated_at' => $timestamp->copy()->subSeconds($index),
+            ]);
+        }
+
+        $response = $this->actingAsAdmin()
+            ->get(route('admin.audit.index'))
+            ->assertOk()
+            ->assertSee('Data Terhapus')
+            ->assertSee('Ekspor CSV')
+            ->assertSee('Pencarian')
+            ->assertSee('Cari deskripsi, alamat IP, atau aksi...')
+            ->assertSee('Semua Aksi')
+            ->assertSee('Dari Tanggal')
+            ->assertSee('Sampai Tanggal')
+            ->assertSee('Atur Ulang')
+            ->assertSee('Terapkan Filter')
+            ->assertSee('Pengguna')
+            ->assertSee('Sistem')
+            ->assertSee('30-08-2026 17:13:39')
+            ->assertSee('Percobaan login dengan username/email: admin')
+            ->assertSee('Guru diperbarui')
+            ->assertSee('Login berhasil')
+            ->assertSee('Login gagal')
+            ->assertSee('Keluar')
+            ->assertSee('Dibuat')
+            ->assertSee('Diperbarui')
+            ->assertSee('Dihapus')
+            ->assertSee('Dipulihkan')
+            ->assertSee('Dihapus permanen')
+            ->assertSee('Reset password Guru')
+            ->assertSee('Menampilkan')
+            ->assertSee('dari')
+            ->assertSee('Sebelumnya')
+            ->assertSee('Berikutnya')
+            ->assertSee('data-live-list-pagination', false)
+            ->assertSee('value="login_success"', false)
+            ->assertSee('value="guru_password_reset"', false)
+            ->assertDontSee('pagination.previous')
+            ->assertDontSee('pagination.next')
+            ->assertDontSee('No description')
+            ->assertDontSee('N/A');
+
+        $this->assertStringNotContainsString('All Actions', $response->getContent());
+    }
+
+    public function test_audit_detail_uses_indonesian_labels_fallbacks_and_hides_sensitive_values(): void
+    {
+        $timestamp = Carbon::create(2026, 8, 30, 17, 13, 39);
+        $updatedLogId = $this->insertAuditRecord([
+            'user_type' => Guru::class,
+            'user_id' => 999999,
+            'action' => 'updated',
+            'model_type' => Guru::class,
+            'model_id' => 999999,
+            'description' => 'Guru updated',
+            'old_values' => [
+                'nama' => 'Nama Lama',
+                'password' => 'rahasia-lama',
+                'remember_token' => 'token-lama',
+            ],
+            'new_values' => [
+                'nama' => 'Nama Baru',
+                'password' => 'rahasia-baru',
+                'pending_email_token_hash' => 'hash-token-rahasia',
+            ],
+            'ip_address' => null,
+            'user_agent' => null,
+            'created_at' => $timestamp,
+            'updated_at' => $timestamp,
+        ]);
+
+        $this->actingAsAdmin()
+            ->get(route('admin.audit.show', $updatedLogId))
+            ->assertOk()
+            ->assertSee('Rincian Catatan Aktivitas')
+            ->assertSee('Informasi Catatan Aktivitas')
+            ->assertSee('30-08-2026 17:13:39')
+            ->assertSee('Diperbarui')
+            ->assertSee('Pengguna')
+            ->assertSee('Tidak diketahui')
+            ->assertSee('Data Terkait')
+            ->assertSee('Guru diperbarui')
+            ->assertSee('Perubahan')
+            ->assertSee('Nama Lama')
+            ->assertSee('Nama Baru')
+            ->assertDontSee('rahasia-lama')
+            ->assertDontSee('rahasia-baru')
+            ->assertDontSee('token-lama')
+            ->assertDontSee('hash-token-rahasia')
+            ->assertDontSee('Audit Log Details')
+            ->assertDontSee('No description')
+            ->assertDontSee('N/A');
+
+        $systemLogId = $this->insertAuditRecord([
+            'user_type' => null,
+            'user_id' => null,
+            'action' => 'guru_password_reset',
+            'description' => null,
+            'ip_address' => null,
+            'user_agent' => null,
+            'created_at' => $timestamp,
+            'updated_at' => $timestamp,
+        ]);
+
+        $this->actingAsAdmin()
+            ->get(route('admin.audit.show', $systemLogId))
+            ->assertOk()
+            ->assertSee('Reset password Guru')
+            ->assertSee('Sistem')
+            ->assertSee('Tidak ada deskripsi');
+    }
+
+    public function test_audit_csv_uses_indonesian_headers_labels_and_fallbacks(): void
+    {
+        $this->insertAuditRecord([
+            'user_type' => null,
+            'user_id' => null,
+            'action' => 'login_failed',
+            'description' => 'Login attempt with username: tidak-ada',
+            'model_type' => null,
+            'model_id' => null,
+            'ip_address' => null,
+            'created_at' => Carbon::create(2026, 8, 30, 17, 13, 39),
+            'updated_at' => Carbon::create(2026, 8, 30, 17, 13, 39),
+        ]);
+
+        $response = $this->actingAsAdmin()
+            ->get(route('admin.audit.export'))
+            ->assertOk();
+
+        $rows = array_values(array_filter(preg_split('/\R/', trim($response->streamedContent()))));
+
+        $this->assertSame(
+            ['ID', 'Pengguna', 'Aksi', 'Jenis Model', 'ID Model', 'Deskripsi', 'Alamat IP', 'Tanggal/Waktu'],
+            str_getcsv($rows[0])
+        );
+        $this->assertSame('Sistem', str_getcsv($rows[1])[1]);
+        $this->assertSame('Login gagal', str_getcsv($rows[1])[2]);
+        $this->assertSame('-', str_getcsv($rows[1])[3]);
+        $this->assertSame('-', str_getcsv($rows[1])[4]);
+        $this->assertSame('Percobaan login dengan username/email: tidak-ada', str_getcsv($rows[1])[5]);
+        $this->assertSame('-', str_getcsv($rows[1])[6]);
+        $this->assertSame('30-08-2026 17:13:39', str_getcsv($rows[1])[7]);
+    }
+
+    public function test_new_audit_service_and_observer_default_descriptions_are_indonesian(): void
+    {
+        $this->actingAsAdmin();
+
+        AuditService::logLogin('failed', 'admin');
+        AuditService::logLogout();
+        AuditService::logCreated($this->admin);
+        AuditService::logUpdated($this->admin, ['name' => 'Admin Lama']);
+        AuditService::logDeleted($this->admin);
+        (new AuditObserver())->restored($this->admin);
+        (new AuditObserver())->forceDeleted($this->admin);
+
+        $this->assertDatabaseHas('audit_logs', [
+            'action' => 'login_failed',
+            'description' => 'Percobaan login dengan username/email: admin',
+        ]);
+        $this->assertDatabaseHas('audit_logs', [
+            'action' => 'logout',
+            'description' => 'Pengguna keluar dari aplikasi.',
+        ]);
+        $this->assertDatabaseHas('audit_logs', ['action' => 'created', 'description' => 'User dibuat']);
+        $this->assertDatabaseHas('audit_logs', ['action' => 'updated', 'description' => 'User diperbarui']);
+        $this->assertDatabaseHas('audit_logs', ['action' => 'deleted', 'description' => 'User dihapus']);
+        $this->assertDatabaseHas('audit_logs', ['action' => 'restored', 'description' => 'User dipulihkan']);
+        $this->assertDatabaseHas('audit_logs', ['action' => 'force_deleted', 'description' => 'User dihapus permanen']);
     }
 
     public function test_recycle_bin_force_delete_all_requires_typed_confirmation(): void
@@ -1570,20 +1770,33 @@ class AdminHardeningPhase2Test extends TestCase
 
     private function insertAuditLog(string $description): void
     {
-        DB::table('audit_logs')->insert([
+        $this->insertAuditRecord(['description' => $description]);
+    }
+
+    private function insertAuditRecord(array $attributes = []): int
+    {
+        $attributes = array_merge([
             'user_type' => User::class,
             'user_id' => $this->admin->id,
             'action' => 'test',
             'model_type' => null,
             'model_id' => null,
-            'description' => $description,
+            'description' => null,
             'old_values' => null,
             'new_values' => null,
             'ip_address' => '127.0.0.1',
             'user_agent' => 'phpunit',
             'created_at' => now(),
             'updated_at' => now(),
-        ]);
+        ], $attributes);
+
+        foreach (['old_values', 'new_values'] as $jsonColumn) {
+            if (is_array($attributes[$jsonColumn])) {
+                $attributes[$jsonColumn] = json_encode($attributes[$jsonColumn], JSON_THROW_ON_ERROR);
+            }
+        }
+
+        return DB::table('audit_logs')->insertGetId($attributes);
     }
 
     private function insertDeletedStudent(): int

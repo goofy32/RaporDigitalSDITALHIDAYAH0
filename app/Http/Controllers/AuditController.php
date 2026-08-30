@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\AuditLog;
 use App\Models\User;
 use App\Models\Guru;
+use App\Services\AuditService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 
@@ -67,7 +68,7 @@ class AuditController extends Controller
             'Content-Disposition' => "attachment; filename={$filename}",
         ];
         
-        $columns = ['ID', 'User', 'Action', 'Model Type', 'Model ID', 'Description', 'IP Address', 'Date/Time'];
+        $columns = ['ID', 'Pengguna', 'Aksi', 'Jenis Model', 'ID Model', 'Deskripsi', 'Alamat IP', 'Tanggal/Waktu'];
         
         $callback = function() use ($request, $columns) {
             $file = fopen('php://output', 'w');
@@ -77,15 +78,25 @@ class AuditController extends Controller
                 ->latest()
                 ->cursor()
                 ->each(function ($log) use ($file) {
+                    $user = 'Sistem';
+
+                    if ($log->user_type && $log->user_id) {
+                        $user = match ($log->user_type) {
+                            User::class => 'Admin: '.(User::find($log->user_id)?->name ?? 'Tidak diketahui'),
+                            Guru::class => 'Guru: '.(Guru::find($log->user_id)?->nama ?? 'Tidak diketahui'),
+                            default => class_basename($log->user_type).' (ID: '.$log->user_id.')',
+                        };
+                    }
+
                     fputcsv($file, [
                         $log->id,
-                        $log->user_type && $log->user_id ? "{$log->user_type} (ID: {$log->user_id})" : 'System',
-                        $log->action,
-                        $log->model_type ?: 'N/A',
-                        $log->model_id ?: 'N/A',
-                        $log->description ?: 'N/A',
-                        $log->ip_address ?: 'N/A',
-                        $log->created_at->format('Y-m-d H:i:s'),
+                        $user,
+                        AuditService::actionLabel($log->action),
+                        $log->model_type ? class_basename($log->model_type) : '-',
+                        $log->model_id ?: '-',
+                        AuditService::localizedDescription($log->description),
+                        $log->ip_address ?: '-',
+                        $log->created_at->format('d-m-Y H:i:s'),
                     ]);
                 });
             
@@ -140,7 +151,7 @@ class AuditController extends Controller
     {
         $request->validate([
             'period' => 'required|in:1month,3months,6months,1year,all',
-            'confirmation' => 'required_if:period,all|nullable|string|in:HAPUS AUDIT LOG',
+            'confirmation' => 'required_if:period,all|nullable|string|in:HAPUS CATATAN AKTIVITAS',
         ]);
         
         $period = $request->period;
@@ -148,7 +159,7 @@ class AuditController extends Controller
         if ($period === 'all') {
             // Clear all logs, but be careful with this!
             AuditLog::truncate();
-            return redirect()->route('admin.audit.index')->with('success', 'All audit logs have been cleared.');
+            return redirect()->route('admin.audit.index')->with('success', 'Semua catatan aktivitas berhasil dihapus.');
         }
         
         // Calculate the cutoff date based on the selected period
@@ -162,9 +173,19 @@ class AuditController extends Controller
         
         if ($cutoffDate) {
             AuditLog::where('created_at', '<', $cutoffDate)->delete();
-            return redirect()->route('admin.audit.index')->with('success', "Audit logs older than {$period} have been cleared.");
+            $periodLabel = match ($period) {
+                '1month' => '1 bulan',
+                '3months' => '3 bulan',
+                '6months' => '6 bulan',
+                '1year' => '1 tahun',
+            };
+
+            return redirect()->route('admin.audit.index')->with(
+                'success',
+                "Catatan aktivitas yang lebih lama dari {$periodLabel} berhasil dihapus."
+            );
         }
         
-        return redirect()->route('admin.audit.index')->with('error', 'Invalid period specified.');
+        return redirect()->route('admin.audit.index')->with('error', 'Periode yang dipilih tidak valid.');
     }
 }

@@ -43,7 +43,7 @@ class AuditObserver
             'restored',
             get_class($model),
             $model->id,
-            class_basename(get_class($model)) . " restored",
+            class_basename(get_class($model)).' dipulihkan',
             null,
             $model->toArray()
         );
@@ -58,7 +58,7 @@ class AuditObserver
             'force_deleted',
             get_class($model),
             $model->id,
-            class_basename(get_class($model)) . " force deleted",
+            class_basename(get_class($model)).' dihapus permanen',
             $model->toArray(),
             null
         );
