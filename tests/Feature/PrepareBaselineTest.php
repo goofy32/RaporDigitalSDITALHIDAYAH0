@@ -2,9 +2,11 @@
 
 namespace Tests\Feature;
 
+use App\Models\Guru;
 use App\Services\BaselineDatabaseIdentity;
 use App\Services\BaselinePreparationService;
 use App\Services\BaselineSchemaInspector;
+use App\Services\GuruRoleAvailability;
 use Illuminate\Database\Migrations\Migrator;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Schema\Blueprint;
@@ -288,7 +290,8 @@ class PrepareBaselineTest extends TestCase
     {
         $this->assertSame(0, $this->apply('minimal'));
 
-        $this->assertCoreBaseline(0, 0, 0);
+        $this->assertCoreBaseline(0, 0, 0, 0);
+        $this->assertSame(0, DB::table('mata_pelajarans')->count());
         $this->assertSame(1, DB::table('tahun_ajarans')->count());
         $this->assertDatabaseHas('tahun_ajarans', [
             'tahun_ajaran' => '2026/2027',
@@ -300,14 +303,50 @@ class PrepareBaselineTest extends TestCase
 
     public function test_school_structure_mode_creates_exact_baseline_b(): void
     {
+        $subjectIds = DB::table('mata_pelajarans')->orderBy('id')->pluck('id')->all();
+        $pivotIds = DB::table('guru_kelas')
+            ->whereIn('kelas_id', range(1, 12))
+            ->orderBy('id')
+            ->pluck('id')
+            ->all();
         $this->bindIdentity(self::BASELINE_B_DATABASE, self::BASELINE_B_DATABASE);
 
         $this->assertSame(0, $this->apply('school-structure'));
 
-        $this->assertCoreBaseline(18, 12, 18);
+        $this->assertCoreBaseline(18, 12, 18, 1);
+        $this->assertSame($subjectIds, DB::table('mata_pelajarans')->orderBy('id')->pluck('id')->all());
+        $this->assertSame($pivotIds, DB::table('guru_kelas')->orderBy('id')->pluck('id')->all());
         $this->assertSame(12, DB::table('guru_kelas')->where('role', 'wali_kelas')->count());
         $this->assertSame(6, DB::table('guru_kelas')->where('role', 'pengajar')->count());
         $this->assertSame(0, DB::table('kelas')->where('tahun_ajaran_id', '!=', 1)->count());
+        foreach (['lingkup_materis', 'tujuan_pembelajarans', 'siswas', 'siswa_kelas_semester', 'nilais', 'absensis'] as $table) {
+            $this->assertSame(0, DB::table($table)->count(), "{$table} should be empty");
+        }
+    }
+
+    public function test_school_structure_dry_run_preserves_subject_plan_without_writes(): void
+    {
+        $before = $this->allTableRows();
+        $this->bindIdentity(self::BASELINE_B_DATABASE, self::BASELINE_B_DATABASE);
+
+        $this->assertSame(0, Artisan::call('initial-data:prepare-baseline', ['mode' => 'school-structure']));
+
+        $this->assertSame($before, $this->allTableRows());
+        $this->assertStringContainsString('Retained Mata Pelajaran IDs: 1', Artisan::output());
+    }
+
+    public function test_school_structure_retains_the_exact_dynamic_valid_subject_set(): void
+    {
+        $this->insertSubject(2, 14, 2);
+        $expectedIds = DB::table('mata_pelajarans')->orderBy('id')->pluck('id')->all();
+        $this->bindIdentity(self::BASELINE_B_DATABASE, self::BASELINE_B_DATABASE);
+
+        $this->assertSame(0, $this->apply('school-structure'));
+
+        $this->assertSame([1, 2], $expectedIds);
+        $this->assertSame($expectedIds, DB::table('mata_pelajarans')->orderBy('id')->pluck('id')->all());
+        $this->assertSame(0, DB::table('lingkup_materis')->count());
+        $this->assertSame(0, DB::table('tujuan_pembelajarans')->count());
     }
 
     public function test_admin_identity_credentials_and_hash_are_preserved_while_transient_state_is_cleared(): void
@@ -464,15 +503,100 @@ class PrepareBaselineTest extends TestCase
         $this->assertSame($before, $this->allTableRows());
     }
 
-    public function test_subject_only_pengajar_role_aborts_before_subject_cleanup(): void
+    public function test_wali_with_subject_only_pengajar_assignment_retains_both_roles_without_new_pivot(): void
     {
-        DB::table('mata_pelajarans')->where('id', 1)->update(['guru_id' => 7]);
-        $before = $this->allTableRows();
+        DB::table('mata_pelajarans')->where('id', 1)->update(['guru_id' => 1, 'kelas_id' => 1]);
+        $beforePivotIds = DB::table('guru_kelas')
+            ->whereIn('kelas_id', range(1, 12))
+            ->orderBy('id')
+            ->pluck('id')
+            ->all();
+        $beforeRoles = $this->availableRoles(1);
         $this->bindIdentity(self::BASELINE_B_DATABASE, self::BASELINE_B_DATABASE);
 
-        $this->assertSame(1, $this->apply('school-structure'));
-        $this->assertStringContainsString('Role Pengajar aktif belum seluruhnya terwakili', Artisan::output());
-        $this->assertSame($before, $this->allTableRows());
+        $this->assertSame(['pengajar', 'wali_kelas'], $beforeRoles);
+        $this->assertSame(0, $this->apply('school-structure'));
+        $this->assertSame($beforeRoles, $this->availableRoles(1));
+        $this->assertSame($beforePivotIds, DB::table('guru_kelas')->orderBy('id')->pluck('id')->all());
+        $this->assertSame(0, DB::table('guru_kelas')->where('guru_id', 1)->where('role', 'pengajar')->count());
+    }
+
+    public function test_non_wali_subject_only_pengajar_retains_role_without_synthetic_pivot(): void
+    {
+        DB::table('guru_kelas')->where('guru_id', 13)->where('role', 'pengajar')->delete();
+        $beforePivotIds = DB::table('guru_kelas')
+            ->whereIn('kelas_id', range(1, 12))
+            ->orderBy('id')
+            ->pluck('id')
+            ->all();
+        $beforeRoles = $this->availableRoles(13);
+        $this->bindIdentity(self::BASELINE_B_DATABASE, self::BASELINE_B_DATABASE);
+
+        $this->assertSame(['pengajar'], $beforeRoles);
+        $this->assertSame(0, $this->apply('school-structure'));
+        $this->assertSame($beforeRoles, $this->availableRoles(13));
+        $this->assertSame($beforePivotIds, DB::table('guru_kelas')->orderBy('id')->pluck('id')->all());
+        $this->assertSame(0, DB::table('guru_kelas')->where('guru_id', 13)->count());
+    }
+
+    public function test_existing_pengajar_pivot_retains_role_without_subject(): void
+    {
+        DB::table('mata_pelajarans')->where('id', 1)->update(['guru_id' => 1, 'kelas_id' => 1]);
+        $beforeRoles = $this->availableRoles(13);
+        $this->bindIdentity(self::BASELINE_B_DATABASE, self::BASELINE_B_DATABASE);
+
+        $this->assertSame(['pengajar'], $beforeRoles);
+        $this->assertSame(0, $this->apply('school-structure'));
+        $this->assertSame($beforeRoles, $this->availableRoles(13));
+        $this->assertSame(1, DB::table('mata_pelajarans')->count());
+    }
+
+    public function test_soft_deleted_subject_aborts_before_mutation(): void
+    {
+        DB::table('mata_pelajarans')->where('id', 1)->update(['deleted_at' => now()]);
+
+        $this->assertSchoolStructureApplyBlocked('Mata Pelajaran soft-deleted');
+    }
+
+    public function test_subject_outside_target_year_aborts_before_mutation(): void
+    {
+        DB::table('mata_pelajarans')->where('id', 1)->update(['tahun_ajaran_id' => 2]);
+
+        $this->assertSchoolStructureApplyBlocked('di luar target Tahun Ajaran');
+    }
+
+    public function test_subject_outside_target_semester_aborts_before_mutation(): void
+    {
+        DB::table('mata_pelajarans')->where('id', 1)->update(['semester' => 2]);
+
+        $this->assertSchoolStructureApplyBlocked('di luar target semester');
+    }
+
+    public function test_subject_with_non_retained_guru_aborts_before_mutation(): void
+    {
+        DB::table('mata_pelajarans')->where('id', 1)->update(['guru_id' => null]);
+
+        $this->assertSchoolStructureApplyBlocked('parent Guru/Kelas valid');
+    }
+
+    public function test_subject_with_non_retained_class_aborts_before_mutation(): void
+    {
+        DB::table('mata_pelajarans')->where('id', 1)->update(['kelas_id' => 13]);
+
+        $this->assertSchoolStructureApplyBlocked('Kelas di luar struktur');
+    }
+
+    public function test_subject_set_drift_between_plan_and_apply_is_rejected(): void
+    {
+        $this->bindIdentity(self::BASELINE_B_DATABASE, self::BASELINE_B_DATABASE);
+        $service = app(BaselinePreparationService::class);
+        $plan = $service->inspect('school-structure');
+        $this->insertSubject(2, 14, 2);
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('Data berubah setelah dry-run/preflight');
+
+        $service->apply('school-structure', $plan);
     }
 
     public function test_unknown_settings_block_apply_without_deleting_the_unknown_row(): void
@@ -913,7 +1037,7 @@ class PrepareBaselineTest extends TestCase
         });
     }
 
-    private function assertCoreBaseline(int $gurus, int $classes, int $pivots): void
+    private function assertCoreBaseline(int $gurus, int $classes, int $pivots, int $subjects): void
     {
         $this->assertSame(1, DB::table('users')->count());
         $this->assertSame(1, DB::table('profil_sekolah')->count());
@@ -921,6 +1045,7 @@ class PrepareBaselineTest extends TestCase
         $this->assertSame($gurus, DB::table('gurus')->count());
         $this->assertSame($classes, DB::table('kelas')->count());
         $this->assertSame($pivots, DB::table('guru_kelas')->count());
+        $this->assertSame($subjects, DB::table('mata_pelajarans')->count());
 
         foreach ([...BaselinePreparationService::CLEAR_TABLES, ...BaselinePreparationService::VOLATILE_TABLES] as $table) {
             $this->assertSame(0, DB::table($table)->count(), "{$table} should be empty");
@@ -929,6 +1054,39 @@ class PrepareBaselineTest extends TestCase
         $this->assertSame(1, DB::table('report_placeholders')->count());
         $this->assertSame(count(File::files(database_path('migrations'))), DB::table('migrations')->count());
         $this->assertTrue(app(BaselineSchemaInspector::class)->hasAdminSingletonInvariant());
+    }
+
+    private function assertSchoolStructureApplyBlocked(string $message): void
+    {
+        $before = $this->allTableRows();
+        $this->bindIdentity(self::BASELINE_B_DATABASE, self::BASELINE_B_DATABASE);
+
+        $this->assertSame(1, $this->apply('school-structure'));
+        $this->assertStringContainsString($message, Artisan::output());
+        $this->assertSame($before, $this->allTableRows());
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function availableRoles(int $guruId): array
+    {
+        $guru = Guru::query()->findOrFail($guruId);
+
+        return (new GuruRoleAvailability)->availableRoles($guru, 1, 1);
+    }
+
+    private function insertSubject(int $id, int $guruId, int $classId): void
+    {
+        DB::table('mata_pelajarans')->insert([
+            'id' => $id,
+            'marker' => "mata-pelajaran-{$id}",
+            'kelas_id' => $classId,
+            'guru_id' => $guruId,
+            'tahun_ajaran_id' => 1,
+            'semester' => 1,
+            'deleted_at' => null,
+        ]);
     }
 
     /**

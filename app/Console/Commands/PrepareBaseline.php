@@ -74,6 +74,7 @@ class PrepareBaseline extends Command
         $this->line('Retained Guru IDs: '.count($plan['retained_guru_ids']));
         $this->line('Retained Kelas IDs: '.count($plan['retained_class_ids']));
         $this->line('Retained guru_kelas rows: '.count($plan['retained_pivot_ids']));
+        $this->line('Retained Mata Pelajaran IDs: '.count($plan['retained_subject_ids']));
         $this->line('Role wali_kelas: '.$plan['role_counts']['wali_kelas']);
         $this->line('Role pengajar: '.$plan['role_counts']['pengajar']);
         $this->line('Guru dengan role Pengajar yang dipertahankan: '.count($plan['pengajar_guru_ids']));

@@ -33,6 +33,7 @@ class BaselinePreparationService
     ];
 
     public const STRUCTURE_TABLES = [
+        'mata_pelajarans',
         'guru_kelas',
         'kelas',
         'gurus',
@@ -86,7 +87,6 @@ class BaselinePreparationService
         'tujuan_pembelajarans',
         'lingkup_materis',
         'pembelajarans',
-        'mata_pelajarans',
         'ekstrakurikulers',
         'siswas',
         'report_mappings',
@@ -168,16 +168,20 @@ class BaselinePreparationService
         $retainedGuruIds = [];
         $retainedClassIds = [];
         $retainedPivotIds = [];
+        $retainedSubjectIds = [];
         $roleCounts = ['wali_kelas' => 0, 'pengajar' => 0];
         $pengajarGuruIds = [];
+        $roleManifest = [];
 
         if ($mode === 'school-structure') {
             $structure = $this->schoolStructurePlan((int) $targetYear->id);
             $retainedGuruIds = $structure['guru_ids'];
             $retainedClassIds = $structure['class_ids'];
             $retainedPivotIds = $structure['pivot_ids'];
+            $retainedSubjectIds = $structure['subject_ids'];
             $roleCounts = $structure['role_counts'];
             $pengajarGuruIds = $structure['pengajar_guru_ids'];
+            $roleManifest = $structure['role_manifest'];
         }
 
         $files = $this->fileInspector->inspect($retainedGuruIds);
@@ -207,6 +211,9 @@ class BaselinePreparationService
             'pivots' => $mode === 'school-structure'
                 ? $this->rowsWhereIn('guru_kelas', 'id', $retainedPivotIds)
                 : [],
+            'subjects' => $mode === 'school-structure'
+                ? $this->rowsWhereIn('mata_pelajarans', 'id', $retainedSubjectIds)
+                : [],
             'files' => $files,
         ];
 
@@ -218,8 +225,10 @@ class BaselinePreparationService
             'retained_guru_ids' => $retainedGuruIds,
             'retained_class_ids' => $retainedClassIds,
             'retained_pivot_ids' => $retainedPivotIds,
+            'retained_subject_ids' => $retainedSubjectIds,
             'role_counts' => $roleCounts,
             'pengajar_guru_ids' => $pengajarGuruIds,
+            'role_manifest' => $roleManifest,
             'settings' => $settingPlan,
             'files' => $files,
             'snapshots' => $snapshots,
@@ -368,7 +377,7 @@ class BaselinePreparationService
     }
 
     /**
-     * @return array{guru_ids: array<int, int>, class_ids: array<int, int>, pivot_ids: array<int, int>, role_counts: array{wali_kelas: int, pengajar: int}, pengajar_guru_ids: array<int, int>}
+     * @return array{guru_ids: array<int, int>, class_ids: array<int, int>, pivot_ids: array<int, int>, subject_ids: array<int, int>, role_counts: array{wali_kelas: int, pengajar: int}, pengajar_guru_ids: array<int, int>, role_manifest: array<int, array<int, string>>}
      */
     private function schoolStructurePlan(int $targetYearId): array
     {
@@ -445,6 +454,7 @@ class BaselinePreparationService
             }
         }
 
+        $subjectIds = $this->retainedSubjectIds($targetYearId, $guruIds, $classIds);
         $pivotPengajarGuruIds = $retained
             ->where('role', 'pengajar')
             ->pluck('guru_id')
@@ -454,34 +464,115 @@ class BaselinePreparationService
             ->values()
             ->all();
         $subjectPengajarGuruIds = DB::table('mata_pelajarans')
-            ->whereIn('guru_id', $guruIds)
-            ->whereIn('kelas_id', $classIds)
-            ->where('tahun_ajaran_id', $targetYearId)
-            ->where('semester', self::TARGET_SEMESTER)
-            ->whereNull('deleted_at')
+            ->whereIn('id', $subjectIds)
             ->pluck('guru_id')
             ->map(fn ($id): int => (int) $id)
-            ->all();
-        $currentPengajarGuruIds = collect([...$pivotPengajarGuruIds, ...$subjectPengajarGuruIds])
             ->unique()
             ->sort()
             ->values()
             ->all();
+        $pengajarGuruIds = collect([...$pivotPengajarGuruIds, ...$subjectPengajarGuruIds])
+            ->unique()
+            ->sort()
+            ->values()
+            ->all();
+        $waliGuruIds = $retained
+            ->where('role', 'wali_kelas')
+            ->pluck('guru_id')
+            ->map(fn ($id): int => (int) $id)
+            ->unique()
+            ->sort()
+            ->values()
+            ->all();
+        $roleManifest = collect($guruIds)
+            ->mapWithKeys(function (int $guruId) use ($pengajarGuruIds, $waliGuruIds): array {
+                $roles = [];
+                if (in_array($guruId, $pengajarGuruIds, true)) {
+                    $roles[] = 'pengajar';
+                }
+                if (in_array($guruId, $waliGuruIds, true)) {
+                    $roles[] = 'wali_kelas';
+                }
 
-        if ($currentPengajarGuruIds !== $pivotPengajarGuruIds) {
-            throw new RuntimeException('Role Pengajar aktif belum seluruhnya terwakili oleh pivot guru_kelas yang dapat dipertahankan.');
-        }
+                return [$guruId => $roles];
+            })
+            ->all();
 
         return [
             'guru_ids' => $guruIds,
             'class_ids' => $classIds,
             'pivot_ids' => $retained->pluck('id')->map(fn ($id): int => (int) $id)->all(),
+            'subject_ids' => $subjectIds,
             'role_counts' => [
                 'wali_kelas' => $retained->where('role', 'wali_kelas')->count(),
                 'pengajar' => $retained->where('role', 'pengajar')->count(),
             ],
-            'pengajar_guru_ids' => $pivotPengajarGuruIds,
+            'pengajar_guru_ids' => $pengajarGuruIds,
+            'role_manifest' => $roleManifest,
         ];
+    }
+
+    /**
+     * @param  array<int, int>  $guruIds
+     * @param  array<int, int>  $classIds
+     * @return array<int, int>
+     */
+    private function retainedSubjectIds(int $targetYearId, array $guruIds, array $classIds): array
+    {
+        if (DB::table('mata_pelajarans')->whereNotNull('deleted_at')->exists()) {
+            throw new RuntimeException('Mode school-structure menolak Mata Pelajaran soft-deleted.');
+        }
+
+        $danglingGuru = DB::table('mata_pelajarans')
+            ->leftJoin('gurus', 'mata_pelajarans.guru_id', '=', 'gurus.id')
+            ->whereNull('gurus.id')
+            ->exists();
+        $danglingClass = DB::table('mata_pelajarans')
+            ->leftJoin('kelas', 'mata_pelajarans.kelas_id', '=', 'kelas.id')
+            ->whereNull('kelas.id')
+            ->exists();
+        if ($danglingGuru || $danglingClass) {
+            throw new RuntimeException('Ditemukan Mata Pelajaran yang tidak memiliki parent Guru/Kelas valid.');
+        }
+
+        if (DB::table('mata_pelajarans')->where(function ($query) use ($targetYearId): void {
+            $query->whereNull('tahun_ajaran_id')->orWhere('tahun_ajaran_id', '!=', $targetYearId);
+        })->exists()) {
+            throw new RuntimeException('Ditemukan Mata Pelajaran di luar target Tahun Ajaran.');
+        }
+
+        if (DB::table('mata_pelajarans')->where(function ($query): void {
+            $query->whereNull('semester')->orWhere('semester', '!=', self::TARGET_SEMESTER);
+        })->exists()) {
+            throw new RuntimeException('Ditemukan Mata Pelajaran di luar target semester.');
+        }
+
+        if (DB::table('mata_pelajarans')->where(function ($query) use ($guruIds): void {
+            $query->whereNull('guru_id')->orWhereNotIn('guru_id', $guruIds);
+        })->exists()) {
+            throw new RuntimeException('Ditemukan Mata Pelajaran dengan Guru di luar struktur yang dipertahankan.');
+        }
+
+        if (DB::table('mata_pelajarans')->where(function ($query) use ($classIds): void {
+            $query->whereNull('kelas_id')->orWhereNotIn('kelas_id', $classIds);
+        })->exists()) {
+            throw new RuntimeException('Ditemukan Mata Pelajaran dengan Kelas di luar struktur yang dipertahankan.');
+        }
+
+        if (DB::table('mata_pelajarans')
+            ->join('kelas', 'mata_pelajarans.kelas_id', '=', 'kelas.id')
+            ->where(function ($query) use ($targetYearId): void {
+                $query->whereNull('kelas.tahun_ajaran_id')->orWhere('kelas.tahun_ajaran_id', '!=', $targetYearId);
+            })
+            ->exists()) {
+            throw new RuntimeException('Ditemukan parent Kelas Mata Pelajaran di luar target Tahun Ajaran.');
+        }
+
+        return DB::table('mata_pelajarans')
+            ->orderBy('id')
+            ->pluck('id')
+            ->map(fn ($id): int => (int) $id)
+            ->all();
     }
 
     /**
@@ -495,6 +586,7 @@ class BaselinePreparationService
             $remove[$table] = (int) $plan['counts'][$table];
         }
 
+        $remove['mata_pelajarans'] = (int) $plan['counts']['mata_pelajarans'] - count($plan['retained_subject_ids']);
         $remove['guru_kelas'] = (int) $plan['counts']['guru_kelas'] - count($plan['retained_pivot_ids']);
         $remove['kelas'] = (int) $plan['counts']['kelas'] - count($plan['retained_class_ids']);
         $remove['gurus'] = (int) $plan['counts']['gurus'] - count($plan['retained_guru_ids']);
@@ -518,6 +610,7 @@ class BaselinePreparationService
             DB::table('gurus')->whereIn('id', $plan['retained_guru_ids'])->lockForUpdate()->get();
             DB::table('kelas')->whereIn('id', $plan['retained_class_ids'])->lockForUpdate()->get();
             DB::table('guru_kelas')->whereIn('id', $plan['retained_pivot_ids'])->lockForUpdate()->get();
+            DB::table('mata_pelajarans')->whereIn('id', $plan['retained_subject_ids'])->lockForUpdate()->get();
         }
     }
 
@@ -537,10 +630,12 @@ class BaselinePreparationService
     private function reduceStructure(string $mode, array $plan): void
     {
         if ($mode === 'minimal') {
+            DB::table('mata_pelajarans')->delete();
             DB::table('guru_kelas')->delete();
             DB::table('kelas')->delete();
             DB::table('gurus')->delete();
         } else {
+            $this->deleteExceptIds('mata_pelajarans', $plan['retained_subject_ids']);
             $this->deleteExceptIds('guru_kelas', $plan['retained_pivot_ids']);
             $this->deleteExceptIds('kelas', $plan['retained_class_ids']);
             $this->deleteExceptIds('gurus', $plan['retained_guru_ids']);
@@ -687,7 +782,12 @@ class BaselinePreparationService
         }
 
         if ($mode === 'minimal') {
-            if (DB::table('gurus')->count() !== 0 || DB::table('kelas')->count() !== 0 || DB::table('guru_kelas')->count() !== 0) {
+            if (
+                DB::table('mata_pelajarans')->count() !== 0
+                || DB::table('gurus')->count() !== 0
+                || DB::table('kelas')->count() !== 0
+                || DB::table('guru_kelas')->count() !== 0
+            ) {
                 throw new RuntimeException('Postcondition gagal: struktur Guru/Kelas Baseline A belum kosong.');
             }
         } else {
@@ -728,14 +828,22 @@ class BaselinePreparationService
         if (DB::table('guru_kelas')->count() !== count($plan['retained_pivot_ids'])) {
             throw new RuntimeException('Postcondition gagal: jumlah guru_kelas tidak sesuai manifest.');
         }
+        if ($this->rowsWhereIn('mata_pelajarans', 'id', $plan['retained_subject_ids']) !== $plan['snapshots']['subjects']) {
+            throw new RuntimeException('Postcondition gagal: data Mata Pelajaran yang dipertahankan berubah.');
+        }
+        if (DB::table('mata_pelajarans')->count() !== count($plan['retained_subject_ids'])) {
+            throw new RuntimeException('Postcondition gagal: jumlah Mata Pelajaran tidak sesuai manifest.');
+        }
 
         $structure = $this->schoolStructurePlan((int) $plan['target_year_id']);
         if (
             $structure['guru_ids'] !== $plan['retained_guru_ids']
             || $structure['class_ids'] !== $plan['retained_class_ids']
             || $structure['pivot_ids'] !== $plan['retained_pivot_ids']
+            || $structure['subject_ids'] !== $plan['retained_subject_ids']
             || $structure['role_counts'] !== $plan['role_counts']
             || $structure['pengajar_guru_ids'] !== $plan['pengajar_guru_ids']
+            || $structure['role_manifest'] !== $plan['role_manifest']
         ) {
             throw new RuntimeException('Postcondition gagal: struktur role Guru/Kelas berubah.');
         }
@@ -753,8 +861,10 @@ class BaselinePreparationService
             'retained_guru_ids' => $plan['retained_guru_ids'],
             'retained_class_ids' => $plan['retained_class_ids'],
             'retained_pivot_ids' => $plan['retained_pivot_ids'],
+            'retained_subject_ids' => $plan['retained_subject_ids'],
             'role_counts' => $plan['role_counts'],
             'pengajar_guru_ids' => $plan['pengajar_guru_ids'],
+            'role_manifest' => $plan['role_manifest'],
             'settings' => $plan['settings'],
             'snapshots' => $plan['snapshots'],
         ]));
