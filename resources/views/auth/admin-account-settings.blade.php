@@ -43,7 +43,7 @@
             <dd class="mt-1 break-words text-sm font-medium text-gray-900">{{ $admin->username }}</dd>
         </div>
         <div class="min-w-0">
-            <dt class="text-xs font-semibold uppercase text-green-700">Email</dt>
+            <dt class="text-xs font-semibold uppercase text-green-700">Email Aktif</dt>
             <dd class="mt-1 break-words text-sm font-medium text-gray-900">{{ $admin->email }}</dd>
         </div>
     </dl>
@@ -85,7 +85,24 @@
 
         <section class="rounded-lg bg-white p-4 shadow-lg sm:p-6" aria-labelledby="email-heading">
             <h2 id="email-heading" class="text-lg font-semibold text-green-700">Ubah Email</h2>
-            <p class="mt-1 text-sm text-gray-600">Email saat ini: <span class="font-medium text-gray-900">{{ $admin->email }}</span></p>
+            <p class="mt-1 text-sm text-gray-600">Email aktif: <span class="font-medium text-gray-900">{{ $admin->email }}</span></p>
+
+            @if ($admin->pending_email)
+                <div class="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900" role="status">
+                    <p class="font-medium">Menunggu verifikasi: {{ $admin->pending_email }}</p>
+                    <p class="mt-1">Email aktif belum berubah. Gunakan tautan pada email baru sebelum
+                        {{ $admin->pending_email_expires_at?->translatedFormat('d M Y, H:i') ?? 'batas waktu berakhir' }}.
+                    </p>
+
+                    <form method="POST" action="{{ route('admin.account.email.cancel') }}" class="mt-3">
+                        @csrf
+                        @method('DELETE')
+                        <button type="submit" class="font-medium text-amber-900 underline hover:text-amber-950 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2">
+                            Batalkan perubahan email
+                        </button>
+                    </form>
+                </div>
+            @endif
 
             <form method="POST" action="{{ route('admin.account.email.update') }}" class="mt-5 space-y-4">
                 @csrf
@@ -94,7 +111,7 @@
                 <div>
                     <label for="email" class="mb-1 block text-sm font-medium text-gray-700">Email Baru</label>
                     <input id="email" name="email" type="email" required maxlength="255" autocomplete="email"
-                        value="{{ old('email', $admin->email) }}"
+                        value="{{ old('email', $admin->pending_email ?? '') }}"
                         class="w-full rounded-md border px-3 py-2 focus:border-green-500 focus:ring-green-500 {{ $errors->emailUpdate->has('email') ? 'border-red-500' : 'border-gray-300' }}">
                     @if ($errors->emailUpdate->has('email'))
                         <p class="mt-1 text-sm text-red-600">{{ $errors->emailUpdate->first('email') }}</p>
@@ -112,7 +129,7 @@
                 </div>
 
                 <button type="submit" class="w-full rounded-lg bg-green-700 px-4 py-2 text-white hover:bg-green-800 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2">
-                    Ubah Email
+                    Kirim Verifikasi
                 </button>
             </form>
         </section>

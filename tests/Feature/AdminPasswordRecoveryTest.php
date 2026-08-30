@@ -6,6 +6,7 @@ use App\Models\AuditLog;
 use App\Models\Guru;
 use App\Models\User;
 use App\Notifications\AdminResetPasswordNotification;
+use App\Notifications\AdminVerifyNewEmailNotification;
 use App\Notifications\GuruResetPasswordNotification;
 use App\Notifications\GuruVerifyEmailNotification;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -16,6 +17,7 @@ use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Facades\Route;
@@ -122,6 +124,64 @@ class AdminPasswordRecoveryTest extends TestCase
         ])->assertRedirect(route('admin.dashboard'));
 
         $this->assertNotSame($oldSessionId, app('session')->driver()->getId());
+    }
+
+    public function test_admin_login_preserves_a_valid_intended_pending_email_verification_url(): void
+    {
+        $token = Str::random(64);
+        $this->admin->forceFill([
+            'pending_email' => 'admin-baru@example.test',
+            'pending_email_token_hash' => hash('sha256', $token),
+            'pending_email_expires_at' => now()->addHour(),
+        ])->save();
+        $url = URL::temporarySignedRoute(
+            'admin.account.email.verify',
+            now()->addHour(),
+            ['user' => $this->admin->id, 'token' => $token]
+        );
+
+        $this->get($url)
+            ->assertRedirect(route('login'))
+            ->assertSessionHas('url.intended', $url);
+
+        $this->post(route('login.post'), [
+            'username' => $this->admin->username,
+            'password' => self::ADMIN_PASSWORD,
+        ])->assertRedirect($url);
+    }
+
+    public function test_admin_login_rejects_an_intended_verification_url_with_a_changed_origin(): void
+    {
+        $activeEmail = $this->admin->email;
+        [, $validUrl] = $this->initiateAdminEmailChange('origin-aman@example.test');
+        $pendingAdmin = $this->admin->fresh();
+        $pendingHash = $pendingAdmin->pending_email_token_hash;
+
+        $this->post(route('logout'));
+        $this->get($validUrl)
+            ->assertRedirect(route('login'))
+            ->assertSessionHas('url.intended', $validUrl);
+
+        $externalUrl = preg_replace('#^https?://[^/]+#', 'https://evil.example', $validUrl);
+        $this->assertIsString($externalUrl);
+        $this->assertNotSame($validUrl, $externalUrl);
+        $this->withSession(['url.intended' => $externalUrl]);
+
+        $response = $this->post(route('login.post'), [
+            'username' => $this->admin->username,
+            'password' => self::ADMIN_PASSWORD,
+        ]);
+
+        $response->assertRedirect(route('admin.dashboard'))
+            ->assertSessionMissing('url.intended');
+        $this->assertNotSame($externalUrl, $response->headers->get('Location'));
+        $this->assertStringNotContainsString('evil.example', (string) $response->headers->get('Location'));
+
+        $freshAdmin = $this->admin->fresh();
+        $this->assertSame($activeEmail, $freshAdmin->email);
+        $this->assertSame('origin-aman@example.test', $freshAdmin->pending_email);
+        $this->assertSame($pendingHash, $freshAdmin->pending_email_token_hash);
+        $this->assertDatabaseMissing('audit_logs', ['action' => 'admin_email_changed']);
     }
 
     public function test_ambiguous_legacy_identifier_is_rejected_without_selecting_a_guard(): void
@@ -777,11 +837,22 @@ class AdminPasswordRecoveryTest extends TestCase
             'admin.account.edit',
             'admin.account.username.update',
             'admin.account.email.update',
+            'admin.account.email.cancel',
+            'admin.account.email.verify',
         ] as $routeName) {
             $middleware = Route::getRoutes()->getByName($routeName)?->gatherMiddleware() ?? [];
             $this->assertContains('auth:web', $middleware);
             $this->assertContains('role:admin', $middleware);
         }
+
+        $this->assertContains(
+            'signed',
+            Route::getRoutes()->getByName('admin.account.email.verify')?->gatherMiddleware() ?? []
+        );
+        $this->assertContains(
+            'throttle:6,1',
+            Route::getRoutes()->getByName('admin.account.email.update')?->gatherMiddleware() ?? []
+        );
     }
 
     public function test_admin_can_change_username_without_changing_other_credentials(): void
@@ -880,44 +951,76 @@ class AdminPasswordRecoveryTest extends TestCase
         $this->assertSame($this->admin->email, $this->admin->fresh()->username);
     }
 
-    public function test_admin_can_change_email_and_old_reset_token_is_invalidated(): void
+    public function test_admin_email_change_is_pending_until_verified_and_activation_clears_both_reset_tokens(): void
     {
-        Notification::fake();
         $oldEmail = $this->admin->email;
         $oldUsername = $this->admin->username;
         $oldPasswordHash = $this->admin->password;
+        $newEmail = 'admin-baru@example.test';
         $verifiedAt = now()->subDay()->startOfSecond();
         $this->admin->forceFill([
             'email_verified_at' => $verifiedAt,
             'remember_token' => 'email-remember-token',
         ])->save();
         Password::broker('users')->createToken($this->admin);
+        DB::table('password_reset_tokens')->insert([
+            'email' => $newEmail,
+            'token' => Hash::make('stale-destination-token'),
+            'created_at' => now(),
+        ]);
         Password::broker('gurus')->createToken($this->guru);
 
-        $response = $this->actingAs($this->admin, 'web')
-            ->put(route('admin.account.email.update'), [
-                'email' => '  ADMIN-BARU@EXAMPLE.TEST  ',
-                'current_password' => self::ADMIN_PASSWORD,
-            ]);
+        [$response, $verificationUrl] = $this->initiateAdminEmailChange('  ADMIN-BARU@EXAMPLE.TEST  ');
 
         $response->assertRedirect(route('admin.account.edit'))
-            ->assertSessionHas('success', 'Email Admin berhasil diubah.')
+            ->assertSessionHas('success', 'Tautan verifikasi telah dikirim. Email aktif belum berubah.')
             ->assertSessionMissing('_old_input.current_password');
 
+        $pendingAdmin = $this->admin->fresh();
+        $rawToken = $this->tokenFromEmailVerificationUrl($verificationUrl);
+        $this->assertSame($oldEmail, $pendingAdmin->email);
+        $this->assertSame($newEmail, $pendingAdmin->pending_email);
+        $this->assertSame(hash('sha256', $rawToken), $pendingAdmin->pending_email_token_hash);
+        $this->assertNotSame($rawToken, $pendingAdmin->pending_email_token_hash);
+        $this->assertSame($oldUsername, $pendingAdmin->username);
+        $this->assertSame($oldPasswordHash, $pendingAdmin->password);
+        $this->assertTrue($pendingAdmin->email_verified_at->equalTo($verifiedAt));
+        $this->assertSame('email-remember-token', $pendingAdmin->remember_token);
+        $this->assertDatabaseHas('password_reset_tokens', ['email' => $oldEmail]);
+        $this->assertDatabaseHas('password_reset_tokens', ['email' => $newEmail]);
+        $this->assertDatabaseHas('guru_password_reset_tokens', ['email' => $this->guru->email]);
+
+        $requestAudit = AuditLog::query()->where('action', 'admin_email_change_requested')->sole();
+        $this->assertNull($requestAudit->old_values);
+        $this->assertNull($requestAudit->new_values);
+        $this->assertStringNotContainsString($rawToken, $requestAudit->toJson());
+
+        $this->insertGuardSessionsWithOverlappingIds();
+        $this->useDatabaseSessions();
+        $this->actingAs($pendingAdmin, 'web')
+            ->get($verificationUrl)
+            ->assertRedirect(route('admin.account.edit'))
+            ->assertSessionHas('success', 'Email Admin berhasil diverifikasi dan diaktifkan.');
+
         $freshAdmin = $this->admin->fresh();
-        $this->assertSame('admin-baru@example.test', $freshAdmin->email);
-        $this->assertSame($oldUsername, $freshAdmin->username);
-        $this->assertSame($oldPasswordHash, $freshAdmin->password);
-        $this->assertTrue($freshAdmin->email_verified_at->equalTo($verifiedAt));
+        $this->assertSame($newEmail, $freshAdmin->email);
+        $this->assertNull($freshAdmin->pending_email);
+        $this->assertNull($freshAdmin->pending_email_token_hash);
+        $this->assertNull($freshAdmin->pending_email_expires_at);
+        $this->assertNotNull($freshAdmin->email_verified_at);
+        $this->assertFalse($freshAdmin->email_verified_at->equalTo($verifiedAt));
         $this->assertNotSame('email-remember-token', $freshAdmin->remember_token);
         $this->assertDatabaseMissing('password_reset_tokens', ['email' => $oldEmail]);
-        $this->assertDatabaseHas('guru_password_reset_tokens', ['email' => $this->guru->email]);
+        $this->assertDatabaseMissing('password_reset_tokens', ['email' => $newEmail]);
+        $this->assertDatabaseMissing('sessions', ['id' => 'admin-session-lama']);
+        $this->assertDatabaseHas('sessions', ['id' => 'guru-session-tetap']);
         $this->assertAuthenticatedAs($freshAdmin, 'web');
 
         $audit = AuditLog::query()->where('action', 'admin_email_changed')->sole();
-        $this->assertSame('Admin mengubah email akun.', $audit->description);
+        $this->assertSame('Admin mengaktifkan alamat email baru yang telah diverifikasi.', $audit->description);
         $this->assertSame(['email' => $oldEmail], $audit->old_values);
-        $this->assertSame(['email' => 'admin-baru@example.test'], $audit->new_values);
+        $this->assertSame(['email' => $newEmail], $audit->new_values);
+        $this->assertStringNotContainsString($rawToken, $audit->toJson());
 
         $this->post(route('logout'));
         $this->post(route('login.post'), [
@@ -925,19 +1028,73 @@ class AdminPasswordRecoveryTest extends TestCase
             'password' => self::ADMIN_PASSWORD,
         ])->assertSessionHasErrors('username');
         $this->post(route('login.post'), [
-            'username' => 'admin-baru@example.test',
+            'username' => $newEmail,
             'password' => self::ADMIN_PASSWORD,
         ])->assertRedirect(route('admin.dashboard'));
         $this->post(route('logout'));
 
-        $this->post(route('password.email'), ['identifier' => 'admin-baru@example.test'])
+        Notification::fake();
+        $this->post(route('password.email'), ['identifier' => $newEmail])
             ->assertSessionHas('status', $this->genericRecoveryMessage());
         Notification::assertSentTo($freshAdmin, AdminResetPasswordNotification::class);
     }
 
+    public function test_successful_email_activation_regenerates_the_current_database_session_and_keeps_it_usable(): void
+    {
+        [, $verificationUrl] = $this->initiateAdminEmailChange('session-baru@example.test');
+        $this->post(route('logout'));
+        $this->flushSession();
+
+        $this->insertGuardSessionsWithOverlappingIds();
+        $this->useDatabaseSessions();
+        $this->app['auth']->forgetGuards();
+        $this->post(route('login.post'), [
+            'username' => $this->admin->username,
+            'password' => self::ADMIN_PASSWORD,
+        ])->assertRedirect(route('admin.dashboard'));
+
+        $currentSessionId = app('session')->driver()->getId();
+        $sessionCookie = app('session')->driver()->getName();
+        $this->assertDatabaseHas('sessions', ['id' => $currentSessionId]);
+
+        app('session')->forgetDrivers();
+        $this->app['auth']->forgetGuards();
+
+        $this->withCookie($sessionCookie, $currentSessionId)
+            ->get($verificationUrl)
+            ->assertRedirect(route('admin.account.edit'))
+            ->assertSessionHas('success', 'Email Admin berhasil diverifikasi dan diaktifkan.');
+
+        $newSessionId = app('session')->driver()->getId();
+        $this->assertNotSame($currentSessionId, $newSessionId);
+        $this->assertDatabaseMissing('sessions', ['id' => $currentSessionId]);
+        $this->assertDatabaseMissing('sessions', ['id' => 'admin-session-lama']);
+        $this->assertDatabaseHas('sessions', ['id' => 'guru-session-tetap']);
+        $this->assertDatabaseHas('sessions', ['id' => $newSessionId]);
+        $this->assertSame('session-baru@example.test', $this->admin->fresh()->email);
+        $this->assertSame(1, AuditLog::query()->where('action', 'admin_email_changed')->count());
+
+        app('session')->forgetDrivers();
+        $this->app['auth']->forgetGuards();
+        $this->withCookie($sessionCookie, $newSessionId)
+            ->get(route('admin.account.edit'))
+            ->assertOk();
+        $this->assertAuthenticatedAs($this->admin->fresh(), 'web');
+
+        app('session')->forgetDrivers();
+        $this->app['auth']->forgetGuards();
+        $this->withCookie($sessionCookie, $newSessionId)
+            ->get($verificationUrl)
+            ->assertSessionHas('error', 'Tautan verifikasi tidak valid, sudah kedaluwarsa, atau sudah digunakan.');
+        $this->assertSame(1, AuditLog::query()->where('action', 'admin_email_changed')->count());
+    }
+
     public function test_wrong_password_or_guru_collision_cannot_change_admin_email(): void
     {
+        Notification::fake();
         $originalEmail = $this->admin->email;
+        $verifiedAt = now()->subDay()->startOfSecond();
+        $this->admin->forceFill(['email_verified_at' => $verifiedAt])->save();
         $guruWithEmailUsername = $this->createGuru(
             'guru-reserved@example.test',
             'guru-reserved-contact@example.test',
@@ -963,31 +1120,424 @@ class AdminPasswordRecoveryTest extends TestCase
             'current_password' => self::ADMIN_PASSWORD,
         ])->assertSessionHasErrors('email', null, 'emailUpdate');
 
-        $this->assertSame($originalEmail, $this->admin->fresh()->email);
+        $this->put(route('admin.account.email.update'), [
+            'email' => $originalEmail,
+            'current_password' => self::ADMIN_PASSWORD,
+        ])->assertSessionHasErrors('email', null, 'emailUpdate');
+
+        $this->put(route('admin.account.email.update'), [
+            'email' => 'bukan-email',
+            'current_password' => self::ADMIN_PASSWORD,
+        ])->assertSessionHasErrors('email', null, 'emailUpdate');
+
+        $softDeletedGuru = $this->createGuru('guru-dihapus', 'guru-dihapus@example.test', false);
+        $softDeletedGuru->delete();
+
+        $this->put(route('admin.account.email.update'), [
+            'email' => strtoupper((string) $softDeletedGuru->email),
+            'current_password' => self::ADMIN_PASSWORD,
+        ])->assertSessionHasErrors('email', null, 'emailUpdate');
+
+        $freshAdmin = $this->admin->fresh();
+        $this->assertSame($originalEmail, $freshAdmin->email);
+        $this->assertTrue($freshAdmin->email_verified_at->equalTo($verifiedAt));
+        $this->assertNull($freshAdmin->pending_email);
+        Notification::assertNothingSent();
     }
 
-    public function test_username_and_email_changes_revoke_only_old_web_sessions(): void
+    public function test_new_email_request_and_same_email_resend_each_supersede_older_links(): void
     {
-        foreach ([
-            ['route' => 'admin.account.username.update', 'payload' => ['username' => 'admin-sesi-baru']],
-            ['route' => 'admin.account.email.update', 'payload' => ['email' => 'admin-sesi-baru@example.test']],
-        ] as $index => $change) {
-            if ($index > 0) {
-                DB::table('sessions')->delete();
-            }
+        $activeEmail = $this->admin->email;
+        [, $firstUrl] = $this->initiateAdminEmailChange('pertama@example.test');
+        $firstHash = $this->admin->fresh()->pending_email_token_hash;
+        [, $secondUrl] = $this->initiateAdminEmailChange('kedua@example.test');
+        $secondHash = $this->admin->fresh()->pending_email_token_hash;
+        [, $thirdUrl] = $this->initiateAdminEmailChange('kedua@example.test');
+        $thirdHash = $this->admin->fresh()->pending_email_token_hash;
 
-            $this->insertGuardSessionsWithOverlappingIds();
-            $this->useDatabaseSessions();
-            $this->actingAs($this->admin->fresh(), 'web')
-                ->put(route($change['route']), array_merge($change['payload'], [
-                    'current_password' => self::ADMIN_PASSWORD,
-                ]))
-                ->assertRedirect(route('admin.account.edit'));
+        $this->assertNotSame($firstHash, $secondHash);
+        $this->assertNotSame($secondHash, $thirdHash);
 
-            $this->assertDatabaseMissing('sessions', ['id' => 'admin-session-lama']);
-            $this->assertDatabaseHas('sessions', ['id' => 'guru-session-tetap']);
-            $this->assertAuthenticatedAs($this->admin->fresh(), 'web');
-        }
+        $this->actingAs($this->admin->fresh(), 'web')->get($firstUrl)
+            ->assertSessionHas('error', 'Tautan verifikasi tidak valid, sudah kedaluwarsa, atau sudah digunakan.');
+        $this->get($secondUrl)
+            ->assertSessionHas('error', 'Tautan verifikasi tidak valid, sudah kedaluwarsa, atau sudah digunakan.');
+
+        $pendingAdmin = $this->admin->fresh();
+        $this->assertSame($activeEmail, $pendingAdmin->email);
+        $this->assertSame('kedua@example.test', $pendingAdmin->pending_email);
+        $this->assertSame($thirdHash, $pendingAdmin->pending_email_token_hash);
+
+        $this->useDatabaseSessions();
+        $this->actingAs($pendingAdmin, 'web')->get($thirdUrl)
+            ->assertSessionHas('success', 'Email Admin berhasil diverifikasi dan diaktifkan.');
+        $this->assertSame('kedua@example.test', $this->admin->fresh()->email);
+    }
+
+    public function test_mail_failure_cleans_only_the_matching_pending_request_without_exposing_transport_details(): void
+    {
+        $originalEmail = $this->admin->email;
+        $verifiedAt = now()->subDay()->startOfSecond();
+        $this->admin->forceFill(['email_verified_at' => $verifiedAt])->save();
+        Log::spy();
+
+        $dispatcher = \Mockery::mock(\Illuminate\Contracts\Notifications\Dispatcher::class);
+        $dispatcher->shouldReceive('sendNow')
+            ->once()
+            ->andThrow(new \RuntimeException('private smtp detail'));
+        $this->app->instance(\Illuminate\Contracts\Notifications\Dispatcher::class, $dispatcher);
+
+        $response = $this->actingAs($this->admin, 'web')
+            ->put(route('admin.account.email.update'), [
+                'email' => 'gagal@example.test',
+                'current_password' => self::ADMIN_PASSWORD,
+            ]);
+
+        $response->assertRedirect()
+            ->assertSessionHas('error', 'Email verifikasi belum dapat dikirim. Silakan coba lagi nanti.')
+            ->assertSessionMissing('success');
+        $freshAdmin = $this->admin->fresh();
+        $this->assertSame($originalEmail, $freshAdmin->email);
+        $this->assertTrue($freshAdmin->email_verified_at->equalTo($verifiedAt));
+        $this->assertNull($freshAdmin->pending_email);
+        $this->assertStringNotContainsString('private smtp detail', json_encode(session()->all()));
+        Log::shouldHaveReceived('warning')->once()->withArgs(function (string $message, array $context): bool {
+            return $message === 'Admin new email verification could not be sent.'
+                && array_keys($context) === ['user_id', 'exception'];
+        });
+    }
+
+    public function test_failure_from_older_delivery_cannot_erase_a_newer_pending_request(): void
+    {
+        $newerHash = hash('sha256', 'newer-token');
+        $dispatcher = \Mockery::mock(\Illuminate\Contracts\Notifications\Dispatcher::class);
+        $dispatcher->shouldReceive('sendNow')
+            ->once()
+            ->andReturnUsing(function () use ($newerHash): void {
+                User::query()->whereKey($this->admin->id)->update([
+                    'pending_email' => 'lebih-baru@example.test',
+                    'pending_email_token_hash' => $newerHash,
+                    'pending_email_expires_at' => now()->addHour(),
+                ]);
+
+                throw new \RuntimeException('delivery failed');
+            });
+        $this->app->instance(\Illuminate\Contracts\Notifications\Dispatcher::class, $dispatcher);
+
+        $this->actingAs($this->admin, 'web')
+            ->put(route('admin.account.email.update'), [
+                'email' => 'lebih-lama@example.test',
+                'current_password' => self::ADMIN_PASSWORD,
+            ])
+            ->assertSessionHas('error');
+
+        $freshAdmin = $this->admin->fresh();
+        $this->assertSame('lebih-baru@example.test', $freshAdmin->pending_email);
+        $this->assertSame($newerHash, $freshAdmin->pending_email_token_hash);
+    }
+
+    public function test_invalid_expired_tampered_and_replayed_verification_links_cannot_change_email(): void
+    {
+        $oldEmail = $this->admin->email;
+        [, $url] = $this->initiateAdminEmailChange('verifikasi@example.test');
+        $token = $this->tokenFromEmailVerificationUrl($url);
+
+        $this->actingAs($this->admin->fresh(), 'web')
+            ->get($url.'&tampered=1')
+            ->assertForbidden();
+
+        $expiredSignedUrl = URL::temporarySignedRoute(
+            'admin.account.email.verify',
+            now()->subMinute(),
+            ['user' => $this->admin->id, 'token' => $token]
+        );
+        $this->get($expiredSignedUrl)->assertForbidden();
+
+        $wrongTokenUrl = URL::temporarySignedRoute(
+            'admin.account.email.verify',
+            now()->addHour(),
+            ['user' => $this->admin->id, 'token' => Str::random(64)]
+        );
+        $this->get($wrongTokenUrl)
+            ->assertSessionHas('error', 'Tautan verifikasi tidak valid, sudah kedaluwarsa, atau sudah digunakan.');
+
+        $this->admin->fresh()->forceFill(['pending_email_expires_at' => now()->subMinute()])->save();
+        $this->get($url)
+            ->assertSessionHas('error', 'Tautan verifikasi tidak valid, sudah kedaluwarsa, atau sudah digunakan.');
+        $this->assertSame($oldEmail, $this->admin->fresh()->email);
+        $this->assertDatabaseMissing('audit_logs', ['action' => 'admin_email_changed']);
+    }
+
+    public function test_successful_admin_email_verification_link_cannot_be_replayed(): void
+    {
+        [, $freshUrl] = $this->initiateAdminEmailChange('replay@example.test');
+        $this->insertGuardSessionsWithOverlappingIds();
+        $this->useDatabaseSessions();
+        Cache::flush();
+        $this->actingAs($this->admin->fresh(), 'web')->get($freshUrl)
+            ->assertRedirect(route('admin.account.edit'));
+        $this->assertSame('replay@example.test', $this->admin->fresh()->email);
+        $this->assertNull($this->admin->fresh()->pending_email);
+
+        $this->flushSession();
+        config()->set('session.driver', 'array');
+        config()->set('session.connection', null);
+        app('session')->forgetDrivers();
+        Cache::flush();
+        $this->actingAs($this->admin->fresh(), 'web')->get($freshUrl)
+            ->assertRedirect(route('admin.account.edit'))
+            ->assertSessionHas('error', 'Tautan verifikasi tidak valid, sudah kedaluwarsa, atau sudah digunakan.');
+        $this->assertSame('replay@example.test', $this->admin->fresh()->email);
+        $this->assertSame(1, AuditLog::query()->where('action', 'admin_email_changed')->count());
+    }
+
+    public function test_guest_guru_wrong_admin_and_unsigned_requests_cannot_activate_pending_email(): void
+    {
+        $oldEmail = $this->admin->email;
+        [, $url] = $this->initiateAdminEmailChange('aman@example.test');
+        $token = $this->tokenFromEmailVerificationUrl($url);
+
+        $this->post(route('logout'));
+        $this->get($url)
+            ->assertRedirect(route('login'))
+            ->assertSessionHas('url.intended', $url);
+        $this->assertSame($oldEmail, $this->admin->fresh()->email);
+
+        $this->actingAs($this->guru, 'guru')->get($url)->assertRedirect(route('login'));
+        $this->assertSame($oldEmail, $this->admin->fresh()->email);
+
+        $this->actingAs($this->admin, 'web')
+            ->get(route('admin.account.email.verify', [
+                'user' => $this->admin->id,
+                'token' => $token,
+            ]))
+            ->assertForbidden();
+
+        $wrongUserUrl = URL::temporarySignedRoute(
+            'admin.account.email.verify',
+            now()->addHour(),
+            ['user' => $this->admin->id + 999, 'token' => $token]
+        );
+        $this->get($wrongUserUrl)
+            ->assertSessionHas('error', 'Tautan verifikasi tidak berlaku untuk akun Admin yang sedang digunakan.');
+
+        $freshAdmin = $this->admin->fresh();
+        $this->assertSame($oldEmail, $freshAdmin->email);
+        $this->assertSame('aman@example.test', $freshAdmin->pending_email);
+        $this->assertDatabaseMissing('audit_logs', ['action' => 'admin_email_changed']);
+    }
+
+    public function test_collision_introduced_after_initiation_blocks_activation_and_invalidates_pending_state(): void
+    {
+        $oldEmail = $this->admin->email;
+        [, $url] = $this->initiateAdminEmailChange('direbut@example.test');
+        $this->createGuru('guru-baru', 'direbut@example.test', false);
+
+        $this->actingAs($this->admin->fresh(), 'web')->get($url)
+            ->assertSessionHas('error', 'Email baru tidak dapat digunakan. Silakan ajukan perubahan email kembali.');
+
+        $freshAdmin = $this->admin->fresh();
+        $this->assertSame($oldEmail, $freshAdmin->email);
+        $this->assertNull($freshAdmin->pending_email);
+        $this->assertNull($freshAdmin->pending_email_token_hash);
+        $this->assertNull($freshAdmin->pending_email_expires_at);
+        $this->assertDatabaseMissing('audit_logs', ['action' => 'admin_email_changed']);
+    }
+
+    public function test_old_email_recovery_remains_active_while_pending_email_is_not_recoverable(): void
+    {
+        $oldEmail = $this->admin->email;
+        $newEmail = 'pending-recovery@example.test';
+        $this->initiateAdminEmailChange($newEmail);
+        $this->post(route('logout'));
+
+        Notification::fake();
+        $oldResponse = $this->post(route('password.email'), ['identifier' => $oldEmail]);
+        $oldResponse->assertSessionHas('status', $this->genericRecoveryMessage());
+        Notification::assertSentTo($this->admin, AdminResetPasswordNotification::class);
+        $this->assertDatabaseHas('password_reset_tokens', ['email' => $oldEmail]);
+
+        Notification::fake();
+        $newResponse = $this->post(route('password.email'), ['identifier' => $newEmail]);
+        $newResponse->assertSessionHas('status', $this->genericRecoveryMessage());
+        Notification::assertNothingSent();
+        $this->assertDatabaseMissing('password_reset_tokens', ['email' => $newEmail]);
+        $this->assertSame(
+            $oldResponse->getSession()->get('status'),
+            $newResponse->getSession()->get('status')
+        );
+        $this->assertStringNotContainsString($newEmail, $newResponse->getContent());
+    }
+
+    public function test_admin_can_cancel_pending_email_without_changing_credentials_tokens_or_sessions(): void
+    {
+        $verifiedAt = now()->subDay()->startOfSecond();
+        $this->admin->forceFill(['email_verified_at' => $verifiedAt])->save();
+        Password::broker('users')->createToken($this->admin);
+        [, $url] = $this->initiateAdminEmailChange('batal@example.test');
+        $passwordHash = $this->admin->fresh()->password;
+
+        $this->actingAs($this->admin->fresh(), 'web')
+            ->delete(route('admin.account.email.cancel'))
+            ->assertSessionHas('success', 'Perubahan email yang menunggu verifikasi telah dibatalkan.');
+
+        $freshAdmin = $this->admin->fresh();
+        $this->assertSame($this->admin->email, $freshAdmin->email);
+        $this->assertTrue($freshAdmin->email_verified_at->equalTo($verifiedAt));
+        $this->assertSame($passwordHash, $freshAdmin->password);
+        $this->assertNull($freshAdmin->pending_email);
+        $this->assertDatabaseHas('password_reset_tokens', ['email' => $freshAdmin->email]);
+        $this->assertAuthenticatedAs($freshAdmin, 'web');
+
+        $this->get($url)
+            ->assertSessionHas('error', 'Tautan verifikasi tidak valid, sudah kedaluwarsa, atau sudah digunakan.');
+        $this->assertDatabaseHas('audit_logs', ['action' => 'admin_email_change_cancelled']);
+    }
+
+    public function test_activation_fails_closed_when_required_database_session_revocation_is_unavailable(): void
+    {
+        $oldEmail = $this->admin->email;
+        [, $url] = $this->initiateAdminEmailChange('fail-closed@example.test');
+
+        $this->actingAs($this->admin->fresh(), 'web')->get($url)
+            ->assertSessionHas('error', 'Perubahan email belum dapat diselesaikan. Silakan coba lagi nanti.')
+            ->assertSessionMissing('success');
+
+        $freshAdmin = $this->admin->fresh();
+        $this->assertSame($oldEmail, $freshAdmin->email);
+        $this->assertSame('fail-closed@example.test', $freshAdmin->pending_email);
+        $this->assertDatabaseMissing('audit_logs', ['action' => 'admin_email_changed']);
+    }
+
+    public function test_admin_password_change_and_forgot_reset_invalidate_pending_email_links(): void
+    {
+        $changedPassword = 'ChangedAdminPassword456!';
+        [, $passwordChangeUrl] = $this->initiateAdminEmailChange('sebelum-password@example.test');
+
+        $this->actingAs($this->admin->fresh(), 'web')
+            ->put(route('admin.password.change.update'), [
+                'current_password' => self::ADMIN_PASSWORD,
+                'password' => $changedPassword,
+                'password_confirmation' => $changedPassword,
+            ])
+            ->assertSessionHas('success', 'Password Admin berhasil diubah.');
+
+        $this->assertNull($this->admin->fresh()->pending_email);
+        $this->get($passwordChangeUrl)
+            ->assertSessionHas('error', 'Tautan verifikasi tidak valid, sudah kedaluwarsa, atau sudah digunakan.');
+
+        [, $forgotResetUrl] = $this->initiateAdminEmailChange(
+            'sebelum-reset@example.test',
+            $changedPassword
+        );
+        $admin = $this->admin->fresh();
+        $resetToken = Password::broker('users')->createToken($admin);
+        $this->post(route('logout'));
+
+        $resetPassword = 'ResetAdminPassword789!';
+        $this->post(
+            route('password.update'),
+            $this->resetPayload($admin->email, $resetToken, $resetPassword)
+        )->assertRedirect(route('login'));
+
+        $freshAdmin = $this->admin->fresh();
+        $this->assertNull($freshAdmin->pending_email);
+        $this->assertTrue(Hash::check($resetPassword, $freshAdmin->password));
+        $this->actingAs($freshAdmin, 'web')->get($forgotResetUrl)
+            ->assertSessionHas('error', 'Tautan verifikasi tidak valid, sudah kedaluwarsa, atau sudah digunakan.');
+    }
+
+    public function test_pending_email_ui_separates_active_and_pending_addresses_without_rendering_secrets(): void
+    {
+        [, $url] = $this->initiateAdminEmailChange('status-pending@example.test');
+        $rawToken = $this->tokenFromEmailVerificationUrl($url);
+        $pendingHash = $this->admin->fresh()->pending_email_token_hash;
+
+        $html = $this->actingAs($this->admin->fresh(), 'web')
+            ->get(route('admin.account.edit'))
+            ->assertOk()
+            ->assertSee('Email Aktif')
+            ->assertSee($this->admin->email)
+            ->assertSee('Menunggu verifikasi: status-pending@example.test')
+            ->assertSee('Email aktif belum berubah')
+            ->assertSee('Kirim Verifikasi')
+            ->assertSee('Batalkan perubahan email')
+            ->getContent();
+
+        $this->assertStringNotContainsString($rawToken, $html);
+        $this->assertStringNotContainsString((string) $pendingHash, $html);
+        $this->assertMatchesRegularExpression(
+            '/id="email_current_password"[^>]+aria-invalid="false"/s',
+            $html
+        );
+    }
+
+    public function test_pending_email_security_fields_are_not_mass_assignable_or_serialized(): void
+    {
+        $this->admin->fill([
+            'pending_email' => 'injected@example.test',
+            'pending_email_token_hash' => str_repeat('a', 64),
+            'pending_email_expires_at' => now()->addHour(),
+        ])->save();
+
+        $freshAdmin = $this->admin->fresh();
+        $this->assertNull($freshAdmin->pending_email);
+        $this->assertNull($freshAdmin->pending_email_token_hash);
+        $this->assertNull($freshAdmin->pending_email_expires_at);
+
+        $freshAdmin->forceFill([
+            'pending_email' => 'hidden@example.test',
+            'pending_email_token_hash' => str_repeat('b', 64),
+            'pending_email_expires_at' => now()->addHour(),
+        ]);
+        $serialized = $freshAdmin->toArray();
+
+        $this->assertArrayNotHasKey('pending_email', $serialized);
+        $this->assertArrayNotHasKey('pending_email_token_hash', $serialized);
+        $this->assertArrayNotHasKey('pending_email_expires_at', $serialized);
+    }
+
+    public function test_email_change_mutations_remain_csrf_protected(): void
+    {
+        $this->withMiddleware(PreventRequestForgery::class);
+        $this->app->instance('env', 'production');
+
+        $this->actingAs($this->admin, 'web')->put(route('admin.account.email.update'), [
+            'email' => 'csrf@example.test',
+            'current_password' => self::ADMIN_PASSWORD,
+        ])->assertStatus(419);
+
+        $this->delete(route('admin.account.email.cancel'))->assertStatus(419);
+        $this->assertNull($this->admin->fresh()->pending_email);
+    }
+
+    public function test_username_change_revokes_only_old_web_sessions_while_email_initiation_changes_no_sessions(): void
+    {
+        $this->insertGuardSessionsWithOverlappingIds();
+        $this->useDatabaseSessions();
+        $this->actingAs($this->admin->fresh(), 'web')
+            ->put(route('admin.account.username.update'), [
+                'username' => 'admin-sesi-baru',
+                'current_password' => self::ADMIN_PASSWORD,
+            ])
+            ->assertRedirect(route('admin.account.edit'));
+
+        $this->assertDatabaseMissing('sessions', ['id' => 'admin-session-lama']);
+        $this->assertDatabaseHas('sessions', ['id' => 'guru-session-tetap']);
+        $this->assertAuthenticatedAs($this->admin->fresh(), 'web');
+
+        DB::table('sessions')->delete();
+        $this->insertGuardSessionsWithOverlappingIds();
+        Notification::fake();
+        $this->actingAs($this->admin->fresh(), 'web')
+            ->put(route('admin.account.email.update'), [
+                'email' => 'admin-sesi-baru@example.test',
+                'current_password' => self::ADMIN_PASSWORD,
+            ])
+            ->assertRedirect(route('admin.account.edit'));
+
+        $this->assertDatabaseHas('sessions', ['id' => 'admin-session-lama']);
+        $this->assertDatabaseHas('sessions', ['id' => 'guru-session-tetap']);
     }
 
     public function test_unverified_guru_sees_verification_status_banner(): void
@@ -1302,6 +1852,46 @@ class AdminPasswordRecoveryTest extends TestCase
         return $guru;
     }
 
+    /** @return array{0: \Illuminate\Testing\TestResponse, 1: string} */
+    private function initiateAdminEmailChange(
+        string $email,
+        string $currentPassword = self::ADMIN_PASSWORD
+    ): array
+    {
+        Notification::fake();
+        $normalizedEmail = mb_strtolower(trim($email));
+        $verificationUrl = null;
+
+        $response = $this->actingAs($this->admin->fresh(), 'web')
+            ->put(route('admin.account.email.update'), [
+                'email' => $email,
+                'current_password' => $currentPassword,
+            ]);
+
+        Notification::assertSentOnDemand(
+            AdminVerifyNewEmailNotification::class,
+            function ($notification, array $channels, object $notifiable) use ($normalizedEmail, &$verificationUrl): bool {
+                $this->assertContains('mail', $channels);
+                $this->assertSame($normalizedEmail, $notifiable->routeNotificationFor('mail'));
+                $this->assertNotInstanceOf(ShouldQueue::class, $notification);
+                $verificationUrl = $notification->toMail($notifiable)->actionUrl;
+
+                return true;
+            }
+        );
+
+        $this->assertIsString($verificationUrl);
+
+        return [$response, $verificationUrl];
+    }
+
+    private function tokenFromEmailVerificationUrl(string $url): string
+    {
+        $path = (string) parse_url($url, PHP_URL_PATH);
+
+        return rawurldecode(basename($path));
+    }
+
     private function verificationUrl(Guru $guru): string
     {
         return URL::temporarySignedRoute(
@@ -1387,6 +1977,9 @@ class AdminPasswordRecoveryTest extends TestCase
             $table->string('username')->unique();
             $table->string('email')->unique();
             $table->timestamp('email_verified_at')->nullable();
+            $table->string('pending_email')->nullable();
+            $table->char('pending_email_token_hash', 64)->nullable();
+            $table->timestamp('pending_email_expires_at')->nullable();
             $table->string('password');
             $table->rememberToken();
             $table->timestamps();

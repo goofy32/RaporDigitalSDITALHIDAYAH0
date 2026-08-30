@@ -180,7 +180,14 @@ Route::middleware(['auth:web', 'role:admin'])->prefix('admin')->group(function (
     Route::put('/account/username', [AdminAccountController::class, 'updateUsername'])
         ->name('admin.account.username.update');
     Route::put('/account/email', [AdminAccountController::class, 'updateEmail'])
+        ->middleware('throttle:6,1')
         ->name('admin.account.email.update');
+    Route::delete('/account/email/pending', [AdminAccountController::class, 'cancelEmailChange'])
+        ->name('admin.account.email.cancel');
+    Route::get('/account/email/verify/{user}/{token}', [AdminAccountController::class, 'verifyEmail'])
+        ->whereNumber('user')
+        ->middleware(['signed', 'throttle:6,1'])
+        ->name('admin.account.email.verify');
     Route::get('/password/change', [AdminPasswordController::class, 'edit'])
         ->name('admin.password.change.edit');
     Route::put('/password/change', [AdminPasswordController::class, 'update'])

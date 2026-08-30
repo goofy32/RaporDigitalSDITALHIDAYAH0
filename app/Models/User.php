@@ -25,10 +25,14 @@ class User extends Authenticatable
     protected $hidden = [
         'password',
         'remember_token',
+        'pending_email',
+        'pending_email_token_hash',
+        'pending_email_expires_at',
     ];
 
     protected $casts = [
         'email_verified_at' => 'datetime',
+        'pending_email_expires_at' => 'datetime',
         'password' => 'hashed',
     ];
 

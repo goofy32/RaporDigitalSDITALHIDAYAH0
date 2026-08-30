@@ -136,7 +136,12 @@ class AdminPasswordController extends Controller
                 if ($account instanceof Guru) {
                     $attributes['must_change_password'] = false;
                 } else {
-                    $attributes['remember_token'] = Str::random(60);
+                    $attributes = array_merge($attributes, [
+                        'remember_token' => Str::random(60),
+                        'pending_email' => null,
+                        'pending_email_token_hash' => null,
+                        'pending_email_expires_at' => null,
+                    ]);
                 }
 
                 $account->forceFill($attributes)->save();
@@ -197,6 +202,9 @@ class AdminPasswordController extends Controller
             $admin->forceFill([
                 'password' => $validator->validated()['password'],
                 'remember_token' => Str::random(60),
+                'pending_email' => null,
+                'pending_email_token_hash' => null,
+                'pending_email_expires_at' => null,
             ])->save();
 
             AuditService::log(

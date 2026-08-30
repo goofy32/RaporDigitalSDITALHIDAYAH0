@@ -48,6 +48,10 @@ class LoginController extends Controller
             $request->session()->put('last_activity', time());
             AuditService::logLogin('success', $identifier);
 
+            if ($verificationUrl = $this->intendedAdminEmailVerificationUrl($request, $admin)) {
+                return redirect()->to($verificationUrl);
+            }
+
             if ($this->forgetGuruVerificationIntendedUrl($request)) {
                 return redirect()->route('admin.dashboard')->with(
                     'error',
@@ -186,6 +190,34 @@ class LoginController extends Controller
                 'Tautan verifikasi ini bukan untuk akun Guru yang sedang digunakan.'
             );
 
+            return null;
+        }
+
+        $verificationRequest = Request::create($intendedUrl, 'GET');
+
+        return URL::hasValidSignature($verificationRequest) ? $intendedUrl : null;
+    }
+
+    private function intendedAdminEmailVerificationUrl(Request $request, User $admin): ?string
+    {
+        $intendedUrl = $request->session()->get('url.intended');
+
+        if (! is_string($intendedUrl) || $intendedUrl === '') {
+            return null;
+        }
+
+        $path = parse_url($intendedUrl, PHP_URL_PATH);
+
+        if (
+            ! is_string($path)
+            || preg_match('#^/admin/account/email/verify/(\d+)/[^/]+$#', $path, $matches) !== 1
+        ) {
+            return null;
+        }
+
+        $request->session()->forget('url.intended');
+
+        if ((int) $matches[1] !== (int) $admin->getKey()) {
             return null;
         }
 
